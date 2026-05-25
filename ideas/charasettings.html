@@ -1,0 +1,1413 @@
+<!DOCTYPE html>
+<html data-theme="black" lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta content="width=device-width, initial-scale=1" name="viewport">
+    <title>Character Settings | MyOC</title>
+
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet"/>
+    <link href="https://cdn.jsdelivr.net/combine/npm/daisyui@5/theme/black.css" rel="stylesheet"/>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+        .gallery-image[aria-grabbed="true"] {
+            opacity: 0.5;
+        }
+
+        .gallery-dropzone.drag-over {
+            outline: 2px dashed currentColor;
+            outline-offset: 4px;
+        }
+    </style>
+</head>
+
+<body class="min-h-screen bg-base-100 text-base-content">
+
+<div class="navbar bg-base-200 border-b border-base-300 px-6">
+    <div class="flex-1">
+        <a class="text-xl font-bold">MyOC</a>
+    </div>
+
+    <div class="flex-none w-full max-w-md mx-6">
+        <label class="input input-bordered w-full">
+            <svg class="h-4 w-4 opacity-60"
+                 fill="none"
+                 stroke="currentColor"
+                 viewBox="0 0 24 24"
+                 xmlns="http://www.w3.org/2000/svg">
+                <path d="M21 21l-4.35-4.35M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14z"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"/>
+            </svg>
+            <input
+                    class="grow"
+                    placeholder="Search characters, artists, tags..."
+                    type="search"
+            />
+        </label>
+    </div>
+
+    <div class="flex-none">
+        <details class="dropdown dropdown-end">
+            <summary class="btn btn-ghost btn-circle avatar">
+                <div class="w-10 rounded-full">
+                    <img
+                            alt="Profile"
+                            src="https://ui-avatars.com/api/?name=R&background=ff0000&color=ffffff"
+                    />
+                </div>
+            </summary>
+
+            <ul class="menu dropdown-content bg-base-100 rounded-box z-50 mt-3 w-56 p-2 shadow">
+                <li><a>Characters</a></li>
+                <li><a>Settings</a></li>
+
+                <div class="divider my-1"></div>
+
+                <li><a class="text-error">Logout</a></li>
+            </ul>
+        </details>
+    </div>
+</div>
+
+<main class="container mx-auto max-w-3xl px-3 py-6 sm:px-0">
+    <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex min-w-0 items-center gap-3">
+            <img
+                    alt="Current profile image"
+                    class="h-14 w-14 shrink-0 rounded object-cover sm:h-16 sm:w-16"
+                    src="https://razeth.monster/wp-content/uploads/2026/04/razref.png"
+            />
+            <h1 class="min-w-0 text-4xl font-bold sm:text-5xl">Super long character name here</h1>
+        </div>
+
+        <div class="flex flex-wrap gap-2 sm:justify-end">
+            <button class="btn btn-secondary" id="transfer-character-button" type="button">Transfer Character</button>
+            <button class="btn btn-error" id="delete-character-button" type="button">Delete Character</button>
+        </div>
+    </div>
+
+    <form class="space-y-5">
+        <fieldset class="fieldset">
+            <label class="fieldset-label" for="character-profile-photo">Profile Photo</label>
+            <input
+                    accept="image/*"
+                    class="file-input w-full"
+                    id="character-profile-photo"
+                    name="character-profile-photo"
+                    type="file"
+            />
+            <div class="label">
+                <span class="label-text-alt">A 1024x1024 image is recommended for best results.</span>
+            </div>
+        </fieldset>
+
+        <fieldset class="fieldset">
+            <label class="fieldset-label" for="character-name">Character Name</label>
+            <input
+                    class="input input-bordered w-full"
+                    id="character-name"
+                    maxlength="80"
+                    name="character-name"
+                    type="text"
+                    value="Super long character name here"
+            />
+        </fieldset>
+
+        <fieldset class="fieldset">
+            <label class="fieldset-label" for="character-description">Description</label>
+            <textarea
+                    class="textarea textarea-bordered min-h-32 w-full resize-y"
+                    id="character-description"
+                    maxlength="255"
+                    name="character-description"
+                    placeholder="Write a short character description..."
+            >Some text goes here. This is a lot of text that fits in this area, and is placeholder text that the user can write in here.</textarea>
+            <div class="label justify-end">
+                <span class="label-text-alt">255 characters max</span>
+            </div>
+        </fieldset>
+    </form>
+
+    <section class="mt-10">
+        <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+                <h2 class="text-2xl font-bold">Gallery Images</h2>
+                <p class="text-sm text-base-content/70">Arrange images into rows for the character gallery.</p>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-end gap-3">
+                <label class="label cursor-pointer gap-2">
+                    <input class="checkbox checkbox-primary" id="fullsize-last-row" type="checkbox"/>
+                    <span class="label-text">Fullsize Last Row</span>
+                </label>
+                <div class="dropdown dropdown-end">
+                    <button aria-label="Explain fullsize last row"
+                            class="btn btn-circle btn-secondary btn-sm"
+                            tabindex="0"
+                            type="button">?
+                    </button>
+                    <div class="dropdown-content z-50 mt-2 w-80 rounded-box border border-secondary bg-neutral p-4 text-sm text-neutral-content shadow">
+                        When a row has one image, it usually stretches across the full gallery width. If the last row
+                        only has one image, turn this on to keep it similar to the other gallery images.
+                    </div>
+                </div>
+                <button class="btn btn-secondary" id="bulk-upload-images" type="button">Bulk Upload</button>
+                <button class="btn btn-primary" id="add-gallery-row" type="button">Add Row</button>
+            </div>
+        </div>
+
+        <div class="space-y-4" id="gallery-rows">
+            <div class="rounded-box border border-base-300 bg-base-200 p-4" data-gallery-row>
+                <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <h3 class="font-semibold">Row 1</h3>
+
+                    <div class="flex flex-wrap gap-2">
+                        <button class="btn btn-sm btn-secondary" data-open-upload-modal type="button">Upload Image
+                        </button>
+                        <button class="btn btn-sm btn-error btn-outline" data-remove-row type="button">Remove Row
+                        </button>
+                    </div>
+                </div>
+
+                <div class="gallery-dropzone flex min-h-28 flex-wrap gap-3 rounded border border-dashed border-base-300 bg-base-100 p-3"
+                     data-dropzone>
+                    <div class="gallery-image group relative aspect-square w-[calc((100%_-_1.5rem)/3)] cursor-grab overflow-hidden rounded bg-base-300 active:cursor-grabbing sm:h-24 sm:w-24"
+                         data-nsfw="true"
+                         draggable="true"
+                         tabindex="0">
+                        <img alt="Gallery image 1"
+                             class="h-full w-full object-cover"
+                             src="https://razeth.monster/wp-content/uploads/2026/04/razref.png"/>
+                        <button aria-label="Delete image"
+                                class="btn btn-error btn-sm btn-circle absolute right-1 top-1 min-h-8 h-8 w-8 opacity-90 sm:btn-xs sm:min-h-6 sm:h-6 sm:w-6"
+                                data-remove-image
+                                type="button">x
+                        </button>
+                    </div>
+
+                    <div class="gallery-image group relative aspect-square w-[calc((100%_-_1.5rem)/3)] cursor-grab overflow-hidden rounded bg-base-300 active:cursor-grabbing sm:h-24 sm:w-24"
+                         draggable="true"
+                         tabindex="0">
+                        <img alt="Gallery image 2"
+                             class="h-full w-full object-cover"
+                             src="https://razeth.monster/wp-content/uploads/2025/11/RazHeadCollage_MomobedaNov2025.png"/>
+                        <button aria-label="Delete image"
+                                class="btn btn-error btn-sm btn-circle absolute right-1 top-1 min-h-8 h-8 w-8 opacity-90 sm:btn-xs sm:min-h-6 sm:h-6 sm:w-6"
+                                data-remove-image
+                                type="button">x
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="rounded-box border border-base-300 bg-base-200 p-4" data-gallery-row>
+                <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <h3 class="font-semibold">Row 2</h3>
+
+                    <div class="flex flex-wrap gap-2">
+                        <button class="btn btn-sm btn-secondary" data-open-upload-modal type="button">Upload Image
+                        </button>
+                        <button class="btn btn-sm btn-error btn-outline" data-remove-row type="button">Remove Row
+                        </button>
+                    </div>
+                </div>
+
+                <div class="gallery-dropzone flex min-h-28 flex-wrap gap-3 rounded border border-dashed border-base-300 bg-base-100 p-3"
+                     data-dropzone>
+                    <div class="gallery-image group relative aspect-square w-[calc((100%_-_1.5rem)/3)] cursor-grab overflow-hidden rounded bg-base-300 active:cursor-grabbing sm:h-24 sm:w-24"
+                         draggable="true"
+                         tabindex="0">
+                        <img alt="Gallery image 3"
+                             class="h-full w-full object-cover"
+                             src="https://razeth.monster/wp-content/uploads/2025/11/RazHeadTurnaround_MomobedaNov2025_FullColour.png"/>
+                        <button aria-label="Delete image"
+                                class="btn btn-error btn-sm btn-circle absolute right-1 top-1 min-h-8 h-8 w-8 opacity-90 sm:btn-xs sm:min-h-6 sm:h-6 sm:w-6"
+                                data-remove-image
+                                type="button">x
+                        </button>
+                    </div>
+
+                    <div class="gallery-image group relative aspect-square w-[calc((100%_-_1.5rem)/3)] cursor-grab overflow-hidden rounded bg-base-300 active:cursor-grabbing sm:h-24 sm:w-24"
+                         data-nsfw="true"
+                         draggable="true"
+                         tabindex="0">
+                        <img alt="Gallery image 4"
+                             class="h-full w-full object-cover"
+                             src="https://razeth.monster/wp-content/uploads/2025/11/Brown_Clean_Minimalist_Fashion_Magazine_Cover_Magazine_Cover_.png"/>
+                        <button aria-label="Delete image"
+                                class="btn btn-error btn-sm btn-circle absolute right-1 top-1 min-h-8 h-8 w-8 opacity-90 sm:btn-xs sm:min-h-6 sm:h-6 sm:w-6"
+                                data-remove-image
+                                type="button">x
+                        </button>
+                    </div>
+
+                    <div class="gallery-image group relative aspect-square w-[calc((100%_-_1.5rem)/3)] cursor-grab overflow-hidden rounded bg-base-300 active:cursor-grabbing sm:h-24 sm:w-24"
+                         data-nsfw="true"
+                         draggable="true"
+                         tabindex="0">
+                        <img alt="Gallery image 5"
+                             class="h-full w-full object-cover"
+                             src="https://razeth.monster/wp-content/uploads/2025/11/RazThighUpFlatColourSketch.png"/>
+                        <button aria-label="Delete image"
+                                class="btn btn-error btn-sm btn-circle absolute right-1 top-1 min-h-8 h-8 w-8 opacity-90 sm:btn-xs sm:min-h-6 sm:h-6 sm:w-6"
+                                data-remove-image
+                                type="button">x
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <div class="mt-8 flex justify-end">
+        <button class="btn btn-primary" id="save-character-settings" type="submit">Save Changes</button>
+    </div>
+</main>
+
+<dialog class="modal" id="upload-image-modal">
+    <div class="modal-box">
+        <form method="dialog">
+            <button aria-label="Close upload dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x
+            </button>
+        </form>
+
+        <h2 class="text-xl font-bold">Upload Image</h2>
+
+        <form class="mt-5 space-y-4" id="upload-image-form">
+            <p class="text-sm text-base-content/70">
+                You may upload an alternate to be shown to users instead when they do not have NSFW media enabled.
+            </p>
+
+            <div class="grid gap-3 sm:grid-cols-2">
+                <fieldset class="fieldset rounded border border-base-300 bg-base-200 p-3">
+                    <label class="fieldset-label" for="gallery-image-sfw-file">SFW</label>
+                    <div class="mb-3 flex aspect-video items-center justify-center overflow-hidden rounded bg-base-300 text-xs text-base-content/60"
+                         data-upload-sfw-preview>No SFW image selected
+                    </div>
+                    <input
+                            accept="image/*"
+                            class="file-input w-full"
+                            id="gallery-image-sfw-file"
+                            name="gallery-image-sfw-file"
+                            type="file"
+                    />
+                </fieldset>
+
+                <fieldset class="fieldset rounded border border-base-300 bg-base-200 p-3">
+                    <label class="fieldset-label" for="gallery-image-nsfw-file">NSFW</label>
+                    <div class="mb-3 flex aspect-video items-center justify-center overflow-hidden rounded bg-base-300 text-xs text-base-content/60"
+                         data-upload-nsfw-preview>No NSFW image selected
+                    </div>
+                    <input
+                            accept="image/*"
+                            class="file-input w-full"
+                            id="gallery-image-nsfw-file"
+                            name="gallery-image-nsfw-file"
+                            type="file"
+                    />
+                </fieldset>
+            </div>
+
+            <div class="grid gap-3 sm:grid-cols-2">
+                <fieldset class="fieldset">
+                    <label class="fieldset-label" for="gallery-image-sfw-artist">SFW Credits</label>
+                    <input
+                            class="input input-bordered w-full"
+                            id="gallery-image-sfw-artist"
+                            maxlength="80"
+                            name="gallery-image-sfw-artist"
+                            placeholder="Artist name"
+                            type="text"
+                    />
+                </fieldset>
+
+                <fieldset class="fieldset">
+                    <label class="fieldset-label" for="gallery-image-nsfw-artist">NSFW Credits</label>
+                    <input
+                            class="input input-bordered w-full"
+                            id="gallery-image-nsfw-artist"
+                            maxlength="80"
+                            name="gallery-image-nsfw-artist"
+                            placeholder="Artist name"
+                            type="text"
+                    />
+                </fieldset>
+            </div>
+
+            <div class="modal-action">
+                <button class="btn btn-ghost" data-close-upload-modal type="button">Cancel</button>
+                <button class="btn btn-primary" type="submit">Add Image</button>
+            </div>
+        </form>
+    </div>
+
+    <form class="modal-backdrop" method="dialog">
+        <button>close</button>
+    </form>
+</dialog>
+
+<dialog class="modal" id="bulk-upload-modal">
+    <div class="modal-box max-w-3xl">
+        <form method="dialog">
+            <button aria-label="Close bulk upload dialog"
+                    class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x
+            </button>
+        </form>
+
+        <h2 class="text-xl font-bold">Bulk Upload</h2>
+
+        <form class="mt-5 space-y-4" id="bulk-upload-form">
+            <fieldset class="fieldset">
+                <label class="fieldset-label" for="bulk-gallery-image-files">Image Files</label>
+                <input
+                        accept="image/*"
+                        class="file-input w-full"
+                        id="bulk-gallery-image-files"
+                        multiple
+                        name="bulk-gallery-image-files"
+                        required
+                        type="file"
+                />
+            </fieldset>
+
+            <div class="space-y-3" id="bulk-upload-list"></div>
+
+            <div class="modal-action">
+                <button class="btn btn-ghost" data-close-bulk-upload-modal type="button">Cancel</button>
+                <button class="btn btn-primary" type="submit">Add Images</button>
+            </div>
+        </form>
+    </div>
+
+    <form class="modal-backdrop" method="dialog">
+        <button>close</button>
+    </form>
+</dialog>
+
+<dialog class="modal" id="remove-row-modal">
+    <div class="modal-box">
+        <form method="dialog">
+            <button aria-label="Close remove row dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">
+                x
+            </button>
+        </form>
+
+        <h2 class="text-xl font-bold">Remove Row?</h2>
+        <p class="mt-3 text-sm text-base-content/80">
+            This row contains images. Removing it will delete those images from the gallery too. Move them to another
+            row first if you want to keep them.
+        </p>
+
+        <div class="modal-action">
+            <button class="btn btn-ghost" data-cancel-remove-row type="button">Cancel</button>
+            <button class="btn btn-error" data-confirm-remove-row type="button">Remove Row</button>
+        </div>
+    </div>
+
+    <form class="modal-backdrop" method="dialog">
+        <button>close</button>
+    </form>
+</dialog>
+
+<dialog class="modal" id="transfer-character-modal">
+    <div class="modal-box">
+        <form method="dialog">
+            <button aria-label="Close transfer dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">
+                x
+            </button>
+        </form>
+
+        <h2 class="text-xl font-bold">Transfer Character</h2>
+        <p class="mt-3 text-sm text-base-content/80">
+            Enter the recipient account handle that should receive this character.
+        </p>
+
+        <form class="mt-5 space-y-4" id="transfer-character-form">
+            <fieldset class="fieldset">
+                <label class="fieldset-label" for="recipient-account-handle">Recipient Account Handle</label>
+                <input
+                        autocapitalize="none"
+                        autocomplete="one-time-code"
+                        autocorrect="off"
+                        class="input input-bordered w-full"
+                        data-1p-ignore="true"
+                        data-bwignore="true"
+                        data-lpignore="true"
+                        id="recipient-account-handle"
+                        maxlength="80"
+                        name="recipient-account-handle"
+                        placeholder="Account handle"
+                        required
+                        spellcheck="false"
+                        type="text"
+                />
+            </fieldset>
+
+            <label class="label cursor-pointer justify-start gap-3">
+                <input class="checkbox checkbox-warning" id="transfer-confirm-ownership" type="checkbox"/>
+                <span class="label-text">I understand this character will move to the recipient account.</span>
+            </label>
+
+            <label class="label cursor-pointer justify-start gap-3">
+                <input class="checkbox checkbox-warning" id="transfer-confirm-final" type="checkbox"/>
+                <span class="label-text">I confirm I want to transfer this character.</span>
+            </label>
+
+            <div class="modal-action">
+                <button class="btn btn-ghost" data-close-transfer-modal type="button">Cancel</button>
+                <button class="btn btn-warning" disabled id="confirm-transfer-character" type="submit">Transfer
+                    Character
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <form class="modal-backdrop" method="dialog">
+        <button>close</button>
+    </form>
+</dialog>
+
+<dialog class="modal" id="delete-character-modal">
+    <div class="modal-box">
+        <form method="dialog">
+            <button aria-label="Close delete dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x
+            </button>
+        </form>
+
+        <h2 class="text-xl font-bold">Delete Character</h2>
+        <p class="mt-3 text-sm text-base-content/80">
+            This will permanently delete this character and its gallery. Type the character name to continue.
+        </p>
+
+        <form class="mt-5 space-y-4" id="delete-character-form">
+            <fieldset class="fieldset">
+                <label class="fieldset-label" for="delete-character-confirm-name">Character Name</label>
+                <input
+                        autocomplete="off"
+                        class="input input-bordered w-full"
+                        id="delete-character-confirm-name"
+                        name="delete-character-confirm-name"
+                        placeholder="Super long character name here"
+                        required
+                        type="text"
+                />
+            </fieldset>
+
+            <label class="label cursor-pointer justify-start gap-3">
+                <input class="checkbox checkbox-error" id="delete-confirm-permanent" type="checkbox"/>
+                <span class="label-text">I understand this deletion is permanent.</span>
+            </label>
+
+            <label class="label cursor-pointer justify-start gap-3">
+                <input class="checkbox checkbox-error" id="delete-confirm-final" type="checkbox"/>
+                <span class="label-text">I confirm I want to delete this character.</span>
+            </label>
+
+            <div class="modal-action">
+                <button class="btn btn-ghost" data-close-delete-modal type="button">Cancel</button>
+                <button class="btn btn-error" disabled id="confirm-delete-character" type="submit">Delete Character
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <form class="modal-backdrop" method="dialog">
+        <button>close</button>
+    </form>
+</dialog>
+
+<dialog class="modal" id="edit-image-artist-modal">
+    <div class="modal-box">
+        <form method="dialog">
+            <button aria-label="Close artist dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x
+            </button>
+        </form>
+
+        <h2 class="text-xl font-bold">Edit Image</h2>
+
+        <form class="mt-5 space-y-4" id="edit-image-artist-form">
+            <p class="text-sm text-base-content/70">
+                You may upload an alternate to be shown to users instead when they do not have NSFW media enabled.
+            </p>
+
+            <div class="grid gap-3 sm:grid-cols-2">
+                <fieldset class="fieldset rounded border border-base-300 bg-base-200 p-3">
+                    <label class="fieldset-label" for="edit-gallery-image-sfw-file">SFW</label>
+                    <div class="mb-3 flex aspect-video items-center justify-center overflow-hidden rounded bg-base-300 text-xs text-base-content/60"
+                         data-edit-sfw-preview>No SFW image uploaded
+                    </div>
+                    <input
+                            accept="image/*"
+                            class="file-input w-full"
+                            id="edit-gallery-image-sfw-file"
+                            name="edit-gallery-image-sfw-file"
+                            type="file"
+                    />
+                    <button class="btn btn-error btn-outline btn-sm mt-3 w-full"
+                            data-remove-edit-sfw
+                            type="button">Remove SFW Image
+                    </button>
+                </fieldset>
+
+                <fieldset class="fieldset rounded border border-base-300 bg-base-200 p-3">
+                    <label class="fieldset-label" for="edit-gallery-image-nsfw-file">NSFW</label>
+                    <div class="mb-3 flex aspect-video items-center justify-center overflow-hidden rounded bg-base-300 text-xs text-base-content/60"
+                         data-edit-nsfw-preview>No NSFW image uploaded
+                    </div>
+                    <input
+                            accept="image/*"
+                            class="file-input w-full"
+                            id="edit-gallery-image-nsfw-file"
+                            name="edit-gallery-image-nsfw-file"
+                            type="file"
+                    />
+                    <button class="btn btn-error btn-outline btn-sm mt-3 w-full"
+                            data-remove-edit-nsfw
+                            type="button">Remove NSFW Image
+                    </button>
+                </fieldset>
+            </div>
+
+            <div class="grid gap-3 sm:grid-cols-2">
+                <fieldset class="fieldset">
+                    <label class="fieldset-label" for="edit-gallery-image-sfw-artist">SFW Credits</label>
+                    <input
+                            class="input input-bordered w-full"
+                            id="edit-gallery-image-sfw-artist"
+                            maxlength="80"
+                            name="edit-gallery-image-sfw-artist"
+                            placeholder="Artist name"
+                            type="text"
+                    />
+                </fieldset>
+
+                <fieldset class="fieldset">
+                    <label class="fieldset-label" for="edit-gallery-image-nsfw-artist">NSFW Credits</label>
+                    <input
+                            class="input input-bordered w-full"
+                            id="edit-gallery-image-nsfw-artist"
+                            maxlength="80"
+                            name="edit-gallery-image-nsfw-artist"
+                            placeholder="Artist name"
+                            type="text"
+                    />
+                </fieldset>
+            </div>
+
+            <div class="modal-action">
+                <button class="btn btn-ghost" data-close-edit-artist-modal type="button">Cancel</button>
+                <button class="btn btn-primary" type="submit">Save Image</button>
+            </div>
+        </form>
+    </div>
+
+    <form class="modal-backdrop" method="dialog">
+        <button>close</button>
+    </form>
+</dialog>
+
+<script>
+    const galleryRows = document.getElementById('gallery-rows');
+    const transferCharacterButton = document.getElementById('transfer-character-button');
+    const transferCharacterModal = document.getElementById('transfer-character-modal');
+    const transferCharacterForm = document.getElementById('transfer-character-form');
+    const transferUsernameInput = document.getElementById('recipient-account-handle');
+    const transferConfirmOwnershipInput = document.getElementById('transfer-confirm-ownership');
+    const transferConfirmFinalInput = document.getElementById('transfer-confirm-final');
+    const confirmTransferCharacterButton = document.getElementById('confirm-transfer-character');
+    const deleteCharacterButton = document.getElementById('delete-character-button');
+    const deleteCharacterModal = document.getElementById('delete-character-modal');
+    const deleteCharacterForm = document.getElementById('delete-character-form');
+    const deleteCharacterConfirmNameInput = document.getElementById('delete-character-confirm-name');
+    const deleteConfirmPermanentInput = document.getElementById('delete-confirm-permanent');
+    const deleteConfirmFinalInput = document.getElementById('delete-confirm-final');
+    const confirmDeleteCharacterButton = document.getElementById('confirm-delete-character');
+    const addGalleryRowButton = document.getElementById('add-gallery-row');
+    const saveCharacterSettingsButton = document.getElementById('save-character-settings');
+    const bulkUploadButton = document.getElementById('bulk-upload-images');
+    const uploadImageModal = document.getElementById('upload-image-modal');
+    const uploadImageForm = document.getElementById('upload-image-form');
+    const uploadImageSfwFileInput = document.getElementById('gallery-image-sfw-file');
+    const uploadImageNsfwFileInput = document.getElementById('gallery-image-nsfw-file');
+    const uploadImageSfwArtistInput = document.getElementById('gallery-image-sfw-artist');
+    const uploadImageNsfwArtistInput = document.getElementById('gallery-image-nsfw-artist');
+    const uploadSfwPreview = document.querySelector('[data-upload-sfw-preview]');
+    const uploadNsfwPreview = document.querySelector('[data-upload-nsfw-preview]');
+    const bulkUploadModal = document.getElementById('bulk-upload-modal');
+    const bulkUploadForm = document.getElementById('bulk-upload-form');
+    const bulkUploadFileInput = document.getElementById('bulk-gallery-image-files');
+    const bulkUploadList = document.getElementById('bulk-upload-list');
+    const removeRowModal = document.getElementById('remove-row-modal');
+    const editImageArtistModal = document.getElementById('edit-image-artist-modal');
+    const editImageArtistForm = document.getElementById('edit-image-artist-form');
+    const editImageSfwFileInput = document.getElementById('edit-gallery-image-sfw-file');
+    const editImageNsfwFileInput = document.getElementById('edit-gallery-image-nsfw-file');
+    const editImageSfwArtistInput = document.getElementById('edit-gallery-image-sfw-artist');
+    const editImageNsfwArtistInput = document.getElementById('edit-gallery-image-nsfw-artist');
+    const editSfwPreview = document.querySelector('[data-edit-sfw-preview]');
+    const editNsfwPreview = document.querySelector('[data-edit-nsfw-preview]');
+    const removeEditSfwButton = document.querySelector('[data-remove-edit-sfw]');
+    const removeEditNsfwButton = document.querySelector('[data-remove-edit-nsfw]');
+    let draggedImage = null;
+    let uploadTargetRow = null;
+    let editTargetImage = null;
+    let removeTargetRow = null;
+    let bulkUploadFiles = [];
+    let editRemoveSfw = false;
+    let editRemoveNsfw = false;
+
+    function updateTransferButtonState() {
+        confirmTransferCharacterButton.disabled = !(
+            transferUsernameInput.value.trim() &&
+            transferConfirmOwnershipInput.checked &&
+            transferConfirmFinalInput.checked
+        );
+    }
+
+    function updateDeleteButtonState() {
+        const characterName = document.getElementById('character-name').value.trim();
+
+        confirmDeleteCharacterButton.disabled = !(
+            deleteCharacterConfirmNameInput.value.trim() === characterName &&
+            deleteConfirmPermanentInput.checked &&
+            deleteConfirmFinalInput.checked
+        );
+    }
+
+    function updateGalleryRowTitles() {
+        Array.from(galleryRows.querySelectorAll('[data-gallery-row]')).forEach(function (row, index) {
+            row.querySelector('h3').textContent = 'Row ' + (index + 1);
+        });
+    }
+
+    function updateAddGalleryRowState() {
+        const rows = Array.from(galleryRows.querySelectorAll('[data-gallery-row]'));
+        const hasEmptyRow = rows.some(function (row) {
+            return !row.querySelector('.gallery-image');
+        });
+        const canSave = rows.length > 0 && !hasEmptyRow;
+
+        addGalleryRowButton.disabled = hasEmptyRow;
+        addGalleryRowButton.title = hasEmptyRow ? 'Delete the empty row before adding another row.' : '';
+        saveCharacterSettingsButton.disabled = !canSave;
+        saveCharacterSettingsButton.title = canSave ? '' : 'Add at least one gallery row with images before saving.';
+    }
+
+    function updateGalleryImageTitle(imageWrapper) {
+        const image = imageWrapper.querySelector('img');
+        const alt = image ? image.alt : 'Gallery image';
+        const artist = imageWrapper.dataset.artist || '';
+        const hasSfwVersion = imageWrapper.dataset.hasSfwVersion === 'true';
+        const sfwArtist = imageWrapper.dataset.sfwArtist || '';
+        const nsfwArtist = imageWrapper.dataset.nsfwArtist || '';
+
+        if (sfwArtist || nsfwArtist) {
+            imageWrapper.title = alt + ' - SFW by ' + sfwArtist + ', NSFW by ' + nsfwArtist;
+            return;
+        }
+
+        imageWrapper.title = (artist ? alt + ' by ' + artist : alt) + (hasSfwVersion ? ' - includes SFW version' : '');
+    }
+
+    function renderImagePreview(preview, src, emptyText) {
+        if (!src) {
+            preview.className = 'mb-3 flex aspect-video items-center justify-center overflow-hidden rounded bg-base-300 text-xs text-base-content/60';
+            preview.textContent = emptyText;
+            return;
+        }
+
+        preview.className = 'mb-3 aspect-video overflow-hidden rounded bg-base-300';
+        preview.innerHTML = '';
+
+        const image = document.createElement('img');
+        image.alt = emptyText;
+        image.className = 'h-full w-full object-cover';
+        image.src = src;
+        preview.append(image);
+    }
+
+    function renderFilePreview(input, preview, emptyText) {
+        const file = input.files[0];
+        renderImagePreview(preview, file && file.type.startsWith('image/') ? URL.createObjectURL(file) : '', emptyText);
+    }
+
+    function getImageVersionSources(imageWrapper) {
+        const image = imageWrapper.querySelector('img');
+        const imageSrc = image ? image.src : '';
+        const isNsfw = imageWrapper.dataset.nsfw === 'true';
+
+        return {
+            sfwSrc: imageWrapper.dataset.sfwSrc || (isNsfw ? '' : imageSrc),
+            nsfwSrc: isNsfw ? imageSrc : ''
+        };
+    }
+
+    function hasSelectedImageFile(input) {
+        const file = input.files[0];
+        return Boolean(file && file.type.startsWith('image/'));
+    }
+
+    function updateEditImageRemovalState() {
+        if (!editTargetImage) {
+            return;
+        }
+
+        const sources = getImageVersionSources(editTargetImage);
+        const hasSfwReplacement = hasSelectedImageFile(editImageSfwFileInput);
+        const hasNsfwReplacement = hasSelectedImageFile(editImageNsfwFileInput);
+        const hasSfwAfterSave = (!editRemoveSfw && Boolean(sources.sfwSrc)) || hasSfwReplacement;
+        const hasNsfwAfterSave = (!editRemoveNsfw && Boolean(sources.nsfwSrc)) || hasNsfwReplacement;
+
+        removeEditSfwButton.disabled = !sources.sfwSrc || (!editRemoveSfw && (editRemoveNsfw || !hasNsfwAfterSave));
+        removeEditNsfwButton.disabled = !sources.nsfwSrc || (!editRemoveNsfw && (editRemoveSfw || !hasSfwAfterSave));
+        removeEditSfwButton.textContent = editRemoveSfw ? 'Keep SFW Image' : 'Remove SFW Image';
+        removeEditNsfwButton.textContent = editRemoveNsfw ? 'Keep NSFW Image' : 'Remove NSFW Image';
+    }
+
+    function createEditImageButton() {
+        const editButton = document.createElement('button');
+        editButton.ariaLabel = 'Edit image settings';
+        editButton.className = 'btn btn-neutral btn-sm btn-circle absolute left-1 top-1 min-h-8 h-8 w-8 opacity-90 sm:btn-xs sm:min-h-6 sm:h-6 sm:w-6';
+        editButton.dataset.editImageArtist = '';
+        editButton.type = 'button';
+        editButton.innerHTML = `
+            <svg aria-hidden="true"
+                 class="h-4 w-4 text-white sm:h-3 sm:w-3"
+                 fill="none"
+                 stroke="currentColor"
+                 viewBox="0 0 24 24"
+                 xmlns="http://www.w3.org/2000/svg">
+                <path d="M16.862 3.487a2.1 2.1 0 0 1 2.97 2.97L8.76 17.53 4.5 18.75l1.22-4.26L16.862 3.487z"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"/>
+            </svg>
+        `;
+
+        return editButton;
+    }
+
+    function createNsfwImageBadge() {
+        const badge = document.createElement('span');
+        badge.ariaLabel = 'NSFW image';
+        badge.className = 'absolute bottom-1 left-1 hidden rounded bg-error px-1.5 py-0.5 text-[0.65rem] font-bold leading-none text-error-content shadow-md';
+        badge.dataset.nsfwBadge = '';
+        badge.textContent = '18+';
+
+        return badge;
+    }
+
+    function createSfwImageBadge() {
+        const badge = document.createElement('span');
+        badge.ariaLabel = 'SFW image';
+        badge.className = 'absolute bottom-1 left-1 hidden rounded bg-info px-1.5 py-0.5 text-[0.65rem] font-bold leading-none text-info-content shadow-md';
+        badge.dataset.sfwBadge = '';
+        badge.textContent = 'SFW';
+
+        return badge;
+    }
+
+    function updateImageBadges(imageWrapper) {
+        const nsfwBadge = imageWrapper.querySelector('[data-nsfw-badge]');
+        const sfwBadge = imageWrapper.querySelector('[data-sfw-badge]');
+        const hasSfwVersion = imageWrapper.dataset.hasSfwVersion === 'true';
+        const isNsfw = imageWrapper.dataset.nsfw === 'true';
+
+        if (nsfwBadge) {
+            nsfwBadge.textContent = hasSfwVersion ? '18+ with alt' : '18+';
+            nsfwBadge.classList.toggle('bg-error', !hasSfwVersion);
+            nsfwBadge.classList.toggle('text-error-content', !hasSfwVersion);
+            nsfwBadge.classList.toggle('bg-purple-600', hasSfwVersion);
+            nsfwBadge.classList.toggle('text-white', hasSfwVersion);
+            nsfwBadge.classList.toggle('hidden', !isNsfw && !hasSfwVersion);
+        }
+
+        if (sfwBadge) {
+            sfwBadge.classList.toggle('hidden', isNsfw || hasSfwVersion);
+        }
+    }
+
+    function setupGalleryImage(imageWrapper) {
+        if (!imageWrapper.dataset.artist) {
+            imageWrapper.dataset.artist = '';
+        }
+
+        if (!imageWrapper.dataset.nsfw) {
+            imageWrapper.dataset.nsfw = 'false';
+        }
+
+        if (!imageWrapper.dataset.hasSfwVersion) {
+            imageWrapper.dataset.hasSfwVersion = 'false';
+        }
+
+        if (!imageWrapper.querySelector('[data-edit-image-artist]')) {
+            imageWrapper.prepend(createEditImageButton());
+        }
+
+        if (!imageWrapper.querySelector('[data-nsfw-badge]')) {
+            imageWrapper.append(createNsfwImageBadge());
+        }
+
+        if (!imageWrapper.querySelector('[data-sfw-badge]')) {
+            imageWrapper.append(createSfwImageBadge());
+        }
+
+        updateGalleryImageTitle(imageWrapper);
+        updateImageBadges(imageWrapper);
+    }
+
+    function createGalleryImage(src, alt, artist, nsfw, sfwSrc, sfwArtist, nsfwArtist) {
+        const imageWrapper = document.createElement('div');
+        imageWrapper.className = 'gallery-image group relative aspect-square w-[calc((100%_-_1.5rem)/3)] cursor-grab overflow-hidden rounded bg-base-300 active:cursor-grabbing sm:h-24 sm:w-24';
+        imageWrapper.draggable = true;
+        imageWrapper.tabIndex = 0;
+        imageWrapper.dataset.artist = artist || '';
+        imageWrapper.dataset.nsfw = nsfw ? 'true' : 'false';
+        imageWrapper.dataset.hasSfwVersion = sfwSrc ? 'true' : 'false';
+        imageWrapper.dataset.sfwSrc = sfwSrc || '';
+        imageWrapper.dataset.sfwArtist = sfwArtist || '';
+        imageWrapper.dataset.nsfwArtist = nsfwArtist || '';
+
+        const image = document.createElement('img');
+        image.alt = alt;
+        image.className = 'h-full w-full object-cover';
+        image.src = src;
+
+        const editButton = createEditImageButton();
+        const nsfwBadge = createNsfwImageBadge();
+        const sfwBadge = createSfwImageBadge();
+
+        const removeButton = document.createElement('button');
+        removeButton.ariaLabel = 'Delete image';
+        removeButton.className = 'btn btn-error btn-sm btn-circle absolute right-1 top-1 min-h-8 h-8 w-8 opacity-90 sm:btn-xs sm:min-h-6 sm:h-6 sm:w-6';
+        removeButton.dataset.removeImage = '';
+        removeButton.type = 'button';
+        removeButton.textContent = 'x';
+
+        imageWrapper.append(image, editButton, removeButton, nsfwBadge, sfwBadge);
+        updateGalleryImageTitle(imageWrapper);
+        updateImageBadges(imageWrapper);
+
+        return imageWrapper;
+    }
+
+    function createGalleryRow() {
+        const row = document.createElement('div');
+        row.className = 'rounded-box border border-base-300 bg-base-200 p-4';
+        row.dataset.galleryRow = '';
+
+        row.innerHTML = `
+            <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <h3 class="font-semibold"></h3>
+
+                <div class="flex flex-wrap gap-2">
+                    <button class="btn btn-sm btn-secondary" data-open-upload-modal type="button">Upload Image</button>
+                    <button class="btn btn-sm btn-error btn-outline" data-remove-row type="button">Remove Row</button>
+                </div>
+            </div>
+
+            <div class="gallery-dropzone flex min-h-28 flex-wrap gap-3 rounded border border-dashed border-base-300 bg-base-100 p-3"
+                 data-dropzone></div>
+        `;
+
+        return row;
+    }
+
+    function clearBulkUploadList() {
+        bulkUploadList.replaceChildren();
+        bulkUploadFiles = [];
+    }
+
+    function renderBulkUploadList(files) {
+        clearBulkUploadList();
+        bulkUploadFiles = files.filter(function (file) {
+            return file.type.startsWith('image/');
+        });
+
+        bulkUploadFiles.forEach(function (file, index) {
+            const item = document.createElement('div');
+            item.className = 'grid gap-3 rounded border border-base-300 bg-base-200 p-3 sm:grid-cols-[4rem_1fr] sm:items-center';
+
+            const preview = document.createElement('img');
+            preview.alt = file.name;
+            preview.className = 'h-16 w-16 rounded object-cover';
+            preview.src = URL.createObjectURL(file);
+
+            const fieldset = document.createElement('fieldset');
+            fieldset.className = 'fieldset min-w-0';
+
+            const label = document.createElement('label');
+            label.className = 'fieldset-label truncate';
+            label.htmlFor = 'bulk-gallery-image-artist-' + index;
+            label.textContent = file.name;
+
+            const artistInput = document.createElement('input');
+            artistInput.className = 'input input-bordered w-full';
+            artistInput.dataset.bulkArtistInput = String(index);
+            artistInput.id = 'bulk-gallery-image-artist-' + index;
+            artistInput.maxLength = 80;
+            artistInput.name = 'bulk-gallery-image-artist-' + index;
+            artistInput.placeholder = 'Artist name';
+            artistInput.required = true;
+            artistInput.type = 'text';
+
+            const nsfwLabel = document.createElement('label');
+            nsfwLabel.className = 'label cursor-pointer justify-start gap-3';
+
+            const nsfwInput = document.createElement('input');
+            nsfwInput.className = 'checkbox checkbox-error';
+            nsfwInput.dataset.bulkNsfwInput = String(index);
+            nsfwInput.id = 'bulk-gallery-image-nsfw-' + index;
+            nsfwInput.name = 'bulk-gallery-image-nsfw-' + index;
+            nsfwInput.type = 'checkbox';
+
+            const nsfwText = document.createElement('span');
+            nsfwText.className = 'label-text';
+            nsfwText.textContent = 'Mark as NSFW';
+
+            nsfwLabel.append(nsfwInput, nsfwText);
+            fieldset.append(label, artistInput, nsfwLabel);
+            item.append(preview, fieldset);
+            bulkUploadList.append(item);
+        });
+    }
+
+    function appendImagesInRows(images) {
+        for (let index = 0; index < images.length; index += 3) {
+            const row = createGalleryRow();
+            const dropzone = row.querySelector('[data-dropzone]');
+            const rowImages = images.slice(index, index + 3);
+
+            rowImages.forEach(function (image) {
+                dropzone.append(image);
+            });
+
+            galleryRows.append(row);
+        }
+
+        updateGalleryRowTitles();
+        updateAddGalleryRowState();
+    }
+
+    function removeGalleryRow(row) {
+        row.remove();
+        updateGalleryRowTitles();
+        updateAddGalleryRowState();
+    }
+
+    function getImageAfterPointer(dropzone, x, y) {
+        const images = Array.from(dropzone.querySelectorAll('.gallery-image:not([aria-grabbed="true"])'));
+
+        return images.reduce(function (closest, child) {
+            const box = child.getBoundingClientRect();
+            const horizontalOffset = x - box.left - box.width / 2;
+            const verticalOffset = Math.abs(y - box.top - box.height / 2);
+            const isBeforeImage = horizontalOffset < 0;
+            const score = Math.abs(horizontalOffset) + verticalOffset;
+
+            if (isBeforeImage && score < closest.score) {
+                return {
+                    score: score,
+                    element: child
+                };
+            }
+
+            return closest;
+        }, {
+            score: Number.POSITIVE_INFINITY,
+            element: null
+        }).element;
+    }
+
+    addGalleryRowButton.addEventListener('click', function () {
+        if (addGalleryRowButton.disabled) {
+            return;
+        }
+
+        galleryRows.append(createGalleryRow());
+        updateGalleryRowTitles();
+        updateAddGalleryRowState();
+    });
+
+    transferCharacterButton.addEventListener('click', function () {
+        transferCharacterModal.showModal();
+        transferUsernameInput.focus();
+    });
+
+    transferCharacterForm.addEventListener('input', updateTransferButtonState);
+    transferCharacterForm.addEventListener('change', updateTransferButtonState);
+
+    transferCharacterForm.addEventListener('submit', function (event) {
+        event.preventDefault();
+        transferCharacterModal.close();
+    });
+
+    transferCharacterModal.addEventListener('click', function (event) {
+        if (event.target.matches('[data-close-transfer-modal]')) {
+            transferCharacterModal.close();
+        }
+    });
+
+    transferCharacterModal.addEventListener('close', function () {
+        transferCharacterForm.reset();
+        updateTransferButtonState();
+    });
+
+    deleteCharacterButton.addEventListener('click', function () {
+        deleteCharacterModal.showModal();
+        deleteCharacterConfirmNameInput.focus();
+    });
+
+    deleteCharacterForm.addEventListener('input', updateDeleteButtonState);
+    deleteCharacterForm.addEventListener('change', updateDeleteButtonState);
+
+    deleteCharacterForm.addEventListener('submit', function (event) {
+        event.preventDefault();
+        deleteCharacterModal.close();
+    });
+
+    deleteCharacterModal.addEventListener('click', function (event) {
+        if (event.target.matches('[data-close-delete-modal]')) {
+            deleteCharacterModal.close();
+        }
+    });
+
+    deleteCharacterModal.addEventListener('close', function () {
+        deleteCharacterForm.reset();
+        updateDeleteButtonState();
+    });
+
+    bulkUploadButton.addEventListener('click', function () {
+        bulkUploadModal.showModal();
+        bulkUploadFileInput.focus();
+    });
+
+    galleryRows.querySelectorAll('.gallery-image').forEach(setupGalleryImage);
+    updateAddGalleryRowState();
+
+    bulkUploadFileInput.addEventListener('change', function () {
+        renderBulkUploadList(Array.from(bulkUploadFileInput.files));
+    });
+
+    uploadImageSfwFileInput.addEventListener('change', function () {
+        renderFilePreview(uploadImageSfwFileInput, uploadSfwPreview, 'No SFW image selected');
+    });
+
+    uploadImageNsfwFileInput.addEventListener('change', function () {
+        renderFilePreview(uploadImageNsfwFileInput, uploadNsfwPreview, 'No NSFW image selected');
+    });
+
+    editImageSfwFileInput.addEventListener('change', function () {
+        renderFilePreview(editImageSfwFileInput, editSfwPreview, 'No SFW image uploaded');
+        updateEditImageRemovalState();
+    });
+
+    editImageNsfwFileInput.addEventListener('change', function () {
+        renderFilePreview(editImageNsfwFileInput, editNsfwPreview, 'No NSFW image uploaded');
+        updateEditImageRemovalState();
+    });
+
+    bulkUploadForm.addEventListener('submit', function (event) {
+        event.preventDefault();
+
+        const images = bulkUploadFiles.map(function (file, index) {
+            const artistInput = bulkUploadList.querySelector('[data-bulk-artist-input="' + index + '"]');
+            const nsfwInput = bulkUploadList.querySelector('[data-bulk-nsfw-input="' + index + '"]');
+            const artist = artistInput ? artistInput.value.trim() : '';
+            const nsfw = nsfwInput ? nsfwInput.checked : false;
+
+            return createGalleryImage(URL.createObjectURL(file), file.name, artist, nsfw);
+        });
+
+        appendImagesInRows(images);
+        bulkUploadModal.close();
+    });
+
+    bulkUploadModal.addEventListener('close', function () {
+        bulkUploadForm.reset();
+        clearBulkUploadList();
+    });
+
+    bulkUploadModal.addEventListener('click', function (event) {
+        if (event.target.matches('[data-close-bulk-upload-modal]')) {
+            bulkUploadModal.close();
+        }
+    });
+
+    uploadImageForm.addEventListener('submit', function (event) {
+        event.preventDefault();
+
+        if (!uploadTargetRow) {
+            return;
+        }
+
+        const dropzone = uploadTargetRow.querySelector('[data-dropzone]');
+        const sfwFile = uploadImageSfwFileInput.files[0];
+        const nsfwFile = uploadImageNsfwFileInput.files[0];
+        const sfwArtist = uploadImageSfwArtistInput.value.trim();
+        const nsfwArtist = uploadImageNsfwArtistInput.value.trim();
+
+        if ((!sfwFile || !sfwFile.type.startsWith('image/')) && (!nsfwFile || !nsfwFile.type.startsWith('image/'))) {
+            return;
+        }
+
+        const sfwSrc = sfwFile && sfwFile.type.startsWith('image/') ? URL.createObjectURL(sfwFile) : '';
+        const nsfwSrc = nsfwFile && nsfwFile.type.startsWith('image/') ? URL.createObjectURL(nsfwFile) : '';
+        const primaryFile = nsfwFile && nsfwSrc ? nsfwFile : sfwFile;
+
+        dropzone.append(createGalleryImage(
+            nsfwSrc || sfwSrc,
+            primaryFile.name,
+            nsfwArtist || sfwArtist,
+            Boolean(nsfwSrc),
+            nsfwSrc && sfwSrc ? sfwSrc : '',
+            sfwArtist,
+            nsfwArtist
+        ));
+        updateAddGalleryRowState();
+
+        uploadImageForm.reset();
+        renderImagePreview(uploadSfwPreview, '', 'No SFW image selected');
+        renderImagePreview(uploadNsfwPreview, '', 'No NSFW image selected');
+        uploadTargetRow = null;
+        uploadImageModal.close();
+    });
+
+    uploadImageModal.addEventListener('close', function () {
+        uploadImageForm.reset();
+        renderImagePreview(uploadSfwPreview, '', 'No SFW image selected');
+        renderImagePreview(uploadNsfwPreview, '', 'No NSFW image selected');
+        uploadTargetRow = null;
+    });
+
+    uploadImageModal.addEventListener('click', function (event) {
+        if (event.target.matches('[data-close-upload-modal]')) {
+            uploadImageModal.close();
+        }
+    });
+
+    editImageArtistForm.addEventListener('submit', function (event) {
+        event.preventDefault();
+
+        if (!editTargetImage) {
+            return;
+        }
+
+        editTargetImage.dataset.sfwArtist = editImageSfwArtistInput.value.trim();
+        editTargetImage.dataset.nsfwArtist = editImageNsfwArtistInput.value.trim();
+        editTargetImage.dataset.artist = editTargetImage.dataset.nsfwArtist || editTargetImage.dataset.sfwArtist;
+
+        const sfwFile = editImageSfwFileInput.files[0];
+        const nsfwFile = editImageNsfwFileInput.files[0];
+        const image = editTargetImage.querySelector('img');
+
+        if (editRemoveSfw) {
+            editTargetImage.dataset.sfwSrc = '';
+            editTargetImage.dataset.sfwArtist = '';
+            editTargetImage.dataset.hasSfwVersion = 'false';
+        }
+
+        if (editRemoveNsfw && image) {
+            const sfwSrc = editTargetImage.dataset.sfwSrc;
+
+            if (sfwSrc) {
+                image.src = sfwSrc;
+                image.alt = 'SFW image';
+                editTargetImage.dataset.sfwSrc = '';
+                editTargetImage.dataset.hasSfwVersion = 'false';
+                editTargetImage.dataset.nsfw = 'false';
+            }
+        }
+
+        if (sfwFile && sfwFile.type.startsWith('image/')) {
+            const sfwSrc = URL.createObjectURL(sfwFile);
+
+            if (editTargetImage.dataset.nsfw === 'true' || (nsfwFile && nsfwFile.type.startsWith('image/'))) {
+                editTargetImage.dataset.hasSfwVersion = 'true';
+                editTargetImage.dataset.sfwSrc = sfwSrc;
+            } else if (image) {
+                image.src = sfwSrc;
+                image.alt = sfwFile.name;
+                editTargetImage.dataset.hasSfwVersion = 'false';
+                editTargetImage.dataset.sfwSrc = '';
+                editTargetImage.dataset.nsfw = 'false';
+            }
+        }
+
+        if (nsfwFile && nsfwFile.type.startsWith('image/') && image) {
+            if (editTargetImage.dataset.nsfw !== 'true' && !editTargetImage.dataset.sfwSrc) {
+                editTargetImage.dataset.hasSfwVersion = 'true';
+                editTargetImage.dataset.sfwSrc = image.src;
+            }
+
+            image.src = URL.createObjectURL(nsfwFile);
+            image.alt = nsfwFile.name;
+            editTargetImage.dataset.nsfw = 'true';
+        }
+
+        if (!editTargetImage.dataset.sfwSrc && editTargetImage.dataset.nsfw !== 'true') {
+            editTargetImage.dataset.hasSfwVersion = 'false';
+        }
+
+        editTargetImage.dataset.artist = editTargetImage.dataset.nsfwArtist || editTargetImage.dataset.sfwArtist;
+        updateGalleryImageTitle(editTargetImage);
+        updateImageBadges(editTargetImage);
+        editImageArtistModal.close();
+    });
+
+    editImageArtistModal.addEventListener('close', function () {
+        editImageArtistForm.reset();
+        renderImagePreview(editSfwPreview, '', 'No SFW image uploaded');
+        renderImagePreview(editNsfwPreview, '', 'No NSFW image uploaded');
+        editTargetImage = null;
+        editRemoveSfw = false;
+        editRemoveNsfw = false;
+    });
+
+    editImageArtistModal.addEventListener('click', function (event) {
+        if (event.target.matches('[data-close-edit-artist-modal]')) {
+            editImageArtistModal.close();
+            return;
+        }
+
+        if (event.target.matches('[data-remove-edit-sfw]')) {
+            editRemoveSfw = !editRemoveSfw;
+            renderImagePreview(editSfwPreview, editRemoveSfw ? '' : getImageVersionSources(editTargetImage).sfwSrc, 'SFW image will be removed');
+            updateEditImageRemovalState();
+            return;
+        }
+
+        if (event.target.matches('[data-remove-edit-nsfw]')) {
+            editRemoveNsfw = !editRemoveNsfw;
+            renderImagePreview(editNsfwPreview, editRemoveNsfw ? '' : getImageVersionSources(editTargetImage).nsfwSrc, 'NSFW image will be removed');
+            updateEditImageRemovalState();
+        }
+    });
+
+    removeRowModal.addEventListener('click', function (event) {
+        if (event.target.matches('[data-cancel-remove-row]')) {
+            removeRowModal.close();
+            return;
+        }
+
+        if (event.target.matches('[data-confirm-remove-row]') && removeTargetRow) {
+            removeGalleryRow(removeTargetRow);
+            removeRowModal.close();
+        }
+    });
+
+    removeRowModal.addEventListener('close', function () {
+        removeTargetRow = null;
+    });
+
+    galleryRows.addEventListener('click', function (event) {
+        const uploadButton = event.target.closest('[data-open-upload-modal]');
+        const editArtistButton = event.target.closest('[data-edit-image-artist]');
+        const removeImageButton = event.target.closest('[data-remove-image]');
+        const removeRowButton = event.target.closest('[data-remove-row]');
+
+        if (uploadButton) {
+            uploadTargetRow = uploadButton.closest('[data-gallery-row]');
+            uploadImageModal.showModal();
+            uploadImageSfwFileInput.focus();
+            return;
+        }
+
+        if (editArtistButton) {
+            editTargetImage = editArtistButton.closest('.gallery-image');
+            editImageSfwArtistInput.value = editTargetImage.dataset.sfwArtist || '';
+            editImageNsfwArtistInput.value = editTargetImage.dataset.nsfwArtist || '';
+            const image = editTargetImage.querySelector('img');
+            const imageSrc = image ? image.src : '';
+            const sfwSrc = editTargetImage.dataset.sfwSrc || (editTargetImage.dataset.nsfw === 'true' ? '' : imageSrc);
+            const nsfwSrc = editTargetImage.dataset.nsfw === 'true' ? imageSrc : '';
+            editRemoveSfw = false;
+            editRemoveNsfw = false;
+            renderImagePreview(editSfwPreview, sfwSrc, 'No SFW image uploaded');
+            renderImagePreview(editNsfwPreview, nsfwSrc, 'No NSFW image uploaded');
+            updateEditImageRemovalState();
+            editImageArtistModal.showModal();
+            editImageSfwFileInput.focus();
+            return;
+        }
+
+        if (removeImageButton) {
+            removeImageButton.closest('.gallery-image').remove();
+            updateAddGalleryRowState();
+            return;
+        }
+
+        if (removeRowButton) {
+            const row = removeRowButton.closest('[data-gallery-row]');
+
+            if (row.querySelector('.gallery-image')) {
+                removeTargetRow = row;
+                removeRowModal.showModal();
+                return;
+            }
+
+            removeGalleryRow(row);
+        }
+    });
+
+    galleryRows.addEventListener('dragstart', function (event) {
+        const image = event.target.closest('.gallery-image');
+
+        if (!image) {
+            return;
+        }
+
+        draggedImage = image;
+        image.setAttribute('aria-grabbed', 'true');
+        event.dataTransfer.effectAllowed = 'move';
+    });
+
+    galleryRows.addEventListener('dragend', function () {
+        if (draggedImage) {
+            draggedImage.removeAttribute('aria-grabbed');
+        }
+
+        draggedImage = null;
+        galleryRows.querySelectorAll('[data-dropzone]').forEach(function (dropzone) {
+            dropzone.classList.remove('drag-over');
+        });
+        updateAddGalleryRowState();
+    });
+
+    galleryRows.addEventListener('dragover', function (event) {
+        const dropzone = event.target.closest('[data-dropzone]');
+
+        if (!dropzone || !draggedImage) {
+            return;
+        }
+
+        event.preventDefault();
+        const nextImage = getImageAfterPointer(dropzone, event.clientX, event.clientY);
+
+        if (nextImage) {
+            dropzone.insertBefore(draggedImage, nextImage);
+        } else {
+            dropzone.append(draggedImage);
+        }
+    });
+
+    galleryRows.addEventListener('dragenter', function (event) {
+        const dropzone = event.target.closest('[data-dropzone]');
+
+        if (dropzone && draggedImage) {
+            dropzone.classList.add('drag-over');
+        }
+    });
+
+    galleryRows.addEventListener('dragleave', function (event) {
+        const dropzone = event.target.closest('[data-dropzone]');
+
+        if (dropzone && !dropzone.contains(event.relatedTarget)) {
+            dropzone.classList.remove('drag-over');
+        }
+    });
+</script>
+
+</body>
+</html>
