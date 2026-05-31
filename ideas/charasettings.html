@@ -9,13 +9,32 @@
     <link href="https://cdn.jsdelivr.net/combine/npm/daisyui@5/theme/black.css" rel="stylesheet"/>
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <style>
+        .media-pool-item[aria-grabbed="true"],
         .gallery-image[aria-grabbed="true"] {
             opacity: 0.5;
+        }
+
+        .media-pool-item[aria-disabled="true"] {
+            cursor: not-allowed;
+            filter: grayscale(1);
+            opacity: 0.35;
         }
 
         .gallery-dropzone.drag-over {
             outline: 2px dashed currentColor;
             outline-offset: 4px;
+        }
+
+        .gallery-dropzone.drag-over::before {
+            color: currentColor;
+            content: "Drop image in this row";
+            font-size: 0.75rem;
+            opacity: 0.65;
+            width: 100%;
+        }
+
+        .gallery-tab-panel {
+            box-shadow: inset 0 1px 0 hsl(var(--bc) / 0.08);
         }
     </style>
 </head>
@@ -129,11 +148,11 @@
         </fieldset>
     </form>
 
-    <section class="mt-10">
-        <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <section class="mt-10 space-y-6">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-                <h2 class="text-2xl font-bold">Gallery Images</h2>
-                <p class="text-sm text-base-content/70">Arrange images into rows for the character gallery.</p>
+                <h2 class="text-2xl font-bold">Gallery Sorting</h2>
+                <p class="text-sm text-base-content/70">Use the media library once per tag, then arrange each tag into gallery rows.</p>
             </div>
 
             <div class="flex flex-wrap items-center justify-end gap-3">
@@ -153,110 +172,51 @@
                     </div>
                 </div>
                 <button class="btn btn-secondary" id="bulk-upload-images" type="button">Bulk Upload</button>
-                <button class="btn btn-primary" id="add-gallery-row" type="button">Add Row</button>
+                <button class="btn btn-primary" id="upload-media-button" type="button">Upload Image</button>
             </div>
         </div>
 
-        <div class="space-y-4" id="gallery-rows">
-            <div class="rounded-box border border-base-300 bg-base-200 p-4" data-gallery-row>
-                <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <h3 class="font-semibold">Row 1</h3>
-
-                    <div class="flex flex-wrap gap-2">
-                        <button class="btn btn-sm btn-secondary" data-open-upload-modal type="button">Upload Image
-                        </button>
-                        <button class="btn btn-sm btn-error btn-outline" data-remove-row type="button">Remove Row
-                        </button>
-                    </div>
+        <div class="rounded-box border border-base-300 bg-base-200 p-4">
+            <div class="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                    <h3 class="text-lg font-semibold">All Media</h3>
+                    <p class="text-sm text-base-content/70">Drag from here into the active tag rows. Used images are dimmed for this tag only.</p>
                 </div>
+                <span class="badge badge-neutral" id="all-media-count">0 media</span>
+            </div>
 
-                <div class="gallery-dropzone flex min-h-28 flex-wrap gap-3 rounded border border-dashed border-base-300 bg-base-100 p-3"
-                     data-dropzone>
-                    <div class="gallery-image group relative aspect-square w-[calc((100%_-_1.5rem)/3)] cursor-grab overflow-hidden rounded bg-base-300 active:cursor-grabbing sm:h-24 sm:w-24"
-                         data-nsfw="true"
-                         draggable="true"
-                         tabindex="0">
-                        <img alt="Gallery image 1"
-                             class="h-full w-full object-cover"
-                             src="https://razeth.monster/wp-content/uploads/2026/04/razref.png"/>
-                        <button aria-label="Delete image"
-                                class="btn btn-error btn-sm btn-circle absolute right-1 top-1 min-h-8 h-8 w-8 opacity-90 sm:btn-xs sm:min-h-6 sm:h-6 sm:w-6"
-                                data-remove-image
-                                type="button">x
-                        </button>
-                    </div>
+            <div class="flex flex-wrap gap-3" id="all-media-pool"></div>
+        </div>
 
-                    <div class="gallery-image group relative aspect-square w-[calc((100%_-_1.5rem)/3)] cursor-grab overflow-hidden rounded bg-base-300 active:cursor-grabbing sm:h-24 sm:w-24"
-                         draggable="true"
-                         tabindex="0">
-                        <img alt="Gallery image 2"
-                             class="h-full w-full object-cover"
-                             src="https://razeth.monster/wp-content/uploads/2025/11/RazHeadCollage_MomobedaNov2025.png"/>
-                        <button aria-label="Delete image"
-                                class="btn btn-error btn-sm btn-circle absolute right-1 top-1 min-h-8 h-8 w-8 opacity-90 sm:btn-xs sm:min-h-6 sm:h-6 sm:w-6"
-                                data-remove-image
-                                type="button">x
-                        </button>
-                    </div>
+        <div class="rounded-box border border-base-300 bg-base-200 p-4">
+            <div class="mb-4">
+                <div class="min-w-0">
+                    <h3 class="text-lg font-semibold">Tag Gallery Layouts</h3>
+                    <p class="text-sm text-base-content/70">Each tab has its own row order and can reuse media from other tabs.</p>
                 </div>
             </div>
 
-            <div class="rounded-box border border-base-300 bg-base-200 p-4" data-gallery-row>
-                <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <h3 class="font-semibold">Row 2</h3>
-
-                    <div class="flex flex-wrap gap-2">
-                        <button class="btn btn-sm btn-secondary" data-open-upload-modal type="button">Upload Image
-                        </button>
-                        <button class="btn btn-sm btn-error btn-outline" data-remove-row type="button">Remove Row
-                        </button>
+            <div class="gallery-tab-panel mb-5 mt-5 rounded-box border border-base-300 bg-base-100 p-3">
+                <div class="mb-2 flex items-center justify-between gap-3">
+                    <span class="text-sm font-semibold text-base-content/80">Gallery tabs</span>
+                    <div class="flex shrink-0 gap-2">
+                        <button aria-label="Add gallery tab" class="btn btn-sm btn-square btn-secondary" id="add-gallery-tag" type="button">+</button>
+                        <button aria-label="Remove current gallery tab" class="btn btn-sm btn-square btn-error btn-outline" id="remove-gallery-tag" type="button">-</button>
                     </div>
                 </div>
 
-                <div class="gallery-dropzone flex min-h-28 flex-wrap gap-3 rounded border border-dashed border-base-300 bg-base-100 p-3"
-                     data-dropzone>
-                    <div class="gallery-image group relative aspect-square w-[calc((100%_-_1.5rem)/3)] cursor-grab overflow-hidden rounded bg-base-300 active:cursor-grabbing sm:h-24 sm:w-24"
-                         draggable="true"
-                         tabindex="0">
-                        <img alt="Gallery image 3"
-                             class="h-full w-full object-cover"
-                             src="https://razeth.monster/wp-content/uploads/2025/11/RazHeadTurnaround_MomobedaNov2025_FullColour.png"/>
-                        <button aria-label="Delete image"
-                                class="btn btn-error btn-sm btn-circle absolute right-1 top-1 min-h-8 h-8 w-8 opacity-90 sm:btn-xs sm:min-h-6 sm:h-6 sm:w-6"
-                                data-remove-image
-                                type="button">x
-                        </button>
-                    </div>
-
-                    <div class="gallery-image group relative aspect-square w-[calc((100%_-_1.5rem)/3)] cursor-grab overflow-hidden rounded bg-base-300 active:cursor-grabbing sm:h-24 sm:w-24"
-                         data-nsfw="true"
-                         draggable="true"
-                         tabindex="0">
-                        <img alt="Gallery image 4"
-                             class="h-full w-full object-cover"
-                             src="https://razeth.monster/wp-content/uploads/2025/11/Brown_Clean_Minimalist_Fashion_Magazine_Cover_Magazine_Cover_.png"/>
-                        <button aria-label="Delete image"
-                                class="btn btn-error btn-sm btn-circle absolute right-1 top-1 min-h-8 h-8 w-8 opacity-90 sm:btn-xs sm:min-h-6 sm:h-6 sm:w-6"
-                                data-remove-image
-                                type="button">x
-                        </button>
-                    </div>
-
-                    <div class="gallery-image group relative aspect-square w-[calc((100%_-_1.5rem)/3)] cursor-grab overflow-hidden rounded bg-base-300 active:cursor-grabbing sm:h-24 sm:w-24"
-                         data-nsfw="true"
-                         draggable="true"
-                         tabindex="0">
-                        <img alt="Gallery image 5"
-                             class="h-full w-full object-cover"
-                             src="https://razeth.monster/wp-content/uploads/2025/11/RazThighUpFlatColourSketch.png"/>
-                        <button aria-label="Delete image"
-                                class="btn btn-error btn-sm btn-circle absolute right-1 top-1 min-h-8 h-8 w-8 opacity-90 sm:btn-xs sm:min-h-6 sm:h-6 sm:w-6"
-                                data-remove-image
-                                type="button">x
-                        </button>
-                    </div>
-                </div>
+                <div class="tabs tabs-lift overflow-x-auto" id="gallery-tag-tabs"></div>
             </div>
+
+            <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                    <h4 class="font-semibold" id="active-gallery-tag-title">default</h4>
+                    <p class="text-sm text-base-content/70" id="active-gallery-tag-meta">0 rows</p>
+                </div>
+                <button class="btn btn-sm btn-primary" id="add-gallery-row" type="button">Add Row</button>
+            </div>
+
+            <div class="space-y-4" id="gallery-rows"></div>
         </div>
     </section>
 
@@ -378,6 +338,89 @@
                 <button class="btn btn-primary" type="submit">Add Images</button>
             </div>
         </form>
+    </div>
+
+    <form class="modal-backdrop" method="dialog">
+        <button>close</button>
+    </form>
+</dialog>
+
+<dialog class="modal" id="gallery-tag-modal">
+    <div class="modal-box">
+        <form method="dialog">
+            <button aria-label="Close tag dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x
+            </button>
+        </form>
+
+        <h2 class="text-xl font-bold">Add Gallery Tab</h2>
+
+        <form class="mt-5 space-y-4" id="gallery-tag-form">
+            <fieldset class="fieldset">
+                <label class="fieldset-label" for="gallery-tag-name">Tab Name</label>
+                <input
+                        class="input input-bordered w-full"
+                        id="gallery-tag-name"
+                        maxlength="32"
+                        name="gallery-tag-name"
+                        placeholder="references"
+                        required
+                        type="text"
+                />
+            </fieldset>
+
+            <div class="modal-action">
+                <button class="btn btn-ghost" data-close-gallery-tag-modal type="button">Cancel</button>
+                <button class="btn btn-primary" type="submit">Add Tab</button>
+            </div>
+        </form>
+    </div>
+
+    <form class="modal-backdrop" method="dialog">
+        <button>close</button>
+    </form>
+</dialog>
+
+<dialog class="modal" id="delete-media-modal">
+    <div class="modal-box">
+        <form method="dialog">
+            <button aria-label="Close delete media dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">
+                x
+            </button>
+        </form>
+
+        <h2 class="text-xl font-bold">Delete Media?</h2>
+        <p class="mt-3 text-sm text-base-content/80">
+            This removes the media from this character entirely and removes it from every gallery tab.
+        </p>
+
+        <div class="modal-action">
+            <button class="btn btn-ghost" data-cancel-delete-media type="button">Cancel</button>
+            <button class="btn btn-error" data-confirm-delete-media type="button">Delete Media</button>
+        </div>
+    </div>
+
+    <form class="modal-backdrop" method="dialog">
+        <button>close</button>
+    </form>
+</dialog>
+
+<dialog class="modal" id="delete-gallery-tag-modal">
+    <div class="modal-box">
+        <form method="dialog">
+            <button aria-label="Close delete tab dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">
+                x
+            </button>
+        </form>
+
+        <h2 class="text-xl font-bold">Delete Tab?</h2>
+        <p class="mt-3 text-sm text-base-content/80">
+            This removes the current gallery tab and its custom row order. The media stays in All Media.
+        </p>
+
+        <div class="modal-action">
+            <button class="btn btn-ghost" data-cancel-delete-gallery-tag type="button">Cancel</button>
+            <button class="btn btn-error" data-confirm-delete-gallery-tag type="button">Delete Tab</button>
+        </div>
     </div>
 
     <form class="modal-backdrop" method="dialog">
@@ -608,7 +651,22 @@
 </dialog>
 
 <script>
+    const mediaPool = document.getElementById('all-media-pool');
+    const mediaCount = document.getElementById('all-media-count');
+    const galleryTagTabs = document.getElementById('gallery-tag-tabs');
     const galleryRows = document.getElementById('gallery-rows');
+    const activeGalleryTagTitle = document.getElementById('active-gallery-tag-title');
+    const activeGalleryTagMeta = document.getElementById('active-gallery-tag-meta');
+    const addGalleryRowButton = document.getElementById('add-gallery-row');
+    const addGalleryTagButton = document.getElementById('add-gallery-tag');
+    const removeGalleryTagButton = document.getElementById('remove-gallery-tag');
+    const galleryTagModal = document.getElementById('gallery-tag-modal');
+    const galleryTagForm = document.getElementById('gallery-tag-form');
+    const galleryTagNameInput = document.getElementById('gallery-tag-name');
+    const deleteMediaModal = document.getElementById('delete-media-modal');
+    const deleteGalleryTagModal = document.getElementById('delete-gallery-tag-modal');
+    const uploadMediaButton = document.getElementById('upload-media-button');
+    const saveCharacterSettingsButton = document.getElementById('save-character-settings');
     const transferCharacterButton = document.getElementById('transfer-character-button');
     const transferCharacterModal = document.getElementById('transfer-character-modal');
     const transferCharacterForm = document.getElementById('transfer-character-form');
@@ -623,8 +681,6 @@
     const deleteConfirmPermanentInput = document.getElementById('delete-confirm-permanent');
     const deleteConfirmFinalInput = document.getElementById('delete-confirm-final');
     const confirmDeleteCharacterButton = document.getElementById('confirm-delete-character');
-    const addGalleryRowButton = document.getElementById('add-gallery-row');
-    const saveCharacterSettingsButton = document.getElementById('save-character-settings');
     const bulkUploadButton = document.getElementById('bulk-upload-images');
     const uploadImageModal = document.getElementById('upload-image-modal');
     const uploadImageForm = document.getElementById('upload-image-form');
@@ -649,65 +705,75 @@
     const editNsfwPreview = document.querySelector('[data-edit-nsfw-preview]');
     const removeEditSfwButton = document.querySelector('[data-remove-edit-sfw]');
     const removeEditNsfwButton = document.querySelector('[data-remove-edit-nsfw]');
-    let draggedImage = null;
-    let uploadTargetRow = null;
-    let editTargetImage = null;
-    let removeTargetRow = null;
+
+    const mediaLibrary = new Map();
+    const tagLayouts = new Map();
+    let activeTagId = 'default';
+    let draggedItem = null;
+    let removeTargetRowIndex = null;
+    let pendingDeleteMediaId = null;
+    let pendingDeleteTagId = null;
     let bulkUploadFiles = [];
+    let editTargetMediaId = null;
     let editRemoveSfw = false;
     let editRemoveNsfw = false;
 
-    function updateTransferButtonState() {
-        confirmTransferCharacterButton.disabled = !(
-            transferUsernameInput.value.trim() &&
-            transferConfirmOwnershipInput.checked &&
-            transferConfirmFinalInput.checked
-        );
-    }
-
-    function updateDeleteButtonState() {
-        const characterName = document.getElementById('character-name').value.trim();
-
-        confirmDeleteCharacterButton.disabled = !(
-            deleteCharacterConfirmNameInput.value.trim() === characterName &&
-            deleteConfirmPermanentInput.checked &&
-            deleteConfirmFinalInput.checked
-        );
-    }
-
-    function updateGalleryRowTitles() {
-        Array.from(galleryRows.querySelectorAll('[data-gallery-row]')).forEach(function (row, index) {
-            row.querySelector('h3').textContent = 'Row ' + (index + 1);
-        });
-    }
-
-    function updateAddGalleryRowState() {
-        const rows = Array.from(galleryRows.querySelectorAll('[data-gallery-row]'));
-        const hasEmptyRow = rows.some(function (row) {
-            return !row.querySelector('.gallery-image');
-        });
-        const canSave = rows.length > 0 && !hasEmptyRow;
-
-        addGalleryRowButton.disabled = hasEmptyRow;
-        addGalleryRowButton.title = hasEmptyRow ? 'Delete the empty row before adding another row.' : '';
-        saveCharacterSettingsButton.disabled = !canSave;
-        saveCharacterSettingsButton.title = canSave ? '' : 'Add at least one gallery row with images before saving.';
-    }
-
-    function updateGalleryImageTitle(imageWrapper) {
-        const image = imageWrapper.querySelector('img');
-        const alt = image ? image.alt : 'Gallery image';
-        const artist = imageWrapper.dataset.artist || '';
-        const hasSfwVersion = imageWrapper.dataset.hasSfwVersion === 'true';
-        const sfwArtist = imageWrapper.dataset.sfwArtist || '';
-        const nsfwArtist = imageWrapper.dataset.nsfwArtist || '';
-
-        if (sfwArtist || nsfwArtist) {
-            imageWrapper.title = alt + ' - SFW by ' + sfwArtist + ', NSFW by ' + nsfwArtist;
-            return;
+    const seedMedia = [
+        {
+            id: 'media-razref',
+            src: 'https://razeth.monster/wp-content/uploads/2026/04/razref.png',
+            alt: 'Gallery image 1',
+            artist: '',
+            nsfw: true
+        },
+        {
+            id: 'media-collage',
+            src: 'https://razeth.monster/wp-content/uploads/2025/11/RazHeadCollage_MomobedaNov2025.png',
+            alt: 'Gallery image 2',
+            artist: '',
+            nsfw: false
+        },
+        {
+            id: 'media-turnaround',
+            src: 'https://razeth.monster/wp-content/uploads/2025/11/RazHeadTurnaround_MomobedaNov2025_FullColour.png',
+            alt: 'Gallery image 3',
+            artist: '',
+            nsfw: false
+        },
+        {
+            id: 'media-cover',
+            src: 'https://razeth.monster/wp-content/uploads/2025/11/Brown_Clean_Minimalist_Fashion_Magazine_Cover_Magazine_Cover_.png',
+            alt: 'Gallery image 4',
+            artist: '',
+            nsfw: true
+        },
+        {
+            id: 'media-thigh',
+            src: 'https://razeth.monster/wp-content/uploads/2025/11/RazThighUpFlatColourSketch.png',
+            alt: 'Gallery image 5',
+            artist: '',
+            nsfw: true
         }
+    ];
 
-        imageWrapper.title = (artist ? alt + ' by ' + artist : alt) + (hasSfwVersion ? ' - includes SFW version' : '');
+    function createId(prefix) {
+        return prefix + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+    }
+
+    function getActiveLayout() {
+        return tagLayouts.get(activeTagId);
+    }
+
+    function getUsedMediaIds(tagId) {
+        return new Set(tagLayouts.get(tagId).rows.flat());
+    }
+
+    function normalizeTagName(name) {
+        return name.trim().replace(/\s+/g, ' ').slice(0, 32);
+    }
+
+    function tagIdFromName(name) {
+        return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || createId('tag');
     }
 
     function renderImagePreview(preview, src, emptyText) {
@@ -732,40 +798,28 @@
         renderImagePreview(preview, file && file.type.startsWith('image/') ? URL.createObjectURL(file) : '', emptyText);
     }
 
-    function getImageVersionSources(imageWrapper) {
-        const image = imageWrapper.querySelector('img');
-        const imageSrc = image ? image.src : '';
-        const isNsfw = imageWrapper.dataset.nsfw === 'true';
-
-        return {
-            sfwSrc: imageWrapper.dataset.sfwSrc || (isNsfw ? '' : imageSrc),
-            nsfwSrc: isNsfw ? imageSrc : ''
-        };
+    function createNsfwImageBadge(media) {
+        const badge = document.createElement('span');
+        badge.className = 'absolute bottom-1 left-1 rounded bg-error px-1.5 py-0.5 text-[0.65rem] font-bold leading-none text-error-content shadow-md';
+        badge.textContent = media.sfwSrc ? '18+ with alt' : '18+';
+        badge.hidden = !media.nsfw && !media.sfwSrc;
+        return badge;
     }
 
-    function hasSelectedImageFile(input) {
-        const file = input.files[0];
-        return Boolean(file && file.type.startsWith('image/'));
-    }
+    function createMediaThumb(media, variant) {
+        const item = document.createElement('div');
+        item.className = variant === 'pool'
+            ? 'media-pool-item group relative aspect-square w-[calc((100%_-_1.5rem)/3)] cursor-grab overflow-hidden rounded bg-base-300 active:cursor-grabbing sm:h-24 sm:w-24'
+            : 'gallery-image group relative aspect-square w-[calc((100%_-_1.5rem)/3)] cursor-grab overflow-hidden rounded bg-base-300 active:cursor-grabbing sm:h-24 sm:w-24';
+        item.dataset.mediaId = media.id;
+        item.draggable = true;
+        item.tabIndex = 0;
 
-    function updateEditImageRemovalState() {
-        if (!editTargetImage) {
-            return;
-        }
+        const image = document.createElement('img');
+        image.alt = media.alt;
+        image.className = 'h-full w-full object-cover';
+        image.src = media.src;
 
-        const sources = getImageVersionSources(editTargetImage);
-        const hasSfwReplacement = hasSelectedImageFile(editImageSfwFileInput);
-        const hasNsfwReplacement = hasSelectedImageFile(editImageNsfwFileInput);
-        const hasSfwAfterSave = (!editRemoveSfw && Boolean(sources.sfwSrc)) || hasSfwReplacement;
-        const hasNsfwAfterSave = (!editRemoveNsfw && Boolean(sources.nsfwSrc)) || hasNsfwReplacement;
-
-        removeEditSfwButton.disabled = !sources.sfwSrc || (!editRemoveSfw && (editRemoveNsfw || !hasNsfwAfterSave));
-        removeEditNsfwButton.disabled = !sources.nsfwSrc || (!editRemoveNsfw && (editRemoveSfw || !hasSfwAfterSave));
-        removeEditSfwButton.textContent = editRemoveSfw ? 'Keep SFW Image' : 'Remove SFW Image';
-        removeEditNsfwButton.textContent = editRemoveNsfw ? 'Keep NSFW Image' : 'Remove NSFW Image';
-    }
-
-    function createEditImageButton() {
         const editButton = document.createElement('button');
         editButton.ariaLabel = 'Edit image settings';
         editButton.className = 'btn btn-neutral btn-sm btn-circle absolute left-1 top-1 min-h-8 h-8 w-8 opacity-90 sm:btn-xs sm:min-h-6 sm:h-6 sm:w-6';
@@ -785,133 +839,176 @@
             </svg>
         `;
 
-        return editButton;
-    }
-
-    function createNsfwImageBadge() {
-        const badge = document.createElement('span');
-        badge.ariaLabel = 'NSFW image';
-        badge.className = 'absolute bottom-1 left-1 hidden rounded bg-error px-1.5 py-0.5 text-[0.65rem] font-bold leading-none text-error-content shadow-md';
-        badge.dataset.nsfwBadge = '';
-        badge.textContent = '18+';
-
-        return badge;
-    }
-
-    function createSfwImageBadge() {
-        const badge = document.createElement('span');
-        badge.ariaLabel = 'SFW image';
-        badge.className = 'absolute bottom-1 left-1 hidden rounded bg-info px-1.5 py-0.5 text-[0.65rem] font-bold leading-none text-info-content shadow-md';
-        badge.dataset.sfwBadge = '';
-        badge.textContent = 'SFW';
-
-        return badge;
-    }
-
-    function updateImageBadges(imageWrapper) {
-        const nsfwBadge = imageWrapper.querySelector('[data-nsfw-badge]');
-        const sfwBadge = imageWrapper.querySelector('[data-sfw-badge]');
-        const hasSfwVersion = imageWrapper.dataset.hasSfwVersion === 'true';
-        const isNsfw = imageWrapper.dataset.nsfw === 'true';
-
-        if (nsfwBadge) {
-            nsfwBadge.textContent = hasSfwVersion ? '18+ with alt' : '18+';
-            nsfwBadge.classList.toggle('bg-error', !hasSfwVersion);
-            nsfwBadge.classList.toggle('text-error-content', !hasSfwVersion);
-            nsfwBadge.classList.toggle('bg-purple-600', hasSfwVersion);
-            nsfwBadge.classList.toggle('text-white', hasSfwVersion);
-            nsfwBadge.classList.toggle('hidden', !isNsfw && !hasSfwVersion);
-        }
-
-        if (sfwBadge) {
-            sfwBadge.classList.toggle('hidden', isNsfw || hasSfwVersion);
-        }
-    }
-
-    function setupGalleryImage(imageWrapper) {
-        if (!imageWrapper.dataset.artist) {
-            imageWrapper.dataset.artist = '';
-        }
-
-        if (!imageWrapper.dataset.nsfw) {
-            imageWrapper.dataset.nsfw = 'false';
-        }
-
-        if (!imageWrapper.dataset.hasSfwVersion) {
-            imageWrapper.dataset.hasSfwVersion = 'false';
-        }
-
-        if (!imageWrapper.querySelector('[data-edit-image-artist]')) {
-            imageWrapper.prepend(createEditImageButton());
-        }
-
-        if (!imageWrapper.querySelector('[data-nsfw-badge]')) {
-            imageWrapper.append(createNsfwImageBadge());
-        }
-
-        if (!imageWrapper.querySelector('[data-sfw-badge]')) {
-            imageWrapper.append(createSfwImageBadge());
-        }
-
-        updateGalleryImageTitle(imageWrapper);
-        updateImageBadges(imageWrapper);
-    }
-
-    function createGalleryImage(src, alt, artist, nsfw, sfwSrc, sfwArtist, nsfwArtist) {
-        const imageWrapper = document.createElement('div');
-        imageWrapper.className = 'gallery-image group relative aspect-square w-[calc((100%_-_1.5rem)/3)] cursor-grab overflow-hidden rounded bg-base-300 active:cursor-grabbing sm:h-24 sm:w-24';
-        imageWrapper.draggable = true;
-        imageWrapper.tabIndex = 0;
-        imageWrapper.dataset.artist = artist || '';
-        imageWrapper.dataset.nsfw = nsfw ? 'true' : 'false';
-        imageWrapper.dataset.hasSfwVersion = sfwSrc ? 'true' : 'false';
-        imageWrapper.dataset.sfwSrc = sfwSrc || '';
-        imageWrapper.dataset.sfwArtist = sfwArtist || '';
-        imageWrapper.dataset.nsfwArtist = nsfwArtist || '';
-
-        const image = document.createElement('img');
-        image.alt = alt;
-        image.className = 'h-full w-full object-cover';
-        image.src = src;
-
-        const editButton = createEditImageButton();
-        const nsfwBadge = createNsfwImageBadge();
-        const sfwBadge = createSfwImageBadge();
-
         const removeButton = document.createElement('button');
-        removeButton.ariaLabel = 'Delete image';
+        removeButton.ariaLabel = variant === 'pool' ? 'Delete media' : 'Remove from row';
         removeButton.className = 'btn btn-error btn-sm btn-circle absolute right-1 top-1 min-h-8 h-8 w-8 opacity-90 sm:btn-xs sm:min-h-6 sm:h-6 sm:w-6';
         removeButton.dataset.removeImage = '';
         removeButton.type = 'button';
         removeButton.textContent = 'x';
 
-        imageWrapper.append(image, editButton, removeButton, nsfwBadge, sfwBadge);
-        updateGalleryImageTitle(imageWrapper);
-        updateImageBadges(imageWrapper);
-
-        return imageWrapper;
+        item.append(image, editButton, removeButton, createNsfwImageBadge(media));
+        return item;
     }
 
-    function createGalleryRow() {
-        const row = document.createElement('div');
-        row.className = 'rounded-box border border-base-300 bg-base-200 p-4';
-        row.dataset.galleryRow = '';
+    function renderMediaPool() {
+        const usedInActiveTab = getUsedMediaIds(activeTagId);
 
-        row.innerHTML = `
-            <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <h3 class="font-semibold"></h3>
+        mediaPool.replaceChildren();
+        Array.from(mediaLibrary.values()).forEach(function (media) {
+            const item = createMediaThumb(media, 'pool');
+            const isUsed = usedInActiveTab.has(media.id);
+            item.setAttribute('aria-disabled', isUsed ? 'true' : 'false');
+            item.title = isUsed ? 'Already used in this tab' : 'Drag into a row';
+            mediaPool.append(item);
+        });
 
-                <div class="flex flex-wrap gap-2">
-                    <button class="btn btn-sm btn-secondary" data-open-upload-modal type="button">Upload Image</button>
-                    <button class="btn btn-sm btn-error btn-outline" data-remove-row type="button">Remove Row</button>
-                </div>
-            </div>
+        mediaCount.textContent = mediaLibrary.size + (mediaLibrary.size === 1 ? ' media' : ' media');
+    }
 
-            <div class="gallery-dropzone flex min-h-28 flex-wrap gap-3 rounded border border-dashed border-base-300 bg-base-100 p-3"
-                 data-dropzone></div>
-        `;
+    function renderTabs() {
+        galleryTagTabs.replaceChildren();
 
-        return row;
+        tagLayouts.forEach(function (layout, tagId) {
+            const tab = document.createElement('button');
+            tab.className = 'tab h-10 px-4' + (tagId === activeTagId ? ' tab-active' : '');
+            tab.dataset.tagId = tagId;
+            tab.type = 'button';
+            tab.textContent = layout.name;
+            galleryTagTabs.append(tab);
+        });
+
+        removeGalleryTagButton.disabled = activeTagId === 'default';
+    }
+
+    function renderRows() {
+        const layout = getActiveLayout();
+        galleryRows.replaceChildren();
+
+        layout.rows.forEach(function (rowMediaIds, rowIndex) {
+            const row = document.createElement('div');
+            row.className = 'rounded-box border border-base-300 bg-base-100 p-4';
+            row.dataset.galleryRow = String(rowIndex);
+
+            const header = document.createElement('div');
+            header.className = 'mb-3 flex flex-wrap items-center justify-between gap-2';
+
+            const title = document.createElement('h5');
+            title.className = 'font-semibold';
+            title.textContent = 'Row ' + (rowIndex + 1);
+
+            const removeButton = document.createElement('button');
+            removeButton.className = 'btn btn-sm btn-error btn-outline';
+            removeButton.dataset.removeRow = '';
+            removeButton.type = 'button';
+            removeButton.textContent = 'Remove Row';
+
+            const dropzone = document.createElement('div');
+            dropzone.className = 'gallery-dropzone flex min-h-28 flex-wrap gap-3 rounded border border-dashed border-base-300 bg-base-200 p-3';
+            dropzone.dataset.dropzone = '';
+            dropzone.dataset.rowIndex = String(rowIndex);
+
+            rowMediaIds.forEach(function (mediaId) {
+                const media = mediaLibrary.get(mediaId);
+                if (media) {
+                    dropzone.append(createMediaThumb(media, 'row'));
+                }
+            });
+
+            header.append(title, removeButton);
+            row.append(header, dropzone);
+            galleryRows.append(row);
+        });
+
+        activeGalleryTagTitle.textContent = layout.name;
+        activeGalleryTagMeta.textContent = layout.rows.length + (layout.rows.length === 1 ? ' row' : ' rows') + ' / ' + getUsedMediaIds(activeTagId).size + ' images';
+        saveCharacterSettingsButton.disabled = layout.rows.length === 0;
+    }
+
+    function renderGallery() {
+        renderTabs();
+        renderRows();
+        renderMediaPool();
+    }
+
+    function addMedia(media) {
+        mediaLibrary.set(media.id, media);
+        renderGallery();
+    }
+
+    function removeMedia(mediaId) {
+        mediaLibrary.delete(mediaId);
+        tagLayouts.forEach(function (layout) {
+            layout.rows = layout.rows.map(function (row) {
+                return row.filter(function (id) {
+                    return id !== mediaId;
+                });
+            });
+        });
+        renderGallery();
+    }
+
+    function removeFromActiveRow(rowIndex, mediaId) {
+        const row = getActiveLayout().rows[rowIndex];
+        const index = row.indexOf(mediaId);
+        if (index >= 0) {
+            row.splice(index, 1);
+            renderGallery();
+        }
+    }
+
+    function insertMediaInRow(mediaId, rowIndex, insertIndex) {
+        const layout = getActiveLayout();
+        const targetRow = layout.rows[rowIndex];
+
+        if (!targetRow || !mediaLibrary.has(mediaId)) {
+            return;
+        }
+
+        if (draggedItem && draggedItem.type === 'row') {
+            const sourceRow = layout.rows[draggedItem.rowIndex];
+            const sourceIndex = sourceRow.indexOf(mediaId);
+
+            if (sourceIndex >= 0) {
+                sourceRow.splice(sourceIndex, 1);
+                if (draggedItem.rowIndex === rowIndex && sourceIndex < insertIndex) {
+                    insertIndex -= 1;
+                }
+            }
+        } else if (getUsedMediaIds(activeTagId).has(mediaId)) {
+            return;
+        }
+
+        targetRow.splice(insertIndex, 0, mediaId);
+        renderGallery();
+    }
+
+    function getDropIndex(dropzone, x, y) {
+        const images = Array.from(dropzone.querySelectorAll('.gallery-image:not([aria-grabbed="true"])'));
+        let index = images.length;
+
+        images.some(function (image, imageIndex) {
+            const box = image.getBoundingClientRect();
+            const beforeImage = y < box.top + box.height / 2 || (Math.abs(y - box.top - box.height / 2) < box.height / 2 && x < box.left + box.width / 2);
+
+            if (beforeImage) {
+                index = imageIndex;
+                return true;
+            }
+
+            return false;
+        });
+
+        return index;
+    }
+
+    function clearDragState() {
+        document.querySelectorAll('[aria-grabbed="true"]').forEach(function (item) {
+            item.removeAttribute('aria-grabbed');
+        });
+        document.querySelectorAll('.gallery-dropzone.drag-over').forEach(function (dropzone) {
+            dropzone.classList.remove('drag-over');
+        });
+        draggedItem = null;
     }
 
     function clearBulkUploadList() {
@@ -973,121 +1070,319 @@
         });
     }
 
-    function appendImagesInRows(images) {
-        for (let index = 0; index < images.length; index += 3) {
-            const row = createGalleryRow();
-            const dropzone = row.querySelector('[data-dropzone]');
-            const rowImages = images.slice(index, index + 3);
-
-            rowImages.forEach(function (image) {
-                dropzone.append(image);
-            });
-
-            galleryRows.append(row);
-        }
-
-        updateGalleryRowTitles();
-        updateAddGalleryRowState();
+    function getImageVersionSources(media) {
+        return {
+            sfwSrc: media.sfwSrc || (media.nsfw ? '' : media.src),
+            nsfwSrc: media.nsfw ? media.src : ''
+        };
     }
 
-    function removeGalleryRow(row) {
-        row.remove();
-        updateGalleryRowTitles();
-        updateAddGalleryRowState();
+    function hasSelectedImageFile(input) {
+        const file = input.files[0];
+        return Boolean(file && file.type.startsWith('image/'));
     }
 
-    function getImageAfterPointer(dropzone, x, y) {
-        const images = Array.from(dropzone.querySelectorAll('.gallery-image:not([aria-grabbed="true"])'));
-
-        return images.reduce(function (closest, child) {
-            const box = child.getBoundingClientRect();
-            const horizontalOffset = x - box.left - box.width / 2;
-            const verticalOffset = Math.abs(y - box.top - box.height / 2);
-            const isBeforeImage = horizontalOffset < 0;
-            const score = Math.abs(horizontalOffset) + verticalOffset;
-
-            if (isBeforeImage && score < closest.score) {
-                return {
-                    score: score,
-                    element: child
-                };
-            }
-
-            return closest;
-        }, {
-            score: Number.POSITIVE_INFINITY,
-            element: null
-        }).element;
-    }
-
-    addGalleryRowButton.addEventListener('click', function () {
-        if (addGalleryRowButton.disabled) {
+    function updateEditImageRemovalState() {
+        if (!editTargetMediaId) {
             return;
         }
 
-        galleryRows.append(createGalleryRow());
-        updateGalleryRowTitles();
-        updateAddGalleryRowState();
+        const media = mediaLibrary.get(editTargetMediaId);
+        const sources = getImageVersionSources(media);
+        const hasSfwReplacement = hasSelectedImageFile(editImageSfwFileInput);
+        const hasNsfwReplacement = hasSelectedImageFile(editImageNsfwFileInput);
+        const hasSfwAfterSave = (!editRemoveSfw && Boolean(sources.sfwSrc)) || hasSfwReplacement;
+        const hasNsfwAfterSave = (!editRemoveNsfw && Boolean(sources.nsfwSrc)) || hasNsfwReplacement;
+
+        removeEditSfwButton.disabled = !sources.sfwSrc || (!editRemoveSfw && (editRemoveNsfw || !hasNsfwAfterSave));
+        removeEditNsfwButton.disabled = !sources.nsfwSrc || (!editRemoveNsfw && (editRemoveSfw || !hasSfwAfterSave));
+        removeEditSfwButton.textContent = editRemoveSfw ? 'Keep SFW Image' : 'Remove SFW Image';
+        removeEditNsfwButton.textContent = editRemoveNsfw ? 'Keep NSFW Image' : 'Remove NSFW Image';
+    }
+
+    function openEditMediaModal(mediaId) {
+        const media = mediaLibrary.get(mediaId);
+        if (!media) {
+            return;
+        }
+
+        editTargetMediaId = mediaId;
+        editImageSfwArtistInput.value = media.sfwArtist || '';
+        editImageNsfwArtistInput.value = media.nsfwArtist || '';
+        editRemoveSfw = false;
+        editRemoveNsfw = false;
+        renderImagePreview(editSfwPreview, getImageVersionSources(media).sfwSrc, 'No SFW image uploaded');
+        renderImagePreview(editNsfwPreview, getImageVersionSources(media).nsfwSrc, 'No NSFW image uploaded');
+        updateEditImageRemovalState();
+        editImageArtistModal.showModal();
+        editImageSfwFileInput.focus();
+    }
+
+    function updateTransferButtonState() {
+        confirmTransferCharacterButton.disabled = !(
+            transferUsernameInput.value.trim() &&
+            transferConfirmOwnershipInput.checked &&
+            transferConfirmFinalInput.checked
+        );
+    }
+
+    function updateDeleteButtonState() {
+        const characterName = document.getElementById('character-name').value.trim();
+
+        confirmDeleteCharacterButton.disabled = !(
+            deleteCharacterConfirmNameInput.value.trim() === characterName &&
+            deleteConfirmPermanentInput.checked &&
+            deleteConfirmFinalInput.checked
+        );
+    }
+
+    seedMedia.forEach(function (media) {
+        mediaLibrary.set(media.id, media);
+    });
+    tagLayouts.set('default', {
+        name: 'default',
+        rows: [
+            ['media-razref', 'media-collage'],
+            ['media-turnaround', 'media-cover', 'media-thigh']
+        ]
+    });
+    tagLayouts.set('references', {
+        name: 'references',
+        rows: [
+            ['media-razref', 'media-turnaround']
+        ]
+    });
+    tagLayouts.set('nsfw', {
+        name: 'nsfw',
+        rows: [
+            ['media-cover', 'media-thigh']
+        ]
     });
 
-    transferCharacterButton.addEventListener('click', function () {
-        transferCharacterModal.showModal();
-        transferUsernameInput.focus();
+    addGalleryRowButton.addEventListener('click', function () {
+        getActiveLayout().rows.push([]);
+        renderGallery();
     });
 
-    transferCharacterForm.addEventListener('input', updateTransferButtonState);
-    transferCharacterForm.addEventListener('change', updateTransferButtonState);
+    addGalleryTagButton.addEventListener('click', function () {
+        galleryTagModal.showModal();
+        galleryTagNameInput.focus();
+    });
 
-    transferCharacterForm.addEventListener('submit', function (event) {
+    removeGalleryTagButton.addEventListener('click', function () {
+        if (activeTagId === 'default') {
+            return;
+        }
+
+        pendingDeleteTagId = activeTagId;
+        deleteGalleryTagModal.showModal();
+    });
+
+    galleryTagTabs.addEventListener('click', function (event) {
+        const tab = event.target.closest('[data-tag-id]');
+        if (!tab) {
+            return;
+        }
+
+        activeTagId = tab.dataset.tagId;
+        renderGallery();
+    });
+
+    galleryTagForm.addEventListener('submit', function (event) {
         event.preventDefault();
-        transferCharacterModal.close();
+
+        const tagName = normalizeTagName(galleryTagNameInput.value);
+        if (!tagName) {
+            galleryTagNameInput.focus();
+            return;
+        }
+
+        let tagId = tagIdFromName(tagName);
+        let suffix = 2;
+
+        while (tagLayouts.has(tagId)) {
+            tagId = tagIdFromName(tagName) + '-' + suffix;
+            suffix += 1;
+        }
+
+        tagLayouts.set(tagId, {
+            name: tagName,
+            rows: [[]]
+        });
+        activeTagId = tagId;
+        galleryTagModal.close();
+        renderGallery();
     });
 
-    transferCharacterModal.addEventListener('click', function (event) {
-        if (event.target.matches('[data-close-transfer-modal]')) {
-            transferCharacterModal.close();
+    galleryTagModal.addEventListener('click', function (event) {
+        if (event.target.matches('[data-close-gallery-tag-modal]')) {
+            galleryTagModal.close();
         }
     });
 
-    transferCharacterModal.addEventListener('close', function () {
-        transferCharacterForm.reset();
-        updateTransferButtonState();
+    galleryTagModal.addEventListener('close', function () {
+        galleryTagForm.reset();
     });
 
-    deleteCharacterButton.addEventListener('click', function () {
-        deleteCharacterModal.showModal();
-        deleteCharacterConfirmNameInput.focus();
-    });
+    deleteMediaModal.addEventListener('click', function (event) {
+        if (event.target.matches('[data-cancel-delete-media]')) {
+            deleteMediaModal.close();
+            return;
+        }
 
-    deleteCharacterForm.addEventListener('input', updateDeleteButtonState);
-    deleteCharacterForm.addEventListener('change', updateDeleteButtonState);
-
-    deleteCharacterForm.addEventListener('submit', function (event) {
-        event.preventDefault();
-        deleteCharacterModal.close();
-    });
-
-    deleteCharacterModal.addEventListener('click', function (event) {
-        if (event.target.matches('[data-close-delete-modal]')) {
-            deleteCharacterModal.close();
+        if (event.target.matches('[data-confirm-delete-media]') && pendingDeleteMediaId) {
+            removeMedia(pendingDeleteMediaId);
+            deleteMediaModal.close();
         }
     });
 
-    deleteCharacterModal.addEventListener('close', function () {
-        deleteCharacterForm.reset();
-        updateDeleteButtonState();
+    deleteMediaModal.addEventListener('close', function () {
+        pendingDeleteMediaId = null;
+    });
+
+    deleteGalleryTagModal.addEventListener('click', function (event) {
+        if (event.target.matches('[data-cancel-delete-gallery-tag]')) {
+            deleteGalleryTagModal.close();
+            return;
+        }
+
+        if (event.target.matches('[data-confirm-delete-gallery-tag]') && pendingDeleteTagId && pendingDeleteTagId !== 'default') {
+            tagLayouts.delete(pendingDeleteTagId);
+            activeTagId = 'default';
+            deleteGalleryTagModal.close();
+            renderGallery();
+        }
+    });
+
+    deleteGalleryTagModal.addEventListener('close', function () {
+        pendingDeleteTagId = null;
+    });
+
+    mediaPool.addEventListener('click', function (event) {
+        const removeButton = event.target.closest('[data-remove-image]');
+        const editButton = event.target.closest('[data-edit-image-artist]');
+        const mediaItem = event.target.closest('[data-media-id]');
+
+        if (!mediaItem) {
+            return;
+        }
+
+        if (removeButton) {
+            pendingDeleteMediaId = mediaItem.dataset.mediaId;
+            deleteMediaModal.showModal();
+            return;
+        }
+
+        if (editButton) {
+            openEditMediaModal(mediaItem.dataset.mediaId);
+        }
+    });
+
+    galleryRows.addEventListener('click', function (event) {
+        const removeImageButton = event.target.closest('[data-remove-image]');
+        const editButton = event.target.closest('[data-edit-image-artist]');
+        const removeRowButton = event.target.closest('[data-remove-row]');
+        const row = event.target.closest('[data-gallery-row]');
+
+        if (removeImageButton) {
+            const image = removeImageButton.closest('[data-media-id]');
+            removeFromActiveRow(Number(row.dataset.galleryRow), image.dataset.mediaId);
+            return;
+        }
+
+        if (editButton) {
+            openEditMediaModal(editButton.closest('[data-media-id]').dataset.mediaId);
+            return;
+        }
+
+        if (removeRowButton) {
+            const rowIndex = Number(row.dataset.galleryRow);
+            if (getActiveLayout().rows[rowIndex].length > 0) {
+                removeTargetRowIndex = rowIndex;
+                removeRowModal.showModal();
+                return;
+            }
+
+            getActiveLayout().rows.splice(rowIndex, 1);
+            renderGallery();
+        }
+    });
+
+    document.addEventListener('dragstart', function (event) {
+        const poolItem = event.target.closest('.media-pool-item');
+        const rowItem = event.target.closest('.gallery-image');
+
+        if (poolItem) {
+            if (poolItem.getAttribute('aria-disabled') === 'true') {
+                event.preventDefault();
+                return;
+            }
+
+            draggedItem = {
+                type: 'pool',
+                mediaId: poolItem.dataset.mediaId
+            };
+            poolItem.setAttribute('aria-grabbed', 'true');
+            event.dataTransfer.effectAllowed = 'copy';
+            return;
+        }
+
+        if (rowItem) {
+            const row = rowItem.closest('[data-gallery-row]');
+            draggedItem = {
+                type: 'row',
+                mediaId: rowItem.dataset.mediaId,
+                rowIndex: Number(row.dataset.galleryRow)
+            };
+            rowItem.setAttribute('aria-grabbed', 'true');
+            event.dataTransfer.effectAllowed = 'move';
+        }
+    });
+
+    document.addEventListener('dragend', clearDragState);
+
+    galleryRows.addEventListener('dragover', function (event) {
+        const dropzone = event.target.closest('[data-dropzone]');
+        if (!dropzone || !draggedItem) {
+            return;
+        }
+
+        if (draggedItem.type === 'pool' && getUsedMediaIds(activeTagId).has(draggedItem.mediaId)) {
+            return;
+        }
+
+        event.preventDefault();
+        dropzone.classList.add('drag-over');
+    });
+
+    galleryRows.addEventListener('dragleave', function (event) {
+        const dropzone = event.target.closest('[data-dropzone]');
+        if (dropzone && !dropzone.contains(event.relatedTarget)) {
+            dropzone.classList.remove('drag-over');
+        }
+    });
+
+    galleryRows.addEventListener('drop', function (event) {
+        const dropzone = event.target.closest('[data-dropzone]');
+        if (!dropzone || !draggedItem) {
+            return;
+        }
+
+        event.preventDefault();
+        const rowIndex = Number(dropzone.dataset.rowIndex);
+        const insertIndex = getDropIndex(dropzone, event.clientX, event.clientY);
+        insertMediaInRow(draggedItem.mediaId, rowIndex, insertIndex);
+        clearDragState();
+    });
+
+    uploadMediaButton.addEventListener('click', function () {
+        uploadImageModal.showModal();
+        uploadImageSfwFileInput.focus();
     });
 
     bulkUploadButton.addEventListener('click', function () {
         bulkUploadModal.showModal();
         bulkUploadFileInput.focus();
-    });
-
-    galleryRows.querySelectorAll('.gallery-image').forEach(setupGalleryImage);
-    updateAddGalleryRowState();
-
-    bulkUploadFileInput.addEventListener('change', function () {
-        renderBulkUploadList(Array.from(bulkUploadFileInput.files));
     });
 
     uploadImageSfwFileInput.addEventListener('change', function () {
@@ -1108,19 +1403,73 @@
         updateEditImageRemovalState();
     });
 
+    uploadImageForm.addEventListener('submit', function (event) {
+        event.preventDefault();
+
+        const sfwFile = uploadImageSfwFileInput.files[0];
+        const nsfwFile = uploadImageNsfwFileInput.files[0];
+        const sfwArtist = uploadImageSfwArtistInput.value.trim();
+        const nsfwArtist = uploadImageNsfwArtistInput.value.trim();
+        const hasSfwFile = sfwFile && sfwFile.type.startsWith('image/');
+        const hasNsfwFile = nsfwFile && nsfwFile.type.startsWith('image/');
+
+        if (!hasSfwFile && !hasNsfwFile) {
+            return;
+        }
+
+        const sfwSrc = hasSfwFile ? URL.createObjectURL(sfwFile) : '';
+        const nsfwSrc = hasNsfwFile ? URL.createObjectURL(nsfwFile) : '';
+        const primaryFile = hasNsfwFile ? nsfwFile : sfwFile;
+
+        addMedia({
+            id: createId('media'),
+            src: nsfwSrc || sfwSrc,
+            alt: primaryFile.name,
+            artist: nsfwArtist || sfwArtist,
+            nsfw: Boolean(nsfwSrc),
+            sfwSrc: nsfwSrc && sfwSrc ? sfwSrc : '',
+            sfwArtist: sfwArtist,
+            nsfwArtist: nsfwArtist
+        });
+
+        uploadImageModal.close();
+    });
+
+    uploadImageModal.addEventListener('close', function () {
+        uploadImageForm.reset();
+        renderImagePreview(uploadSfwPreview, '', 'No SFW image selected');
+        renderImagePreview(uploadNsfwPreview, '', 'No NSFW image selected');
+    });
+
+    uploadImageModal.addEventListener('click', function (event) {
+        if (event.target.matches('[data-close-upload-modal]')) {
+            uploadImageModal.close();
+        }
+    });
+
+    bulkUploadFileInput.addEventListener('change', function () {
+        renderBulkUploadList(Array.from(bulkUploadFileInput.files));
+    });
+
     bulkUploadForm.addEventListener('submit', function (event) {
         event.preventDefault();
 
-        const images = bulkUploadFiles.map(function (file, index) {
+        bulkUploadFiles.forEach(function (file, index) {
             const artistInput = bulkUploadList.querySelector('[data-bulk-artist-input="' + index + '"]');
             const nsfwInput = bulkUploadList.querySelector('[data-bulk-nsfw-input="' + index + '"]');
-            const artist = artistInput ? artistInput.value.trim() : '';
-            const nsfw = nsfwInput ? nsfwInput.checked : false;
 
-            return createGalleryImage(URL.createObjectURL(file), file.name, artist, nsfw);
+            addMedia({
+                id: createId('media'),
+                src: URL.createObjectURL(file),
+                alt: file.name,
+                artist: artistInput ? artistInput.value.trim() : '',
+                nsfw: nsfwInput ? nsfwInput.checked : false,
+                sfwSrc: '',
+                sfwArtist: '',
+                nsfwArtist: artistInput ? artistInput.value.trim() : ''
+            });
         });
 
-        appendImagesInRows(images);
         bulkUploadModal.close();
     });
 
@@ -1135,132 +1484,65 @@
         }
     });
 
-    uploadImageForm.addEventListener('submit', function (event) {
-        event.preventDefault();
-
-        if (!uploadTargetRow) {
-            return;
-        }
-
-        const dropzone = uploadTargetRow.querySelector('[data-dropzone]');
-        const sfwFile = uploadImageSfwFileInput.files[0];
-        const nsfwFile = uploadImageNsfwFileInput.files[0];
-        const sfwArtist = uploadImageSfwArtistInput.value.trim();
-        const nsfwArtist = uploadImageNsfwArtistInput.value.trim();
-
-        if ((!sfwFile || !sfwFile.type.startsWith('image/')) && (!nsfwFile || !nsfwFile.type.startsWith('image/'))) {
-            return;
-        }
-
-        const sfwSrc = sfwFile && sfwFile.type.startsWith('image/') ? URL.createObjectURL(sfwFile) : '';
-        const nsfwSrc = nsfwFile && nsfwFile.type.startsWith('image/') ? URL.createObjectURL(nsfwFile) : '';
-        const primaryFile = nsfwFile && nsfwSrc ? nsfwFile : sfwFile;
-
-        dropzone.append(createGalleryImage(
-            nsfwSrc || sfwSrc,
-            primaryFile.name,
-            nsfwArtist || sfwArtist,
-            Boolean(nsfwSrc),
-            nsfwSrc && sfwSrc ? sfwSrc : '',
-            sfwArtist,
-            nsfwArtist
-        ));
-        updateAddGalleryRowState();
-
-        uploadImageForm.reset();
-        renderImagePreview(uploadSfwPreview, '', 'No SFW image selected');
-        renderImagePreview(uploadNsfwPreview, '', 'No NSFW image selected');
-        uploadTargetRow = null;
-        uploadImageModal.close();
-    });
-
-    uploadImageModal.addEventListener('close', function () {
-        uploadImageForm.reset();
-        renderImagePreview(uploadSfwPreview, '', 'No SFW image selected');
-        renderImagePreview(uploadNsfwPreview, '', 'No NSFW image selected');
-        uploadTargetRow = null;
-    });
-
-    uploadImageModal.addEventListener('click', function (event) {
-        if (event.target.matches('[data-close-upload-modal]')) {
-            uploadImageModal.close();
-        }
-    });
-
     editImageArtistForm.addEventListener('submit', function (event) {
         event.preventDefault();
 
-        if (!editTargetImage) {
+        const media = mediaLibrary.get(editTargetMediaId);
+        if (!media) {
             return;
         }
 
-        editTargetImage.dataset.sfwArtist = editImageSfwArtistInput.value.trim();
-        editTargetImage.dataset.nsfwArtist = editImageNsfwArtistInput.value.trim();
-        editTargetImage.dataset.artist = editTargetImage.dataset.nsfwArtist || editTargetImage.dataset.sfwArtist;
+        media.sfwArtist = editImageSfwArtistInput.value.trim();
+        media.nsfwArtist = editImageNsfwArtistInput.value.trim();
+        media.artist = media.nsfwArtist || media.sfwArtist;
 
         const sfwFile = editImageSfwFileInput.files[0];
         const nsfwFile = editImageNsfwFileInput.files[0];
-        const image = editTargetImage.querySelector('img');
 
         if (editRemoveSfw) {
-            editTargetImage.dataset.sfwSrc = '';
-            editTargetImage.dataset.sfwArtist = '';
-            editTargetImage.dataset.hasSfwVersion = 'false';
+            media.sfwSrc = '';
+            media.sfwArtist = '';
         }
 
-        if (editRemoveNsfw && image) {
-            const sfwSrc = editTargetImage.dataset.sfwSrc;
-
-            if (sfwSrc) {
-                image.src = sfwSrc;
-                image.alt = 'SFW image';
-                editTargetImage.dataset.sfwSrc = '';
-                editTargetImage.dataset.hasSfwVersion = 'false';
-                editTargetImage.dataset.nsfw = 'false';
-            }
+        if (editRemoveNsfw && media.sfwSrc) {
+            media.src = media.sfwSrc;
+            media.sfwSrc = '';
+            media.nsfw = false;
+            media.alt = 'SFW image';
         }
 
         if (sfwFile && sfwFile.type.startsWith('image/')) {
             const sfwSrc = URL.createObjectURL(sfwFile);
 
-            if (editTargetImage.dataset.nsfw === 'true' || (nsfwFile && nsfwFile.type.startsWith('image/'))) {
-                editTargetImage.dataset.hasSfwVersion = 'true';
-                editTargetImage.dataset.sfwSrc = sfwSrc;
-            } else if (image) {
-                image.src = sfwSrc;
-                image.alt = sfwFile.name;
-                editTargetImage.dataset.hasSfwVersion = 'false';
-                editTargetImage.dataset.sfwSrc = '';
-                editTargetImage.dataset.nsfw = 'false';
+            if (media.nsfw || (nsfwFile && nsfwFile.type.startsWith('image/'))) {
+                media.sfwSrc = sfwSrc;
+            } else {
+                media.src = sfwSrc;
+                media.alt = sfwFile.name;
+                media.nsfw = false;
+                media.sfwSrc = '';
             }
         }
 
-        if (nsfwFile && nsfwFile.type.startsWith('image/') && image) {
-            if (editTargetImage.dataset.nsfw !== 'true' && !editTargetImage.dataset.sfwSrc) {
-                editTargetImage.dataset.hasSfwVersion = 'true';
-                editTargetImage.dataset.sfwSrc = image.src;
+        if (nsfwFile && nsfwFile.type.startsWith('image/')) {
+            if (!media.nsfw && !media.sfwSrc) {
+                media.sfwSrc = media.src;
             }
 
-            image.src = URL.createObjectURL(nsfwFile);
-            image.alt = nsfwFile.name;
-            editTargetImage.dataset.nsfw = 'true';
+            media.src = URL.createObjectURL(nsfwFile);
+            media.alt = nsfwFile.name;
+            media.nsfw = true;
         }
 
-        if (!editTargetImage.dataset.sfwSrc && editTargetImage.dataset.nsfw !== 'true') {
-            editTargetImage.dataset.hasSfwVersion = 'false';
-        }
-
-        editTargetImage.dataset.artist = editTargetImage.dataset.nsfwArtist || editTargetImage.dataset.sfwArtist;
-        updateGalleryImageTitle(editTargetImage);
-        updateImageBadges(editTargetImage);
         editImageArtistModal.close();
+        renderGallery();
     });
 
     editImageArtistModal.addEventListener('close', function () {
         editImageArtistForm.reset();
         renderImagePreview(editSfwPreview, '', 'No SFW image uploaded');
         renderImagePreview(editNsfwPreview, '', 'No NSFW image uploaded');
-        editTargetImage = null;
+        editTargetMediaId = null;
         editRemoveSfw = false;
         editRemoveNsfw = false;
     });
@@ -1271,16 +1553,21 @@
             return;
         }
 
+        const media = mediaLibrary.get(editTargetMediaId);
+        if (!media) {
+            return;
+        }
+
         if (event.target.matches('[data-remove-edit-sfw]')) {
             editRemoveSfw = !editRemoveSfw;
-            renderImagePreview(editSfwPreview, editRemoveSfw ? '' : getImageVersionSources(editTargetImage).sfwSrc, 'SFW image will be removed');
+            renderImagePreview(editSfwPreview, editRemoveSfw ? '' : getImageVersionSources(media).sfwSrc, 'SFW image will be removed');
             updateEditImageRemovalState();
             return;
         }
 
         if (event.target.matches('[data-remove-edit-nsfw]')) {
             editRemoveNsfw = !editRemoveNsfw;
-            renderImagePreview(editNsfwPreview, editRemoveNsfw ? '' : getImageVersionSources(editTargetImage).nsfwSrc, 'NSFW image will be removed');
+            renderImagePreview(editNsfwPreview, editRemoveNsfw ? '' : getImageVersionSources(media).nsfwSrc, 'NSFW image will be removed');
             updateEditImageRemovalState();
         }
     });
@@ -1291,122 +1578,62 @@
             return;
         }
 
-        if (event.target.matches('[data-confirm-remove-row]') && removeTargetRow) {
-            removeGalleryRow(removeTargetRow);
+        if (event.target.matches('[data-confirm-remove-row]') && removeTargetRowIndex !== null) {
+            getActiveLayout().rows.splice(removeTargetRowIndex, 1);
             removeRowModal.close();
+            renderGallery();
         }
     });
 
     removeRowModal.addEventListener('close', function () {
-        removeTargetRow = null;
+        removeTargetRowIndex = null;
     });
 
-    galleryRows.addEventListener('click', function (event) {
-        const uploadButton = event.target.closest('[data-open-upload-modal]');
-        const editArtistButton = event.target.closest('[data-edit-image-artist]');
-        const removeImageButton = event.target.closest('[data-remove-image]');
-        const removeRowButton = event.target.closest('[data-remove-row]');
-
-        if (uploadButton) {
-            uploadTargetRow = uploadButton.closest('[data-gallery-row]');
-            uploadImageModal.showModal();
-            uploadImageSfwFileInput.focus();
-            return;
-        }
-
-        if (editArtistButton) {
-            editTargetImage = editArtistButton.closest('.gallery-image');
-            editImageSfwArtistInput.value = editTargetImage.dataset.sfwArtist || '';
-            editImageNsfwArtistInput.value = editTargetImage.dataset.nsfwArtist || '';
-            const image = editTargetImage.querySelector('img');
-            const imageSrc = image ? image.src : '';
-            const sfwSrc = editTargetImage.dataset.sfwSrc || (editTargetImage.dataset.nsfw === 'true' ? '' : imageSrc);
-            const nsfwSrc = editTargetImage.dataset.nsfw === 'true' ? imageSrc : '';
-            editRemoveSfw = false;
-            editRemoveNsfw = false;
-            renderImagePreview(editSfwPreview, sfwSrc, 'No SFW image uploaded');
-            renderImagePreview(editNsfwPreview, nsfwSrc, 'No NSFW image uploaded');
-            updateEditImageRemovalState();
-            editImageArtistModal.showModal();
-            editImageSfwFileInput.focus();
-            return;
-        }
-
-        if (removeImageButton) {
-            removeImageButton.closest('.gallery-image').remove();
-            updateAddGalleryRowState();
-            return;
-        }
-
-        if (removeRowButton) {
-            const row = removeRowButton.closest('[data-gallery-row]');
-
-            if (row.querySelector('.gallery-image')) {
-                removeTargetRow = row;
-                removeRowModal.showModal();
-                return;
-            }
-
-            removeGalleryRow(row);
-        }
+    transferCharacterButton.addEventListener('click', function () {
+        transferCharacterModal.showModal();
+        transferUsernameInput.focus();
     });
 
-    galleryRows.addEventListener('dragstart', function (event) {
-        const image = event.target.closest('.gallery-image');
-
-        if (!image) {
-            return;
-        }
-
-        draggedImage = image;
-        image.setAttribute('aria-grabbed', 'true');
-        event.dataTransfer.effectAllowed = 'move';
-    });
-
-    galleryRows.addEventListener('dragend', function () {
-        if (draggedImage) {
-            draggedImage.removeAttribute('aria-grabbed');
-        }
-
-        draggedImage = null;
-        galleryRows.querySelectorAll('[data-dropzone]').forEach(function (dropzone) {
-            dropzone.classList.remove('drag-over');
-        });
-        updateAddGalleryRowState();
-    });
-
-    galleryRows.addEventListener('dragover', function (event) {
-        const dropzone = event.target.closest('[data-dropzone]');
-
-        if (!dropzone || !draggedImage) {
-            return;
-        }
-
+    transferCharacterForm.addEventListener('input', updateTransferButtonState);
+    transferCharacterForm.addEventListener('change', updateTransferButtonState);
+    transferCharacterForm.addEventListener('submit', function (event) {
         event.preventDefault();
-        const nextImage = getImageAfterPointer(dropzone, event.clientX, event.clientY);
-
-        if (nextImage) {
-            dropzone.insertBefore(draggedImage, nextImage);
-        } else {
-            dropzone.append(draggedImage);
+        transferCharacterModal.close();
+    });
+    transferCharacterModal.addEventListener('click', function (event) {
+        if (event.target.matches('[data-close-transfer-modal]')) {
+            transferCharacterModal.close();
         }
     });
-
-    galleryRows.addEventListener('dragenter', function (event) {
-        const dropzone = event.target.closest('[data-dropzone]');
-
-        if (dropzone && draggedImage) {
-            dropzone.classList.add('drag-over');
-        }
+    transferCharacterModal.addEventListener('close', function () {
+        transferCharacterForm.reset();
+        updateTransferButtonState();
     });
 
-    galleryRows.addEventListener('dragleave', function (event) {
-        const dropzone = event.target.closest('[data-dropzone]');
+    deleteCharacterButton.addEventListener('click', function () {
+        deleteCharacterModal.showModal();
+        deleteCharacterConfirmNameInput.focus();
+    });
 
-        if (dropzone && !dropzone.contains(event.relatedTarget)) {
-            dropzone.classList.remove('drag-over');
+    deleteCharacterForm.addEventListener('input', updateDeleteButtonState);
+    deleteCharacterForm.addEventListener('change', updateDeleteButtonState);
+    deleteCharacterForm.addEventListener('submit', function (event) {
+        event.preventDefault();
+        deleteCharacterModal.close();
+    });
+    deleteCharacterModal.addEventListener('click', function (event) {
+        if (event.target.matches('[data-close-delete-modal]')) {
+            deleteCharacterModal.close();
         }
     });
+    deleteCharacterModal.addEventListener('close', function () {
+        deleteCharacterForm.reset();
+        updateDeleteButtonState();
+    });
+
+    renderGallery();
+    updateTransferButtonState();
+    updateDeleteButtonState();
 </script>
 
 </body>

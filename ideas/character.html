@@ -140,6 +140,21 @@
     <p class="mb-6 text-center font-light">Some text goes here. This is a lot of text that fits in this area,
         and is placeholder text that the user can write in here.</p>
 
+    <fieldset aria-label="Gallery sort options" class="mb-6 flex flex-wrap justify-center gap-2">
+        <label class="cursor-pointer">
+            <input checked class="peer sr-only" name="gallery-sort" type="radio" value="default"/>
+            <span class="btn btn-sm btn-outline rounded-full peer-checked:border-white peer-checked:bg-white peer-checked:text-black">default</span>
+        </label>
+        <label class="cursor-pointer">
+            <input class="peer sr-only" name="gallery-sort" type="radio" value="references"/>
+            <span class="btn btn-sm btn-outline rounded-full peer-checked:border-white peer-checked:bg-white peer-checked:text-black">references</span>
+        </label>
+        <label class="cursor-pointer">
+            <input class="peer sr-only" name="gallery-sort" type="radio" value="nsfw"/>
+            <span class="btn btn-sm btn-outline rounded-full peer-checked:border-white peer-checked:bg-white peer-checked:text-black">nsfw</span>
+        </label>
+    </fieldset>
+
     <section class="justified-gallery">
         <!-- Single image row -->
         <div class="justified-row">
@@ -421,7 +436,32 @@
         });
     }
 
+    function initGallerySortOptions() {
+        const sortInputs = Array.from(document.querySelectorAll('input[name="gallery-sort"]'));
+        const validSortValues = sortInputs.map(function (input) {
+            return input.value;
+        });
+        const requestedSort = window.location.hash.replace('#', '');
+
+        if (validSortValues.includes(requestedSort)) {
+            sortInputs.forEach(function (input) {
+                input.checked = input.value === requestedSort;
+            });
+        } else if (!window.location.hash) {
+            history.replaceState(null, '', '#default');
+        }
+
+        sortInputs.forEach(function (input) {
+            input.addEventListener('change', function () {
+                if (input.checked) {
+                    history.replaceState(null, '', '#' + input.value);
+                }
+            });
+        });
+    }
+
     waitForGalleryImages(resizeJustifiedGallery);
+    initGallerySortOptions();
     initLightbox();
 
     window.addEventListener('resize', resizeJustifiedGallery);
