@@ -14,7 +14,7 @@
             opacity: 0.5;
         }
 
-        .media-pool-item[aria-disabled="true"] {
+        .media-pool-item[aria-disabled="true"] [data-media-thumb] {
             cursor: not-allowed;
             filter: grayscale(1);
             opacity: 0.35;
@@ -25,7 +25,7 @@
             outline-offset: 4px;
         }
 
-        .gallery-dropzone.drag-over::before {
+        .gallery-dropzone.drag-over:empty::before {
             color: currentColor;
             content: "Drop image in this row";
             font-size: 0.75rem;
@@ -33,8 +33,119 @@
             width: 100%;
         }
 
-        .gallery-tab-panel {
-            box-shadow: inset 0 1px 0 hsl(var(--bc) / 0.08);
+        .gallery-drop-marker {
+            align-self: stretch;
+            background: #ffffff;
+            border-radius: 999px;
+            box-shadow: 0 0 0 1px var(--color-base-100), 0 0 12px color-mix(in oklab, var(--color-primary) 80%, transparent);
+            flex: 0 0 2px;
+            min-height: 6rem;
+            pointer-events: none;
+        }
+
+        .gallery-drag-ghost {
+            align-items: center;
+            background: var(--color-base-100);
+            border: 2px solid #ffffff;
+            border-radius: 0.375rem;
+            box-shadow: 0 0 12px color-mix(in oklab, var(--color-primary) 70%, transparent);
+            color: var(--color-base-content);
+            display: flex;
+            font-size: 0.7rem;
+            font-weight: 700;
+            height: 3rem;
+            justify-content: center;
+            left: -9999px;
+            pointer-events: none;
+            position: fixed;
+            top: -9999px;
+            width: 3rem;
+        }
+
+        .gallery-layout-tabs {
+            gap: 0.25rem;
+            scrollbar-width: thin;
+        }
+
+        .gallery-layout-tab {
+            align-items: center;
+            border: 1px solid var(--color-base-300);
+            border-bottom-color: transparent;
+            border-radius: var(--radius-box, 0.5rem) var(--radius-box, 0.5rem) 0 0;
+            display: inline-flex;
+            gap: 0.5rem;
+            min-height: 2.75rem;
+            padding: 0 0.75rem;
+            position: relative;
+            top: 1px;
+            white-space: nowrap;
+        }
+
+        .gallery-layout-tab:not(.tab-active) {
+            background: var(--color-base-300);
+            border-bottom-color: var(--color-base-300);
+            color: color-mix(in oklab, var(--color-base-content) 72%, transparent);
+        }
+
+        .gallery-layout-tab.tab-active {
+            background: var(--color-base-200);
+            color: var(--color-base-content);
+            z-index: 1;
+        }
+
+        .gallery-layout-tab-add {
+            cursor: pointer;
+            justify-content: center;
+            min-width: 2.75rem;
+            padding: 0;
+        }
+
+        .gallery-layout-tab-button {
+            align-items: center;
+            align-self: stretch;
+            background: transparent;
+            border: 0;
+            color: inherit;
+            cursor: pointer;
+            display: flex;
+            font: inherit;
+            padding: 0;
+        }
+
+        .gallery-layout-tab-remove {
+            background: transparent;
+            border-color: transparent;
+            color: color-mix(in oklab, var(--color-base-content) 58%, transparent);
+            min-height: 1.5rem;
+            height: 1.5rem;
+            width: 1.5rem;
+        }
+
+        .gallery-layout-tab-remove:hover,
+        .gallery-layout-tab-remove:focus-visible {
+            background: var(--color-error);
+            border-color: var(--color-error);
+            color: var(--color-error-content);
+        }
+
+        .gallery-layout-tab-edit {
+            background: transparent;
+            border-color: transparent;
+            color: color-mix(in oklab, var(--color-base-content) 58%, transparent);
+            min-height: 1.5rem;
+            height: 1.5rem;
+            width: 1.5rem;
+        }
+
+        .gallery-layout-tab-edit:hover,
+        .gallery-layout-tab-edit:focus-visible {
+            background: var(--color-base-content);
+            border-color: var(--color-base-content);
+            color: var(--color-base-100);
+        }
+
+        .gallery-layout-panel {
+            border-top-left-radius: 0;
         }
     </style>
 </head>
@@ -72,7 +183,7 @@
                 <div class="w-10 rounded-full">
                     <img
                             alt="Profile"
-                            src="https://ui-avatars.com/api/?name=R&background=ff0000&color=ffffff"
+                            src="https://placehold.co/150x150?text=Profile"
                     />
                 </div>
             </summary>
@@ -95,7 +206,7 @@
             <img
                     alt="Current profile image"
                     class="h-14 w-14 shrink-0 rounded object-cover sm:h-16 sm:w-16"
-                    src="https://razeth.monster/wp-content/uploads/2026/04/razref.png"
+                    src="https://placehold.co/150x150?text=Character"
             />
             <h1 class="min-w-0 text-4xl font-bold sm:text-5xl">Super long character name here</h1>
         </div>
@@ -152,7 +263,8 @@
         <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
                 <h2 class="text-2xl font-bold">Gallery Sorting</h2>
-                <p class="text-sm text-base-content/70">Use the media library once per tag, then arrange each tag into gallery rows.</p>
+                <p class="text-sm text-base-content/70">Use the media library once per tag, then arrange each tag into
+                    gallery rows.</p>
             </div>
 
             <div class="flex flex-wrap items-center justify-end gap-3">
@@ -180,7 +292,6 @@
             <div class="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                 <div>
                     <h3 class="text-lg font-semibold">All Media</h3>
-                    <p class="text-sm text-base-content/70">Drag from here into the active tag rows. Used images are dimmed for this tag only.</p>
                 </div>
                 <span class="badge badge-neutral" id="all-media-count">0 media</span>
             </div>
@@ -188,39 +299,36 @@
             <div class="flex flex-wrap gap-3" id="all-media-pool"></div>
         </div>
 
-        <div class="rounded-box border border-base-300 bg-base-200 p-4">
-            <div class="mb-4">
+        <div>
+            <div class="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                 <div class="min-w-0">
                     <h3 class="text-lg font-semibold">Tag Gallery Layouts</h3>
-                    <p class="text-sm text-base-content/70">Each tab has its own row order and can reuse media from other tabs.</p>
+                    <p class="text-sm text-base-content/70">Each tab has its own row order and can reuse media from
+                        other tabs.</p>
                 </div>
             </div>
 
-            <div class="gallery-tab-panel mb-5 mt-5 rounded-box border border-base-300 bg-base-100 p-3">
-                <div class="mb-2 flex items-center justify-between gap-3">
-                    <span class="text-sm font-semibold text-base-content/80">Gallery tabs</span>
-                    <div class="flex shrink-0 gap-2">
-                        <button aria-label="Add gallery tab" class="btn btn-sm btn-square btn-secondary" id="add-gallery-tag" type="button">+</button>
-                        <button aria-label="Remove current gallery tab" class="btn btn-sm btn-square btn-error btn-outline" id="remove-gallery-tag" type="button">-</button>
+            <div aria-label="Gallery layout tabs" class="gallery-layout-tabs flex overflow-x-auto" id="gallery-tag-tabs"
+                 role="tablist"></div>
+
+            <div class="gallery-layout-panel rounded-box border border-base-300 bg-base-200 p-4">
+                <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                        <h4 class="font-semibold" id="active-gallery-tag-title">default</h4>
+                        <p class="text-sm text-base-content/70" id="active-gallery-tag-meta">0 rows</p>
                     </div>
+                    <button class="btn btn-sm btn-primary" id="add-gallery-row" type="button">Add Row</button>
                 </div>
 
-                <div class="tabs tabs-lift overflow-x-auto" id="gallery-tag-tabs"></div>
+                <div class="space-y-4" id="gallery-rows"></div>
             </div>
-
-            <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                    <h4 class="font-semibold" id="active-gallery-tag-title">default</h4>
-                    <p class="text-sm text-base-content/70" id="active-gallery-tag-meta">0 rows</p>
-                </div>
-                <button class="btn btn-sm btn-primary" id="add-gallery-row" type="button">Add Row</button>
-            </div>
-
-            <div class="space-y-4" id="gallery-rows"></div>
         </div>
     </section>
 
-    <div class="mt-8 flex justify-end">
+    <div class="mt-8 flex flex-col items-end gap-2">
+        <p class="text-sm text-error" hidden id="save-character-settings-warning">
+            Delete unused media before saving changes.
+        </p>
         <button class="btn btn-primary" id="save-character-settings" type="submit">Save Changes</button>
     </div>
 </main>
@@ -380,10 +488,46 @@
     </form>
 </dialog>
 
+<dialog class="modal" id="rename-gallery-tag-modal">
+    <div class="modal-box">
+        <form method="dialog">
+            <button aria-label="Close rename tab dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">
+                x
+            </button>
+        </form>
+
+        <h2 class="text-xl font-bold">Rename Gallery Tab</h2>
+
+        <form class="mt-5 space-y-4" id="rename-gallery-tag-form">
+            <fieldset class="fieldset">
+                <label class="fieldset-label" for="rename-gallery-tag-name">Tab Name</label>
+                <input
+                        class="input input-bordered w-full"
+                        id="rename-gallery-tag-name"
+                        maxlength="32"
+                        name="rename-gallery-tag-name"
+                        required
+                        type="text"
+                />
+            </fieldset>
+
+            <div class="modal-action">
+                <button class="btn btn-ghost" data-close-rename-gallery-tag-modal type="button">Cancel</button>
+                <button class="btn btn-primary" type="submit">Rename Tab</button>
+            </div>
+        </form>
+    </div>
+
+    <form class="modal-backdrop" method="dialog">
+        <button>close</button>
+    </form>
+</dialog>
+
 <dialog class="modal" id="delete-media-modal">
     <div class="modal-box">
         <form method="dialog">
-            <button aria-label="Close delete media dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">
+            <button aria-label="Close delete media dialog"
+                    class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">
                 x
             </button>
         </form>
@@ -414,7 +558,7 @@
 
         <h2 class="text-xl font-bold">Delete Tab?</h2>
         <p class="mt-3 text-sm text-base-content/80">
-            This removes the current gallery tab and its custom row order. The media stays in All Media.
+            This removes that gallery tab and its custom row order. The media stays in All Media.
         </p>
 
         <div class="modal-action">
@@ -658,11 +802,12 @@
     const activeGalleryTagTitle = document.getElementById('active-gallery-tag-title');
     const activeGalleryTagMeta = document.getElementById('active-gallery-tag-meta');
     const addGalleryRowButton = document.getElementById('add-gallery-row');
-    const addGalleryTagButton = document.getElementById('add-gallery-tag');
-    const removeGalleryTagButton = document.getElementById('remove-gallery-tag');
     const galleryTagModal = document.getElementById('gallery-tag-modal');
     const galleryTagForm = document.getElementById('gallery-tag-form');
     const galleryTagNameInput = document.getElementById('gallery-tag-name');
+    const renameGalleryTagModal = document.getElementById('rename-gallery-tag-modal');
+    const renameGalleryTagForm = document.getElementById('rename-gallery-tag-form');
+    const renameGalleryTagNameInput = document.getElementById('rename-gallery-tag-name');
     const deleteMediaModal = document.getElementById('delete-media-modal');
     const deleteGalleryTagModal = document.getElementById('delete-gallery-tag-modal');
     const uploadMediaButton = document.getElementById('upload-media-button');
@@ -688,6 +833,7 @@
     const uploadImageNsfwFileInput = document.getElementById('gallery-image-nsfw-file');
     const uploadImageSfwArtistInput = document.getElementById('gallery-image-sfw-artist');
     const uploadImageNsfwArtistInput = document.getElementById('gallery-image-nsfw-artist');
+    const saveCharacterSettingsWarning = document.getElementById('save-character-settings-warning');
     const uploadSfwPreview = document.querySelector('[data-upload-sfw-preview]');
     const uploadNsfwPreview = document.querySelector('[data-upload-nsfw-preview]');
     const bulkUploadModal = document.getElementById('bulk-upload-modal');
@@ -710,46 +856,54 @@
     const tagLayouts = new Map();
     let activeTagId = 'default';
     let draggedItem = null;
+    let pendingDropMarker = null;
+    let dropMarkerFrame = null;
     let removeTargetRowIndex = null;
     let pendingDeleteMediaId = null;
     let pendingDeleteTagId = null;
+    let pendingRenameTagId = null;
     let bulkUploadFiles = [];
     let editTargetMediaId = null;
     let editRemoveSfw = false;
     let editRemoveNsfw = false;
+    const dropMarker = document.createElement('div');
+    dropMarker.className = 'gallery-drop-marker';
+    const dragGhost = document.createElement('div');
+    dragGhost.className = 'gallery-drag-ghost';
+    dragGhost.textContent = 'Image';
 
     const seedMedia = [
         {
             id: 'media-razref',
-            src: 'https://razeth.monster/wp-content/uploads/2026/04/razref.png',
+            src: 'https://placehold.co/150x150?text=Image+1',
             alt: 'Gallery image 1',
             artist: '',
             nsfw: true
         },
         {
             id: 'media-collage',
-            src: 'https://razeth.monster/wp-content/uploads/2025/11/RazHeadCollage_MomobedaNov2025.png',
+            src: 'https://placehold.co/150x150?text=Image+2',
             alt: 'Gallery image 2',
             artist: '',
             nsfw: false
         },
         {
             id: 'media-turnaround',
-            src: 'https://razeth.monster/wp-content/uploads/2025/11/RazHeadTurnaround_MomobedaNov2025_FullColour.png',
+            src: 'https://placehold.co/150x150?text=Image+3',
             alt: 'Gallery image 3',
             artist: '',
             nsfw: false
         },
         {
             id: 'media-cover',
-            src: 'https://razeth.monster/wp-content/uploads/2025/11/Brown_Clean_Minimalist_Fashion_Magazine_Cover_Magazine_Cover_.png',
+            src: 'https://placehold.co/150x150?text=Image+4',
             alt: 'Gallery image 4',
             artist: '',
             nsfw: true
         },
         {
             id: 'media-thigh',
-            src: 'https://razeth.monster/wp-content/uploads/2025/11/RazThighUpFlatColourSketch.png',
+            src: 'https://placehold.co/150x150?text=Image+5',
             alt: 'Gallery image 5',
             artist: '',
             nsfw: true
@@ -766,6 +920,34 @@
 
     function getUsedMediaIds(tagId) {
         return new Set(tagLayouts.get(tagId).rows.flat());
+    }
+
+    function getMediaUsageTabCount(mediaId) {
+        let usageCount = 0;
+
+        tagLayouts.forEach(function (layout) {
+            const isUsedInTab = layout.rows.some(function (row) {
+                return row.includes(mediaId);
+            });
+
+            if (isUsedInTab) {
+                usageCount += 1;
+            }
+        });
+
+        return usageCount;
+    }
+
+    function getUnusedMediaCount() {
+        let unusedCount = 0;
+
+        mediaLibrary.forEach(function (media) {
+            if (getMediaUsageTabCount(media.id) === 0) {
+                unusedCount += 1;
+            }
+        });
+
+        return unusedCount;
     }
 
     function normalizeTagName(name) {
@@ -798,22 +980,39 @@
         renderImagePreview(preview, file && file.type.startsWith('image/') ? URL.createObjectURL(file) : '', emptyText);
     }
 
-    function createNsfwImageBadge(media) {
+    function createImageRatingBadge(media) {
         const badge = document.createElement('span');
-        badge.className = 'absolute bottom-1 left-1 rounded bg-error px-1.5 py-0.5 text-[0.65rem] font-bold leading-none text-error-content shadow-md';
-        badge.textContent = media.sfwSrc ? '18+ with alt' : '18+';
-        badge.hidden = !media.nsfw && !media.sfwSrc;
+        badge.className = 'absolute bottom-1 left-1 rounded px-1.5 py-0.5 text-[0.65rem] font-bold leading-none shadow-md';
+
+        if (media.nsfw) {
+            if (media.sfwSrc) {
+                badge.className += ' bg-purple-600 text-white';
+                badge.textContent = '18+ with SFW';
+                return badge;
+            }
+
+            badge.className += ' bg-error text-error-content';
+            badge.textContent = '18+';
+            return badge;
+        }
+
+        badge.className += ' bg-success text-success-content';
+        badge.textContent = 'SFW';
         return badge;
     }
 
     function createMediaThumb(media, variant) {
         const item = document.createElement('div');
         item.className = variant === 'pool'
-            ? 'media-pool-item group relative aspect-square w-[calc((100%_-_1.5rem)/3)] cursor-grab overflow-hidden rounded bg-base-300 active:cursor-grabbing sm:h-24 sm:w-24'
+            ? 'media-pool-item group w-[calc((100%_-_1.5rem)/3)] cursor-grab active:cursor-grabbing sm:w-24'
             : 'gallery-image group relative aspect-square w-[calc((100%_-_1.5rem)/3)] cursor-grab overflow-hidden rounded bg-base-300 active:cursor-grabbing sm:h-24 sm:w-24';
         item.dataset.mediaId = media.id;
         item.draggable = true;
         item.tabIndex = 0;
+
+        const thumb = document.createElement('div');
+        thumb.className = 'relative aspect-square overflow-hidden rounded bg-base-300';
+        thumb.dataset.mediaThumb = '';
 
         const image = document.createElement('img');
         image.alt = media.alt;
@@ -846,7 +1045,20 @@
         removeButton.type = 'button';
         removeButton.textContent = 'x';
 
-        item.append(image, editButton, removeButton, createNsfwImageBadge(media));
+        thumb.append(image, editButton, removeButton, createImageRatingBadge(media));
+
+        if (variant === 'pool') {
+            const usageCount = getMediaUsageTabCount(media.id);
+            const usage = document.createElement('div');
+            usage.className = 'mt-1 rounded px-1.5 py-1 text-center text-[0.65rem] font-bold leading-tight ' + (usageCount > 0 ? 'bg-success text-success-content' : 'bg-error text-error-content');
+            usage.textContent = usageCount > 0
+                ? 'Used on ' + usageCount + (usageCount === 1 ? ' tab' : ' tabs')
+                : 'Unused';
+            item.append(thumb, usage);
+            return item;
+        }
+
+        item.append(thumb);
         return item;
     }
 
@@ -869,15 +1081,59 @@
         galleryTagTabs.replaceChildren();
 
         tagLayouts.forEach(function (layout, tagId) {
-            const tab = document.createElement('button');
-            tab.className = 'tab h-10 px-4' + (tagId === activeTagId ? ' tab-active' : '');
-            tab.dataset.tagId = tagId;
-            tab.type = 'button';
-            tab.textContent = layout.name;
+            const tab = document.createElement('div');
+            tab.className = 'gallery-layout-tab' + (tagId === activeTagId ? ' tab-active' : '');
+
+            const labelButton = document.createElement('button');
+            labelButton.className = 'gallery-layout-tab-button';
+            labelButton.dataset.tagId = tagId;
+            labelButton.role = 'tab';
+            labelButton.setAttribute('aria-selected', tagId === activeTagId ? 'true' : 'false');
+            labelButton.type = 'button';
+            labelButton.textContent = layout.name;
+            tab.append(labelButton);
+
+            if (tagId !== 'default') {
+                const editButton = document.createElement('button');
+                editButton.ariaLabel = 'Rename ' + layout.name + ' gallery tab';
+                editButton.className = 'gallery-layout-tab-edit btn btn-xs btn-circle btn-ghost';
+                editButton.dataset.renameGalleryTag = tagId;
+                editButton.type = 'button';
+                editButton.innerHTML = `
+                    <svg aria-hidden="true"
+                         class="h-3 w-3"
+                         fill="none"
+                         stroke="currentColor"
+                         viewBox="0 0 24 24"
+                         xmlns="http://www.w3.org/2000/svg">
+                        <path d="M16.862 3.487a2.1 2.1 0 0 1 2.97 2.97L8.76 17.53 4.5 18.75l1.22-4.26L16.862 3.487z"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              stroke-width="2"/>
+                    </svg>
+                `;
+                tab.append(editButton);
+
+                const removeButton = document.createElement('button');
+                removeButton.ariaLabel = 'Remove ' + layout.name + ' gallery tab';
+                removeButton.className = 'gallery-layout-tab-remove btn btn-xs btn-circle btn-error btn-outline';
+                removeButton.dataset.removeGalleryTag = tagId;
+                removeButton.type = 'button';
+                removeButton.textContent = '-';
+                tab.append(removeButton);
+            }
+
             galleryTagTabs.append(tab);
         });
 
-        removeGalleryTagButton.disabled = activeTagId === 'default';
+        const addTab = document.createElement('button');
+        addTab.ariaLabel = 'Add gallery tab';
+        addTab.className = 'gallery-layout-tab gallery-layout-tab-add';
+        addTab.dataset.addGalleryTag = '';
+        addTab.role = 'tab';
+        addTab.type = 'button';
+        addTab.textContent = '+';
+        galleryTagTabs.append(addTab);
     }
 
     function renderRows() {
@@ -921,13 +1177,19 @@
 
         activeGalleryTagTitle.textContent = layout.name;
         activeGalleryTagMeta.textContent = layout.rows.length + (layout.rows.length === 1 ? ' row' : ' rows') + ' / ' + getUsedMediaIds(activeTagId).size + ' images';
-        saveCharacterSettingsButton.disabled = layout.rows.length === 0;
     }
 
     function renderGallery() {
         renderTabs();
         renderRows();
         renderMediaPool();
+
+        const unusedMediaCount = getUnusedMediaCount();
+        saveCharacterSettingsButton.disabled = getActiveLayout().rows.length === 0 || unusedMediaCount > 0;
+        saveCharacterSettingsWarning.hidden = unusedMediaCount === 0;
+        saveCharacterSettingsWarning.textContent = unusedMediaCount === 1
+            ? 'Delete 1 unused media item before saving changes.'
+            : 'Delete ' + unusedMediaCount + ' unused media items before saving changes.';
     }
 
     function addMedia(media) {
@@ -970,35 +1232,123 @@
 
             if (sourceIndex >= 0) {
                 sourceRow.splice(sourceIndex, 1);
-                if (draggedItem.rowIndex === rowIndex && sourceIndex < insertIndex) {
-                    insertIndex -= 1;
-                }
             }
         } else if (getUsedMediaIds(activeTagId).has(mediaId)) {
             return;
         }
 
+        insertIndex = Math.max(0, Math.min(insertIndex, targetRow.length));
         targetRow.splice(insertIndex, 0, mediaId);
         renderGallery();
     }
 
     function getDropIndex(dropzone, x, y) {
-        const images = Array.from(dropzone.querySelectorAll('.gallery-image:not([aria-grabbed="true"])'));
-        let index = images.length;
-
-        images.some(function (image, imageIndex) {
+        const images = Array.from(dropzone.querySelectorAll('.gallery-image:not([aria-grabbed="true"])')).map(function (image, index) {
             const box = image.getBoundingClientRect();
-            const beforeImage = y < box.top + box.height / 2 || (Math.abs(y - box.top - box.height / 2) < box.height / 2 && x < box.left + box.width / 2);
-
-            if (beforeImage) {
-                index = imageIndex;
-                return true;
-            }
-
-            return false;
+            return {
+                box: box,
+                centerX: box.left + box.width / 2,
+                centerY: box.top + box.height / 2,
+                image: image,
+                index: index
+            };
         });
 
-        return index;
+        if (images.length === 0) {
+            return 0;
+        }
+
+        const rows = [];
+
+        images.forEach(function (image) {
+            let row = rows.find(function (candidate) {
+                return Math.abs(candidate.centerY - image.centerY) < image.box.height / 2;
+            });
+
+            if (!row) {
+                row = {
+                    centerY: image.centerY,
+                    images: []
+                };
+                rows.push(row);
+            }
+
+            row.images.push(image);
+            row.centerY = row.images.reduce(function (total, rowImage) {
+                return total + rowImage.centerY;
+            }, 0) / row.images.length;
+        });
+
+        rows.sort(function (a, b) {
+            return a.centerY - b.centerY;
+        });
+
+        const targetRow = rows.reduce(function (closestRow, row) {
+            return Math.abs(row.centerY - y) < Math.abs(closestRow.centerY - y) ? row : closestRow;
+        }, rows[0]);
+
+        targetRow.images.sort(function (a, b) {
+            return a.centerX - b.centerX;
+        });
+
+        const beforeImage = targetRow.images.find(function (image) {
+            return x < image.centerX;
+        });
+
+        if (beforeImage) {
+            return beforeImage.index;
+        }
+
+        return targetRow.images[targetRow.images.length - 1].index + 1;
+    }
+
+    function clearDropMarker() {
+        pendingDropMarker = null;
+
+        if (dropMarkerFrame) {
+            window.cancelAnimationFrame(dropMarkerFrame);
+            dropMarkerFrame = null;
+        }
+
+        dropMarker.remove();
+    }
+
+    function placeDropMarker(dropzone, x, y) {
+        const insertIndex = getDropIndex(dropzone, x, y);
+        const images = Array.from(dropzone.querySelectorAll('.gallery-image:not([aria-grabbed="true"])'));
+        dropzone.insertBefore(dropMarker, images[insertIndex] || null);
+    }
+
+    function scheduleDropMarker(dropzone, x, y) {
+        pendingDropMarker = {
+            dropzone: dropzone,
+            x: x,
+            y: y
+        };
+
+        if (dropMarkerFrame) {
+            return;
+        }
+
+        dropMarkerFrame = window.requestAnimationFrame(function () {
+            const marker = pendingDropMarker;
+            dropMarkerFrame = null;
+
+            if (!marker || !draggedItem || !marker.dropzone.isConnected) {
+                clearDropMarker();
+                return;
+            }
+
+            placeDropMarker(marker.dropzone, marker.x, marker.y);
+        });
+    }
+
+    function setLightweightDragImage(event) {
+        if (!dragGhost.parentElement) {
+            document.body.append(dragGhost);
+        }
+
+        event.dataTransfer.setDragImage(dragGhost, 24, 24);
     }
 
     function clearDragState() {
@@ -1008,6 +1358,8 @@
         document.querySelectorAll('.gallery-dropzone.drag-over').forEach(function (dropzone) {
             dropzone.classList.remove('drag-over');
         });
+        clearDropMarker();
+        dragGhost.remove();
         draggedItem = null;
     }
 
@@ -1164,21 +1516,36 @@
         renderGallery();
     });
 
-    addGalleryTagButton.addEventListener('click', function () {
-        galleryTagModal.showModal();
-        galleryTagNameInput.focus();
-    });
-
-    removeGalleryTagButton.addEventListener('click', function () {
-        if (activeTagId === 'default') {
+    galleryTagTabs.addEventListener('click', function (event) {
+        const addTab = event.target.closest('[data-add-gallery-tag]');
+        if (addTab) {
+            galleryTagModal.showModal();
+            galleryTagNameInput.focus();
             return;
         }
 
-        pendingDeleteTagId = activeTagId;
-        deleteGalleryTagModal.showModal();
-    });
+        const removeTab = event.target.closest('[data-remove-gallery-tag]');
+        if (removeTab) {
+            pendingDeleteTagId = removeTab.dataset.removeGalleryTag;
+            deleteGalleryTagModal.showModal();
+            return;
+        }
 
-    galleryTagTabs.addEventListener('click', function (event) {
+        const renameTab = event.target.closest('[data-rename-gallery-tag]');
+        if (renameTab) {
+            pendingRenameTagId = renameTab.dataset.renameGalleryTag;
+            if (pendingRenameTagId === 'default' || !tagLayouts.has(pendingRenameTagId)) {
+                pendingRenameTagId = null;
+                return;
+            }
+
+            renameGalleryTagNameInput.value = tagLayouts.get(pendingRenameTagId).name;
+            renameGalleryTagModal.showModal();
+            renameGalleryTagNameInput.focus();
+            renameGalleryTagNameInput.select();
+            return;
+        }
+
         const tab = event.target.closest('[data-tag-id]');
         if (!tab) {
             return;
@@ -1224,6 +1591,32 @@
         galleryTagForm.reset();
     });
 
+    renameGalleryTagForm.addEventListener('submit', function (event) {
+        event.preventDefault();
+
+        const layout = tagLayouts.get(pendingRenameTagId);
+        const tagName = normalizeTagName(renameGalleryTagNameInput.value);
+        if (pendingRenameTagId === 'default' || !layout || !tagName) {
+            renameGalleryTagNameInput.focus();
+            return;
+        }
+
+        layout.name = tagName;
+        renameGalleryTagModal.close();
+        renderGallery();
+    });
+
+    renameGalleryTagModal.addEventListener('click', function (event) {
+        if (event.target.matches('[data-close-rename-gallery-tag-modal]')) {
+            renameGalleryTagModal.close();
+        }
+    });
+
+    renameGalleryTagModal.addEventListener('close', function () {
+        pendingRenameTagId = null;
+        renameGalleryTagForm.reset();
+    });
+
     deleteMediaModal.addEventListener('click', function (event) {
         if (event.target.matches('[data-cancel-delete-media]')) {
             deleteMediaModal.close();
@@ -1247,8 +1640,11 @@
         }
 
         if (event.target.matches('[data-confirm-delete-gallery-tag]') && pendingDeleteTagId && pendingDeleteTagId !== 'default') {
+            const deletingActiveTab = pendingDeleteTagId === activeTagId;
             tagLayouts.delete(pendingDeleteTagId);
-            activeTagId = 'default';
+            if (deletingActiveTab) {
+                activeTagId = 'default';
+            }
             deleteGalleryTagModal.close();
             renderGallery();
         }
@@ -1324,6 +1720,7 @@
             };
             poolItem.setAttribute('aria-grabbed', 'true');
             event.dataTransfer.effectAllowed = 'copy';
+            setLightweightDragImage(event);
             return;
         }
 
@@ -1336,6 +1733,7 @@
             };
             rowItem.setAttribute('aria-grabbed', 'true');
             event.dataTransfer.effectAllowed = 'move';
+            setLightweightDragImage(event);
         }
     });
 
@@ -1352,13 +1750,18 @@
         }
 
         event.preventDefault();
+        event.dataTransfer.dropEffect = draggedItem.type === 'pool' ? 'copy' : 'move';
         dropzone.classList.add('drag-over');
+        scheduleDropMarker(dropzone, event.clientX, event.clientY);
     });
 
     galleryRows.addEventListener('dragleave', function (event) {
         const dropzone = event.target.closest('[data-dropzone]');
         if (dropzone && !dropzone.contains(event.relatedTarget)) {
             dropzone.classList.remove('drag-over');
+            if (dropMarker.parentElement === dropzone) {
+                clearDropMarker();
+            }
         }
     });
 
