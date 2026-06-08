@@ -1,0 +1,1316 @@
+<!DOCTYPE html>
+<html data-theme="black" lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta content="width=device-width, initial-scale=1" name="viewport">
+    <title>MyOC Size Tool</title>
+
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet"/>
+    <link href="https://cdn.jsdelivr.net/combine/npm/daisyui@5/theme/black.css" rel="stylesheet"/>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        :root {
+            --ink: #f8f8f2;
+            --muted: #a7a7a2;
+            --paper: #000;
+            --panel: #070707;
+            --panel-soft: #101010;
+            --line: rgba(255, 255, 255, 0.72);
+            --line-soft: rgba(255, 255, 255, 0.16);
+            --accent: #38f5d4;
+            --accent-warm: #ff4d4d;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            background: var(--paper);
+            color: var(--ink);
+            font-family: "Trebuchet MS", Verdana, sans-serif;
+        }
+
+        body {
+            min-width: 320px;
+        }
+
+        button,
+        input {
+            font: inherit;
+        }
+
+        .chart-character,
+        .chart-label,
+        .roster-thumb,
+        .roster-meta {
+            border: 0;
+            background: transparent;
+            color: inherit;
+            font: inherit;
+            cursor: pointer;
+        }
+
+        .navbar {
+            background: #050505;
+        }
+
+        .size-page {
+            min-height: calc(100vh - 65px);
+            padding: clamp(1rem, 2vw, 2rem);
+            background:
+                linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+                linear-gradient(180deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+                #000;
+            background-size: 64px 64px;
+        }
+
+        .tool-header {
+            display: flex;
+            align-items: end;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .tool-title {
+            margin: 0;
+            font-family: Georgia, "Times New Roman", serif;
+            font-size: clamp(2rem, 4vw, 4.6rem);
+            font-weight: 700;
+            line-height: 0.9;
+            letter-spacing: 0;
+        }
+
+        .toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+        }
+
+        .unit-toggle {
+            display: inline-grid;
+            grid-template-columns: 1fr 1fr;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            background: #050505;
+        }
+
+        .unit-toggle button,
+        .upload-control,
+        .icon-button {
+            min-height: 2.75rem;
+            border: 0;
+            color: var(--ink);
+            background: transparent;
+            cursor: pointer;
+        }
+
+        .unit-toggle button {
+            min-width: 5.5rem;
+            padding: 0 1rem;
+            font-weight: 700;
+        }
+
+        .unit-toggle button.is-active {
+            background: var(--ink);
+            color: #000;
+        }
+
+        .upload-control {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0 1rem;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            background: #050505;
+            font-weight: 700;
+        }
+
+        .upload-control:hover,
+        .icon-button:hover,
+        .roster-item:hover {
+            border-color: rgba(255, 255, 255, 0.62);
+        }
+
+        .upload-control input {
+            position: absolute;
+            inline-size: 1px;
+            block-size: 1px;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .tool-shell {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(320px, 390px);
+            gap: 1rem;
+            align-items: start;
+        }
+
+        .chart-panel,
+        .control-panel {
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            background: rgba(0, 0, 0, 0.9);
+            box-shadow: 0 28px 60px rgba(0, 0, 0, 0.38);
+        }
+
+        .chart-panel {
+            min-width: 0;
+            overflow: hidden;
+        }
+
+        .chart-status {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: 0.85rem 1rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+            background: #030303;
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+
+        .chart-status strong {
+            color: var(--ink);
+            font-size: 1rem;
+        }
+
+        .chart-scroller {
+            overflow: auto;
+            overscroll-behavior: contain;
+            background:
+                radial-gradient(circle at 18% 12%, rgba(56, 245, 212, 0.08), transparent 24rem),
+                #000;
+        }
+
+        .chart-content {
+            position: relative;
+            min-width: 100%;
+        }
+
+        .chart-plot {
+            position: relative;
+            height: clamp(460px, 67vh, 820px);
+            min-height: 420px;
+            overflow: visible;
+        }
+
+        .grid-line {
+            position: absolute;
+            right: 0;
+            left: 0;
+            border-top: 1px solid var(--line);
+            pointer-events: none;
+        }
+
+        .grid-line.is-zero {
+            border-top-width: 2px;
+            border-color: rgba(255, 255, 255, 0.92);
+        }
+
+        .grid-line span {
+            position: sticky;
+            left: 0;
+            display: inline-flex;
+            align-items: center;
+            min-width: 4.5rem;
+            padding: 0.1rem 0.45rem 0.16rem 0.8rem;
+            transform: translateY(-50%);
+            background: rgba(0, 0, 0, 0.88);
+            color: var(--ink);
+            font-size: 0.82rem;
+            font-weight: 800;
+            line-height: 1;
+        }
+
+        .characters-layer {
+            position: absolute;
+            inset: 0;
+        }
+
+        .chart-character {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            padding: 0;
+            cursor: pointer;
+        }
+
+        .chart-character.is-selected .chart-sprite {
+            filter: drop-shadow(0 0 0.75rem rgba(56, 245, 212, 0.34));
+        }
+
+        .chart-sprite {
+            position: absolute;
+            max-width: none;
+            object-fit: contain;
+            object-position: center bottom;
+            user-select: none;
+            pointer-events: none;
+        }
+
+        .measurement-line {
+            position: absolute;
+            height: 0;
+            border-top: 1px dashed rgba(255, 255, 255, 0.9);
+            transform: translateY(0.5px);
+            pointer-events: none;
+        }
+
+        .measurement-line span {
+            position: absolute;
+            right: 0;
+            bottom: 0.25rem;
+            padding: 0.16rem 0.35rem;
+            background: rgba(0, 0, 0, 0.78);
+            color: var(--ink);
+            font-size: 0.75rem;
+            font-weight: 800;
+            white-space: nowrap;
+        }
+
+        .chart-label-row {
+            position: relative;
+            min-height: 3.9rem;
+        }
+
+        .chart-label {
+            position: absolute;
+            top: 0;
+            display: grid;
+            gap: 0.2rem;
+            justify-items: center;
+            padding: 0.5rem 0.4rem 0.8rem;
+            text-align: center;
+        }
+
+        .chart-label strong {
+            max-width: 100%;
+            overflow: hidden;
+            color: var(--ink);
+            font-size: 0.88rem;
+            line-height: 1.15;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .chart-label span {
+            color: var(--muted);
+            font-size: 0.78rem;
+            font-weight: 800;
+        }
+
+        .control-panel {
+            display: grid;
+            gap: 1rem;
+            padding: 1rem;
+        }
+
+        .panel-section {
+            display: grid;
+            gap: 0.75rem;
+        }
+
+        .section-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            color: var(--muted);
+            font-size: 0.78rem;
+            font-weight: 900;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .roster {
+            display: grid;
+            gap: 0.55rem;
+            max-height: 16rem;
+            overflow: auto;
+            padding-right: 0.15rem;
+        }
+
+        .roster-item {
+            display: grid;
+            grid-template-columns: 3.2rem minmax(0, 1fr) 2.45rem;
+            align-items: center;
+            gap: 0.65rem;
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            background: var(--panel);
+            color: var(--ink);
+            text-align: left;
+        }
+
+        .roster-item.is-selected {
+            border-color: rgba(56, 245, 212, 0.78);
+            background: rgba(56, 245, 212, 0.08);
+        }
+
+        .roster-thumb {
+            width: 3.2rem;
+            height: 3.2rem;
+            overflow: hidden;
+            padding: 0;
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            background: #000;
+        }
+
+        .roster-thumb img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .roster-meta {
+            min-width: 0;
+            padding: 0;
+            text-align: left;
+        }
+
+        .roster-meta strong,
+        .roster-meta span {
+            display: block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .roster-meta strong {
+            font-size: 0.95rem;
+        }
+
+        .roster-meta span {
+            color: var(--muted);
+            font-size: 0.78rem;
+            font-weight: 800;
+        }
+
+        .icon-button {
+            display: inline-grid;
+            place-items: center;
+            width: 2.45rem;
+            height: 2.45rem;
+            min-height: 2.45rem;
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .icon-button[data-remove] {
+            color: #ff9b9b;
+        }
+
+        .editor {
+            display: grid;
+            gap: 0.85rem;
+        }
+
+        .field {
+            display: grid;
+            gap: 0.4rem;
+        }
+
+        .field span,
+        .range-head {
+            color: var(--muted);
+            font-size: 0.78rem;
+            font-weight: 900;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .text-input,
+        .number-input {
+            width: 100%;
+            min-height: 2.65rem;
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 0;
+            background: var(--panel-soft);
+            color: var(--ink);
+            outline: none;
+            padding: 0.55rem 0.65rem;
+        }
+
+        .text-input:focus,
+        .number-input:focus {
+            border-color: rgba(56, 245, 212, 0.78);
+            box-shadow: 0 0 0 2px rgba(56, 245, 212, 0.14);
+        }
+
+        .height-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.55rem;
+        }
+
+        .height-grid.metric {
+            grid-template-columns: 1fr;
+        }
+
+        .height-input {
+            position: relative;
+        }
+
+        .height-input small {
+            position: absolute;
+            top: 50%;
+            right: 0.65rem;
+            transform: translateY(-50%);
+            color: var(--muted);
+            font-weight: 900;
+        }
+
+        .height-input .number-input {
+            padding-right: 2.2rem;
+        }
+
+        .calibration-frame {
+            position: relative;
+            display: grid;
+            place-items: center;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            background:
+                linear-gradient(45deg, rgba(255, 255, 255, 0.055) 25%, transparent 25%),
+                linear-gradient(-45deg, rgba(255, 255, 255, 0.055) 25%, transparent 25%),
+                linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.055) 75%),
+                linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.055) 75%),
+                #050505;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+            background-size: 20px 20px;
+        }
+
+        .calibration-frame img {
+            display: block;
+            width: auto;
+            height: auto;
+            max-width: 100%;
+            max-height: 22rem;
+            object-fit: contain;
+            user-select: none;
+            pointer-events: none;
+        }
+
+        .cal-line {
+            position: absolute;
+            right: 0;
+            left: 0;
+            z-index: 2;
+            height: 0;
+            border-top: 2px solid var(--accent);
+            color: var(--accent);
+            cursor: ns-resize;
+            touch-action: none;
+        }
+
+        .cal-line[data-marker="bottom"] {
+            border-color: var(--accent-warm);
+            color: var(--accent-warm);
+        }
+
+        .cal-line::before {
+            position: absolute;
+            top: -0.55rem;
+            left: 50%;
+            width: 1.1rem;
+            height: 1.1rem;
+            content: "";
+            transform: translateX(-50%);
+            border: 2px solid #000;
+            border-radius: 999px;
+            background: currentColor;
+            box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.8);
+        }
+
+        .cal-line span {
+            position: absolute;
+            top: -1.55rem;
+            left: 0.5rem;
+            padding: 0.12rem 0.35rem;
+            background: rgba(0, 0, 0, 0.82);
+            color: var(--ink);
+            font-size: 0.72rem;
+            font-weight: 900;
+            text-transform: uppercase;
+        }
+
+        .range-grid {
+            display: grid;
+            gap: 0.65rem;
+        }
+
+        .range-row {
+            display: grid;
+            gap: 0.35rem;
+        }
+
+        .range-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            accent-color: var(--accent);
+        }
+
+        input[data-calibration="bottom"] {
+            accent-color: var(--accent-warm);
+        }
+
+        .empty-state {
+            display: grid;
+            place-items: center;
+            min-height: 14rem;
+            border: 1px dashed rgba(255, 255, 255, 0.26);
+            color: var(--muted);
+            text-align: center;
+        }
+
+        @media (max-width: 1060px) {
+            .tool-shell {
+                grid-template-columns: 1fr;
+            }
+
+            .control-panel {
+                grid-template-columns: minmax(0, 1fr) minmax(280px, 0.8fr);
+            }
+        }
+
+        @media (max-width: 720px) {
+            .size-page {
+                padding: 0.75rem;
+            }
+
+            .tool-header {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .toolbar {
+                justify-content: stretch;
+            }
+
+            .unit-toggle,
+            .upload-control {
+                flex: 1 1 auto;
+            }
+
+            .unit-toggle button {
+                min-width: 0;
+            }
+
+            .chart-status {
+                align-items: start;
+                flex-direction: column;
+            }
+
+            .chart-plot {
+                height: 62vh;
+                min-height: 390px;
+            }
+
+            .control-panel {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body class="min-h-screen bg-base-100 text-base-content">
+
+<div class="navbar border-b border-base-300 px-6">
+    <div class="flex-1">
+        <a class="text-xl font-bold">MyOC</a>
+    </div>
+
+    <div class="flex-none w-full max-w-md mx-6">
+        <label class="input input-bordered w-full">
+            <svg class="h-4 w-4 opacity-60"
+                 fill="none"
+                 stroke="currentColor"
+                 viewBox="0 0 24 24"
+                 xmlns="http://www.w3.org/2000/svg">
+                <path d="M21 21l-4.35-4.35M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14z"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"/>
+            </svg>
+            <input
+                    class="grow"
+                    placeholder="Search characters, artists, tags..."
+                    type="search"
+            />
+        </label>
+    </div>
+
+    <div class="flex-none">
+        <details class="dropdown dropdown-end">
+            <summary class="btn btn-ghost btn-circle avatar">
+                <div class="w-10 rounded-full">
+                    <img
+                            alt="Profile"
+                            src="https://ui-avatars.com/api/?name=R&background=ff0000&color=ffffff"
+                    />
+                </div>
+            </summary>
+
+            <ul class="menu dropdown-content bg-base-100 rounded-box z-50 mt-3 w-56 p-2 shadow">
+                <li><a>Characters</a></li>
+                <li><a>Settings</a></li>
+
+                <div class="divider my-1"></div>
+
+                <li><a class="text-error">Logout</a></li>
+            </ul>
+        </details>
+    </div>
+</div>
+
+<main class="size-page">
+    <header class="tool-header">
+        <h1 class="tool-title">Size Chart</h1>
+        <div class="toolbar">
+            <div aria-label="Units" class="unit-toggle">
+                <button class="is-active" data-unit="imperial" type="button">ft/in</button>
+                <button data-unit="metric" type="button">m</button>
+            </div>
+            <label class="upload-control" title="Upload PNG">
+                <i data-lucide="upload"></i>
+                <span>Upload PNG</span>
+                <input accept="image/png,image/*" data-upload multiple type="file">
+            </label>
+        </div>
+    </header>
+
+    <div class="tool-shell">
+        <section class="chart-panel" aria-label="Character height chart">
+            <div class="chart-status">
+                <strong id="chartRange">0'0" - 0'0"</strong>
+                <span id="chartCount">0 characters</span>
+            </div>
+            <div class="chart-scroller" id="chartScroller">
+                <div class="chart-content" id="chartContent">
+                    <div class="chart-plot" id="chartPlot"></div>
+                    <div class="chart-label-row" id="chartLabels"></div>
+                </div>
+            </div>
+        </section>
+
+        <aside class="control-panel" aria-label="Character controls">
+            <section class="panel-section">
+                <div class="section-title">
+                    <span>Characters</span>
+                    <span id="rosterTotal"></span>
+                </div>
+                <div class="roster" id="roster"></div>
+            </section>
+
+            <section class="panel-section">
+                <div class="section-title">
+                    <span>Calibration</span>
+                    <span id="selectedHeight"></span>
+                </div>
+                <div id="editor"></div>
+            </section>
+        </aside>
+    </div>
+</main>
+
+<script>
+    const INCHES_PER_METER = 39.37007874015748;
+    const LABEL_GUTTER = 72;
+    const SLOT_GAP = 22;
+
+    const state = {
+        unit: "imperial",
+        selectedId: "raz-front",
+        characters: [
+            {
+                id: "raz-front",
+                name: "Raz_Front",
+                src: "../assets/Raz_Front%20copy%202.png",
+                naturalWidth: 2886,
+                naturalHeight: 3118,
+                heightInches: 100,
+                topPct: 0.07,
+                bottomPct: 0.97
+            },
+            {
+                id: "layer-5",
+                name: "Layer 5",
+                src: "../assets/Layer%205.png",
+                naturalWidth: 3928,
+                naturalHeight: 4179,
+                heightInches: 48,
+                topPct: 0.17,
+                bottomPct: 0.95
+            }
+        ]
+    };
+
+    const els = {
+        chartScroller: document.getElementById("chartScroller"),
+        chartContent: document.getElementById("chartContent"),
+        chartPlot: document.getElementById("chartPlot"),
+        chartLabels: document.getElementById("chartLabels"),
+        chartRange: document.getElementById("chartRange"),
+        chartCount: document.getElementById("chartCount"),
+        roster: document.getElementById("roster"),
+        rosterTotal: document.getElementById("rosterTotal"),
+        editor: document.getElementById("editor"),
+        selectedHeight: document.getElementById("selectedHeight")
+    };
+
+    function escapeHtml(value) {
+        return String(value)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    function clamp(value, min, max) {
+        return Math.min(Math.max(value, min), max);
+    }
+
+    function selectedCharacter() {
+        return state.characters.find((character) => character.id === state.selectedId) || state.characters[0] || null;
+    }
+
+    function measuredPixels(character) {
+        const top = character.topPct * character.naturalHeight;
+        const bottom = character.bottomPct * character.naturalHeight;
+        return Math.max(1, bottom - top);
+    }
+
+    function visibleTopInches(character) {
+        const topPixels = character.topPct * character.naturalHeight;
+        return character.heightInches + (topPixels / measuredPixels(character)) * character.heightInches;
+    }
+
+    function chartMaxInches() {
+        const visibleMax = Math.max(60, ...state.characters.map(visibleTopInches));
+
+        if (state.unit === "metric") {
+            const maxMeters = visibleMax / INCHES_PER_METER;
+            return Math.max(2, Math.ceil(maxMeters * 2) / 2) * INCHES_PER_METER;
+        }
+
+        return Math.max(60, Math.ceil(visibleMax / 12) * 12);
+    }
+
+    function formatHeight(inches) {
+        if (state.unit === "metric") {
+            return `${(inches / INCHES_PER_METER).toFixed(2)} m`;
+        }
+
+        const rounded = Math.max(0, Math.round(inches));
+        const feet = Math.floor(rounded / 12);
+        const remainingInches = rounded % 12;
+        return `${feet}'${remainingInches}"`;
+    }
+
+    function imperialParts(inches) {
+        const rounded = Math.max(1, Math.round(inches));
+        return {
+            feet: Math.floor(rounded / 12),
+            inches: rounded % 12
+        };
+    }
+
+    function normalizeHeightsForUnit() {
+        state.characters.forEach((character) => {
+            if (state.unit === "metric") {
+                const meters = Number((character.heightInches / INCHES_PER_METER).toFixed(2));
+                character.heightInches = Math.max(0.01, meters) * INCHES_PER_METER;
+            } else {
+                character.heightInches = Math.max(1, Math.round(character.heightInches));
+            }
+        });
+    }
+
+    function gridLines(maxInches) {
+        const lines = [];
+
+        if (state.unit === "metric") {
+            const maxMeters = maxInches / INCHES_PER_METER;
+            for (let meters = 0; meters <= maxMeters + 0.001; meters += 0.5) {
+                lines.push({
+                    inches: meters * INCHES_PER_METER,
+                    label: `${meters.toFixed(2)} m`,
+                    zero: meters === 0
+                });
+            }
+            return lines;
+        }
+
+        for (let inches = 0; inches <= maxInches; inches += 12) {
+            const feet = inches / 12;
+            lines.push({
+                inches,
+                label: `${feet}'0"`,
+                zero: inches === 0
+            });
+        }
+
+        return lines;
+    }
+
+    function chartLayout(maxInches, plotHeight) {
+        const pxPerInch = plotHeight / maxInches;
+        let totalWidth = 0;
+        let maxBottomExcess = 0;
+
+        const items = state.characters.map((character) => {
+            const scale = (character.heightInches * pxPerInch) / measuredPixels(character);
+            const imageWidth = Math.max(24, character.naturalWidth * scale);
+            const imageHeight = Math.max(24, character.naturalHeight * scale);
+            const measuredHeight = character.heightInches * pxPerInch;
+            const bottomPixels = character.bottomPct * character.naturalHeight;
+            const bottomExcess = Math.max(0, (character.naturalHeight - bottomPixels) * scale);
+            const slotWidth = Math.max(138, imageWidth + 36);
+
+            maxBottomExcess = Math.max(maxBottomExcess, bottomExcess);
+
+            const item = {
+                character,
+                imageWidth,
+                imageHeight,
+                measuredHeight,
+                bottomExcess,
+                slotWidth,
+                imageLeft: (slotWidth - imageWidth) / 2
+            };
+
+            totalWidth += slotWidth + SLOT_GAP;
+            return item;
+        });
+
+        totalWidth = Math.max(0, totalWidth - SLOT_GAP);
+
+        const available = Math.max(0, els.chartScroller.clientWidth - LABEL_GUTTER - 40);
+        const startPad = totalWidth < available ? 20 + (available - totalWidth) / 2 : 20;
+        const contentWidth = Math.max(els.chartScroller.clientWidth, LABEL_GUTTER + startPad + totalWidth + 20);
+        let cursor = LABEL_GUTTER + startPad;
+
+        items.forEach((item) => {
+            item.left = cursor;
+            cursor += item.slotWidth + SLOT_GAP;
+        });
+
+        return {
+            items,
+            contentWidth,
+            maxBottomExcess,
+            pxPerInch
+        };
+    }
+
+    function renderChart() {
+        const maxInches = chartMaxInches();
+        const plotHeight = els.chartPlot.clientHeight || 640;
+        const layout = chartLayout(maxInches, plotHeight);
+
+        els.chartContent.style.width = `${layout.contentWidth}px`;
+        els.chartLabels.style.width = `${layout.contentWidth}px`;
+        els.chartLabels.style.marginTop = `${Math.ceil(layout.maxBottomExcess) + 12}px`;
+
+        const gridHtml = gridLines(maxInches).map((line) => {
+            const bottom = (line.inches / maxInches) * 100;
+            return `
+                <div class="grid-line ${line.zero ? "is-zero" : ""}" style="bottom: ${bottom}%">
+                    <span>${escapeHtml(line.label)}</span>
+                </div>
+            `;
+        }).join("");
+
+        const charactersHtml = layout.items.map((item) => {
+            const character = item.character;
+            const selected = character.id === state.selectedId ? "is-selected" : "";
+            return `
+                <button
+                    aria-label="${escapeHtml(character.name)}"
+                    class="chart-character ${selected}"
+                    data-select="${escapeHtml(character.id)}"
+                    style="left: ${item.left}px; width: ${item.slotWidth}px"
+                    type="button"
+                >
+                    <img
+                        alt="${escapeHtml(character.name)}"
+                        class="chart-sprite"
+                        src="${escapeHtml(character.src)}"
+                        style="
+                            width: ${item.imageWidth}px;
+                            height: ${item.imageHeight}px;
+                            left: ${item.imageLeft}px;
+                            bottom: -${item.bottomExcess}px;
+                        "
+                    >
+                    <div
+                        class="measurement-line"
+                        style="
+                            left: ${item.imageLeft}px;
+                            width: ${item.imageWidth}px;
+                            bottom: ${item.measuredHeight}px;
+                        "
+                    >
+                        <span>${escapeHtml(formatHeight(character.heightInches))}</span>
+                    </div>
+                </button>
+            `;
+        }).join("");
+
+        const labelsHtml = layout.items.map((item) => {
+            const character = item.character;
+            return `
+                <button
+                    class="chart-label"
+                    data-select="${escapeHtml(character.id)}"
+                    style="left: ${item.left}px; width: ${item.slotWidth}px"
+                    type="button"
+                >
+                    <strong>${escapeHtml(character.name)}</strong>
+                    <span>${escapeHtml(formatHeight(character.heightInches))}</span>
+                </button>
+            `;
+        }).join("");
+
+        els.chartPlot.innerHTML = `${gridHtml}<div class="characters-layer">${charactersHtml}</div>`;
+        els.chartLabels.innerHTML = labelsHtml;
+        els.chartRange.textContent = `0 - ${formatHeight(maxInches)}`;
+        els.chartCount.textContent = `${state.characters.length} ${state.characters.length === 1 ? "character" : "characters"}`;
+    }
+
+    function renderRoster() {
+        els.rosterTotal.textContent = String(state.characters.length);
+
+        if (state.characters.length === 0) {
+            els.roster.innerHTML = `<div class="empty-state">Upload PNG</div>`;
+            return;
+        }
+
+        els.roster.innerHTML = state.characters.map((character) => {
+            const selected = character.id === state.selectedId ? "is-selected" : "";
+            return `
+                <div class="roster-item ${selected}">
+                    <button class="roster-thumb" data-select="${escapeHtml(character.id)}" type="button">
+                        <img alt="${escapeHtml(character.name)}" src="${escapeHtml(character.src)}">
+                    </button>
+                    <button class="roster-meta" data-select="${escapeHtml(character.id)}" type="button">
+                        <strong>${escapeHtml(character.name)}</strong>
+                        <span>${escapeHtml(formatHeight(character.heightInches))}</span>
+                    </button>
+                    <button class="icon-button" data-remove="${escapeHtml(character.id)}" title="Remove" type="button">
+                        <i data-lucide="trash-2"></i>
+                    </button>
+                </div>
+            `;
+        }).join("");
+    }
+
+    function renderEditor() {
+        const character = selectedCharacter();
+
+        if (!character) {
+            els.selectedHeight.textContent = "";
+            els.editor.innerHTML = `<div class="empty-state">Upload PNG</div>`;
+            return;
+        }
+
+        els.selectedHeight.textContent = formatHeight(character.heightInches);
+        const parts = imperialParts(character.heightInches);
+        const metricValue = (character.heightInches / INCHES_PER_METER).toFixed(2);
+        const heightInputs = state.unit === "metric"
+            ? `
+                <div class="height-grid metric">
+                    <label class="height-input">
+                        <input class="number-input" data-height-meters min="0.01" step="0.01" type="number" value="${metricValue}">
+                        <small>m</small>
+                    </label>
+                </div>
+            `
+            : `
+                <div class="height-grid">
+                    <label class="height-input">
+                        <input class="number-input" data-height-feet min="0" step="1" type="number" value="${parts.feet}">
+                        <small>ft</small>
+                    </label>
+                    <label class="height-input">
+                        <input class="number-input" data-height-inches min="0" step="1" type="number" value="${parts.inches}">
+                        <small>in</small>
+                    </label>
+                </div>
+            `;
+
+        els.editor.innerHTML = `
+            <div class="editor">
+                <label class="field">
+                    <span>Name</span>
+                    <input class="text-input" data-name type="text" value="${escapeHtml(character.name)}">
+                </label>
+
+                <label class="field">
+                    <span>Height</span>
+                    ${heightInputs}
+                </label>
+
+                <div class="calibration-frame" data-calibration-frame>
+                    <img alt="${escapeHtml(character.name)} calibration" src="${escapeHtml(character.src)}">
+                    <div class="cal-line" data-marker="top" style="top: ${character.topPct * 100}%">
+                        <span>Head</span>
+                    </div>
+                    <div class="cal-line" data-marker="bottom" style="top: ${character.bottomPct * 100}%">
+                        <span>Foot</span>
+                    </div>
+                </div>
+
+                <div class="range-grid">
+                    <label class="range-row">
+                        <span class="range-head">
+                            <span>Head</span>
+                            <output id="headPct">${Math.round(character.topPct * 100)}%</output>
+                        </span>
+                        <input data-calibration="top" max="100" min="0" step="0.1" type="range" value="${character.topPct * 100}">
+                    </label>
+                    <label class="range-row">
+                        <span class="range-head">
+                            <span>Foot</span>
+                            <output id="footPct">${Math.round(character.bottomPct * 100)}%</output>
+                        </span>
+                        <input data-calibration="bottom" max="100" min="0" step="0.1" type="range" value="${character.bottomPct * 100}">
+                    </label>
+                </div>
+            </div>
+        `;
+    }
+
+    function renderUnitToggle() {
+        document.querySelectorAll("[data-unit]").forEach((button) => {
+            button.classList.toggle("is-active", button.dataset.unit === state.unit);
+        });
+    }
+
+    function renderAll() {
+        renderUnitToggle();
+        renderChart();
+        renderRoster();
+        renderEditor();
+        if (window.lucide) {
+            window.lucide.createIcons();
+        }
+    }
+
+    function renderDataOnly() {
+        renderChart();
+        renderRoster();
+        const character = selectedCharacter();
+        els.selectedHeight.textContent = character ? formatHeight(character.heightInches) : "";
+        if (window.lucide) {
+            window.lucide.createIcons();
+        }
+    }
+
+    function setCalibration(character, marker, valuePct) {
+        const value = clamp(valuePct, 0, 1);
+        if (marker === "top") {
+            character.topPct = clamp(value, 0, character.bottomPct - 0.02);
+        } else {
+            character.bottomPct = clamp(value, character.topPct + 0.02, 1);
+        }
+    }
+
+    function updateCalibrationUi(character) {
+        const topLine = document.querySelector('[data-marker="top"]');
+        const bottomLine = document.querySelector('[data-marker="bottom"]');
+        const topRange = document.querySelector('[data-calibration="top"]');
+        const bottomRange = document.querySelector('[data-calibration="bottom"]');
+        const headOutput = document.getElementById("headPct");
+        const footOutput = document.getElementById("footPct");
+
+        if (topLine) {
+            topLine.style.top = `${character.topPct * 100}%`;
+        }
+        if (bottomLine) {
+            bottomLine.style.top = `${character.bottomPct * 100}%`;
+        }
+        if (topRange) {
+            topRange.value = String(character.topPct * 100);
+        }
+        if (bottomRange) {
+            bottomRange.value = String(character.bottomPct * 100);
+        }
+        if (headOutput) {
+            headOutput.textContent = `${Math.round(character.topPct * 100)}%`;
+        }
+        if (footOutput) {
+            footOutput.textContent = `${Math.round(character.bottomPct * 100)}%`;
+        }
+    }
+
+    function setSelected(id) {
+        if (!state.characters.some((character) => character.id === id)) {
+            return;
+        }
+        state.selectedId = id;
+        renderAll();
+    }
+
+    function removeCharacter(id) {
+        const character = state.characters.find((item) => item.id === id);
+        if (character && character.objectUrl) {
+            URL.revokeObjectURL(character.objectUrl);
+        }
+
+        state.characters = state.characters.filter((item) => item.id !== id);
+        if (state.selectedId === id) {
+            state.selectedId = state.characters[0]?.id || "";
+        }
+        renderAll();
+    }
+
+    function addFiles(files) {
+        Array.from(files).forEach((file, index) => {
+            const objectUrl = URL.createObjectURL(file);
+            const cleanName = file.name.replace(/\.[^.]+$/, "");
+            const id = `uploaded-${Date.now()}-${index}`;
+            const character = {
+                id,
+                name: cleanName || "Character",
+                src: objectUrl,
+                objectUrl,
+                naturalWidth: 1,
+                naturalHeight: 1,
+                heightInches: state.unit === "metric" ? 1.52 * INCHES_PER_METER : 60,
+                topPct: 0.05,
+                bottomPct: 0.95
+            };
+
+            const image = new Image();
+            image.onload = () => {
+                character.naturalWidth = image.naturalWidth || 1;
+                character.naturalHeight = image.naturalHeight || 1;
+                renderAll();
+            };
+            image.src = objectUrl;
+
+            state.characters.push(character);
+            state.selectedId = id;
+        });
+
+        renderAll();
+    }
+
+    document.addEventListener("click", (event) => {
+        const unitButton = event.target.closest("[data-unit]");
+        if (unitButton) {
+            state.unit = unitButton.dataset.unit;
+            normalizeHeightsForUnit();
+            renderAll();
+            return;
+        }
+
+        const removeButton = event.target.closest("[data-remove]");
+        if (removeButton) {
+            removeCharacter(removeButton.dataset.remove);
+            return;
+        }
+
+        const selectButton = event.target.closest("[data-select]");
+        if (selectButton) {
+            setSelected(selectButton.dataset.select);
+        }
+    });
+
+    document.addEventListener("change", (event) => {
+        if (event.target.matches("[data-upload]")) {
+            addFiles(event.target.files);
+            event.target.value = "";
+        }
+    });
+
+    document.addEventListener("input", (event) => {
+        const character = selectedCharacter();
+        if (!character) {
+            return;
+        }
+
+        if (event.target.matches("[data-name]")) {
+            character.name = event.target.value || "Character";
+            renderDataOnly();
+            return;
+        }
+
+        if (event.target.matches("[data-height-feet], [data-height-inches]")) {
+            const feet = Number(document.querySelector("[data-height-feet]")?.value || 0);
+            const inches = Number(document.querySelector("[data-height-inches]")?.value || 0);
+            character.heightInches = Math.max(1, Math.round(feet * 12 + inches));
+            renderDataOnly();
+            return;
+        }
+
+        if (event.target.matches("[data-height-meters]")) {
+            const meters = Number(event.target.value || 0);
+            character.heightInches = Math.max(0.01, meters) * INCHES_PER_METER;
+            renderDataOnly();
+            return;
+        }
+
+        if (event.target.matches("[data-calibration]")) {
+            setCalibration(character, event.target.dataset.calibration, Number(event.target.value) / 100);
+            updateCalibrationUi(character);
+            renderDataOnly();
+        }
+    });
+
+    document.addEventListener("pointerdown", (event) => {
+        const marker = event.target.closest("[data-marker]");
+        const frame = event.target.closest("[data-calibration-frame]");
+        const character = selectedCharacter();
+
+        if (!marker || !frame || !character) {
+            return;
+        }
+
+        event.preventDefault();
+        marker.setPointerCapture(event.pointerId);
+
+        const moveMarker = (moveEvent) => {
+            const rect = frame.getBoundingClientRect();
+            const pct = (moveEvent.clientY - rect.top) / Math.max(1, rect.height);
+            setCalibration(character, marker.dataset.marker, pct);
+            updateCalibrationUi(character);
+            renderDataOnly();
+        };
+
+        const stopDragging = () => {
+            marker.removeEventListener("pointermove", moveMarker);
+            marker.removeEventListener("pointerup", stopDragging);
+            marker.removeEventListener("pointercancel", stopDragging);
+        };
+
+        marker.addEventListener("pointermove", moveMarker);
+        marker.addEventListener("pointerup", stopDragging);
+        marker.addEventListener("pointercancel", stopDragging);
+        moveMarker(event);
+    });
+
+    window.addEventListener("resize", () => {
+        renderChart();
+    });
+
+    renderAll();
+</script>
+
+</body>
+</html>
