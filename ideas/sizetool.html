@@ -47,6 +47,7 @@
         .chart-label,
         .roster-thumb,
         .roster-meta {
+            appearance: none;
             border: 0;
             background: transparent;
             color: inherit;
@@ -62,8 +63,8 @@
             min-height: calc(100vh - 65px);
             padding: clamp(1rem, 2vw, 2rem);
             background:
-                linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-                linear-gradient(180deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.065) 1px, transparent 1px),
+                linear-gradient(180deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
                 #000;
             background-size: 64px 64px;
         }
@@ -78,10 +79,10 @@
 
         .tool-title {
             margin: 0;
-            font-family: Georgia, "Times New Roman", serif;
-            font-size: clamp(2rem, 4vw, 4.6rem);
-            font-weight: 700;
-            line-height: 0.9;
+            font-family: inherit;
+            font-size: clamp(1.8rem, 3vw, 3rem);
+            font-weight: 800;
+            line-height: 1;
             letter-spacing: 0;
         }
 
@@ -103,6 +104,7 @@
 
         .unit-toggle button,
         .upload-control,
+        .save-control,
         .icon-button {
             min-height: 2.75rem;
             border: 0;
@@ -122,7 +124,8 @@
             color: #000;
         }
 
-        .upload-control {
+        .upload-control,
+        .save-control {
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
@@ -133,9 +136,15 @@
         }
 
         .upload-control:hover,
+        .save-control:hover,
         .icon-button:hover,
         .roster-item:hover {
             border-color: rgba(255, 255, 255, 0.62);
+        }
+
+        .save-control.is-saved {
+            border-color: rgba(56, 245, 212, 0.78);
+            color: var(--accent);
         }
 
         .upload-control input {
@@ -183,15 +192,19 @@
         }
 
         .chart-scroller {
-            overflow: auto;
-            overscroll-behavior: contain;
+            overflow-x: hidden;
+            overflow-y: auto;
+            overscroll-behavior: auto;
             background:
-                radial-gradient(circle at 18% 12%, rgba(56, 245, 212, 0.08), transparent 24rem),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+                linear-gradient(180deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
                 #000;
+            background-size: 64px 64px;
         }
 
         .chart-content {
             position: relative;
+            width: 100%;
             min-width: 100%;
         }
 
@@ -206,13 +219,15 @@
             position: absolute;
             right: 0;
             left: 0;
-            border-top: 1px solid var(--line);
+            height: 1px;
+            transform: translateY(50%);
+            background: var(--line);
             pointer-events: none;
         }
 
         .grid-line.is-zero {
-            border-top-width: 2px;
-            border-color: rgba(255, 255, 255, 0.92);
+            height: 2px;
+            background: rgba(255, 255, 255, 0.92);
         }
 
         .grid-line span {
@@ -240,7 +255,7 @@
             top: 0;
             bottom: 0;
             padding: 0;
-            cursor: pointer;
+            pointer-events: none;
         }
 
         .chart-character.is-selected .chart-sprite {
@@ -256,23 +271,32 @@
             pointer-events: none;
         }
 
-        .measurement-line {
+        .hover-measurement-line {
             position: absolute;
-            height: 0;
-            border-top: 1px dashed rgba(255, 255, 255, 0.9);
-            transform: translateY(0.5px);
+            z-index: 100000;
+            display: none;
+            height: 1px;
+            transform: translateY(50%);
+            background: repeating-linear-gradient(
+                90deg,
+                rgba(255, 255, 255, 0.98) 0,
+                rgba(255, 255, 255, 0.98) 8px,
+                transparent 8px,
+                transparent 13px
+            );
+            filter: drop-shadow(0 0 0.35rem rgba(0, 0, 0, 0.9));
             pointer-events: none;
         }
 
-        .measurement-line span {
+        .hover-measurement-line span {
             position: absolute;
             right: 0;
             bottom: 0.25rem;
             padding: 0.16rem 0.35rem;
-            background: rgba(0, 0, 0, 0.78);
+            background: rgba(0, 0, 0, 0.9);
             color: var(--ink);
             font-size: 0.75rem;
-            font-weight: 800;
+            font-weight: 900;
             white-space: nowrap;
         }
 
@@ -289,6 +313,7 @@
             justify-items: center;
             padding: 0.5rem 0.4rem 0.8rem;
             text-align: center;
+            z-index: 1;
         }
 
         .chart-label strong {
@@ -339,7 +364,7 @@
 
         .roster-item {
             display: grid;
-            grid-template-columns: 3.2rem minmax(0, 1fr) 2.45rem;
+            grid-template-columns: 3.2rem minmax(0, 1fr) auto;
             align-items: center;
             gap: 0.65rem;
             width: 100%;
@@ -404,8 +429,25 @@
             background: rgba(255, 255, 255, 0.04);
         }
 
+        .roster-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .roster-actions .icon-button {
+            width: 2rem;
+            height: 2rem;
+            min-height: 2rem;
+        }
+
         .icon-button[data-remove] {
             color: #ff9b9b;
+        }
+
+        .icon-button:disabled {
+            opacity: 0.32;
+            cursor: not-allowed;
         }
 
         .editor {
@@ -453,6 +495,27 @@
 
         .height-grid.metric {
             grid-template-columns: 1fr;
+        }
+
+        .switch-field {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            min-height: 2.75rem;
+            padding: 0.55rem 0.65rem;
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            background: var(--panel-soft);
+            color: var(--ink);
+            font-weight: 800;
+        }
+
+        .switch-field input {
+            width: 2.85rem;
+            height: 1.45rem;
+            margin: 0;
+            accent-color: var(--accent);
+            cursor: pointer;
         }
 
         .height-input {
@@ -601,7 +664,8 @@
             }
 
             .unit-toggle,
-            .upload-control {
+            .upload-control,
+            .save-control {
                 flex: 1 1 auto;
             }
 
@@ -689,6 +753,10 @@
                 <span>Upload PNG</span>
                 <input accept="image/png,image/*" data-upload multiple type="file">
             </label>
+            <button class="save-control" data-save type="button" title="Prepare save JSON">
+                <i data-lucide="save"></i>
+                <span data-save-label>Save</span>
+            </button>
         </div>
     </header>
 
@@ -729,34 +797,68 @@
 <script>
     const INCHES_PER_METER = 39.37007874015748;
     const LABEL_GUTTER = 72;
-    const SLOT_GAP = 22;
+    const CHART_SIDE_PAD = 18;
+    const MIN_DRAWABLE_WIDTH = 140;
+    const LABEL_GAP = 3;
+    const MAX_LAYER = 99;
+    const ALPHA_HIT_THRESHOLD = 20;
 
-    const state = {
-        unit: "imperial",
-        selectedId: "raz-front",
+    const SIZE_TOOL_JSON = {
+        settings: {
+            displayUnit: "imperial",
+            selectedCharacterId: "raz-front"
+        },
         characters: [
             {
                 id: "raz-front",
                 name: "Raz_Front",
-                src: "../assets/Raz_Front%20copy%202.png",
-                naturalWidth: 2886,
-                naturalHeight: 3118,
-                heightInches: 100,
-                topPct: 0.07,
-                bottomPct: 0.97
+                image: {
+                    src: "../assets/Raz_Front%20copy%202.png",
+                    naturalWidth: 2886,
+                    naturalHeight: 3118
+                },
+                height: {
+                    meters: 2.54
+                },
+                calibration: {
+                    headYPercent: 7,
+                    footYPercent: 97
+                },
+                placement: {
+                    xPercent: 62,
+                    layer: 2
+                },
+                transform: {
+                    flipHorizontal: false
+                }
             },
             {
                 id: "layer-5",
                 name: "Layer 5",
-                src: "../assets/Layer%205.png",
-                naturalWidth: 3928,
-                naturalHeight: 4179,
-                heightInches: 48,
-                topPct: 0.17,
-                bottomPct: 0.95
+                image: {
+                    src: "../assets/Layer%205.png",
+                    naturalWidth: 3928,
+                    naturalHeight: 4179
+                },
+                height: {
+                    meters: 1.2192
+                },
+                calibration: {
+                    headYPercent: 17,
+                    footYPercent: 95
+                },
+                placement: {
+                    xPercent: 34,
+                    layer: 1
+                },
+                transform: {
+                    flipHorizontal: false
+                }
             }
         ]
     };
+
+    const state = createStateFromSizeToolJson(SIZE_TOOL_JSON);
 
     const els = {
         chartScroller: document.getElementById("chartScroller"),
@@ -771,6 +873,11 @@
         selectedHeight: document.getElementById("selectedHeight")
     };
 
+    const alphaMasks = new Map();
+    let currentChartLayout = null;
+    let SIZE_TOOL_SAVE_JSON = null;
+    let SIZE_TOOL_SAVE_BODY = "";
+
     function escapeHtml(value) {
         return String(value)
             .replace(/&/g, "&amp;")
@@ -784,8 +891,140 @@
         return Math.min(Math.max(value, min), max);
     }
 
+    function normalizedDisplayUnit(unit) {
+        return unit === "metric" ? "metric" : "imperial";
+    }
+
+    function createCharacterFromJson(character, index) {
+        const image = character.image || {};
+        const height = character.height || {};
+        const calibration = character.calibration || {};
+        const placement = character.placement || {};
+        const transform = character.transform || {};
+        const id = character.id || `character-${index + 1}`;
+
+        return {
+            id,
+            name: character.name || "Character",
+            src: image.src || "",
+            naturalWidth: Math.max(1, Number(image.naturalWidth) || Number(image.width) || 1),
+            naturalHeight: Math.max(1, Number(image.naturalHeight) || Number(image.height) || 1),
+            heightMeters: Math.max(0.01, Number(height.meters) || 1.52),
+            topPct: clamp((Number(calibration.headYPercent) || 0) / 100, 0, 0.98),
+            bottomPct: clamp((Number(calibration.footYPercent) || 100) / 100, 0.02, 1),
+            flipped: Boolean(transform.flipHorizontal),
+            xPct: clamp(Number(placement.xPercent) || 0, 0, 100),
+            layer: clamp(Number(placement.layer) || index + 1, 1, MAX_LAYER)
+        };
+    }
+
+    function createStateFromSizeToolJson(data) {
+        const settings = data.settings || {};
+        const characters = (data.characters || []).map(createCharacterFromJson);
+
+        characters.forEach((character) => {
+            if (character.topPct >= character.bottomPct) {
+                character.topPct = clamp(character.bottomPct - 0.02, 0, 0.98);
+            }
+        });
+
+        const selectedId = characters.some((character) => character.id === settings.selectedCharacterId)
+            ? settings.selectedCharacterId
+            : characters[0]?.id || "";
+
+        return {
+            unit: normalizedDisplayUnit(settings.displayUnit),
+            selectedId,
+            characters
+        };
+    }
+
+    function createSizeToolJsonFromState() {
+        return {
+            settings: {
+                displayUnit: state.unit,
+                selectedCharacterId: state.selectedId
+            },
+            characters: state.characters.map((character) => ({
+                id: character.id,
+                name: character.name,
+                image: {
+                    src: character.src,
+                    naturalWidth: character.naturalWidth,
+                    naturalHeight: character.naturalHeight
+                },
+                height: {
+                    meters: Number(character.heightMeters.toFixed(4))
+                },
+                calibration: {
+                    headYPercent: Number((character.topPct * 100).toFixed(2)),
+                    footYPercent: Number((character.bottomPct * 100).toFixed(2))
+                },
+                placement: {
+                    xPercent: Number(characterXPct(character).toFixed(2)),
+                    layer: characterLayer(character)
+                },
+                transform: {
+                    flipHorizontal: Boolean(character.flipped)
+                }
+            }))
+        };
+    }
+
+    function syncSavePayload() {
+        SIZE_TOOL_SAVE_JSON = createSizeToolJsonFromState();
+        SIZE_TOOL_SAVE_BODY = JSON.stringify(SIZE_TOOL_SAVE_JSON);
+        window.SIZE_TOOL_SAVE_JSON = SIZE_TOOL_SAVE_JSON;
+        window.SIZE_TOOL_SAVE_BODY = SIZE_TOOL_SAVE_BODY;
+    }
+
+    function markSaveReady() {
+        const saveButton = document.querySelector("[data-save]");
+        const saveLabel = document.querySelector("[data-save-label]");
+        if (!saveButton || !saveLabel) {
+            return;
+        }
+
+        saveButton.classList.add("is-saved");
+        saveLabel.textContent = "Saved";
+        window.setTimeout(() => {
+            saveButton.classList.remove("is-saved");
+            saveLabel.textContent = "Save";
+        }, 1400);
+    }
+
     function selectedCharacter() {
         return state.characters.find((character) => character.id === state.selectedId) || state.characters[0] || null;
+    }
+
+    function characterLayer(character) {
+        return clamp(Number(character.layer) || 1, 1, MAX_LAYER);
+    }
+
+    function characterXPct(character) {
+        const xPct = Number(character.xPct);
+        return clamp(Number.isFinite(xPct) ? xPct : 50, 0, 100);
+    }
+
+    function layeredCharacters() {
+        return state.characters
+            .map((character, index) => ({ character, index }))
+            .sort((a, b) => characterLayer(b.character) - characterLayer(a.character) || a.index - b.index)
+            .map((item) => item.character);
+    }
+
+    function alphabeticalCharacters() {
+        return state.characters
+            .map((character, index) => ({ character, index }))
+            .sort((a, b) => {
+                const nameCompare = a.character.name.localeCompare(b.character.name, undefined, { sensitivity: "base" });
+                return nameCompare || a.index - b.index;
+            })
+            .map((item) => item.character);
+    }
+
+    function maxCharacterLayer() {
+        return Math.max(0, ...state.characters.map(characterLayer));
     }
 
     function measuredPixels(character) {
@@ -794,34 +1033,140 @@
         return Math.max(1, bottom - top);
     }
 
-    function visibleTopInches(character) {
+    function imageWidthMeters(character) {
+        return (character.naturalWidth * character.heightMeters) / measuredPixels(character);
+    }
+
+    function visibleTopMeters(character) {
         const topPixels = character.topPct * character.naturalHeight;
-        return character.heightInches + (topPixels / measuredPixels(character)) * character.heightInches;
+        return character.heightMeters + (topPixels / measuredPixels(character)) * character.heightMeters;
     }
 
-    function chartMaxInches() {
-        const visibleMax = Math.max(60, ...state.characters.map(visibleTopInches));
-
+    function roundChartMaxMeters(visibleMax) {
         if (state.unit === "metric") {
-            const maxMeters = visibleMax / INCHES_PER_METER;
-            return Math.max(2, Math.ceil(maxMeters * 2) / 2) * INCHES_PER_METER;
+            return Math.max(2, Math.ceil(visibleMax * 2) / 2);
         }
 
-        return Math.max(60, Math.ceil(visibleMax / 12) * 12);
+        const maxFeet = visibleMax * INCHES_PER_METER / 12;
+        return Math.max(60 / INCHES_PER_METER, Math.ceil(maxFeet) * 12 / INCHES_PER_METER);
     }
 
-    function formatHeight(inches) {
-        if (state.unit === "metric") {
-            return `${(inches / INCHES_PER_METER).toFixed(2)} m`;
+    function visibleChartMaxMeters() {
+        return Math.max(60 / INCHES_PER_METER, ...state.characters.map(visibleTopMeters));
+    }
+
+    function ensureAlphaMask(character) {
+        const existing = alphaMasks.get(character.id);
+        if (existing) {
+            return existing;
         }
 
+        const mask = {
+            status: "loading",
+            width: 0,
+            height: 0,
+            alpha: null
+        };
+        alphaMasks.set(character.id, mask);
+
+        const image = new Image();
+        image.onload = () => {
+            try {
+                const width = image.naturalWidth || character.naturalWidth;
+                const height = image.naturalHeight || character.naturalHeight;
+                const canvas = document.createElement("canvas");
+                const context = canvas.getContext("2d", { willReadFrequently: true });
+                canvas.width = width;
+                canvas.height = height;
+                context.drawImage(image, 0, 0, width, height);
+
+                const rgba = context.getImageData(0, 0, width, height).data;
+                const alpha = new Uint8Array(width * height);
+                for (let sourceIndex = 3, targetIndex = 0; sourceIndex < rgba.length; sourceIndex += 4, targetIndex += 1) {
+                    alpha[targetIndex] = rgba[sourceIndex];
+                }
+
+                mask.status = "ready";
+                mask.width = width;
+                mask.height = height;
+                mask.alpha = alpha;
+            } catch (error) {
+                mask.status = "failed";
+                mask.error = error;
+            }
+        };
+        image.onerror = () => {
+            mask.status = "failed";
+        };
+        image.src = character.src;
+
+        return mask;
+    }
+
+    function isOpaqueImagePixel(item, imageX, imageY) {
+        const mask = ensureAlphaMask(item.character);
+        if (mask.status !== "ready" || !mask.alpha) {
+            return false;
+        }
+
+        const xRatio = clamp(imageX / item.imageWidth, 0, 1);
+        const yRatio = clamp(imageY / item.imageHeight, 0, 1);
+        const sourceXRatio = item.character.flipped ? 1 - xRatio : xRatio;
+        const sourceX = clamp(Math.floor(sourceXRatio * mask.width), 0, mask.width - 1);
+        const sourceY = clamp(Math.floor(yRatio * mask.height), 0, mask.height - 1);
+
+        return mask.alpha[sourceY * mask.width + sourceX] > ALPHA_HIT_THRESHOLD;
+    }
+
+    function chartHitTest(clientX, clientY) {
+        if (!currentChartLayout) {
+            return null;
+        }
+
+        const rect = els.chartPlot.getBoundingClientRect();
+        const x = clientX - rect.left;
+        const y = clientY - rect.top;
+        const plotHeight = els.chartPlot.clientHeight || 0;
+        const maxHitY = plotHeight + currentChartLayout.maxBottomExcess;
+        if (x < 0 || x > rect.width || y < 0 || y > maxHitY) {
+            return null;
+        }
+
+        const candidates = currentChartLayout.items
+            .map((item, index) => ({ item, index }))
+            .sort((a, b) => b.item.layer - a.item.layer || b.index - a.index);
+
+        for (const candidate of candidates) {
+            const item = candidate.item;
+            const imageTop = plotHeight + item.bottomExcess - item.imageHeight;
+            const imageX = x - item.left;
+            const imageY = y - imageTop;
+            if (imageX < 0 || imageX > item.imageWidth || imageY < 0 || imageY > item.imageHeight) {
+                continue;
+            }
+
+            if (isOpaqueImagePixel(item, imageX, imageY)) {
+                return item;
+            }
+        }
+
+        return null;
+    }
+
+    function formatHeight(meters) {
+        if (state.unit === "metric") {
+            return `${meters.toFixed(2)} m`;
+        }
+
+        const inches = meters * INCHES_PER_METER;
         const rounded = Math.max(0, Math.round(inches));
         const feet = Math.floor(rounded / 12);
         const remainingInches = rounded % 12;
         return `${feet}'${remainingInches}"`;
     }
 
-    function imperialParts(inches) {
+    function imperialParts(meters) {
+        const inches = meters * INCHES_PER_METER;
         const rounded = Math.max(1, Math.round(inches));
         return {
             feet: Math.floor(rounded / 12),
@@ -829,107 +1174,178 @@
         };
     }
 
-    function normalizeHeightsForUnit() {
-        state.characters.forEach((character) => {
-            if (state.unit === "metric") {
-                const meters = Number((character.heightInches / INCHES_PER_METER).toFixed(2));
-                character.heightInches = Math.max(0.01, meters) * INCHES_PER_METER;
-            } else {
-                character.heightInches = Math.max(1, Math.round(character.heightInches));
-            }
-        });
+    function niceStep(rawStep, candidates) {
+        return candidates.find((candidate) => candidate >= rawStep) || candidates[candidates.length - 1];
     }
 
-    function gridLines(maxInches) {
+    function gridStep(maxMeters) {
+        if (state.unit === "metric") {
+            const baseLines = maxMeters / 0.5;
+            const stepMeters = baseLines <= 18
+                ? 0.5
+                : niceStep(maxMeters / 14, [1, 2, 5, 10, 20, 50, 100, 200, 500]);
+
+            return {
+                meters: stepMeters,
+                metricStep: stepMeters
+            };
+        }
+
+        const maxFeet = maxMeters * INCHES_PER_METER / 12;
+        const stepFeet = maxFeet <= 18
+            ? 1
+            : niceStep(maxFeet / 14, [2, 5, 10, 20, 50, 100, 200, 500]);
+
+        return {
+            meters: stepFeet * 12 / INCHES_PER_METER,
+            imperialStep: stepFeet
+        };
+    }
+
+    function gridLines(maxMeters) {
         const lines = [];
+        const step = gridStep(maxMeters);
 
         if (state.unit === "metric") {
-            const maxMeters = maxInches / INCHES_PER_METER;
-            for (let meters = 0; meters <= maxMeters + 0.001; meters += 0.5) {
+            for (let meters = 0; meters <= maxMeters + 0.001; meters += step.meters) {
                 lines.push({
-                    inches: meters * INCHES_PER_METER,
+                    meters,
                     label: `${meters.toFixed(2)} m`,
                     zero: meters === 0
                 });
             }
-            return lines;
+        } else {
+            for (let meters = 0; meters <= maxMeters + 0.001; meters += step.meters) {
+                const feet = Math.round(meters * INCHES_PER_METER / 12);
+                lines.push({
+                    meters,
+                    label: `${feet}'0"`,
+                    zero: meters === 0
+                });
+            }
         }
 
-        for (let inches = 0; inches <= maxInches; inches += 12) {
-            const feet = inches / 12;
+        const last = lines[lines.length - 1];
+        if (last && Math.abs(last.meters - maxMeters) > step.meters * 0.25) {
             lines.push({
-                inches,
-                label: `${feet}'0"`,
-                zero: inches === 0
+                meters: maxMeters,
+                label: formatHeight(maxMeters),
+                zero: false
             });
         }
 
         return lines;
     }
 
-    function chartLayout(maxInches, plotHeight) {
-        const pxPerInch = plotHeight / maxInches;
-        let totalWidth = 0;
+    function resolveLabelPositions(items, minLeft, maxRight) {
+        const labels = items
+            .map((item, index) => ({
+                item,
+                index,
+                width: item.labelWidth,
+                desiredLeft: clamp(item.labelCenter - item.labelWidth / 2, minLeft, maxRight - item.labelWidth),
+                center: item.labelCenter
+            }))
+            .sort((a, b) => a.center - b.center || a.index - b.index);
+
+        let cursor = minLeft;
+        labels.forEach((label) => {
+            label.left = Math.max(label.desiredLeft, cursor);
+            cursor = label.left + label.width + LABEL_GAP;
+        });
+
+        for (let index = labels.length - 1; index >= 0; index -= 1) {
+            const label = labels[index];
+            const rightLimit = index === labels.length - 1
+                ? maxRight
+                : labels[index + 1].left - LABEL_GAP;
+            label.left = Math.min(label.left, rightLimit - label.width);
+        }
+
+        cursor = minLeft;
+        labels.forEach((label) => {
+            label.left = Math.max(label.left, cursor);
+            label.item.labelLeft = label.left;
+            cursor = label.left + label.width + LABEL_GAP;
+        });
+    }
+
+    function chartLayout(plotHeight) {
+        const contentWidth = Math.max(1, els.chartScroller.clientWidth || els.chartPlot.clientWidth || 900);
+        const drawableLeft = LABEL_GUTTER;
+        const drawableRight = Math.max(drawableLeft + MIN_DRAWABLE_WIDTH, contentWidth - CHART_SIDE_PAD);
+        const drawableWidth = Math.max(MIN_DRAWABLE_WIDTH, drawableRight - drawableLeft);
+        const usableWidth = Math.max(48, drawableWidth - 8);
+        const widthRequiredMax = state.characters.reduce((requiredMax, character) => {
+            const widthMeters = imageWidthMeters(character);
+            return Math.max(requiredMax, (plotHeight * widthMeters) / usableWidth);
+        }, 0);
+        const maxMeters = roundChartMaxMeters(Math.max(visibleChartMaxMeters(), widthRequiredMax));
+        const pxPerMeter = plotHeight / maxMeters;
         let maxBottomExcess = 0;
 
         const items = state.characters.map((character) => {
-            const scale = (character.heightInches * pxPerInch) / measuredPixels(character);
+            const scale = (character.heightMeters * pxPerMeter) / measuredPixels(character);
             const imageWidth = Math.max(24, character.naturalWidth * scale);
             const imageHeight = Math.max(24, character.naturalHeight * scale);
-            const measuredHeight = character.heightInches * pxPerInch;
+            const measuredHeight = character.heightMeters * pxPerMeter;
             const bottomPixels = character.bottomPct * character.naturalHeight;
             const bottomExcess = Math.max(0, (character.naturalHeight - bottomPixels) * scale);
-            const slotWidth = Math.max(138, imageWidth + 36);
+            const maxImageLeft = Math.max(drawableLeft, drawableRight - imageWidth);
+            const imageTravel = Math.max(0, maxImageLeft - drawableLeft);
+            const left = drawableLeft + (characterXPct(character) / 100) * imageTravel;
+            const labelWidth = Math.min(132, Math.max(86, imageWidth));
+            const labelCenter = left + imageWidth / 2;
 
             maxBottomExcess = Math.max(maxBottomExcess, bottomExcess);
 
-            const item = {
+            return {
                 character,
                 imageWidth,
                 imageHeight,
                 measuredHeight,
                 bottomExcess,
-                slotWidth,
-                imageLeft: (slotWidth - imageWidth) / 2
+                left,
+                labelCenter,
+                labelLeft: 0,
+                labelWidth,
+                layer: characterLayer(character)
             };
-
-            totalWidth += slotWidth + SLOT_GAP;
-            return item;
         });
 
-        totalWidth = Math.max(0, totalWidth - SLOT_GAP);
-
-        const available = Math.max(0, els.chartScroller.clientWidth - LABEL_GUTTER - 40);
-        const startPad = totalWidth < available ? 20 + (available - totalWidth) / 2 : 20;
-        const contentWidth = Math.max(els.chartScroller.clientWidth, LABEL_GUTTER + startPad + totalWidth + 20);
-        let cursor = LABEL_GUTTER + startPad;
-
+        const labelSpace = Math.max(0, contentWidth - CHART_SIDE_PAD - drawableLeft);
+        const fittedLabelWidth = items.length > 0
+            ? Math.max(44, (labelSpace - LABEL_GAP * (items.length - 1)) / items.length)
+            : 160;
         items.forEach((item) => {
-            item.left = cursor;
-            cursor += item.slotWidth + SLOT_GAP;
+            item.labelWidth = Math.min(item.labelWidth, fittedLabelWidth);
         });
+        resolveLabelPositions(items, drawableLeft, contentWidth - CHART_SIDE_PAD);
 
         return {
             items,
             contentWidth,
             maxBottomExcess,
-            pxPerInch
+            pxPerMeter,
+            maxMeters
         };
     }
 
     function renderChart() {
-        const maxInches = chartMaxInches();
         const plotHeight = els.chartPlot.clientHeight || 640;
-        const layout = chartLayout(maxInches, plotHeight);
+        const layout = chartLayout(plotHeight);
+        const maxMeters = layout.maxMeters;
+        currentChartLayout = layout;
+        layout.items.forEach((item) => ensureAlphaMask(item.character));
 
-        els.chartContent.style.width = `${layout.contentWidth}px`;
-        els.chartLabels.style.width = `${layout.contentWidth}px`;
+        els.chartContent.style.width = "100%";
+        els.chartLabels.style.width = "100%";
         els.chartLabels.style.marginTop = `${Math.ceil(layout.maxBottomExcess) + 12}px`;
 
-        const gridHtml = gridLines(maxInches).map((line) => {
-            const bottom = (line.inches / maxInches) * 100;
+        const gridHtml = gridLines(maxMeters).map((line) => {
+            const bottom = line.meters * layout.pxPerMeter;
             return `
-                <div class="grid-line ${line.zero ? "is-zero" : ""}" style="bottom: ${bottom}%">
+                <div class="grid-line ${line.zero ? "is-zero" : ""}" style="bottom: ${bottom}px">
                     <span>${escapeHtml(line.label)}</span>
                 </div>
             `;
@@ -942,8 +1358,9 @@
                 <button
                     aria-label="${escapeHtml(character.name)}"
                     class="chart-character ${selected}"
-                    data-select="${escapeHtml(character.id)}"
-                    style="left: ${item.left}px; width: ${item.slotWidth}px"
+                    data-chart-id="${escapeHtml(character.id)}"
+                    style="left: ${item.left}px; width: ${item.imageWidth}px; z-index: ${item.layer}"
+                    tabindex="-1"
                     type="button"
                 >
                     <img
@@ -953,20 +1370,11 @@
                         style="
                             width: ${item.imageWidth}px;
                             height: ${item.imageHeight}px;
-                            left: ${item.imageLeft}px;
+                            left: 0;
                             bottom: -${item.bottomExcess}px;
+                            transform: ${character.flipped ? "scaleX(-1)" : "none"};
                         "
                     >
-                    <div
-                        class="measurement-line"
-                        style="
-                            left: ${item.imageLeft}px;
-                            width: ${item.imageWidth}px;
-                            bottom: ${item.measuredHeight}px;
-                        "
-                    >
-                        <span>${escapeHtml(formatHeight(character.heightInches))}</span>
-                    </div>
                 </button>
             `;
         }).join("");
@@ -977,18 +1385,22 @@
                 <button
                     class="chart-label"
                     data-select="${escapeHtml(character.id)}"
-                    style="left: ${item.left}px; width: ${item.slotWidth}px"
+                    style="left: ${item.labelLeft}px; width: ${item.labelWidth}px; z-index: ${item.layer}"
                     type="button"
                 >
                     <strong>${escapeHtml(character.name)}</strong>
-                    <span>${escapeHtml(formatHeight(character.heightInches))}</span>
+                    <span>${escapeHtml(formatHeight(character.heightMeters))}</span>
                 </button>
             `;
         }).join("");
 
-        els.chartPlot.innerHTML = `${gridHtml}<div class="characters-layer">${charactersHtml}</div>`;
+        els.chartPlot.innerHTML = `
+            ${gridHtml}
+            <div class="characters-layer">${charactersHtml}</div>
+            <div class="hover-measurement-line" id="hoverMeasurementLine"><span></span></div>
+        `;
         els.chartLabels.innerHTML = labelsHtml;
-        els.chartRange.textContent = `0 - ${formatHeight(maxInches)}`;
+        els.chartRange.textContent = `0 - ${formatHeight(maxMeters)}`;
         els.chartCount.textContent = `${state.characters.length} ${state.characters.length === 1 ? "character" : "characters"}`;
     }
 
@@ -1000,20 +1412,37 @@
             return;
         }
 
-        els.roster.innerHTML = state.characters.map((character) => {
+        const orderedCharacters = alphabeticalCharacters();
+        const layerOrder = layeredCharacters();
+        const topLayerId = layerOrder[0]?.id || "";
+        const bottomLayerId = layerOrder[layerOrder.length - 1]?.id || "";
+
+        els.roster.innerHTML = orderedCharacters.map((character) => {
             const selected = character.id === state.selectedId ? "is-selected" : "";
             return `
                 <div class="roster-item ${selected}">
                     <button class="roster-thumb" data-select="${escapeHtml(character.id)}" type="button">
-                        <img alt="${escapeHtml(character.name)}" src="${escapeHtml(character.src)}">
+                        <img
+                            alt="${escapeHtml(character.name)}"
+                            src="${escapeHtml(character.src)}"
+                            style="transform: ${character.flipped ? "scaleX(-1)" : "none"}"
+                        >
                     </button>
                     <button class="roster-meta" data-select="${escapeHtml(character.id)}" type="button">
                         <strong>${escapeHtml(character.name)}</strong>
-                        <span>${escapeHtml(formatHeight(character.heightInches))}</span>
+                        <span>${escapeHtml(formatHeight(character.heightMeters))} / layer ${characterLayer(character)}</span>
                     </button>
-                    <button class="icon-button" data-remove="${escapeHtml(character.id)}" title="Remove" type="button">
-                        <i data-lucide="trash-2"></i>
-                    </button>
+                    <div class="roster-actions">
+                        <button class="icon-button" data-character-id="${escapeHtml(character.id)}" data-move="up" ${character.id === topLayerId ? "disabled" : ""} title="Layer up" type="button">
+                            <i data-lucide="chevron-up"></i>
+                        </button>
+                        <button class="icon-button" data-character-id="${escapeHtml(character.id)}" data-move="down" ${character.id === bottomLayerId ? "disabled" : ""} title="Layer down" type="button">
+                            <i data-lucide="chevron-down"></i>
+                        </button>
+                        <button class="icon-button" data-remove="${escapeHtml(character.id)}" title="Remove" type="button">
+                            <i data-lucide="trash-2"></i>
+                        </button>
+                    </div>
                 </div>
             `;
         }).join("");
@@ -1028,9 +1457,10 @@
             return;
         }
 
-        els.selectedHeight.textContent = formatHeight(character.heightInches);
-        const parts = imperialParts(character.heightInches);
-        const metricValue = (character.heightInches / INCHES_PER_METER).toFixed(2);
+        els.selectedHeight.textContent = formatHeight(character.heightMeters);
+        const parts = imperialParts(character.heightMeters);
+        const metricValue = character.heightMeters.toFixed(2);
+        const xPosition = Math.round(characterXPct(character));
         const heightInputs = state.unit === "metric"
             ? `
                 <div class="height-grid metric">
@@ -1065,8 +1495,27 @@
                     ${heightInputs}
                 </label>
 
+                <div class="range-grid">
+                    <label class="range-row">
+                        <span class="range-head">
+                            <span>Left / Right</span>
+                            <output id="xPct">${xPosition}%</output>
+                        </span>
+                        <input data-x-position max="100" min="0" step="1" type="range" value="${xPosition}">
+                    </label>
+                </div>
+
+                <label class="switch-field">
+                    <span>Flip horizontal</span>
+                    <input data-flipped type="checkbox" ${character.flipped ? "checked" : ""}>
+                </label>
+
                 <div class="calibration-frame" data-calibration-frame>
-                    <img alt="${escapeHtml(character.name)} calibration" src="${escapeHtml(character.src)}">
+                    <img
+                        alt="${escapeHtml(character.name)} calibration"
+                        src="${escapeHtml(character.src)}"
+                        style="transform: ${character.flipped ? "scaleX(-1)" : "none"}"
+                    >
                     <div class="cal-line" data-marker="top" style="top: ${character.topPct * 100}%">
                         <span>Head</span>
                     </div>
@@ -1115,9 +1564,49 @@
         renderChart();
         renderRoster();
         const character = selectedCharacter();
-        els.selectedHeight.textContent = character ? formatHeight(character.heightInches) : "";
+        els.selectedHeight.textContent = character ? formatHeight(character.heightMeters) : "";
         if (window.lucide) {
             window.lucide.createIcons();
+        }
+    }
+
+    function hideHoverMeasurementLine() {
+        const line = document.getElementById("hoverMeasurementLine");
+        if (line) {
+            line.style.display = "none";
+        }
+    }
+
+    function showHoverMeasurementLine(item) {
+        const line = document.getElementById("hoverMeasurementLine");
+        if (!line) {
+            return;
+        }
+
+        line.style.display = "block";
+        line.style.left = `${item.left}px`;
+        line.style.width = `${item.imageWidth}px`;
+        line.style.bottom = `${item.measuredHeight}px`;
+
+        const label = line.querySelector("span");
+        if (label) {
+            label.textContent = formatHeight(item.character.heightMeters);
+        }
+    }
+
+    function updateChartPointer(event) {
+        if (event.target.closest(".chart-label")) {
+            els.chartContent.style.cursor = "default";
+            hideHoverMeasurementLine();
+            return;
+        }
+
+        const hit = chartHitTest(event.clientX, event.clientY);
+        els.chartContent.style.cursor = hit ? "pointer" : "default";
+        if (hit) {
+            showHoverMeasurementLine(hit);
+        } else {
+            hideHoverMeasurementLine();
         }
     }
 
@@ -1171,11 +1660,32 @@
         if (character && character.objectUrl) {
             URL.revokeObjectURL(character.objectUrl);
         }
+        alphaMasks.delete(id);
 
         state.characters = state.characters.filter((item) => item.id !== id);
         if (state.selectedId === id) {
             state.selectedId = state.characters[0]?.id || "";
         }
+        renderAll();
+    }
+
+    function moveCharacterLayer(id, direction) {
+        const orderedCharacters = layeredCharacters();
+        const fromIndex = orderedCharacters.findIndex((character) => character.id === id);
+        if (fromIndex === -1) {
+            return;
+        }
+
+        const toIndex = direction === "up" ? fromIndex - 1 : fromIndex + 1;
+        if (toIndex < 0 || toIndex >= orderedCharacters.length) {
+            return;
+        }
+
+        const [character] = orderedCharacters.splice(fromIndex, 1);
+        orderedCharacters.splice(toIndex, 0, character);
+        orderedCharacters.forEach((item, index) => {
+            item.layer = clamp(orderedCharacters.length - index, 1, MAX_LAYER);
+        });
         renderAll();
     }
 
@@ -1191,9 +1701,12 @@
                 objectUrl,
                 naturalWidth: 1,
                 naturalHeight: 1,
-                heightInches: state.unit === "metric" ? 1.52 * INCHES_PER_METER : 60,
+                heightMeters: 1.52,
                 topPct: 0.05,
-                bottomPct: 0.95
+                bottomPct: 0.95,
+                flipped: false,
+                xPct: 50,
+                layer: clamp(maxCharacterLayer() + 1, 1, MAX_LAYER)
             };
 
             const image = new Image();
@@ -1215,8 +1728,20 @@
         const unitButton = event.target.closest("[data-unit]");
         if (unitButton) {
             state.unit = unitButton.dataset.unit;
-            normalizeHeightsForUnit();
             renderAll();
+            return;
+        }
+
+        const saveButton = event.target.closest("[data-save]");
+        if (saveButton) {
+            syncSavePayload();
+            markSaveReady();
+            return;
+        }
+
+        const moveButton = event.target.closest("[data-move]");
+        if (moveButton) {
+            moveCharacterLayer(moveButton.dataset.characterId, moveButton.dataset.move);
             return;
         }
 
@@ -1237,6 +1762,37 @@
             addFiles(event.target.files);
             event.target.value = "";
         }
+
+        if (event.target.matches("[data-flipped]")) {
+            const character = selectedCharacter();
+            if (!character) {
+                return;
+            }
+            character.flipped = event.target.checked;
+            renderAll();
+        }
+    });
+
+    els.chartContent.addEventListener("pointermove", updateChartPointer);
+
+    els.chartContent.addEventListener("pointerleave", () => {
+        els.chartContent.style.cursor = "default";
+        hideHoverMeasurementLine();
+    });
+
+    els.chartContent.addEventListener("click", (event) => {
+        if (event.target.closest(".chart-label")) {
+            return;
+        }
+
+        const hit = chartHitTest(event.clientX, event.clientY);
+        if (!hit) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        setSelected(hit.character.id);
     });
 
     document.addEventListener("input", (event) => {
@@ -1254,14 +1810,24 @@
         if (event.target.matches("[data-height-feet], [data-height-inches]")) {
             const feet = Number(document.querySelector("[data-height-feet]")?.value || 0);
             const inches = Number(document.querySelector("[data-height-inches]")?.value || 0);
-            character.heightInches = Math.max(1, Math.round(feet * 12 + inches));
+            character.heightMeters = Math.max(1, Math.round(feet * 12 + inches)) / INCHES_PER_METER;
             renderDataOnly();
             return;
         }
 
         if (event.target.matches("[data-height-meters]")) {
             const meters = Number(event.target.value || 0);
-            character.heightInches = Math.max(0.01, meters) * INCHES_PER_METER;
+            character.heightMeters = Math.max(0.01, meters);
+            renderDataOnly();
+            return;
+        }
+
+        if (event.target.matches("[data-x-position]")) {
+            character.xPct = clamp(Number(event.target.value) || 0, 0, 100);
+            const output = document.getElementById("xPct");
+            if (output) {
+                output.textContent = `${Math.round(character.xPct)}%`;
+            }
             renderDataOnly();
             return;
         }
@@ -1309,6 +1875,7 @@
         renderChart();
     });
 
+    syncSavePayload();
     renderAll();
 </script>
 
