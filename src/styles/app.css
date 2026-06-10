@@ -1,0 +1,9 @@
+@import "tailwindcss" source(none);
+@import "daisyui/theme/black.css";
+
+@source "../views";
+
+@plugin "daisyui" {
+    themes: false;
+}
+
