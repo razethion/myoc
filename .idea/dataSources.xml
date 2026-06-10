@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="DataSourceManagerImpl" format="xml" multifile-model="true">
+    <data-source source="LOCAL" name="myoc-db" uuid="788111fb-66f5-4ec6-93ce-3cdef74e7e72">
+      <driver-ref>sqlite.xerial</driver-ref>
+      <synchronize>true</synchronize>
+      <jdbc-driver>org.sqlite.JDBC</jdbc-driver>
+      <jdbc-url>jdbc:sqlite:C:\Users\riley\WebstormProjects\myoc\.wrangler\state\v3\d1\miniflare-D1DatabaseObject\3fc672244445fed61cfd67252cd660d608b724c785c78925c5419a278e3a94fc.sqlite</jdbc-url>
+      <working-dir>$ProjectFileDir$</working-dir>
+    </data-source>
+  </component>
+</project>

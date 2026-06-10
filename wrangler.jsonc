@@ -1,0 +1,16 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "myoc",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-06-10",
+	"assets": {
+		"directory": "./public"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "myoc-db",
+			"database_id": "909ada8f-fc57-47ad-83e1-18ffe863debb"
+		}
+	]
+}
