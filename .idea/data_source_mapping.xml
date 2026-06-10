@@ -3,5 +3,6 @@
   <component name="DataSourcePerFileMappings">
     <file url="file://$PROJECT_DIR$/migrations/0001_create_users_table.sql" value="788111fb-66f5-4ec6-93ce-3cdef74e7e72" />
     <file url="file://$PROJECT_DIR$/src/index.ts" value="788111fb-66f5-4ec6-93ce-3cdef74e7e72" />
+    <file url="file://$PROJECT_DIR$/src/routes/api.ts" value="788111fb-66f5-4ec6-93ce-3cdef74e7e72" />
   </component>
 </project>
