@@ -1,0 +1,125 @@
+name: Checks and Deploy
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: deploy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-and-deploy:
+    name: Check and Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck and test
+        run: npm run check
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy production
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+        run: npx wrangler deploy --minify --message "GitHub Actions ${GITHUB_SHA}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Prepare preview alias
+        id: preview
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+        env:
+          RAW_REF: ${{ github.head_ref }}
+        run: |
+          preview_alias="$(printf '%s' "$RAW_REF" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//' \
+            | cut -c1-63)"
+
+          if [ -z "$preview_alias" ]; then
+            preview_alias="preview"
+          fi
+
+          echo "preview_alias=$preview_alias" >> "$GITHUB_OUTPUT"
+
+      - name: Upload branch preview
+        id: upload-preview
+        if: ${{ steps.preview.outputs.preview_alias != '' }}
+        run: |
+          set -o pipefail
+
+          npx wrangler versions upload --minify --preview-alias "${{ steps.preview.outputs.preview_alias }}" --message "GitHub Actions preview ${GITHUB_SHA}" 2>&1 | tee wrangler-preview.log
+
+          preview_url="$(grep -Eo 'https://[^[:space:]]+' wrangler-preview.log | grep -m1 'workers.dev' | sed -E 's/[).,]+$//' || true)"
+
+          echo "preview_url=$preview_url" >> "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Comment preview URL
+        if: ${{ steps.upload-preview.outputs.preview_url != '' }}
+        uses: actions/github-script@v7
+        env:
+          PREVIEW_URL: ${{ steps.upload-preview.outputs.preview_url }}
+          PREVIEW_ALIAS: ${{ steps.preview.outputs.preview_alias }}
+        with:
+          script: |
+            const marker = '<!-- myoc-preview-url -->'
+            const body = `${marker}
+            Cloudflare preview is ready:
+
+            ${process.env.PREVIEW_URL}
+
+            Preview alias: \`${process.env.PREVIEW_ALIAS}\`
+            Commit: \`${context.sha}\``
+
+            const { owner, repo } = context.repo
+            const issue_number = context.issue.number
+            const { data: comments } = await github.rest.issues.listComments({
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            })
+
+            const existing = comments.find((comment) =>
+              comment.user?.type === 'Bot' && comment.body?.includes(marker)
+            )
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              })
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              })
+            }
