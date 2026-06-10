@@ -1,9 +1,6 @@
 import { Hono } from 'hono'
 import { authRoutes } from './routes/auth'
-
-type Bindings = {
-  DB: D1Database
-}
+import { Bindings } from './types/env'
 
 const app = new Hono<{ Bindings: Bindings }>()
 
