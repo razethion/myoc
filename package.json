@@ -2,9 +2,12 @@
   "name": "myoc",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy --minify",
-    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+    "build:css": "tailwindcss -i ./src/styles/app.css -o ./public/app.css --minify",
+    "build": "npm run build:css",
+    "dev": "npm run build && wrangler dev",
+    "deploy": "npm run build && wrangler deploy --minify",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -12,6 +15,10 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260610.1",
+    "@tailwindcss/cli": "^4.3.0",
+    "daisyui": "^5.5.23",
+    "tailwindcss": "^4.3.0",
+    "typescript": "^6.0.3",
     "wrangler": "^4.4.0"
   }
 }

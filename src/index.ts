@@ -1,23 +1,10 @@
 import { Hono } from 'hono'
-import { authRoutes } from './routes/auth'
+import { pageRoutes } from './routes/pages'
 
-type Bindings = {
-  DB: D1Database
-}
+const app = new Hono()
 
-const app = new Hono<{ Bindings: Bindings }>()
+app.route('/', pageRoutes)
 
-app.route('/api/auth', authRoutes)
-
-app.get('/api/health', async (c) => {
-  const result = await c.env.DB
-      .prepare('SELECT COUNT(*) AS count FROM users')
-      .first<{ count: number }>()
-
-  return c.json({
-    status: 'ok',
-    userCount: result?.count ?? 0
-  })
-})
-
+// Cloudflare Workers loads this default export from wrangler.jsonc.
+// noinspection JSUnusedGlobalSymbols
 export default app
