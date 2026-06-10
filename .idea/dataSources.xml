@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="DataSourceManagerImpl" format="xml" multifile-model="true">
-    <data-source source="LOCAL" name="myoc-db" uuid="788111fb-66f5-4ec6-93ce-3cdef74e7e72">
+    <data-source source="LOCAL" name="myoc-db LOCAL" uuid="788111fb-66f5-4ec6-93ce-3cdef74e7e72">
       <driver-ref>sqlite.xerial</driver-ref>
       <synchronize>true</synchronize>
       <jdbc-driver>org.sqlite.JDBC</jdbc-driver>
