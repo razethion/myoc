@@ -5,7 +5,7 @@
       <driver-ref>sqlite.xerial</driver-ref>
       <synchronize>true</synchronize>
       <jdbc-driver>org.sqlite.JDBC</jdbc-driver>
-      <jdbc-url>jdbc:sqlite:C:\Users\riley\WebstormProjects\myoc\.wrangler\state\v3\d1\miniflare-D1DatabaseObject\3fc672244445fed61cfd67252cd660d608b724c785c78925c5419a278e3a94fc.sqlite</jdbc-url>
+      <jdbc-url>jdbc:sqlite:.wrangler/state/v3/d1/miniflare-D1DatabaseObject/3fc672244445fed61cfd67252cd660d608b724c785c78925c5419a278e3a94fc.sqlite</jdbc-url>
       <working-dir>$ProjectFileDir$</working-dir>
     </data-source>
   </component>
