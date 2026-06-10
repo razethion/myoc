@@ -19,22 +19,21 @@ MyOC focuses on:
 
 ## Stack
 
-| Area             | Technology                    |
-|------------------|-------------------------------|
-| Runtime          | Cloudflare Workers            |
-| Server framework | Hono                          |
-| Views            | Hono JSX                      |
-| Language         | TypeScript                    |
-| Styling          | Tailwind CSS 4, DaisyUI       |
-| Database         | Cloudflare D1                 |
-| Testing          | Vitest                        |
-| Tooling          | Wrangler, npm, GitHub Actions |
+| Area | Technology |
+| --- | --- |
+| Runtime | Cloudflare Workers |
+| Server framework | Hono |
+| Views | Hono JSX |
+| Language | TypeScript |
+| Styling | Tailwind CSS 4, DaisyUI |
+| Database | Cloudflare D1 |
+| Tooling | Wrangler, npm |
 
 ## Getting Started
 
 ### Prerequisites
 
-- Node.js 22 or newer.
+- Node.js 20 or newer.
 - npm.
 - A Cloudflare account for D1 and deployment.
 - Wrangler authentication for Cloudflare operations.
@@ -56,11 +55,9 @@ This builds the CSS bundle and starts the app with Wrangler.
 ### Run Checks
 
 ```sh
-npm run check
+npm run typecheck
 npm run build
 ```
-
-`npm run check` runs TypeScript typechecking and the Vitest test suite once. Use `npm run test` while actively working on tests; it starts Vitest in watch mode.
 
 ## Configuration
 
@@ -92,41 +89,27 @@ npm run cf-typegen
 
 ## Deployment
 
-Deployment is handled by GitHub Actions in [`.github/workflows/checks.yml`](./.github/workflows/checks.yml). The workflow installs dependencies, runs checks, builds the CSS bundle, and only then calls Cloudflare.
-
-The workflow behavior is:
-
-- Pushes to `main` run `wrangler deploy --minify`.
-- Pushes to non-main branches upload a Cloudflare preview version with a branch-based preview alias.
-- Same-repository pull requests upload a Cloudflare preview version after checks pass.
-- Fork pull requests run checks only because Cloudflare secrets are not exposed to forked code.
-
-The repository must define these GitHub Actions secrets:
-
-- `CLOUDFLARE_API_TOKEN`
-- `CLOUDFLARE_ACCOUNT_ID`
-
-Manual deployment is still available when needed:
+Deploy to Cloudflare Workers:
 
 ```sh
 npm run deploy
 ```
 
-The local deploy command runs checks, builds the CSS bundle, then runs Wrangler deployment with minification enabled.
+The deploy command builds the CSS bundle first, then runs Wrangler deployment with minification enabled.
 
 ## Scripts
 
-| Command              | Description                                                   |
-|----------------------|---------------------------------------------------------------|
-| `npm run build`      | Compiles `src/styles/app.css` into minified `public/app.css`. |
-| `npm run dev`        | Builds CSS, then starts `wrangler dev`.                       |
-| `npm run typecheck`  | Runs TypeScript without emitting files.                       |
-| `npm run test`       | Runs Vitest in watch mode.                                    |
-| `npm run check`      | Runs TypeScript typechecking and the Vitest test suite once.  |
-| `npm run deploy`     | Runs checks, builds CSS, then deploys the Worker.             |
-| `npm run cf-typegen` | Generates Cloudflare binding types from `wrangler.jsonc`.     |
+| Command | Description |
+| --- | --- |
+| `npm run build:css` | Compiles `src/styles/app.css` into minified `public/app.css`. |
+| `npm run build` | Runs the CSS build. |
+| `npm run dev` | Builds CSS, then starts `wrangler dev`. |
+| `npm run deploy` | Builds CSS, then deploys the Worker. |
+| `npm run cf-typegen` | Generates Cloudflare binding types from `wrangler.jsonc`. |
+| `npm run typecheck` | Runs TypeScript without emitting files. |
 
 ## Contributing
+
 Contributions are welcome, but they must be made under the project Contributor License Agreement.
 
 By opening a pull request, you agree that:
@@ -139,11 +122,9 @@ By opening a pull request, you agree that:
 Before submitting a pull request, run:
 
 ```sh
-npm run check
+npm run typecheck
 npm run build
 ```
-
-GitHub Actions runs the same checks automatically on pushes and pull requests. Cloudflare deployment or preview upload only happens after those checks and the build pass.
 
 Keep pull requests focused. If a change affects Cloudflare bindings, update `wrangler.jsonc` and run:
 
