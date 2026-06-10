@@ -1,6 +1,9 @@
 {
   "name": "myoc",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tailwindcss -i ./src/styles/app.css -o ./public/app.css --minify",
     "dev": "npm run build && wrangler dev",

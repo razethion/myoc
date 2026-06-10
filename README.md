@@ -34,7 +34,7 @@ MyOC focuses on:
 
 ### Prerequisites
 
-- Node.js 20 or newer.
+- Node.js 22 or newer.
 - npm.
 - A Cloudflare account for D1 and deployment.
 - Wrangler authentication for Cloudflare operations.
@@ -127,7 +127,6 @@ The local deploy command runs checks, builds the CSS bundle, then runs Wrangler 
 | `npm run cf-typegen` | Generates Cloudflare binding types from `wrangler.jsonc`.     |
 
 ## Contributing
-.
 Contributions are welcome, but they must be made under the project Contributor License Agreement.
 
 By opening a pull request, you agree that:
