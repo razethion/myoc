@@ -98,6 +98,7 @@ The workflow behavior is:
 
 - Pull requests run typechecking, Vitest, and the CSS build.
 - Same-repository pull requests upload a Cloudflare preview version with a branch-based preview alias after checks pass.
+- Successful same-repository pull request previews get a bot comment with the live Cloudflare preview URL.
 - Fork pull requests run checks only because Cloudflare secrets are not exposed to forked code.
 
 The repository must define these GitHub Actions secrets:
