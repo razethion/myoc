@@ -3,9 +3,10 @@ import {describe, expect, it} from 'vitest'
 import {apiRoutes} from '../api'
 import {createMockDb} from '../../test/mockD1'
 import {createCsrfToken, type UserRecord} from '../../lib/auth/session'
+import {expectSessionCookie} from '../../test/assertions'
 
 async function postLogin(body: unknown, db: D1Database, url = '/login'): Promise<Response> {
-    return await apiRoutes.request(url, {
+    return apiRoutes.request(url, {
         method: 'POST',
         body: typeof body === 'string' ? body : JSON.stringify(body),
         headers: {
@@ -13,7 +14,7 @@ async function postLogin(body: unknown, db: D1Database, url = '/login'): Promise
         },
     }, {
         DB: db,
-    })
+    });
 }
 
 async function postLogout(
@@ -22,7 +23,7 @@ async function postLogout(
     url = 'https://example.com/logout',
     csrfToken?: string,
 ): Promise<Response> {
-    return await apiRoutes.request(url, {
+    return apiRoutes.request(url, {
         method: 'POST',
         headers: cookie
             ? {
@@ -32,7 +33,7 @@ async function postLogout(
             : undefined,
     }, {
         DB: db,
-    })
+    });
 }
 
 async function postLogoutForm(db: D1Database, cookie?: string, csrfToken?: string): Promise<Response> {
@@ -42,7 +43,7 @@ async function postLogoutForm(db: D1Database, cookie?: string, csrfToken?: strin
         body.set('csrfToken', csrfToken)
     }
 
-    return await apiRoutes.request('https://example.com/logout', {
+    return apiRoutes.request('https://example.com/logout', {
         method: 'POST',
         body,
         headers: {
@@ -52,7 +53,7 @@ async function postLogoutForm(db: D1Database, cookie?: string, csrfToken?: strin
         },
     }, {
         DB: db,
-    })
+    });
 }
 
 describe('POST /login', () => {
@@ -156,13 +157,7 @@ describe('POST /login', () => {
             },
         })
 
-        const cookie = response.headers.get('set-cookie')
-        expect(cookie).toContain('myoc_session=')
-        expect(cookie).toContain('HttpOnly')
-        expect(cookie).toContain('Max-Age=2592000')
-        expect(cookie).toContain('Path=/')
-        expect(cookie).toContain('SameSite=Lax')
-        expect(cookie).toContain('Secure')
+        expectSessionCookie(response)
 
         expect(db.batch).toHaveBeenCalledTimes(1)
         expect(boundStatements).toHaveLength(3)

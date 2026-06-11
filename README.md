@@ -27,6 +27,7 @@ MyOC focuses on:
 | Language         | TypeScript                    |
 | Styling          | Tailwind CSS 4, DaisyUI       |
 | Database         | Cloudflare D1                 |
+| Media storage    | Cloudflare R2                 |
 | Testing          | Vitest                        |
 | Tooling          | Wrangler, npm, GitHub Actions |
 
@@ -66,11 +67,27 @@ npm run build
 
 Worker configuration lives in [`wrangler.jsonc`](./wrangler.jsonc).
 
-The app expects a Cloudflare D1 database bound as `DB`. For a new environment, create a D1 database and update `wrangler.jsonc` with the generated database ID:
+The app expects:
+
+- A Cloudflare D1 database bound as `DB`.
+- A Cloudflare R2 bucket bound as `MEDIA_BUCKET`.
+- A media public base URL bound as `MEDIA_PUBLIC_BASE_URL`.
+
+For a new environment, create a D1 database and update `wrangler.jsonc` with the generated database ID:
 
 ```sh
 npx wrangler d1 create myoc-db
 ```
+
+The production R2 bucket is `myoc` and is served from `https://m.myoc.art`. Local development and pull request preview
+Workers use `myoc-dev`, served from `https://m.dev.myoc.art`.
+
+The R2 binding is marked `remote: true` so local `wrangler dev` uploads files into the real `myoc-dev` bucket instead of
+Wrangler's local R2 simulator. This is required because the browser loads media directly from the public R2 custom
+domain, not through the Worker.
+
+For local development, copy [`.dev.vars.example`](./.dev.vars.example) to `.dev.vars` if it does not already exist.
+`.dev.vars` is ignored by Git and should keep local-only values.
 
 Apply migrations locally:
 
@@ -96,11 +113,14 @@ Apply migrations to Cloudflare:
 npx wrangler d1 migrations apply myoc-db --remote
 ```
 
-When Worker bindings change, regenerate Cloudflare binding types:
+When Worker bindings change, regenerate Cloudflare runtime types:
 
 ```sh
 npm run cf-typegen
 ```
+
+`npm run typecheck` runs this automatically before TypeScript, so normal checks use the current `wrangler.jsonc`
+bindings.
 
 ## Deployment
 
@@ -110,6 +130,7 @@ The workflow behavior is:
 
 - Pull requests run typechecking, Vitest, and the CSS build.
 - Same-repository pull requests create or reuse a per-PR D1 database named `myoc-pr-<number>`.
+- Same-repository pull request previews bind media storage to the shared `myoc-dev` R2 bucket.
 - Pull request preview databases receive migrations and fake seed data from [`seeds/development.sql`](./seeds/development.sql).
 - Same-repository pull requests upload a Cloudflare preview version bound to that per-PR D1 database after checks pass.
 - Successful same-repository pull request previews get a bot comment with the live Cloudflare preview URL.
@@ -132,18 +153,18 @@ The local deploy command runs checks, builds the CSS bundle, then runs Wrangler 
 
 ## Scripts
 
-| Command              | Description                                                   |
-|----------------------|---------------------------------------------------------------|
-| `npm run build`      | Compiles `src/styles/app.css` into minified `public/app.css`. |
-| `npm run dev`        | Builds CSS, then starts `wrangler dev`.                       |
-| `npm run typecheck`  | Runs TypeScript without emitting files.                       |
-| `npm run test`       | Runs Vitest in watch mode.                                    |
-| `npm run check`      | Runs TypeScript typechecking and the Vitest test suite once.  |
-| `npm run db:migrate:local` | Applies D1 migrations to the local database.             |
-| `npm run db:seed:local` | Applies fake development seed data to the local database.     |
-| `npm run db:prepare:local` | Applies local migrations and fake seed data.             |
-| `npm run deploy`     | Runs checks, builds CSS, then deploys the Worker.             |
-| `npm run cf-typegen` | Generates Cloudflare binding types from `wrangler.jsonc`.     |
+| Command                    | Description                                                   |
+|----------------------------|---------------------------------------------------------------|
+| `npm run build`            | Compiles `src/styles/app.css` into minified `public/app.css`. |
+| `npm run dev`              | Builds CSS, then starts `wrangler dev`.                       |
+| `npm run typecheck`        | Runs TypeScript without emitting files.                       |
+| `npm run test`             | Runs Vitest in watch mode.                                    |
+| `npm run check`            | Runs TypeScript typechecking and the Vitest test suite once.  |
+| `npm run db:migrate:local` | Applies D1 migrations to the local database.                  |
+| `npm run db:seed:local`    | Applies fake development seed data to the local database.     |
+| `npm run db:prepare:local` | Applies local migrations and fake seed data.                  |
+| `npm run deploy`           | Runs checks, builds CSS, then deploys the Worker.             |
+| `npm run cf-typegen`       | Generates `worker-configuration.d.ts` from `wrangler.jsonc`.  |
 
 ## Contributing
 Contributions are welcome, but they must be made under the project Contributor License Agreement.
@@ -169,6 +190,8 @@ Keep pull requests focused. If a change affects Cloudflare bindings, update `wra
 ```sh
 npm run cf-typegen
 ```
+
+Commit the generated `worker-configuration.d.ts` with binding changes.
 
 ## License
 

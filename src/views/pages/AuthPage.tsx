@@ -8,6 +8,7 @@ type AuthPageProps = {
     mode: AuthMode
     currentUser?: CurrentUser | null
     guestInitial: string
+    mediaBaseUrl: string
 }
 
 function AuthPageStyles() {
@@ -145,12 +146,12 @@ function AuthPageScript() {
     )
 }
 
-export function AuthPage({mode, currentUser, guestInitial}: AuthPageProps) {
+export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPageProps) {
     const isLogin = mode === 'login'
 
     return (
         <BaseLayout head={<AuthPageStyles />} title={`${mode === 'login' ? 'Login' : 'Create account'} | MyOC`}>
-            <Navbar currentUser={currentUser} guestInitial={guestInitial} />
+            <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl}/>
 
             <main class={`auth-shell relative flex min-h-[calc(100vh-4rem)] items-center overflow-hidden px-4 py-12 sm:px-6 lg:px-8 ${isLogin ? '' : 'lg:py-16'}`}>
                 {isLogin ? (

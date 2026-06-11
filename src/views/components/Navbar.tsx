@@ -1,15 +1,17 @@
 import type {CurrentUser} from '../../lib/auth/session'
+import {profilePhotoUrl} from '../../lib/media/url'
 
 type NavbarProps = {
     currentUser?: CurrentUser | null
     guestInitial?: string
+    mediaBaseUrl: string
 }
 
-export function Navbar({currentUser, guestInitial = 'R'}: NavbarProps) {
+export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarProps) {
     const avatarName = currentUser?.username ?? guestInitial
     const avatarLetter = avatarName.trim().charAt(0).toUpperCase() || 'R'
     const avatarUrl = currentUser?.profilePhotoKey
-        ? `/media/${currentUser.profilePhotoKey}`
+        ? profilePhotoUrl(mediaBaseUrl, currentUser.id, currentUser.profilePhotoKey)
         : `https://ui-avatars.com/api/?name=${encodeURIComponent(avatarLetter)}&background=ccc&color=000`
     const search = (
         <label class="input input-bordered w-full">
@@ -38,7 +40,8 @@ export function Navbar({currentUser, guestInitial = 'R'}: NavbarProps) {
                         <details class="dropdown dropdown-end">
                             <summary class="btn btn-ghost btn-circle avatar">
                                 <div class="w-10 rounded-full">
-                                    <img alt={`${currentUser.username} profile`} src={avatarUrl}/>
+                                    <img alt={`${currentUser.username} profile`} data-profile-photo-image
+                                         src={avatarUrl}/>
                                 </div>
                             </summary>
 
