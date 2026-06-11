@@ -1,7 +1,7 @@
-import {Hono} from 'hono'
-import {setCookie} from 'hono/cookie'
-import {compare} from 'bcryptjs'
-import type {Bindings} from '../types/bindings'
+import { Hono } from 'hono'
+import { setCookie } from 'hono/cookie'
+import { compare } from 'bcryptjs'
+import type { Bindings } from '../types/bindings'
 
 type UserRecord = {
     id: string
@@ -30,28 +30,27 @@ apiRoutes.post('/login', async (c) => {
     try {
         body = await c.req.json<LoginRequest>()
     } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
+        return c.json({ error: 'Invalid JSON body' }, 400)
     }
 
     const identifier = normalizeCredential(body.identifier)
     const password = normalizeCredential(body.password)
 
     if (!identifier || !password) {
-        return c.json({error: 'Identifier and password are required'}, 400)
+        return c.json({ error: 'Identifier and password are required' }, 400)
     }
 
     const user = await c.env.DB.prepare(
         `SELECT id, email, username, password_hash, profile_photo_key, bio, created_at
          FROM users
-         WHERE lower(email) = lower(?)
-            OR username = ?
+         WHERE lower(email) = lower(?) OR username = ?
          LIMIT 1`,
     )
         .bind(identifier, identifier)
         .first<UserRecord>()
 
     if (!user || !(await compare(password, user.password_hash))) {
-        return c.json({error: 'Invalid identifier or password'}, 401)
+        return c.json({ error: 'Invalid identifier or password' }, 401)
     }
 
     const now = new Date()
@@ -99,18 +98,12 @@ function normalizeCredential(value: unknown): string | null {
 function createSessionToken(): string {
     const bytes = new Uint8Array(SESSION_TOKEN_BYTES)
     crypto.getRandomValues(bytes)
-    return [...bytes].map((byte) => byte
-        .toString(16)
-        .padStart(2, '0'))
-        .join('')
+    return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
 async function sha256Hex(value: string): Promise<string> {
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
-    return [...new Uint8Array(digest)].map((byte) => byte
-        .toString(16)
-        .padStart(2, '0'))
-        .join('')
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
 function toSqlTimestamp(date: Date): string {

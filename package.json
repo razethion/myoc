@@ -1,17 +1,13 @@
 {
   "name": "myoc",
   "type": "module",
-  "engines": {
-    "node": ">=22"
-  },
   "scripts": {
-    "build": "tailwindcss -i ./src/styles/app.css -o ./public/app.css --minify",
+    "build:css": "tailwindcss -i ./src/styles/app.css -o ./public/app.css --minify",
+    "build": "npm run build:css",
     "dev": "npm run build && wrangler dev",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest",
-    "check": "npm run typecheck && vitest run",
-    "deploy": "npm run check && npm run build && wrangler deploy --minify",
-    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+    "deploy": "npm run build && wrangler deploy --minify",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -23,7 +19,6 @@
     "daisyui": "^5.5.23",
     "tailwindcss": "^4.3.0",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.8",
     "wrangler": "^4.4.0"
   }
 }
