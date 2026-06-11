@@ -75,7 +75,19 @@ npx wrangler d1 create myoc-db
 Apply migrations locally:
 
 ```sh
-npx wrangler d1 migrations apply myoc-db --local
+npm run db:migrate:local
+```
+
+Apply fake development seed data locally:
+
+```sh
+npm run db:seed:local
+```
+
+Prepare a local database from migrations and seed data:
+
+```sh
+npm run db:prepare:local
 ```
 
 Apply migrations to Cloudflare:
@@ -97,10 +109,13 @@ Checks, pull request previews, and production deployment are handled by GitHub A
 The workflow behavior is:
 
 - Pull requests run typechecking, Vitest, and the CSS build.
-- Same-repository pull requests upload a Cloudflare preview version with a branch-based preview alias after checks pass.
+- Same-repository pull requests create or reuse a per-PR D1 database named `myoc-pr-<number>`.
+- Pull request preview databases receive migrations and fake seed data from [`seeds/development.sql`](./seeds/development.sql).
+- Same-repository pull requests upload a Cloudflare preview version bound to that per-PR D1 database after checks pass.
 - Successful same-repository pull request previews get a bot comment with the live Cloudflare preview URL.
+- Closing a same-repository pull request deletes its `myoc-pr-<number>` D1 database.
 - Fork pull requests run checks only because Cloudflare secrets are not exposed to forked code.
-- Pushes to `master`, including merged pull requests, run checks and build before deploying to production with `wrangler deploy --minify`.
+- Pushes to `master`, including merged pull requests, run checks, build, apply production D1 migrations, and then deploy with `wrangler deploy --minify`.
 
 The repository must define these GitHub Actions secrets:
 
@@ -124,6 +139,9 @@ The local deploy command runs checks, builds the CSS bundle, then runs Wrangler 
 | `npm run typecheck`  | Runs TypeScript without emitting files.                       |
 | `npm run test`       | Runs Vitest in watch mode.                                    |
 | `npm run check`      | Runs TypeScript typechecking and the Vitest test suite once.  |
+| `npm run db:migrate:local` | Applies D1 migrations to the local database.             |
+| `npm run db:seed:local` | Applies fake development seed data to the local database.     |
+| `npm run db:prepare:local` | Applies local migrations and fake seed data.             |
 | `npm run deploy`     | Runs checks, builds CSS, then deploys the Worker.             |
 | `npm run cf-typegen` | Generates Cloudflare binding types from `wrangler.jsonc`.     |
 
