@@ -7,11 +7,22 @@
 	"assets": {
 		"directory": "./public"
 	},
+	"vars": {
+		"MEDIA_PUBLIC_BASE_URL": "https://m.myoc.art"
+	},
 	"d1_databases": [
 		{
 			"binding": "DB",
 			"database_name": "myoc-db",
 			"database_id": "909ada8f-fc57-47ad-83e1-18ffe863debb"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "MEDIA_BUCKET",
+			"bucket_name": "myoc",
+			"preview_bucket_name": "myoc-dev",
+			"remote": true
 		}
 	]
 }

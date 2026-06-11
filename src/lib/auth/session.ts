@@ -13,8 +13,11 @@ export type UserRecord = {
 }
 
 export type CurrentUser = {
+    id: string
+    email: string
     username: string
     profilePhotoKey: string | null
+    bio: string
     csrfToken: string
 }
 
@@ -56,7 +59,7 @@ export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promis
 
     const sessionHash = await sha256Hex(sessionToken)
     const user = await c.env.DB.prepare(
-        `SELECT users.username, users.profile_photo_key
+        `SELECT users.id, users.email, users.username, users.profile_photo_key, users.bio
          FROM sessions
          INNER JOIN users ON users.id = sessions.user_id
          WHERE sessions.session_hash = ?
@@ -64,15 +67,18 @@ export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promis
          LIMIT 1`,
     )
         .bind(sessionHash, toSqlTimestamp(new Date()))
-        .first<{ username: string; profile_photo_key: string | null }>()
+        .first<{ id: string; email: string; username: string; profile_photo_key: string | null; bio: string }>()
 
     if (!user) {
         return null
     }
 
     return {
+        id: user.id,
+        email: user.email,
         username: user.username,
         profilePhotoKey: user.profile_photo_key,
+        bio: user.bio,
         csrfToken: await createCsrfToken(sessionToken),
     }
 }

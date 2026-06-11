@@ -124,11 +124,20 @@ jobs:
             "assets": {
               "directory": "./public"
             },
+            "vars": {
+              "MEDIA_PUBLIC_BASE_URL": "https://m.dev.myoc.art"
+            },
             "d1_databases": [
               {
                 "binding": "DB",
                 "database_name": "$db_name",
                 "database_id": "$db_id"
+              }
+            ],
+            "r2_buckets": [
+              {
+                "binding": "MEDIA_BUCKET",
+                "bucket_name": "myoc-dev"
               }
             ]
           }

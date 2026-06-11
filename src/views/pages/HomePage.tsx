@@ -63,6 +63,7 @@ const QUESTIONS_SECTION_ID = 'questions'
 type HomePageProps = {
     currentUser?: CurrentUser | null
     guestInitial: string
+    mediaBaseUrl: string
 }
 
 function HomePageStyles() {
@@ -119,10 +120,10 @@ function HomePageStyles() {
     )
 }
 
-export function HomePage({ currentUser, guestInitial }: HomePageProps) {
+export function HomePage({currentUser, guestInitial, mediaBaseUrl}: HomePageProps) {
     return (
         <BaseLayout head={<HomePageStyles />} title="Home | MyOC">
-            <Navbar currentUser={currentUser} guestInitial={guestInitial} />
+            <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl}/>
             <main>
                 <section class="hero-prism relative overflow-hidden border-b border-base-300 bg-base-100">
                     <div class="relative z-20 mx-auto grid min-h-[calc(100vh-4rem)] max-w-6xl items-center gap-10 px-4 py-16 sm:px-6 lg:grid-cols-2 lg:px-8">
