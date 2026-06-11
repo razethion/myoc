@@ -5,6 +5,11 @@ on:
     branches:
       - master
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - closed
 
 permissions:
   contents: read
@@ -18,6 +23,7 @@ concurrency:
 jobs:
   check-and-deploy:
     name: Check and Deploy
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -39,6 +45,13 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Apply production D1 migrations
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+        run: npx wrangler d1 migrations apply myoc-db --remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Deploy production
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
         run: npx wrangler deploy --minify --message "GitHub Actions ${GITHUB_SHA}"
@@ -50,18 +63,93 @@ jobs:
         id: preview
         if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
         env:
-          RAW_REF: ${{ github.head_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          preview_alias="$(printf '%s' "$RAW_REF" \
-            | tr '[:upper:]' '[:lower:]' \
-            | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//' \
-            | cut -c1-63)"
-
-          if [ -z "$preview_alias" ]; then
-            preview_alias="preview"
-          fi
+          preview_alias="myoc-pr-${PR_NUMBER}"
 
           echo "preview_alias=$preview_alias" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare preview D1 database
+        id: preview-db
+        if: ${{ steps.preview.outputs.preview_alias != '' }}
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          DB_NAME: myoc-pr-${{ github.event.pull_request.number }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+
+          db_name="myoc-pr-${PR_NUMBER}"
+
+          list_d1_databases() {
+            if ! npx wrangler d1 list --json > d1-list.json; then
+              echo "::error::Unable to list D1 databases. Check that CLOUDFLARE_API_TOKEN is valid and has D1 edit/read permissions for this account."
+              exit 1
+            fi
+          }
+
+          get_db_id() {
+            node -e "
+              const fs = require('node:fs');
+              const dbs = JSON.parse(fs.readFileSync('d1-list.json', 'utf8'));
+              const db = dbs.find((entry) => entry.name === process.env.DB_NAME);
+              if (db) {
+                process.stdout.write(db.uuid || db.id || '');
+              }
+            "
+          }
+
+          list_d1_databases
+          db_id="$(get_db_id)"
+
+          if [ -z "$db_id" ]; then
+            npx wrangler d1 create "$db_name" --location enam
+
+            list_d1_databases
+            db_id="$(get_db_id)"
+
+            if [ -z "$db_id" ]; then
+              echo "::error::Created preview D1 database $db_name was not found in wrangler d1 list output."
+              exit 1
+            fi
+          fi
+
+          cat > wrangler.preview.jsonc <<EOF
+          {
+            "name": "myoc",
+            "main": "src/index.ts",
+            "compatibility_date": "2026-06-10",
+            "workers_dev": false,
+            "assets": {
+              "directory": "./public"
+            },
+            "d1_databases": [
+              {
+                "binding": "DB",
+                "database_name": "$db_name",
+                "database_id": "$db_id"
+              }
+            ]
+          }
+          EOF
+
+          echo "db_name=$db_name" >> "$GITHUB_OUTPUT"
+          echo "db_id=$db_id" >> "$GITHUB_OUTPUT"
+
+      - name: Apply preview D1 migrations
+        if: ${{ steps.preview-db.outputs.db_name != '' }}
+        run: npx wrangler d1 migrations apply "${{ steps.preview-db.outputs.db_name }}" --config wrangler.preview.jsonc --remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Seed preview D1 database
+        if: ${{ steps.preview-db.outputs.db_name != '' }}
+        run: npx wrangler d1 execute "${{ steps.preview-db.outputs.db_name }}" --config wrangler.preview.jsonc --remote --file seeds/development.sql
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Upload branch preview
         id: upload-preview
@@ -69,7 +157,7 @@ jobs:
         run: |
           set -o pipefail
 
-          npx wrangler versions upload --minify --preview-alias "${{ steps.preview.outputs.preview_alias }}" --message "GitHub Actions preview ${GITHUB_SHA}" 2>&1 | tee wrangler-preview.log
+          npx wrangler versions upload --config wrangler.preview.jsonc --minify --preview-alias "${{ steps.preview.outputs.preview_alias }}" --message "GitHub Actions preview ${GITHUB_SHA}" 2>&1 | tee wrangler-preview.log
 
           preview_url="$(grep -Eo 'https://[^[:space:]]+' wrangler-preview.log | grep -m1 'workers.dev' | sed -E 's/[).,]+$//' || true)"
 
@@ -123,3 +211,47 @@ jobs:
                 body,
               })
             }
+
+  cleanup-preview-db:
+    name: Cleanup Preview D1
+    if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Delete preview D1 database
+        env:
+          DB_NAME: myoc-pr-${{ github.event.pull_request.number }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+
+          if ! npx wrangler d1 list --json > d1-list.json; then
+            echo "::error::Unable to list D1 databases. Check that CLOUDFLARE_API_TOKEN is valid and has D1 edit/read permissions for this account."
+            exit 1
+          fi
+
+          db_exists="$(node -e "
+            const fs = require('node:fs');
+            const dbs = JSON.parse(fs.readFileSync('d1-list.json', 'utf8'));
+            const db = dbs.find((entry) => entry.name === process.env.DB_NAME);
+            process.stdout.write(db ? 'yes' : 'no');
+          " )"
+
+          if [ "$db_exists" = "yes" ]; then
+            npx wrangler d1 delete "$DB_NAME" --skip-confirmation
+          else
+            echo "Preview D1 database $DB_NAME does not exist; nothing to delete."
+          fi
