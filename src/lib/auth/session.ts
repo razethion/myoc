@@ -1,0 +1,172 @@
+import {getCookie, setCookie} from 'hono/cookie'
+import type {Context} from 'hono'
+import type {Bindings} from '../../types/bindings'
+
+export type UserRecord = {
+    id: string
+    email: string
+    username: string
+    password_hash: string
+    profile_photo_key: string | null
+    bio: string
+    created_at: string
+}
+
+export type CurrentUser = {
+    username: string
+    profilePhotoKey: string | null
+    csrfToken: string
+}
+
+const SESSION_COOKIE = 'myoc_session'
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30
+const SESSION_TOKEN_BYTES = 32
+const CSRF_TOKEN_PREFIX = 'csrf:'
+
+export async function createSession(db: D1Database, userId: string, now = new Date()): Promise<string> {
+    const expiresAt = new Date(now.getTime() + SESSION_TTL_SECONDS * 1000)
+    const sessionToken = createSessionToken()
+    const sessionHash = await sha256Hex(sessionToken)
+
+    await db.batch([
+        db.prepare('DELETE FROM sessions WHERE expires_at <= ?').bind(toSqlTimestamp(now)),
+        db.prepare(
+            `INSERT INTO sessions (id, user_id, session_hash, expires_at)
+             VALUES (?, ?, ?, ?)`,
+        ).bind(crypto.randomUUID(), userId, sessionHash, toSqlTimestamp(expiresAt)),
+    ])
+
+    return sessionToken
+}
+
+export async function deleteSession(db: D1Database, sessionToken: string): Promise<void> {
+    const sessionHash = await sha256Hex(sessionToken)
+
+    await db.prepare('DELETE FROM sessions WHERE session_hash = ?')
+        .bind(sessionHash)
+        .run()
+}
+
+export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promise<CurrentUser | null> {
+    const sessionToken = getCookie(c, SESSION_COOKIE)
+
+    if (!sessionToken) {
+        return null
+    }
+
+    const sessionHash = await sha256Hex(sessionToken)
+    const user = await c.env.DB.prepare(
+        `SELECT users.username, users.profile_photo_key
+         FROM sessions
+         INNER JOIN users ON users.id = sessions.user_id
+         WHERE sessions.session_hash = ?
+           AND sessions.expires_at > ?
+         LIMIT 1`,
+    )
+        .bind(sessionHash, toSqlTimestamp(new Date()))
+        .first<{ username: string; profile_photo_key: string | null }>()
+
+    if (!user) {
+        return null
+    }
+
+    return {
+        username: user.username,
+        profilePhotoKey: user.profile_photo_key,
+        csrfToken: await createCsrfToken(sessionToken),
+    }
+}
+
+export function setSessionCookie(c: Context<{ Bindings: Bindings }>, sessionToken: string): void {
+    setCookie(c, SESSION_COOKIE, sessionToken, {
+        httpOnly: true,
+        maxAge: SESSION_TTL_SECONDS,
+        path: '/',
+        sameSite: 'Lax',
+        secure: new URL(c.req.url).protocol === 'https:',
+    })
+}
+
+export function clearSessionCookie(c: Context<{ Bindings: Bindings }>): void {
+    setCookie(c, SESSION_COOKIE, '', {
+        httpOnly: true,
+        maxAge: 0,
+        path: '/',
+        sameSite: 'Lax',
+        secure: new URL(c.req.url).protocol === 'https:',
+    })
+}
+
+export function getSessionCookieName(): string {
+    return SESSION_COOKIE
+}
+
+export async function createCsrfToken(sessionToken: string): Promise<string> {
+    return await sha256Hex(`${CSRF_TOKEN_PREFIX}${sessionToken}`)
+}
+
+export async function isValidCsrfToken(sessionToken: string, csrfToken: string | null): Promise<boolean> {
+    if (!csrfToken) {
+        return false
+    }
+
+    return timingSafeEqual(await createCsrfToken(sessionToken), csrfToken)
+}
+
+export function normalizeCredential(value: unknown): string | null {
+    if (typeof value !== 'string') {
+        return null
+    }
+
+    const trimmed = value.trim()
+    return trimmed.length > 0 ? trimmed : null
+}
+
+export function toPublicUser(user: UserRecord) {
+    return {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        profilePhotoKey: user.profile_photo_key,
+        bio: user.bio,
+        createdAt: user.created_at,
+    }
+}
+
+export function toSqlTimestamp(date: Date): string {
+    return date.toISOString().replace('T', ' ').slice(0, 19)
+}
+
+function createSessionToken(): string {
+    const bytes = new Uint8Array(SESSION_TOKEN_BYTES)
+    crypto.getRandomValues(bytes)
+    return [...bytes].map((byte) => byte
+        .toString(16)
+        .padStart(2, '0'))
+        .join('')
+}
+
+async function sha256Hex(value: string): Promise<string> {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+    return [...new Uint8Array(digest)].map((byte) => byte
+        .toString(16)
+        .padStart(2, '0'))
+        .join('')
+}
+
+function timingSafeEqual(left: string, right: string): boolean {
+    const leftBytes = new TextEncoder().encode(left)
+    const rightBytes = new TextEncoder().encode(right)
+
+    if (leftBytes.length !== rightBytes.length) {
+        return false
+    }
+
+    let mismatch = 0
+
+    for (let index = 0; index < leftBytes.length; index += 1) {
+        mismatch |= leftBytes[index] ^ rightBytes[index]
+    }
+
+    return mismatch === 0
+}
