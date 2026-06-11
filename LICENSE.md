@@ -2,7 +2,7 @@
 
 Licensor: Razeth
 
-Licensed Work: MyOC. The Licensed Work is copyright (c) 2026 Razeth.
+Licensed Work: MyOC. The Licensed Work is copyright © 2026 Razeth.
 
 Additional Use Grant: You may use the Licensed Work for personal, educational, evaluation, development, testing, and non-commercial production purposes. You may not use the Licensed Work to provide a commercial hosted, managed, software-as-a-service, or substantially similar offering to third parties without a separate commercial license from the Licensor.
 

@@ -5,23 +5,24 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tailwindcss -i ./src/styles/app.css -o ./public/app.css --minify",
-    "dev": "npm run build && wrangler dev",
-    "typecheck": "tsc --noEmit",
+    "build": "npm run vendor:assets && tailwindcss -i ./src/styles/app.css -o ./public/app.css --minify",
+    "vendor:assets": "node scripts/copy-vendor-assets.mjs",
+    "dev": "npm run cf-typegen && npm run build && wrangler dev",
+    "typecheck": "npm run cf-typegen && tsc --noEmit",
     "test": "vitest",
     "check": "npm run typecheck && vitest run",
     "db:migrate:local": "wrangler d1 migrations apply myoc-db --local",
     "db:seed:local": "wrangler d1 execute myoc-db --local --file seeds/development.sql",
     "db:prepare:local": "npm run db:migrate:local && npm run db:seed:local",
     "deploy": "npm run check && npm run build && wrangler deploy --minify",
-    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+    "cf-typegen": "wrangler types"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
+    "cropperjs": "^1.6.2",
     "hono": "^4.12.25"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260610.1",
     "@tailwindcss/cli": "^4.3.0",
     "daisyui": "^5.5.23",
     "tailwindcss": "^4.3.0",

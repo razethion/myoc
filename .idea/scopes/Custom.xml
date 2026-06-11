@@ -1,0 +1,3 @@
+<component name="DependencyValidationManager">
+  <scope name="Custom" pattern="!file[myoc]:public/referencematerial//*&amp;&amp;!file[myoc]:.idea//*&amp;&amp;!ext:*/&amp;&amp;!file:worker-configuration.d.ts" />
+</component>

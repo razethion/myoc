@@ -37,3 +37,4 @@ lerna-debug.log*
 *.sqlite-shm
 *.sqlite-wal
 /public/app.css
+/public/vendor/

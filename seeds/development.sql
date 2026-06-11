@@ -37,3 +37,14 @@ INSERT OR IGNORE INTO users (
         'Fake collector account for browsing and organization previews.',
         '2026-06-10 12:10:00'
     );
+
+INSERT OR IGNORE INTO user_social_links (user_id,
+                                         platform,
+                                         label,
+                                         url)
+VALUES ('seed-user-demo', 'twitter', NULL, 'https://twitter.com/demo'),
+       ('seed-user-demo', 'bluesky', NULL, 'https://bsky.app/profile/demo.example.test'),
+       ('seed-user-demo', 'custom', 'Portfolio', 'https://example.test/demo'),
+       ('seed-user-artist', 'furaffinity', NULL, 'https://www.furaffinity.net/user/artist'),
+       ('seed-user-artist', 'telegram', NULL, 'https://t.me/artist'),
+       ('seed-user-collector', 'instagram', NULL, 'https://instagram.com/collector');
