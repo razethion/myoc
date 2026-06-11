@@ -1,5 +1,6 @@
 import { Navbar } from '../components/Navbar'
 import { BaseLayout } from '../layouts/BaseLayout'
+import type {CurrentUser} from '../../lib/auth/session'
 
 const features = [
     {
@@ -57,7 +58,10 @@ const questions = [
     }
 ]
 
+const QUESTIONS_SECTION_ID = 'questions'
+
 type HomePageProps = {
+    currentUser?: CurrentUser | null
     guestInitial: string
 }
 
@@ -115,10 +119,10 @@ function HomePageStyles() {
     )
 }
 
-export function HomePage({ guestInitial }: HomePageProps) {
+export function HomePage({ currentUser, guestInitial }: HomePageProps) {
     return (
         <BaseLayout head={<HomePageStyles />} title="Home | MyOC">
-            <Navbar guestInitial={guestInitial} />
+            <Navbar currentUser={currentUser} guestInitial={guestInitial} />
             <main>
                 <section class="hero-prism relative overflow-hidden border-b border-base-300 bg-base-100">
                     <div class="relative z-20 mx-auto grid min-h-[calc(100vh-4rem)] max-w-6xl items-center gap-10 px-4 py-16 sm:px-6 lg:grid-cols-2 lg:px-8">
@@ -130,13 +134,13 @@ export function HomePage({ guestInitial }: HomePageProps) {
                             </p>
                             <div class="mt-8 flex flex-col gap-3 sm:flex-row">
                                 <a class="btn btn-primary btn-lg" href="/register">Get started</a>
-                                <a class="btn btn-outline btn-lg" href="#questions">Learn more</a>
+                                <a class="btn btn-outline btn-lg" href={`#${QUESTIONS_SECTION_ID}`}>Learn more</a>
                             </div>
                         </div>
 
                         <div class="glass-preview-card rounded-3xl p-4">
                             <div class="relative">
-                                <img alt="Character artwork preview" class="aspect-[4/5] w-full rounded-2xl object-cover" src="/assets/razfalling.png" />
+                                <img alt="Character artwork preview" class="aspect-4/5 w-full rounded-2xl object-cover" src="/assets/razfalling.png" />
                                 <div class="absolute bottom-3 right-3 w-32 rounded-2xl border border-cyan-100/30 bg-base-100/80 p-2 shadow-xl backdrop-blur-md sm:bottom-4 sm:right-4 sm:w-56">
                                     <div
                                         aria-hidden="true"
@@ -181,7 +185,7 @@ export function HomePage({ guestInitial }: HomePageProps) {
                     </div>
                 </section>
 
-                <section class="bg-base-200 px-4 py-16 sm:px-6 lg:px-8" id="questions">
+                <section class="bg-base-200 px-4 py-16 sm:px-6 lg:px-8" id={QUESTIONS_SECTION_ID}>
                     <div class="mx-auto max-w-7xl">
                         <div class="mb-8 flex flex-col justify-between gap-4 md:flex-row md:items-end">
                             <div>
