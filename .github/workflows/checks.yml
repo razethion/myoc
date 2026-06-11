@@ -81,33 +81,38 @@ jobs:
           set -euo pipefail
 
           db_name="myoc-pr-${PR_NUMBER}"
-          db_id="$(npx wrangler d1 list --json | node -e "
-            let input = '';
-            process.stdin.on('data', (chunk) => input += chunk);
-            process.stdin.on('end', () => {
-              const dbs = JSON.parse(input);
+
+          list_d1_databases() {
+            if ! npx wrangler d1 list --json > d1-list.json; then
+              echo "::error::Unable to list D1 databases. Check that CLOUDFLARE_API_TOKEN is valid and has D1 edit/read permissions for this account."
+              exit 1
+            fi
+          }
+
+          get_db_id() {
+            node -e "
+              const fs = require('node:fs');
+              const dbs = JSON.parse(fs.readFileSync('d1-list.json', 'utf8'));
               const db = dbs.find((entry) => entry.name === process.env.DB_NAME);
               if (db) {
                 process.stdout.write(db.uuid || db.id || '');
               }
-            });
-          " )"
+            "
+          }
+
+          list_d1_databases
+          db_id="$(get_db_id)"
 
           if [ -z "$db_id" ]; then
             npx wrangler d1 create "$db_name" --location enam
 
-            db_id="$(npx wrangler d1 list --json | node -e "
-              let input = '';
-              process.stdin.on('data', (chunk) => input += chunk);
-              process.stdin.on('end', () => {
-                const dbs = JSON.parse(input);
-                const db = dbs.find((entry) => entry.name === process.env.DB_NAME);
-                if (!db) {
-                  throw new Error('Created preview D1 database was not found');
-                }
-                process.stdout.write(db.uuid || db.id || '');
-              });
-            " )"
+            list_d1_databases
+            db_id="$(get_db_id)"
+
+            if [ -z "$db_id" ]; then
+              echo "::error::Created preview D1 database $db_name was not found in wrangler d1 list output."
+              exit 1
+            fi
           fi
 
           cat > wrangler.preview.jsonc <<EOF
@@ -233,14 +238,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          db_exists="$(npx wrangler d1 list --json | node -e "
-            let input = '';
-            process.stdin.on('data', (chunk) => input += chunk);
-            process.stdin.on('end', () => {
-              const dbs = JSON.parse(input);
-              const db = dbs.find((entry) => entry.name === process.env.DB_NAME);
-              process.stdout.write(db ? 'yes' : 'no');
-            });
+          if ! npx wrangler d1 list --json > d1-list.json; then
+            echo "::error::Unable to list D1 databases. Check that CLOUDFLARE_API_TOKEN is valid and has D1 edit/read permissions for this account."
+            exit 1
+          fi
+
+          db_exists="$(node -e "
+            const fs = require('node:fs');
+            const dbs = JSON.parse(fs.readFileSync('d1-list.json', 'utf8'));
+            const db = dbs.find((entry) => entry.name === process.env.DB_NAME);
+            process.stdout.write(db ? 'yes' : 'no');
           " )"
 
           if [ "$db_exists" = "yes" ]; then
