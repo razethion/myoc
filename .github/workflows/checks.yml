@@ -121,6 +121,7 @@ jobs:
             "main": "src/index.ts",
             "compatibility_date": "2026-06-10",
             "workers_dev": false,
+            "preview_urls": true,
             "assets": {
               "directory": "./public"
             },
@@ -164,11 +165,33 @@ jobs:
         id: upload-preview
         if: ${{ steps.preview.outputs.preview_alias != '' }}
         run: |
-          set -o pipefail
+          set -euo pipefail
+
+          export WRANGLER_OUTPUT_FILE_PATH="${RUNNER_TEMP}/wrangler-preview-output.json"
 
           npx wrangler versions upload --config wrangler.preview.jsonc --minify --preview-alias "${{ steps.preview.outputs.preview_alias }}" --message "GitHub Actions preview ${GITHUB_SHA}" 2>&1 | tee wrangler-preview.log
 
-          preview_url="$(grep -Eo 'https://[^[:space:]]+' wrangler-preview.log | grep -m1 'workers.dev' | sed -E 's/[).,]+$//' || true)"
+          preview_url="$(node -e "
+            const fs = require('node:fs');
+            const outputFile = process.env.WRANGLER_OUTPUT_FILE_PATH;
+            if (!fs.existsSync(outputFile)) {
+              process.exit(0);
+            }
+            const entries = fs.readFileSync(outputFile, 'utf8')
+              .trim()
+              .split(/\n+/)
+              .filter(Boolean)
+              .map((line) => JSON.parse(line));
+            const upload = entries.reverse().find((entry) => entry.type === 'version-upload');
+            process.stdout.write(upload?.preview_alias_url || upload?.preview_url || '');
+          ")"
+
+          if [ -z "$preview_url" ]; then
+            echo "::error::Wrangler uploaded the preview but did not return a preview URL. Check that Preview URLs are enabled for this Worker."
+            echo "Wrangler output file:"
+            cat "$WRANGLER_OUTPUT_FILE_PATH" || true
+            exit 1
+          fi
 
           echo "preview_url=$preview_url" >> "$GITHUB_OUTPUT"
         env:
