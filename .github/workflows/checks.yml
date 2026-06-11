@@ -1,6 +1,9 @@
-name: Checks and Preview
+name: Checks and Deploy
 
 on:
+  push:
+    branches:
+      - master
   pull_request:
 
 permissions:
@@ -9,12 +12,12 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: preview-${{ github.workflow }}-${{ github.ref }}
+  group: deploy-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   check-and-deploy:
-    name: Check and Preview
+    name: Check and Deploy
     runs-on: ubuntu-latest
 
     steps:
@@ -36,9 +39,16 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Deploy production
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+        run: npx wrangler deploy --minify --message "GitHub Actions ${GITHUB_SHA}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Prepare preview alias
         id: preview
-        if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
         env:
           RAW_REF: ${{ github.head_ref }}
         run: |

@@ -92,7 +92,7 @@ npm run cf-typegen
 
 ## Deployment
 
-Pull request checks and previews are handled by GitHub Actions in [`.github/workflows/checks.yml`](./.github/workflows/checks.yml). The workflow installs dependencies, runs checks, builds the CSS bundle, and only then calls Cloudflare.
+Checks, pull request previews, and production deployment are handled by GitHub Actions in [`.github/workflows/checks.yml`](./.github/workflows/checks.yml). The workflow installs dependencies, runs checks, builds the CSS bundle, and only then calls Cloudflare.
 
 The workflow behavior is:
 
@@ -100,6 +100,7 @@ The workflow behavior is:
 - Same-repository pull requests upload a Cloudflare preview version with a branch-based preview alias after checks pass.
 - Successful same-repository pull request previews get a bot comment with the live Cloudflare preview URL.
 - Fork pull requests run checks only because Cloudflare secrets are not exposed to forked code.
+- Pushes to `master`, including merged pull requests, run checks and build before deploying to production with `wrangler deploy --minify`.
 
 The repository must define these GitHub Actions secrets:
 
@@ -143,7 +144,7 @@ npm run check
 npm run build
 ```
 
-GitHub Actions runs the same checks automatically on pull requests. Cloudflare preview upload only happens after those checks and the build pass.
+GitHub Actions runs the same checks automatically on pull requests and pushes to `master`. Cloudflare preview uploads and production deployments only happen after those checks and the build pass.
 
 Keep pull requests focused. If a change affects Cloudflare bindings, update `wrangler.jsonc` and run:
 
