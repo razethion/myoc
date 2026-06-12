@@ -1177,7 +1177,7 @@ export function CharacterSettingsPage({
                             <div class="gallery-layout-panel rounded-box border border-base-300 bg-base-200 p-4">
                                 <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                     <div>
-                                        <h4 class="font-semibold" id="active-gallery-tag-title">default</h4>
+                                        <h4 class="font-semibold" id="active-gallery-tag-title">Default</h4>
                                         <p class="text-sm text-base-content/70" id="active-gallery-tag-meta">0 rows</p>
                                     </div>
                                     <button class="btn btn-sm btn-primary" id="add-gallery-row" type="button">Add Row</button>
