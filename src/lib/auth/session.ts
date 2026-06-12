@@ -9,6 +9,7 @@ export type UserRecord = {
     password_hash: string
     profile_photo_key: string | null
     bio: string
+    display_nsfw_media: number
     created_at: string
 }
 
@@ -18,6 +19,7 @@ export type CurrentUser = {
     username: string
     profilePhotoKey: string | null
     bio: string
+    displayNsfwMedia: boolean
     csrfToken: string
 }
 
@@ -59,7 +61,12 @@ export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promis
 
     const sessionHash = await sha256Hex(sessionToken)
     const user = await c.env.DB.prepare(
-        `SELECT users.id, users.email, users.username, users.profile_photo_key, users.bio
+        `SELECT users.id,
+                users.email,
+                users.username,
+                users.profile_photo_key,
+                users.bio,
+                users.display_nsfw_media
          FROM sessions
          INNER JOIN users ON users.id = sessions.user_id
          WHERE sessions.session_hash = ?
@@ -67,7 +74,14 @@ export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promis
          LIMIT 1`,
     )
         .bind(sessionHash, toSqlTimestamp(new Date()))
-        .first<{ id: string; email: string; username: string; profile_photo_key: string | null; bio: string }>()
+        .first<{
+            id: string
+            email: string
+            username: string
+            profile_photo_key: string | null
+            bio: string
+            display_nsfw_media: number
+        }>()
 
     if (!user) {
         return null
@@ -79,6 +93,7 @@ export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promis
         username: user.username,
         profilePhotoKey: user.profile_photo_key,
         bio: user.bio,
+        displayNsfwMedia: Boolean(user.display_nsfw_media),
         csrfToken: await createCsrfToken(sessionToken),
     }
 }
@@ -135,6 +150,7 @@ export function toPublicUser(user: UserRecord) {
         username: user.username,
         profilePhotoKey: user.profile_photo_key,
         bio: user.bio,
+        displayNsfwMedia: Boolean(user.display_nsfw_media),
         createdAt: user.created_at,
     }
 }

@@ -1,0 +1,1384 @@
+import type {CurrentUser} from '../../lib/auth/session'
+import {characterMediaImageUrl, characterProfileImageUrl} from '../../lib/media/url'
+import {Navbar} from '../components/Navbar'
+import {BaseLayout} from '../layouts/BaseLayout'
+
+export type CharacterSettingsCharacter = {
+    id: string
+    userId: string
+    name: string
+    profileImageKey: string
+    description: string
+    galleryFullsizeLastRow: boolean
+}
+
+export type CharacterSettingsMedia = {
+    id: string
+    sfwImageKey: string | null
+    nsfwImageKey: string | null
+    sfwArtist: string
+    nsfwArtist: string
+    sfwWidth: number | null
+    sfwHeight: number | null
+    nsfwWidth: number | null
+    nsfwHeight: number | null
+}
+
+export type CharacterSettingsGalleryTab = {
+    id: string
+    name: string
+    rows: {
+        id: string
+        mediaIds: string[]
+    }[]
+}
+
+type CharacterSettingsPageProps = {
+    currentUser: CurrentUser
+    character: CharacterSettingsCharacter
+    media: CharacterSettingsMedia[]
+    galleryTabs: CharacterSettingsGalleryTab[]
+    mediaBaseUrl: string
+}
+
+function safeJson(value: unknown): string {
+    return JSON.stringify(value)
+        .replace(/</g, '\\u003c')
+        .replace(/>/g, '\\u003e')
+        .replace(/&/g, '\\u0026')
+        .replace(/\u2028/g, '\\u2028')
+        .replace(/\u2029/g, '\\u2029')
+}
+
+function mediaWithUrls(mediaBaseUrl: string, character: CharacterSettingsCharacter, media: CharacterSettingsMedia) {
+    return {
+        ...media,
+        sfwImageUrl: media.sfwImageKey
+            ? characterMediaImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.sfwImageKey, 'sfw')
+            : null,
+        nsfwImageUrl: media.nsfwImageKey
+            ? characterMediaImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwImageKey, 'nsfw')
+            : null,
+    }
+}
+
+function CharacterSettingsScript({
+    character,
+    media,
+    galleryTabs,
+    csrfToken,
+}: {
+    character: CharacterSettingsCharacter
+    media: ReturnType<typeof mediaWithUrls>[]
+    galleryTabs: CharacterSettingsGalleryTab[]
+    csrfToken: string
+}) {
+    return (
+        <script dangerouslySetInnerHTML={{
+            __html: `
+const character = ${safeJson(character)};
+const csrfToken = ${safeJson(csrfToken)};
+const mediaLibrary = new Map(${safeJson(media)}.map((item) => [item.id, item]));
+const tagLayouts = new Map(${safeJson(galleryTabs)}.map((tab) => [tab.id, tab]));
+let activeTagId = ${safeJson(galleryTabs[0]?.id ?? 'default')};
+let draggedItem = null;
+let pendingDeleteMediaId = null;
+
+const mediaPool = document.getElementById('all-media-pool');
+const mediaCount = document.getElementById('all-media-count');
+const galleryTagTabs = document.getElementById('gallery-tag-tabs');
+const galleryRows = document.getElementById('gallery-rows');
+const activeGalleryTagTitle = document.getElementById('active-gallery-tag-title');
+const activeGalleryTagMeta = document.getElementById('active-gallery-tag-meta');
+const addGalleryRowButton = document.getElementById('add-gallery-row');
+const saveCharacterSettingsButton = document.getElementById('save-character-settings');
+const saveCharacterSettingsWarning = document.getElementById('save-character-settings-warning');
+const settingsToastRegion = document.querySelector('[data-character-settings-toast-region]');
+const characterSettingsForm = document.getElementById('character-settings-form');
+const characterTitle = document.querySelector('[data-character-title]');
+const characterProfileImageInput = document.getElementById('character-profile-photo');
+const characterProfileImagePreview = document.querySelector('[data-character-profile-image-preview]');
+const characterProfileCropper = document.querySelector('[data-character-profile-cropper]');
+const characterProfileCropImage = document.querySelector('[data-character-profile-crop-image]');
+const fullsizeLastRowInput = document.getElementById('fullsize-last-row');
+const uploadMediaButton = document.getElementById('upload-media-button');
+const bulkUploadButton = document.getElementById('bulk-upload-images');
+const uploadImageModal = document.getElementById('upload-image-modal');
+const uploadImageForm = document.getElementById('upload-image-form');
+const uploadImageSfwFileInput = document.getElementById('gallery-image-sfw-file');
+const uploadImageNsfwFileInput = document.getElementById('gallery-image-nsfw-file');
+const uploadImageSfwArtistInput = document.getElementById('gallery-image-sfw-artist');
+const uploadImageNsfwArtistInput = document.getElementById('gallery-image-nsfw-artist');
+const uploadSfwPreview = document.querySelector('[data-upload-sfw-preview]');
+const uploadNsfwPreview = document.querySelector('[data-upload-nsfw-preview]');
+const bulkUploadModal = document.getElementById('bulk-upload-modal');
+const bulkUploadForm = document.getElementById('bulk-upload-form');
+const bulkUploadFileInput = document.getElementById('bulk-gallery-image-files');
+const bulkUploadList = document.getElementById('bulk-upload-list');
+const galleryTagModal = document.getElementById('gallery-tag-modal');
+const galleryTagForm = document.getElementById('gallery-tag-form');
+const galleryTagNameInput = document.getElementById('gallery-tag-name');
+const renameGalleryTagModal = document.getElementById('rename-gallery-tag-modal');
+const renameGalleryTagForm = document.getElementById('rename-gallery-tag-form');
+const renameGalleryTagNameInput = document.getElementById('rename-gallery-tag-name');
+const deleteMediaModal = document.getElementById('delete-media-modal');
+const deleteGalleryTagModal = document.getElementById('delete-gallery-tag-modal');
+const removeRowModal = document.getElementById('remove-row-modal');
+const editImageArtistModal = document.getElementById('edit-image-artist-modal');
+const editImageArtistForm = document.getElementById('edit-image-artist-form');
+const editImageSfwFileInput = document.getElementById('edit-gallery-image-sfw-file');
+const editImageNsfwFileInput = document.getElementById('edit-gallery-image-nsfw-file');
+const editImageSfwArtistInput = document.getElementById('edit-gallery-image-sfw-artist');
+const editImageNsfwArtistInput = document.getElementById('edit-gallery-image-nsfw-artist');
+const editSfwPreview = document.querySelector('[data-edit-sfw-preview]');
+const editNsfwPreview = document.querySelector('[data-edit-nsfw-preview]');
+const deleteCharacterButton = document.getElementById('delete-character-button');
+const deleteCharacterModal = document.getElementById('delete-character-modal');
+const deleteCharacterForm = document.getElementById('delete-character-form');
+const deleteCharacterConfirmNameInput = document.getElementById('delete-character-confirm-name');
+const deleteConfirmPermanentInput = document.getElementById('delete-confirm-permanent');
+const deleteConfirmFinalInput = document.getElementById('delete-confirm-final');
+const confirmDeleteCharacterButton = document.getElementById('confirm-delete-character');
+
+let pendingDeleteTagId = null;
+let pendingRenameTagId = null;
+let removeTargetRowIndex = null;
+let bulkUploadFiles = [];
+let editTargetMediaId = null;
+let editRemoveSfw = false;
+let editRemoveNsfw = false;
+let characterProfileCropperInstance = null;
+let characterProfileObjectUrl = null;
+
+function createId() {
+    return crypto.randomUUID ? crypto.randomUUID() : 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+}
+
+function showAlert(message, isSuccess) {
+    if (!settingsToastRegion) return;
+    const toast = document.createElement('div');
+    toast.className = 'character-settings-toast-message alert shadow-lg ' + (isSuccess ? 'alert-success' : 'alert-error');
+    toast.setAttribute('role', 'status');
+    toast.textContent = message || 'Request failed.';
+    settingsToastRegion.append(toast);
+    window.setTimeout(() => toast.remove(), 3600);
+}
+
+function clearAlert() {
+    if (!settingsToastRegion) return;
+    settingsToastRegion.querySelectorAll('.character-settings-toast-message').forEach((toast) => toast.remove());
+}
+
+async function apiFetch(url, options) {
+    const response = await fetch(url, {
+        ...options,
+        headers: {
+            ...(options && options.headers ? options.headers : {}),
+            'x-csrf-token': csrfToken
+        }
+    });
+    if (!response.ok) {
+        let message = 'Request failed';
+        try {
+            const body = await response.json();
+            message = body.error || message;
+        } catch {}
+        throw new Error(message);
+    }
+    if (response.status === 204) {
+        return null;
+    }
+    return await response.json();
+}
+
+function setLoading(button, isLoading, text) {
+    if (!button) return;
+    button.disabled = isLoading;
+    button.classList.toggle('loading', isLoading);
+    if (text) {
+        if (!button.dataset.idleText) button.dataset.idleText = button.textContent;
+        button.textContent = isLoading ? text : button.dataset.idleText;
+    }
+}
+
+async function loadCharacterProfileForCropping(file) {
+    if (!file || !file.type.startsWith('image/')) throw new Error('Choose an image file.');
+    if (typeof Cropper === 'undefined') throw new Error('Profile image editor could not load. Refresh and try again.');
+    if (characterProfileCropperInstance) characterProfileCropperInstance.destroy();
+    if (characterProfileObjectUrl) URL.revokeObjectURL(characterProfileObjectUrl);
+    characterProfileObjectUrl = URL.createObjectURL(file);
+    characterProfileCropImage.src = characterProfileObjectUrl;
+    characterProfileCropperInstance = new Cropper(characterProfileCropImage, {
+        aspectRatio: 1,
+        autoCropArea: 1,
+        background: false,
+        viewMode: 1,
+    });
+}
+
+function createCroppedCharacterProfileFile() {
+    if (!characterProfileCropperInstance) throw new Error('Choose a profile image first.');
+    const canvas = characterProfileCropperInstance.getCroppedCanvas({
+        width: 512,
+        height: 512,
+        imageSmoothingEnabled: true,
+        imageSmoothingQuality: 'high',
+    });
+    return new Promise((resolve, reject) => {
+        canvas.toBlob((blob) => {
+            if (!blob) {
+                reject(new Error('Could not prepare profile image.'));
+                return;
+            }
+            resolve(new File([blob], 'character-profile.webp', { type: 'image/webp' }));
+        }, 'image/webp', 0.9);
+    });
+}
+
+function resetCharacterProfileCropper() {
+    if (characterProfileCropperInstance) {
+        characterProfileCropperInstance.destroy();
+        characterProfileCropperInstance = null;
+    }
+    if (characterProfileObjectUrl) {
+        URL.revokeObjectURL(characterProfileObjectUrl);
+        characterProfileObjectUrl = null;
+    }
+    characterProfileCropImage.removeAttribute('src');
+    characterProfileCropper.classList.add('hidden');
+}
+
+function normalizeTagName(name) {
+    return name.trim().replace(/\\s+/g, ' ').slice(0, 32);
+}
+
+function getActiveLayout() {
+    return tagLayouts.get(activeTagId) || Array.from(tagLayouts.values())[0];
+}
+
+function getUsedMediaIds(tagId) {
+    const layout = tagLayouts.get(tagId);
+    return new Set(layout ? layout.rows.flatMap((row) => row.mediaIds) : []);
+}
+
+function getMediaUsageTabCount(mediaId) {
+    let count = 0;
+    tagLayouts.forEach((layout) => {
+        if (layout.rows.some((row) => row.mediaIds.includes(mediaId))) count += 1;
+    });
+    return count;
+}
+
+function getUnusedMediaCount() {
+    let count = 0;
+    mediaLibrary.forEach((media) => {
+        if (getMediaUsageTabCount(media.id) === 0) count += 1;
+    });
+    return count;
+}
+
+function mediaDisplayUrl(media) {
+    return media.nsfwImageUrl || media.sfwImageUrl || '';
+}
+
+function mediaAlt(media) {
+    return media.nsfwArtist || media.sfwArtist || 'Character media';
+}
+
+function createImageRatingBadge(media) {
+    const badge = document.createElement('span');
+    badge.className = 'absolute bottom-1 left-1 rounded px-1.5 py-0.5 text-[0.65rem] font-bold leading-none shadow-md ';
+    if (media.nsfwImageUrl) {
+        badge.className += media.sfwImageUrl ? 'bg-purple-600 text-white' : 'bg-error text-error-content';
+        badge.textContent = media.sfwImageUrl ? '18+ with SFW' : '18+';
+    } else {
+        badge.className += 'bg-success text-success-content';
+        badge.textContent = 'SFW';
+    }
+    return badge;
+}
+
+function createMediaThumb(media, variant) {
+    const item = document.createElement('div');
+    item.className = variant === 'pool'
+        ? 'media-pool-item group w-[calc((100%_-_1.5rem)/3)] cursor-grab active:cursor-grabbing sm:w-24'
+        : 'gallery-image group relative aspect-square w-[calc((100%_-_1.5rem)/3)] cursor-grab overflow-hidden rounded bg-base-300 active:cursor-grabbing sm:h-24 sm:w-24';
+    item.dataset.mediaId = media.id;
+    item.draggable = true;
+    item.tabIndex = 0;
+
+    const thumb = document.createElement('div');
+    thumb.className = 'relative aspect-square overflow-hidden rounded bg-base-300';
+
+    const image = document.createElement('img');
+    image.className = 'h-full w-full object-cover';
+    image.alt = mediaAlt(media);
+    image.dataset.mediaThumbImage = '';
+    image.loading = 'lazy';
+    image.src = mediaDisplayUrl(media);
+
+    const editButton = document.createElement('button');
+    editButton.ariaLabel = 'Edit image settings';
+    editButton.className = 'btn btn-neutral btn-sm btn-circle absolute left-1 top-1 z-10 min-h-8 h-8 w-8 opacity-95 sm:btn-xs sm:min-h-6 sm:h-6 sm:w-6';
+    editButton.dataset.editImageArtist = '';
+    editButton.type = 'button';
+    editButton.innerHTML = '<svg aria-hidden="true" class="h-4 w-4 sm:h-3 sm:w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M16.862 3.487a2.1 2.1 0 0 1 2.97 2.97L8.76 17.53 4.5 18.75l1.22-4.26L16.862 3.487z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg>';
+
+    const removeButton = document.createElement('button');
+    removeButton.ariaLabel = variant === 'pool' ? 'Delete media' : 'Remove from row';
+    removeButton.className = 'btn btn-error btn-sm btn-circle absolute right-1 top-1 z-10 min-h-8 h-8 w-8 opacity-95 sm:btn-xs sm:min-h-6 sm:h-6 sm:w-6';
+    removeButton.dataset.removeImage = '';
+    removeButton.type = 'button';
+    removeButton.textContent = 'x';
+
+    thumb.append(image, editButton, removeButton, createImageRatingBadge(media));
+
+    if (variant === 'pool') {
+        const usageCount = getMediaUsageTabCount(media.id);
+        const usage = document.createElement('div');
+        usage.className = 'mt-1 rounded px-1.5 py-1 text-center text-[0.65rem] font-bold leading-tight ' + (usageCount > 0 ? 'bg-success text-success-content' : 'bg-error text-error-content');
+        usage.textContent = usageCount > 0 ? 'Used on ' + usageCount + (usageCount === 1 ? ' tab' : ' tabs') : 'Unused';
+        item.append(thumb, usage);
+        return item;
+    }
+
+    item.append(thumb);
+    return item;
+}
+
+function renderMediaPool() {
+    const usedInActiveTab = getUsedMediaIds(activeTagId);
+    mediaPool.replaceChildren();
+    mediaLibrary.forEach((media) => {
+        const item = createMediaThumb(media, 'pool');
+        const isUsed = usedInActiveTab.has(media.id);
+        item.setAttribute('aria-disabled', isUsed ? 'true' : 'false');
+        item.title = isUsed ? 'Already used in this tab' : 'Drag into a row';
+        mediaPool.append(item);
+    });
+    mediaCount.textContent = mediaLibrary.size + ' media';
+}
+
+function renderTabs() {
+    galleryTagTabs.replaceChildren();
+    tagLayouts.forEach((layout, tagId) => {
+        const tab = document.createElement('div');
+        tab.className = 'gallery-layout-tab' + (tagId === activeTagId ? ' tab-active' : '');
+        const labelButton = document.createElement('button');
+        labelButton.className = 'gallery-layout-tab-button';
+        labelButton.dataset.tagId = tagId;
+        labelButton.role = 'tab';
+        labelButton.type = 'button';
+        labelButton.textContent = layout.name;
+        tab.append(labelButton);
+        if (layout.name !== 'default') {
+            const editButton = document.createElement('button');
+            editButton.className = 'gallery-layout-tab-edit btn btn-xs btn-circle btn-ghost';
+            editButton.dataset.renameGalleryTag = tagId;
+            editButton.type = 'button';
+            editButton.textContent = '✎';
+            const removeButton = document.createElement('button');
+            removeButton.className = 'gallery-layout-tab-remove btn btn-xs btn-circle btn-error btn-outline';
+            removeButton.dataset.removeGalleryTag = tagId;
+            removeButton.type = 'button';
+            removeButton.textContent = '-';
+            tab.append(editButton, removeButton);
+        }
+        galleryTagTabs.append(tab);
+    });
+    const addTab = document.createElement('button');
+    addTab.ariaLabel = 'Add gallery tab';
+    addTab.className = 'gallery-layout-tab gallery-layout-tab-add';
+    addTab.dataset.addGalleryTag = '';
+    addTab.role = 'tab';
+    addTab.type = 'button';
+    addTab.textContent = '+';
+    galleryTagTabs.append(addTab);
+}
+
+function renderRows() {
+    const layout = getActiveLayout();
+    galleryRows.replaceChildren();
+    layout.rows.forEach((rowData, rowIndex) => {
+        const row = document.createElement('div');
+        row.className = 'rounded-box border border-base-300 bg-base-100 p-4';
+        row.dataset.galleryRow = String(rowIndex);
+        const header = document.createElement('div');
+        header.className = 'mb-3 flex flex-wrap items-center justify-between gap-2';
+        const title = document.createElement('h5');
+        title.className = 'font-semibold';
+        title.textContent = 'Row ' + (rowIndex + 1);
+        const removeButton = document.createElement('button');
+        removeButton.className = 'btn btn-sm btn-error btn-outline';
+        removeButton.dataset.removeRow = '';
+        removeButton.type = 'button';
+        removeButton.textContent = 'Remove Row';
+        const dropzone = document.createElement('div');
+        dropzone.className = 'gallery-dropzone flex min-h-28 flex-wrap gap-3 rounded border border-dashed border-base-300 bg-base-200 p-3';
+        dropzone.dataset.dropzone = '';
+        dropzone.dataset.rowIndex = String(rowIndex);
+        rowData.mediaIds.forEach((mediaId) => {
+            const media = mediaLibrary.get(mediaId);
+            if (media) dropzone.append(createMediaThumb(media, 'row'));
+        });
+        header.append(title, removeButton);
+        row.append(header, dropzone);
+        galleryRows.append(row);
+    });
+    activeGalleryTagTitle.textContent = layout.name;
+    activeGalleryTagMeta.textContent = layout.rows.length + (layout.rows.length === 1 ? ' row' : ' rows') + ' / ' + getUsedMediaIds(activeTagId).size + ' images';
+}
+
+function renderGallery() {
+    renderTabs();
+    renderRows();
+    renderMediaPool();
+    const unusedMediaCount = getUnusedMediaCount();
+    saveCharacterSettingsButton.disabled = getActiveLayout().rows.length === 0 || unusedMediaCount > 0;
+    saveCharacterSettingsWarning.hidden = unusedMediaCount === 0;
+    saveCharacterSettingsWarning.textContent = unusedMediaCount === 1
+        ? 'Delete 1 unused media item before saving changes.'
+        : 'Delete ' + unusedMediaCount + ' unused media items before saving changes.';
+}
+
+function insertMediaInRow(mediaId, rowIndex, insertIndex) {
+    const layout = getActiveLayout();
+    const targetRow = layout.rows[rowIndex];
+    if (!targetRow || !mediaLibrary.has(mediaId)) return;
+    if (draggedItem && draggedItem.type === 'row') {
+        const sourceRow = layout.rows[draggedItem.rowIndex];
+        const sourceIndex = sourceRow.mediaIds.indexOf(mediaId);
+        if (sourceIndex >= 0) sourceRow.mediaIds.splice(sourceIndex, 1);
+    } else if (getUsedMediaIds(activeTagId).has(mediaId)) {
+        return;
+    }
+    targetRow.mediaIds.splice(Math.max(0, Math.min(insertIndex, targetRow.mediaIds.length)), 0, mediaId);
+    renderGallery();
+}
+
+function removeFromActiveRow(rowIndex, mediaId) {
+    const row = getActiveLayout().rows[rowIndex];
+    if (!row) return;
+    row.mediaIds = row.mediaIds.filter((id) => id !== mediaId);
+    renderGallery();
+}
+
+function getDropIndex(dropzone, x) {
+    const images = Array.from(dropzone.querySelectorAll('.gallery-image:not([aria-grabbed="true"])'));
+    const beforeImage = images.find((image) => x < image.getBoundingClientRect().left + image.getBoundingClientRect().width / 2);
+    return beforeImage ? images.indexOf(beforeImage) : images.length;
+}
+
+function renderImagePreview(preview, src, emptyText) {
+    if (!src) {
+        preview.className = 'mb-3 flex aspect-video items-center justify-center overflow-hidden rounded bg-base-300 text-xs text-base-content/60';
+        preview.textContent = emptyText;
+        return;
+    }
+    preview.className = 'mb-3 aspect-video overflow-hidden rounded bg-base-300';
+    preview.replaceChildren();
+    const image = document.createElement('img');
+    image.alt = emptyText;
+    image.className = 'h-full w-full object-cover';
+    image.loading = 'lazy';
+    image.src = src;
+    preview.append(image);
+}
+
+function renderFilePreview(input, preview, emptyText) {
+    const file = input.files[0];
+    renderImagePreview(preview, file && file.type.startsWith('image/') ? URL.createObjectURL(file) : '', emptyText);
+}
+
+async function convertImageFileToPng(file) {
+    if (!file) return null;
+    if (!file.type.startsWith('image/')) {
+        throw new Error('Choose an image file. PNG, JPG, WebP, GIF, AVIF, and other browser-supported image files are accepted.');
+    }
+    if (file.type === 'image/png') {
+        return file;
+    }
+    let bitmap;
+    try {
+        bitmap = await createImageBitmap(file, { colorSpaceConversion: 'default' });
+    } catch {
+        throw new Error('Could not read this image. Try PNG, JPG, WebP, GIF, or AVIF.');
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext('2d', { alpha: true, colorSpace: 'srgb' }) || canvas.getContext('2d');
+    context.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    return await new Promise((resolve, reject) => {
+        canvas.toBlob((blob) => {
+            if (!blob) {
+                reject(new Error('Unable to convert image to PNG'));
+                return;
+            }
+            resolve(new File([blob], file.name.replace(/\\.[^.]+$/, '') + '.png', { type: 'image/png' }));
+        }, 'image/png');
+    });
+}
+
+async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}) {
+    const [sfwPng, nsfwPng] = await Promise.all([
+        sfwFile ? convertImageFileToPng(sfwFile) : null,
+        nsfwFile ? convertImageFileToPng(nsfwFile) : null
+    ]);
+    const ratings = [];
+    if (sfwPng) ratings.push('sfw');
+    if (nsfwPng) ratings.push('nsfw');
+    if (ratings.length === 0) throw new Error('At least one image is required.');
+
+    const initResult = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/chunked/init', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ratings })
+    });
+    const completeBody = {
+        mediaId: initResult.mediaId,
+        sfwArtist: sfwArtist || '',
+        nsfwArtist: nsfwArtist || ''
+    };
+    if (sfwPng) completeBody.sfwUpload = await uploadChunkedPng(initResult.mediaId, 'sfw', sfwPng, initResult.uploads.sfw);
+    if (nsfwPng) completeBody.nsfwUpload = await uploadChunkedPng(initResult.mediaId, 'nsfw', nsfwPng, initResult.uploads.nsfw);
+
+    const result = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/chunked/complete', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(completeBody)
+    });
+    mediaLibrary.set(result.media.id, result.media);
+    const layout = getActiveLayout();
+    if (layout.rows.length === 0) layout.rows.push({ id: createId(), mediaIds: [] });
+    layout.rows[layout.rows.length - 1].mediaIds.push(result.media.id);
+    renderGallery();
+    return result.media;
+}
+
+async function uploadChunkedPng(mediaId, rating, file, upload) {
+    if (!upload) throw new Error('Upload could not be initialized.');
+    const chunkSize = upload.chunkSize || (8 * 1024 * 1024);
+    const parts = [];
+    let partNumber = 1;
+
+    for (let offset = 0; offset < file.size; offset += chunkSize) {
+        const chunk = file.slice(offset, Math.min(offset + chunkSize, file.size), 'image/png');
+        const part = await apiFetch(
+            '/api/characters/' + encodeURIComponent(character.id)
+            + '/media/chunked/' + encodeURIComponent(mediaId)
+            + '/' + encodeURIComponent(rating)
+            + '/' + encodeURIComponent(upload.uploadId)
+            + '/' + encodeURIComponent(String(partNumber))
+            + '?imageKey=' + encodeURIComponent(upload.imageKey),
+            {
+                method: 'PUT',
+                body: chunk
+            }
+        );
+        parts.push(part);
+        partNumber += 1;
+    }
+
+    return {
+        uploadId: upload.uploadId,
+        imageKey: upload.imageKey,
+        parts
+    };
+}
+
+function openEditMediaModal(mediaId) {
+    const media = mediaLibrary.get(mediaId);
+    if (!media) return;
+    editTargetMediaId = mediaId;
+    editImageSfwArtistInput.value = media.sfwArtist || '';
+    editImageNsfwArtistInput.value = media.nsfwArtist || '';
+    editRemoveSfw = false;
+    editRemoveNsfw = false;
+    renderImagePreview(editSfwPreview, media.sfwImageUrl, 'No SFW image uploaded');
+    renderImagePreview(editNsfwPreview, media.nsfwImageUrl, 'No NSFW image uploaded');
+    editImageArtistModal.showModal();
+}
+
+function removeMediaFromLayouts(mediaId) {
+    tagLayouts.forEach((layout) => {
+        layout.rows.forEach((row) => {
+            row.mediaIds = row.mediaIds.filter((id) => id !== mediaId);
+        });
+    });
+}
+
+document.addEventListener('dragstart', (event) => {
+    if (event.target.closest('[data-edit-image-artist],[data-remove-image]')) {
+        event.preventDefault();
+        return;
+    }
+
+    const poolItem = event.target.closest('.media-pool-item');
+    const rowItem = event.target.closest('.gallery-image');
+    if (poolItem) {
+        if (poolItem.getAttribute('aria-disabled') === 'true') {
+            event.preventDefault();
+            return;
+        }
+        draggedItem = { type: 'pool', mediaId: poolItem.dataset.mediaId };
+        poolItem.setAttribute('aria-grabbed', 'true');
+        event.dataTransfer.effectAllowed = 'copy';
+        return;
+    }
+    if (rowItem) {
+        draggedItem = { type: 'row', mediaId: rowItem.dataset.mediaId, rowIndex: Number(rowItem.closest('[data-gallery-row]').dataset.galleryRow) };
+        rowItem.setAttribute('aria-grabbed', 'true');
+        event.dataTransfer.effectAllowed = 'move';
+    }
+});
+
+document.addEventListener('dragend', () => {
+    document.querySelectorAll('[aria-grabbed="true"]').forEach((item) => item.removeAttribute('aria-grabbed'));
+    draggedItem = null;
+});
+
+galleryRows.addEventListener('dragover', (event) => {
+    const dropzone = event.target.closest('[data-dropzone]');
+    if (!dropzone || !draggedItem) return;
+    event.preventDefault();
+});
+
+galleryRows.addEventListener('drop', (event) => {
+    const dropzone = event.target.closest('[data-dropzone]');
+    if (!dropzone || !draggedItem) return;
+    event.preventDefault();
+    insertMediaInRow(draggedItem.mediaId, Number(dropzone.dataset.rowIndex), getDropIndex(dropzone, event.clientX));
+    draggedItem = null;
+});
+
+galleryRows.addEventListener('click', (event) => {
+    const removeImageButton = event.target.closest('[data-remove-image]');
+    const editButton = event.target.closest('[data-edit-image-artist]');
+    const removeRowButton = event.target.closest('[data-remove-row]');
+    const row = event.target.closest('[data-gallery-row]');
+    if (removeImageButton && row) {
+        removeFromActiveRow(Number(row.dataset.galleryRow), removeImageButton.closest('[data-media-id]').dataset.mediaId);
+        return;
+    }
+    if (editButton) {
+        openEditMediaModal(editButton.closest('[data-media-id]').dataset.mediaId);
+        return;
+    }
+    if (removeRowButton && row) {
+        const rowIndex = Number(row.dataset.galleryRow);
+        if (getActiveLayout().rows[rowIndex].mediaIds.length > 0) {
+            removeTargetRowIndex = rowIndex;
+            removeRowModal.showModal();
+            return;
+        }
+        getActiveLayout().rows.splice(rowIndex, 1);
+        renderGallery();
+    }
+});
+
+mediaPool.addEventListener('click', (event) => {
+    const removeButton = event.target.closest('[data-remove-image]');
+    const editButton = event.target.closest('[data-edit-image-artist]');
+    const mediaItem = event.target.closest('[data-media-id]');
+    if (!mediaItem) return;
+    if (removeButton) {
+        pendingDeleteMediaId = mediaItem.dataset.mediaId;
+        deleteMediaModal.showModal();
+        return;
+    }
+    if (editButton) openEditMediaModal(mediaItem.dataset.mediaId);
+});
+
+galleryTagTabs.addEventListener('click', (event) => {
+    const addTab = event.target.closest('[data-add-gallery-tag]');
+    const removeTab = event.target.closest('[data-remove-gallery-tag]');
+    const renameTab = event.target.closest('[data-rename-gallery-tag]');
+    const tab = event.target.closest('[data-tag-id]');
+    if (addTab) {
+        galleryTagModal.showModal();
+        galleryTagNameInput.focus();
+        return;
+    }
+    if (removeTab) {
+        pendingDeleteTagId = removeTab.dataset.removeGalleryTag;
+        deleteGalleryTagModal.showModal();
+        return;
+    }
+    if (renameTab) {
+        pendingRenameTagId = renameTab.dataset.renameGalleryTag;
+        renameGalleryTagNameInput.value = tagLayouts.get(pendingRenameTagId).name;
+        renameGalleryTagModal.showModal();
+        renameGalleryTagNameInput.focus();
+        return;
+    }
+    if (tab) {
+        activeTagId = tab.dataset.tagId;
+        renderGallery();
+    }
+});
+
+addGalleryRowButton.addEventListener('click', () => {
+    getActiveLayout().rows.push({ id: createId(), mediaIds: [] });
+    renderGallery();
+});
+
+galleryTagForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const name = normalizeTagName(galleryTagNameInput.value);
+    if (!name) return;
+    const id = createId();
+    tagLayouts.set(id, { id, name, rows: [{ id: createId(), mediaIds: [] }] });
+    activeTagId = id;
+    galleryTagModal.close();
+    renderGallery();
+});
+
+renameGalleryTagForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const layout = tagLayouts.get(pendingRenameTagId);
+    const name = normalizeTagName(renameGalleryTagNameInput.value);
+    if (layout && name) layout.name = name;
+    renameGalleryTagModal.close();
+    renderGallery();
+});
+
+deleteGalleryTagModal.addEventListener('click', (event) => {
+    if (event.target.matches('[data-cancel-delete-gallery-tag]')) {
+        deleteGalleryTagModal.close();
+        return;
+    }
+    if (event.target.matches('[data-confirm-delete-gallery-tag]') && pendingDeleteTagId) {
+        tagLayouts.delete(pendingDeleteTagId);
+        activeTagId = Array.from(tagLayouts.keys())[0];
+        deleteGalleryTagModal.close();
+        renderGallery();
+    }
+});
+
+removeRowModal.addEventListener('click', (event) => {
+    if (event.target.matches('[data-cancel-remove-row]')) {
+        removeRowModal.close();
+        return;
+    }
+    if (event.target.matches('[data-confirm-remove-row]') && removeTargetRowIndex !== null) {
+        getActiveLayout().rows.splice(removeTargetRowIndex, 1);
+        removeRowModal.close();
+        renderGallery();
+    }
+});
+
+deleteMediaModal.addEventListener('click', async (event) => {
+    if (event.target.matches('[data-cancel-delete-media]')) {
+        deleteMediaModal.close();
+        return;
+    }
+    if (event.target.matches('[data-confirm-delete-media]') && pendingDeleteMediaId) {
+        try {
+            await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/' + encodeURIComponent(pendingDeleteMediaId), { method: 'DELETE' });
+            mediaLibrary.delete(pendingDeleteMediaId);
+            removeMediaFromLayouts(pendingDeleteMediaId);
+            deleteMediaModal.close();
+            renderGallery();
+        } catch (error) {
+            showAlert(error.message, false);
+        }
+    }
+});
+
+uploadMediaButton.addEventListener('click', () => uploadImageModal.showModal());
+bulkUploadButton.addEventListener('click', () => bulkUploadModal.showModal());
+uploadImageSfwFileInput.addEventListener('change', () => renderFilePreview(uploadImageSfwFileInput, uploadSfwPreview, 'No SFW image selected'));
+uploadImageNsfwFileInput.addEventListener('change', () => renderFilePreview(uploadImageNsfwFileInput, uploadNsfwPreview, 'No NSFW image selected'));
+
+uploadImageForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const submitButton = uploadImageForm.querySelector('button[type="submit"]');
+    try {
+        setLoading(submitButton, true, 'Uploading...');
+        await uploadMedia({
+            sfwFile: uploadImageSfwFileInput.files[0],
+            nsfwFile: uploadImageNsfwFileInput.files[0],
+            sfwArtist: uploadImageSfwArtistInput.value,
+            nsfwArtist: uploadImageNsfwArtistInput.value
+        });
+        uploadImageModal.close();
+        showAlert('Image uploaded. Save changes to persist gallery placement.', true);
+    } catch (error) {
+        showAlert(error.message, false);
+    } finally {
+        setLoading(submitButton, false, 'Uploading...');
+    }
+});
+
+bulkUploadFileInput.addEventListener('change', () => {
+    bulkUploadFiles = Array.from(bulkUploadFileInput.files).filter((file) => file.type.startsWith('image/'));
+    bulkUploadList.replaceChildren();
+    bulkUploadFiles.forEach((file, index) => {
+        const item = document.createElement('div');
+        item.className = 'grid gap-3 rounded border border-base-300 bg-base-200 p-3 sm:grid-cols-[4rem_1fr] sm:items-center';
+        const preview = document.createElement('img');
+        preview.alt = file.name;
+        preview.className = 'h-16 w-16 rounded object-cover';
+        preview.loading = 'lazy';
+        preview.src = URL.createObjectURL(file);
+        const input = document.createElement('input');
+        input.className = 'input input-bordered w-full';
+        input.dataset.bulkArtistInput = String(index);
+        input.placeholder = 'Artist name';
+        input.maxLength = 80;
+        const nsfwLabel = document.createElement('label');
+        nsfwLabel.className = 'label cursor-pointer justify-start gap-3';
+        const nsfwInput = document.createElement('input');
+        nsfwInput.className = 'checkbox checkbox-error';
+        nsfwInput.dataset.bulkNsfwInput = String(index);
+        nsfwInput.type = 'checkbox';
+        const nsfwText = document.createElement('span');
+        nsfwText.className = 'label-text';
+        nsfwText.textContent = 'Mark as NSFW';
+        const controls = document.createElement('div');
+        controls.className = 'space-y-2';
+        nsfwLabel.append(nsfwInput, nsfwText);
+        controls.append(input, nsfwLabel);
+        item.append(preview, controls);
+        bulkUploadList.append(item);
+    });
+});
+
+bulkUploadForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const submitButton = bulkUploadForm.querySelector('button[type="submit"]');
+    try {
+        setLoading(submitButton, true, 'Uploading...');
+        for (let index = 0; index < bulkUploadFiles.length; index += 1) {
+            const artistInput = bulkUploadList.querySelector('[data-bulk-artist-input="' + index + '"]');
+            const nsfwInput = bulkUploadList.querySelector('[data-bulk-nsfw-input="' + index + '"]');
+            const isNsfw = Boolean(nsfwInput && nsfwInput.checked);
+            await uploadMedia({
+                sfwFile: isNsfw ? null : bulkUploadFiles[index],
+                nsfwFile: isNsfw ? bulkUploadFiles[index] : null,
+                sfwArtist: isNsfw ? '' : (artistInput ? artistInput.value : ''),
+                nsfwArtist: isNsfw ? (artistInput ? artistInput.value : '') : ''
+            });
+        }
+        bulkUploadModal.close();
+        showAlert('Bulk upload complete. Save changes to persist gallery placement.', true);
+    } catch (error) {
+        showAlert(error.message, false);
+    } finally {
+        setLoading(submitButton, false, 'Uploading...');
+    }
+});
+
+editImageSfwFileInput.addEventListener('change', () => renderFilePreview(editImageSfwFileInput, editSfwPreview, 'No SFW image uploaded'));
+editImageNsfwFileInput.addEventListener('change', () => renderFilePreview(editImageNsfwFileInput, editNsfwPreview, 'No NSFW image uploaded'));
+
+editImageArtistForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const submitButton = editImageArtistForm.querySelector('button[type="submit"]');
+    try {
+        setLoading(submitButton, true, 'Saving...');
+        const [sfwPng, nsfwPng] = await Promise.all([
+            editImageSfwFileInput.files[0] ? convertImageFileToPng(editImageSfwFileInput.files[0]) : null,
+            editImageNsfwFileInput.files[0] ? convertImageFileToPng(editImageNsfwFileInput.files[0]) : null
+        ]);
+        const ratings = [];
+        if (sfwPng) ratings.push('sfw');
+        if (nsfwPng) ratings.push('nsfw');
+        const hasUploads = ratings.length > 0;
+        const initResult = hasUploads
+            ? await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/' + encodeURIComponent(editTargetMediaId) + '/chunked/init', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ ratings })
+            })
+            : null;
+        const completeBody = {
+            sfwArtist: editImageSfwArtistInput.value,
+            nsfwArtist: editImageNsfwArtistInput.value,
+            removeSfw: editRemoveSfw,
+            removeNsfw: editRemoveNsfw
+        };
+        if (initResult && sfwPng) completeBody.sfwUpload = await uploadChunkedPng(editTargetMediaId, 'sfw', sfwPng, initResult.uploads.sfw);
+        if (initResult && nsfwPng) completeBody.nsfwUpload = await uploadChunkedPng(editTargetMediaId, 'nsfw', nsfwPng, initResult.uploads.nsfw);
+        const result = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/' + encodeURIComponent(editTargetMediaId) + '/chunked/complete', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(completeBody)
+        });
+        mediaLibrary.set(result.media.id, result.media);
+        editImageArtistModal.close();
+        renderGallery();
+    } catch (error) {
+        showAlert(error.message, false);
+    } finally {
+        setLoading(submitButton, false, 'Saving...');
+    }
+});
+
+editImageArtistModal.addEventListener('click', (event) => {
+    const media = mediaLibrary.get(editTargetMediaId);
+    if (!media) return;
+    if (event.target.matches('[data-remove-edit-sfw]')) {
+        editRemoveSfw = !editRemoveSfw;
+        renderImagePreview(editSfwPreview, editRemoveSfw ? '' : media.sfwImageUrl, 'SFW image will be removed');
+    }
+    if (event.target.matches('[data-remove-edit-nsfw]')) {
+        editRemoveNsfw = !editRemoveNsfw;
+        renderImagePreview(editNsfwPreview, editRemoveNsfw ? '' : media.nsfwImageUrl, 'NSFW image will be removed');
+    }
+});
+
+document.querySelectorAll('dialog').forEach((dialog) => {
+    dialog.addEventListener('click', (event) => {
+        if (event.target.matches('[data-close-upload-modal],[data-close-bulk-upload-modal],[data-close-gallery-tag-modal],[data-close-rename-gallery-tag-modal],[data-close-edit-artist-modal],[data-close-delete-modal]')) {
+            dialog.close();
+        }
+    });
+});
+
+characterProfileImageInput.addEventListener('change', async () => {
+    resetCharacterProfileCropper();
+    const file = characterProfileImageInput.files && characterProfileImageInput.files[0];
+    if (!file) return;
+    try {
+        await loadCharacterProfileForCropping(file);
+        characterProfileCropper.classList.remove('hidden');
+    } catch (error) {
+        showAlert(error.message || 'Could not prepare profile image.', false);
+        characterProfileImageInput.value = '';
+    }
+});
+
+characterSettingsForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    clearAlert();
+    try {
+        setLoading(saveCharacterSettingsButton, true, 'Saving...');
+        if (characterProfileImageInput.files[0]) {
+            const croppedProfileImage = await createCroppedCharacterProfileFile();
+            const profileImageFormData = new FormData();
+            profileImageFormData.set('profileImage', croppedProfileImage);
+            const profileImageResult = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/profile-image', {
+                method: 'POST',
+                body: profileImageFormData
+            });
+            character.profileImageKey = profileImageResult.profileImageKey;
+            characterProfileImagePreview.src = profileImageResult.profileImageUrl;
+            characterProfileImageInput.value = '';
+            resetCharacterProfileCropper();
+        }
+        const name = document.getElementById('character-name').value;
+        const description = document.getElementById('character-description').value;
+        const updatedCharacter = await apiFetch('/api/characters/' + encodeURIComponent(character.id), {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ name, description })
+        });
+        character.name = updatedCharacter.character.name;
+        character.description = updatedCharacter.character.description;
+        characterTitle.textContent = character.name;
+        await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/gallery', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                fullsizeLastRow: fullsizeLastRowInput.checked,
+                tabs: Array.from(tagLayouts.values())
+            })
+        });
+        showAlert('Character settings saved.', true);
+    } catch (error) {
+        showAlert(error.message, false);
+    } finally {
+        setLoading(saveCharacterSettingsButton, false, 'Saving...');
+    }
+});
+
+function updateDeleteButtonState() {
+    confirmDeleteCharacterButton.disabled = !(deleteCharacterConfirmNameInput.value.trim().toUpperCase() === character.name.toUpperCase() && deleteConfirmPermanentInput.checked && deleteConfirmFinalInput.checked);
+}
+
+deleteCharacterButton.addEventListener('click', () => deleteCharacterModal.showModal());
+deleteCharacterForm.addEventListener('input', updateDeleteButtonState);
+deleteCharacterForm.addEventListener('change', updateDeleteButtonState);
+deleteCharacterForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try {
+        setLoading(confirmDeleteCharacterButton, true, 'Deleting...');
+        await apiFetch('/api/characters/' + encodeURIComponent(character.id), {
+            method: 'DELETE',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ confirmName: deleteCharacterConfirmNameInput.value, permanent: deleteConfirmPermanentInput.checked && deleteConfirmFinalInput.checked })
+        });
+        window.location.assign('/characters');
+    } catch (error) {
+        showAlert(error.message, false);
+        setLoading(confirmDeleteCharacterButton, false, 'Deleting...');
+    }
+});
+
+uploadImageModal.addEventListener('close', () => {
+    uploadImageForm.reset();
+    renderImagePreview(uploadSfwPreview, '', 'No SFW image selected');
+    renderImagePreview(uploadNsfwPreview, '', 'No NSFW image selected');
+});
+bulkUploadModal.addEventListener('close', () => {
+    bulkUploadForm.reset();
+    bulkUploadList.replaceChildren();
+    bulkUploadFiles = [];
+});
+editImageArtistModal.addEventListener('close', () => {
+    editImageArtistForm.reset();
+    editTargetMediaId = null;
+    editRemoveSfw = false;
+    editRemoveNsfw = false;
+});
+galleryTagModal.addEventListener('close', () => galleryTagForm.reset());
+renameGalleryTagModal.addEventListener('close', () => {
+    pendingRenameTagId = null;
+    renameGalleryTagForm.reset();
+});
+deleteMediaModal.addEventListener('close', () => pendingDeleteMediaId = null);
+deleteGalleryTagModal.addEventListener('close', () => pendingDeleteTagId = null);
+removeRowModal.addEventListener('close', () => removeTargetRowIndex = null);
+
+if (tagLayouts.size === 0) {
+    const defaultTabId = createId();
+    tagLayouts.set(defaultTabId, { id: defaultTabId, name: 'default', rows: [{ id: createId(), mediaIds: [] }] });
+    activeTagId = defaultTabId;
+}
+
+renderGallery();
+updateDeleteButtonState();
+`,
+        }}/>
+    )
+}
+
+export function CharacterSettingsPage({
+    currentUser,
+    character,
+    media,
+    galleryTabs,
+    mediaBaseUrl,
+}: CharacterSettingsPageProps) {
+    const mediaItems = media.map((item) => mediaWithUrls(mediaBaseUrl, character, item))
+    const profileImageUrl = characterProfileImageUrl(mediaBaseUrl, character.userId, character.id, character.profileImageKey)
+    const characterViewUrl = `/u/${encodeURIComponent(currentUser.username)}/${encodeURIComponent(character.name)}`
+
+    return (
+        <BaseLayout
+            head={<link href="/vendor/cropperjs/cropper.min.css" rel="stylesheet"/>}
+            title={`${character.name} Settings | MyOC`}
+        >
+            <Navbar currentUser={currentUser} guestInitial={currentUser.username.charAt(0).toUpperCase()} mediaBaseUrl={mediaBaseUrl}/>
+            <main class="container mx-auto max-w-3xl px-3 py-6 sm:px-0">
+                <style>{`
+                    .media-pool-item[aria-grabbed="true"], .gallery-image[aria-grabbed="true"] { opacity: 0.5; }
+                    .media-pool-item[aria-disabled="true"] [data-media-thumb-image] { cursor: not-allowed; filter: grayscale(1); opacity: 0.35; }
+                    .gallery-dropzone.drag-over { outline: 2px dashed currentColor; outline-offset: 4px; }
+                    .gallery-dropzone:empty::before { color: currentColor; content: "Drop image in this row"; font-size: 0.75rem; opacity: 0.65; width: 100%; }
+                    .gallery-layout-tabs { gap: 0.25rem; scrollbar-width: thin; }
+                    .gallery-layout-tab { align-items: center; border: 1px solid var(--color-base-300); border-bottom-color: transparent; border-radius: var(--radius-box, 0.5rem) var(--radius-box, 0.5rem) 0 0; display: inline-flex; gap: 0.5rem; min-height: 2.75rem; padding: 0 0.75rem; position: relative; top: 1px; white-space: nowrap; }
+                    .gallery-layout-tab:not(.tab-active) { background: var(--color-base-300); border-bottom-color: var(--color-base-300); color: color-mix(in oklab, var(--color-base-content) 72%, transparent); }
+                    .gallery-layout-tab.tab-active { background: var(--color-base-200); color: var(--color-base-content); z-index: 1; }
+                    .gallery-layout-tab-add { cursor: pointer; justify-content: center; min-width: 2.75rem; padding: 0; }
+                    .gallery-layout-tab-button { align-items: center; align-self: stretch; background: transparent; border: 0; color: inherit; cursor: pointer; display: flex; font: inherit; padding: 0; }
+                    .gallery-layout-tab-remove, .gallery-layout-tab-edit { background: transparent; border-color: transparent; color: color-mix(in oklab, var(--color-base-content) 58%, transparent); min-height: 1.5rem; height: 1.5rem; width: 1.5rem; }
+                    .gallery-layout-panel { border-top-left-radius: 0; }
+                    .character-settings-toast-message { animation: character-settings-toast-fade 3400ms ease forwards; pointer-events: auto; }
+                    @keyframes character-settings-toast-fade {
+                        0%, 82% { opacity: 1; transform: translateY(0); }
+                        100% { opacity: 0; transform: translateY(-0.5rem); }
+                    }
+                `}</style>
+
+                <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div class="flex min-w-0 items-center gap-3">
+                        <img alt="Current profile image" class="h-14 w-14 shrink-0 rounded object-cover sm:h-16 sm:w-16"
+                             data-character-profile-image-preview loading="lazy" src={profileImageUrl}/>
+                        <h1 class="min-w-0 break-words text-4xl font-bold sm:text-5xl" data-character-title>{character.name}</h1>
+                    </div>
+                    <div class="flex flex-wrap gap-2 sm:justify-end">
+                        <a class="btn btn-primary" href={characterViewUrl}>View Character</a>
+                        <a class="btn btn-secondary" href="/characters">Back to Characters</a>
+                        <button class="btn btn-error" id="delete-character-button" type="button">Delete Character</button>
+                    </div>
+                </div>
+
+                <form class="space-y-5" id="character-settings-form">
+                    <fieldset class="fieldset">
+                        <label class="fieldset-label" for="character-profile-photo">Profile Photo</label>
+                        <input accept="image/*" class="file-input w-full" id="character-profile-photo"
+                               name="character-profile-photo" type="file"/>
+                        <div class="label">
+                            <span class="label-text-alt">You'll be able to crop the image before uploading.</span>
+                        </div>
+                    </fieldset>
+                    <div class="hidden rounded-box border border-base-300 bg-base-100 p-3" data-character-profile-cropper>
+                        <div class="max-h-[22rem] overflow-hidden rounded-box bg-base-300">
+                            <img alt="Crop character profile image" class="block max-h-[22rem] w-full object-contain"
+                                 data-character-profile-crop-image/>
+                        </div>
+                        <p class="mt-2 text-xs text-base-content/60">Drag and zoom to choose the square profile crop. The saved image will be converted to 512x512 WebP.</p>
+                    </div>
+
+                    <fieldset class="fieldset">
+                        <label class="fieldset-label" for="character-name">Character Name</label>
+                        <input class="input input-bordered w-full" id="character-name" maxLength={80}
+                               name="character-name" pattern="[A-Za-z0-9][A-Za-z0-9 _'.()-]*" required
+                               title="Use letters, numbers, spaces, apostrophes, hyphens, underscores, periods, and parentheses. Start with a letter or number."
+                               type="text" value={character.name}/>
+                    </fieldset>
+
+                    <fieldset class="fieldset">
+                        <label class="fieldset-label" for="character-description">Description</label>
+                        <textarea class="textarea textarea-bordered min-h-32 w-full resize-y" id="character-description"
+                                  maxLength={255} name="character-description"
+                                  placeholder="Write a short character description...">{character.description}</textarea>
+                        <div class="label justify-end">
+                            <span class="label-text-alt">255 characters max</span>
+                        </div>
+                    </fieldset>
+
+                    <section class="mt-10 space-y-6">
+                        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <h2 class="text-2xl font-bold">Gallery Sorting</h2>
+                                <p class="text-sm text-base-content/70">Upload PNG, JPG, WebP, GIF, AVIF, or other browser-supported images, then arrange each tab into rows.</p>
+                            </div>
+                            <div class="flex flex-wrap items-center justify-end gap-3">
+                                <label class="label cursor-pointer gap-2">
+                                    <input checked={character.galleryFullsizeLastRow} class="checkbox checkbox-primary"
+                                           id="fullsize-last-row" type="checkbox"/>
+                                    <span class="label-text">Fullsize Last Row</span>
+                                </label>
+                                <button class="btn btn-secondary" id="bulk-upload-images" type="button">Bulk Upload</button>
+                                <button class="btn btn-primary" id="upload-media-button" type="button">Upload Image</button>
+                            </div>
+                        </div>
+
+                        <div class="rounded-box border border-base-300 bg-base-200 p-4">
+                            <div class="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                                <h3 class="text-lg font-semibold">All Media</h3>
+                                <span class="badge badge-neutral" id="all-media-count">0 media</span>
+                            </div>
+                            <div class="flex flex-wrap gap-3" id="all-media-pool"></div>
+                        </div>
+
+                        <div>
+                            <div class="mb-3 min-w-0">
+                                <h3 class="text-lg font-semibold">Tag Gallery Layouts</h3>
+                                <p class="text-sm text-base-content/70">Each tab has its own row order and can reuse media from other tabs.</p>
+                            </div>
+                            <div aria-label="Gallery layout tabs" class="gallery-layout-tabs flex overflow-x-auto"
+                                 id="gallery-tag-tabs" role="tablist"></div>
+                            <div class="gallery-layout-panel rounded-box border border-base-300 bg-base-200 p-4">
+                                <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                    <div>
+                                        <h4 class="font-semibold" id="active-gallery-tag-title">default</h4>
+                                        <p class="text-sm text-base-content/70" id="active-gallery-tag-meta">0 rows</p>
+                                    </div>
+                                    <button class="btn btn-sm btn-primary" id="add-gallery-row" type="button">Add Row</button>
+                                </div>
+                                <div class="space-y-4" id="gallery-rows"></div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <div class="mt-8 flex flex-col items-end gap-2">
+                        <p class="text-sm text-error" hidden id="save-character-settings-warning">Delete unused media before saving changes.</p>
+                        <button class="btn btn-primary" id="save-character-settings" type="submit">Save Changes</button>
+                    </div>
+                </form>
+
+                <UploadDialog/>
+                <BulkUploadDialog/>
+                <GalleryTagDialogs/>
+                <MediaDialogs characterName={character.name}/>
+                <DeleteCharacterDialog characterName={character.name}/>
+                <div aria-live="polite" class="toast toast-top toast-end pointer-events-none z-[9999]" data-character-settings-toast-region></div>
+
+                <script src="/vendor/cropperjs/cropper.min.js"></script>
+                <CharacterSettingsScript
+                    character={character}
+                    csrfToken={currentUser.csrfToken}
+                    galleryTabs={galleryTabs}
+                    media={mediaItems}
+                />
+            </main>
+        </BaseLayout>
+    )
+}
+
+function UploadDialog() {
+    return (
+        <dialog class="modal" id="upload-image-modal">
+            <div class="modal-box">
+                <form method="dialog"><button aria-label="Close upload dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button></form>
+                <h2 class="text-xl font-bold">Upload Image</h2>
+                <form class="mt-5 space-y-4" id="upload-image-form">
+                    <p class="text-sm text-base-content/70">PNG, JPG, WebP, GIF, AVIF, and other browser-supported images are accepted. Files are stored as original-dimension PNGs.</p>
+                    <div class="grid gap-3 sm:grid-cols-2">
+                        <fieldset class="fieldset rounded border border-base-300 bg-base-200 p-3">
+                            <label class="fieldset-label" for="gallery-image-sfw-file">SFW</label>
+                            <div class="mb-3 flex aspect-video items-center justify-center overflow-hidden rounded bg-base-300 text-xs text-base-content/60" data-upload-sfw-preview>No SFW image selected</div>
+                            <input accept="image/*" class="file-input w-full" id="gallery-image-sfw-file" type="file"/>
+                        </fieldset>
+                        <fieldset class="fieldset rounded border border-base-300 bg-base-200 p-3">
+                            <label class="fieldset-label" for="gallery-image-nsfw-file">NSFW</label>
+                            <div class="mb-3 flex aspect-video items-center justify-center overflow-hidden rounded bg-base-300 text-xs text-base-content/60" data-upload-nsfw-preview>No NSFW image selected</div>
+                            <input accept="image/*" class="file-input w-full" id="gallery-image-nsfw-file" type="file"/>
+                        </fieldset>
+                    </div>
+                    <div class="grid gap-3 sm:grid-cols-2">
+                        <fieldset class="fieldset"><label class="fieldset-label" for="gallery-image-sfw-artist">SFW Credits</label><input class="input input-bordered w-full" id="gallery-image-sfw-artist" maxLength={80} placeholder="Artist name" type="text"/></fieldset>
+                        <fieldset class="fieldset"><label class="fieldset-label" for="gallery-image-nsfw-artist">NSFW Credits</label><input class="input input-bordered w-full" id="gallery-image-nsfw-artist" maxLength={80} placeholder="Artist name" type="text"/></fieldset>
+                    </div>
+                    <div class="modal-action">
+                        <button class="btn btn-ghost" data-close-upload-modal type="button">Cancel</button>
+                        <button class="btn btn-primary" type="submit">Add Image</button>
+                    </div>
+                </form>
+            </div>
+            <form class="modal-backdrop" method="dialog"><button>close</button></form>
+        </dialog>
+    )
+}
+
+function BulkUploadDialog() {
+    return (
+        <dialog class="modal" id="bulk-upload-modal">
+            <div class="modal-box max-w-3xl">
+                <form method="dialog"><button aria-label="Close bulk upload dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button></form>
+                <h2 class="text-xl font-bold">Bulk Upload</h2>
+                <form class="mt-5 space-y-4" id="bulk-upload-form">
+                    <fieldset class="fieldset">
+                        <label class="fieldset-label" for="bulk-gallery-image-files">Image Files</label>
+                        <input accept="image/*" class="file-input w-full" id="bulk-gallery-image-files" multiple required type="file"/>
+                    </fieldset>
+                    <div class="space-y-3" id="bulk-upload-list"></div>
+                    <div class="modal-action">
+                        <button class="btn btn-ghost" data-close-bulk-upload-modal type="button">Cancel</button>
+                        <button class="btn btn-primary" type="submit">Add Images</button>
+                    </div>
+                </form>
+            </div>
+            <form class="modal-backdrop" method="dialog"><button>close</button></form>
+        </dialog>
+    )
+}
+
+function GalleryTagDialogs() {
+    return (
+        <>
+            <dialog class="modal" id="gallery-tag-modal">
+                <div class="modal-box">
+                    <form method="dialog"><button aria-label="Close tag dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button></form>
+                    <h2 class="text-xl font-bold">Add Gallery Tab</h2>
+                    <form class="mt-5 space-y-4" id="gallery-tag-form">
+                        <fieldset class="fieldset"><label class="fieldset-label" for="gallery-tag-name">Tab Name</label><input class="input input-bordered w-full" id="gallery-tag-name" maxLength={32} required type="text"/></fieldset>
+                        <div class="modal-action"><button class="btn btn-ghost" data-close-gallery-tag-modal type="button">Cancel</button><button class="btn btn-primary" type="submit">Add Tab</button></div>
+                    </form>
+                </div>
+                <form class="modal-backdrop" method="dialog"><button>close</button></form>
+            </dialog>
+            <dialog class="modal" id="rename-gallery-tag-modal">
+                <div class="modal-box">
+                    <form method="dialog"><button aria-label="Close rename tab dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button></form>
+                    <h2 class="text-xl font-bold">Rename Gallery Tab</h2>
+                    <form class="mt-5 space-y-4" id="rename-gallery-tag-form">
+                        <fieldset class="fieldset"><label class="fieldset-label" for="rename-gallery-tag-name">Tab Name</label><input class="input input-bordered w-full" id="rename-gallery-tag-name" maxLength={32} required type="text"/></fieldset>
+                        <div class="modal-action"><button class="btn btn-ghost" data-close-rename-gallery-tag-modal type="button">Cancel</button><button class="btn btn-primary" type="submit">Rename Tab</button></div>
+                    </form>
+                </div>
+                <form class="modal-backdrop" method="dialog"><button>close</button></form>
+            </dialog>
+            <dialog class="modal" id="delete-gallery-tag-modal">
+                <div class="modal-box">
+                    <h2 class="text-xl font-bold">Delete Tab?</h2>
+                    <p class="mt-3 text-sm text-base-content/80">This removes that gallery tab and its custom row order. The media stays in All Media.</p>
+                    <div class="modal-action"><button class="btn btn-ghost" data-cancel-delete-gallery-tag type="button">Cancel</button><button class="btn btn-error" data-confirm-delete-gallery-tag type="button">Delete Tab</button></div>
+                </div>
+                <form class="modal-backdrop" method="dialog"><button>close</button></form>
+            </dialog>
+        </>
+    )
+}
+
+function MediaDialogs({characterName}: { characterName: string }) {
+    return (
+        <>
+            <dialog class="modal" id="delete-media-modal">
+                <div class="modal-box">
+                    <h2 class="text-xl font-bold">Delete Media?</h2>
+                    <p class="mt-3 text-sm text-base-content/80">This removes the media from this character entirely and removes it from every gallery tab.</p>
+                    <div class="modal-action"><button class="btn btn-ghost" data-cancel-delete-media type="button">Cancel</button><button class="btn btn-error" data-confirm-delete-media type="button">Delete Media</button></div>
+                </div>
+                <form class="modal-backdrop" method="dialog"><button>close</button></form>
+            </dialog>
+            <dialog class="modal" id="remove-row-modal">
+                <div class="modal-box">
+                    <h2 class="text-xl font-bold">Remove Row?</h2>
+                    <p class="mt-3 text-sm text-base-content/80">This row contains images. Removing it will delete those images from the gallery too. Move them to another row first if you want to keep them.</p>
+                    <div class="modal-action"><button class="btn btn-ghost" data-cancel-remove-row type="button">Cancel</button><button class="btn btn-error" data-confirm-remove-row type="button">Remove Row</button></div>
+                </div>
+                <form class="modal-backdrop" method="dialog"><button>close</button></form>
+            </dialog>
+            <dialog class="modal" id="edit-image-artist-modal">
+                <div class="modal-box">
+                    <form method="dialog"><button aria-label="Close artist dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button></form>
+                    <h2 class="text-xl font-bold">Edit Image</h2>
+                    <form class="mt-5 space-y-4" id="edit-image-artist-form">
+                        <p class="text-sm text-base-content/70">PNG, JPG, WebP, GIF, AVIF, and other browser-supported replacements are accepted. Files are stored as original-dimension PNGs.</p>
+                        <div class="grid gap-3 sm:grid-cols-2">
+                            <fieldset class="fieldset rounded border border-base-300 bg-base-200 p-3">
+                                <label class="fieldset-label" for="edit-gallery-image-sfw-file">SFW</label>
+                                <div class="mb-3 flex aspect-video items-center justify-center overflow-hidden rounded bg-base-300 text-xs text-base-content/60" data-edit-sfw-preview>No SFW image uploaded</div>
+                                <input accept="image/*" class="file-input w-full" id="edit-gallery-image-sfw-file" type="file"/>
+                                <button class="btn btn-error btn-outline btn-sm mt-3 w-full" data-remove-edit-sfw type="button">Remove SFW Image</button>
+                            </fieldset>
+                            <fieldset class="fieldset rounded border border-base-300 bg-base-200 p-3">
+                                <label class="fieldset-label" for="edit-gallery-image-nsfw-file">NSFW</label>
+                                <div class="mb-3 flex aspect-video items-center justify-center overflow-hidden rounded bg-base-300 text-xs text-base-content/60" data-edit-nsfw-preview>No NSFW image uploaded</div>
+                                <input accept="image/*" class="file-input w-full" id="edit-gallery-image-nsfw-file" type="file"/>
+                                <button class="btn btn-error btn-outline btn-sm mt-3 w-full" data-remove-edit-nsfw type="button">Remove NSFW Image</button>
+                            </fieldset>
+                        </div>
+                        <div class="grid gap-3 sm:grid-cols-2">
+                            <fieldset class="fieldset"><label class="fieldset-label" for="edit-gallery-image-sfw-artist">SFW Credits</label><input class="input input-bordered w-full" id="edit-gallery-image-sfw-artist" maxLength={80} type="text"/></fieldset>
+                            <fieldset class="fieldset"><label class="fieldset-label" for="edit-gallery-image-nsfw-artist">NSFW Credits</label><input class="input input-bordered w-full" id="edit-gallery-image-nsfw-artist" maxLength={80} type="text"/></fieldset>
+                        </div>
+                        <div class="modal-action"><button class="btn btn-ghost" data-close-edit-artist-modal type="button">Cancel</button><button class="btn btn-primary" type="submit">Save Image</button></div>
+                    </form>
+                </div>
+                <form class="modal-backdrop" method="dialog"><button>close</button></form>
+            </dialog>
+            <input hidden readOnly value={characterName}/>
+        </>
+    )
+}
+
+function DeleteCharacterDialog({characterName}: { characterName: string }) {
+    return (
+        <dialog class="modal" id="delete-character-modal">
+            <div class="modal-box">
+                <form method="dialog"><button aria-label="Close delete dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button></form>
+                <h2 class="text-xl font-bold">Delete Character</h2>
+                <p class="mt-3 text-sm text-base-content/80">This will permanently delete this character and its gallery. Type the character name to continue.</p>
+                <form class="mt-5 space-y-4" id="delete-character-form">
+                    <fieldset class="fieldset">
+                        <label class="fieldset-label" for="delete-character-confirm-name">Character Name</label>
+                        <input autocomplete="off" class="input input-bordered w-full" id="delete-character-confirm-name"
+                               placeholder={characterName} required type="text"/>
+                    </fieldset>
+                    <label class="label cursor-pointer justify-start gap-3"><input class="checkbox checkbox-error" id="delete-confirm-permanent" type="checkbox"/><span class="label-text">I understand this deletion is permanent.</span></label>
+                    <label class="label cursor-pointer justify-start gap-3"><input class="checkbox checkbox-error" id="delete-confirm-final" type="checkbox"/><span class="label-text">I confirm I want to delete this character.</span></label>
+                    <div class="modal-action"><button class="btn btn-ghost" data-close-delete-modal type="button">Cancel</button><button class="btn btn-error" disabled id="confirm-delete-character" type="submit">Delete Character</button></div>
+                </form>
+            </div>
+            <form class="modal-backdrop" method="dialog"><button>close</button></form>
+        </dialog>
+    )
+}

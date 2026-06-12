@@ -153,8 +153,43 @@ function UserSettingsPageScript() {
             return true;
         }
 
+        function prepareOptionalSocialInputs(form) {
+            for (const input of form.querySelectorAll('[data-social-url]')) {
+                input.required = false;
+                input.removeAttribute('required');
+
+                if (!input.value.trim()) {
+                    input.value = '';
+                    input.setCustomValidity('');
+                }
+            }
+        }
+
+        function clearSocialValidityForInput(input) {
+            if (!input) {
+                return;
+            }
+
+            input.setCustomValidity('');
+
+            if (input.matches('[data-social-url]') && !input.value.trim()) {
+                input.required = false;
+                input.removeAttribute('required');
+            }
+
+            if (input.name === 'customLinkLabel' || input.name === 'customLinkUrl') {
+                const form = input.form;
+                const customLabel = form && form.elements.namedItem('customLinkLabel');
+                const customUrl = form && form.elements.namedItem('customLinkUrl');
+
+                if (customLabel) customLabel.setCustomValidity('');
+                if (customUrl) customUrl.setCustomValidity('');
+            }
+        }
+
         function validateSettingsForm(form) {
             clearCustomValidity(form);
+            prepareOptionalSocialInputs(form);
 
             for (const input of form.querySelectorAll('[data-social-url]')) {
                 validateUrl(input, input.dataset.socialLabel || 'Social link');
@@ -333,6 +368,17 @@ function UserSettingsPageScript() {
         }
 
         if (settingsForm) {
+            prepareOptionalSocialInputs(settingsForm);
+
+            settingsForm.addEventListener('input', (event) => {
+                clearSettingsAlert();
+                clearSocialValidityForInput(event.target);
+            });
+
+            settingsForm.addEventListener('change', (event) => {
+                clearSocialValidityForInput(event.target);
+            });
+
             settingsForm.addEventListener('submit', async (event) => {
                 event.preventDefault();
                 if (!validateSettingsForm(settingsForm)) {
@@ -446,6 +492,7 @@ export function UserSettingsPage({currentUser, socialLinks = [], mediaBaseUrl}: 
                                     name="username"
                                     pattern="[A-Za-z0-9_]+"
                                     required
+                                    title="Use 3-32 letters, numbers, or underscores."
                                     type="text"
                                     value={currentUser.username}
                                 />
@@ -470,6 +517,24 @@ export function UserSettingsPage({currentUser, socialLinks = [], mediaBaseUrl}: 
                             </div>
                         </fieldset>
 
+                        <section class="rounded-box border border-base-300 bg-base-200 p-4">
+                            <label class="flex cursor-pointer items-start gap-3">
+                                <input
+                                    checked={currentUser.displayNsfwMedia}
+                                    class="checkbox checkbox-primary mt-1"
+                                    name="displayNsfwMedia"
+                                    type="checkbox"
+                                    value="true"
+                                />
+                                <span>
+                                    <span class="block font-bold">Display NSFW media</span>
+                                    <span class="mt-1 block text-sm text-base-content/70">
+                                        Show NSFW variants while browsing media when they are available. NSFW media will always display when editing characters.
+                                    </span>
+                                </span>
+                            </label>
+                        </section>
+
                         <section class="rounded-box border border-base-300 bg-base-200 p-4"
                                  data-csrf-token={currentUser.csrfToken} data-profile-photo-uploader>
                             <div class="flex flex-col gap-4 sm:flex-row sm:items-center">
@@ -484,7 +549,7 @@ export function UserSettingsPage({currentUser, socialLinks = [], mediaBaseUrl}: 
                                 <div class="min-w-0 flex-1">
                                     <h3 class="text-xl font-bold">Profile Photo</h3>
                                     <p class="mt-1 text-sm text-base-content/70">
-                                        Choose an image, adjust the square crop, then upload it as a 512x512 WebP.
+                                        You'll be able to crop the image before uploading.
                                     </p>
 
                                     <div class="mt-4 flex flex-col gap-3 sm:flex-row">
@@ -497,7 +562,7 @@ export function UserSettingsPage({currentUser, socialLinks = [], mediaBaseUrl}: 
 
                                     <div class="mt-4 hidden rounded-box border border-base-300 bg-base-100 p-4"
                                          data-profile-photo-cropper>
-                                        <img alt="Selected profile photo crop editor" class="max-h-[28rem] w-full"
+                                        <img alt="Selected profile photo crop editor" class="max-h-112 w-full"
                                              data-profile-photo-crop-image/>
                                         <p class="mt-3 text-xs text-base-content/60">
                                             Drag the image or crop box to choose the square area. Scroll or pinch to

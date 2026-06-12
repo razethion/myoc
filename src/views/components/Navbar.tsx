@@ -14,14 +14,16 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
         ? profilePhotoUrl(mediaBaseUrl, currentUser.id, currentUser.profilePhotoKey)
         : `https://ui-avatars.com/api/?name=${encodeURIComponent(avatarLetter)}&background=ccc&color=000`
     const search = (
-        <label class="input input-bordered w-full">
-            <svg class="h-4 w-4 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                 xmlns="http://www.w3.org/2000/svg">
-                <path d="M21 21l-4.35-4.35M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14z" stroke-linecap="round"
-                      stroke-linejoin="round" stroke-width="2"/>
-            </svg>
-            <input class="grow" placeholder="Search characters, artists, tags..." type="search"/>
-        </label>
+        <form action="/search" class="w-full" method="get">
+            <label class="input input-bordered w-full">
+                <svg class="h-4 w-4 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                     xmlns="http://www.w3.org/2000/svg">
+                    <path d="M21 21l-4.35-4.35M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14z" stroke-linecap="round"
+                          stroke-linejoin="round" stroke-width="2"/>
+                </svg>
+                <input class="grow" maxLength={80} name="q" placeholder="Search characters, artists, tags..." type="search"/>
+            </label>
+        </form>
     )
 
     return (
@@ -46,6 +48,7 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
                             </summary>
 
                             <ul class="menu dropdown-content bg-base-100 rounded-box z-50 mt-3 w-56 p-2 shadow">
+                                <li><a href={`/u/${encodeURIComponent(currentUser.username)}`}>Profile</a></li>
                                 <li><a href="/characters">Characters</a></li>
                                 <li><a href="/settings">Settings</a></li>
                                 <div class="divider my-1"></div>

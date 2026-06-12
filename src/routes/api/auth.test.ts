@@ -153,6 +153,7 @@ describe('POST /login', () => {
                 username: user.username,
                 profilePhotoKey: user.profile_photo_key,
                 bio: user.bio,
+                displayNsfwMedia: false,
                 createdAt: user.created_at,
             },
         })
@@ -238,6 +239,7 @@ async function createTestUser(password: string): Promise<UserRecord> {
         password_hash: await hash(password, 10),
         profile_photo_key: null,
         bio: '',
+        display_nsfw_media: 0,
         created_at: '2026-06-10 12:00:00',
     }
 }
