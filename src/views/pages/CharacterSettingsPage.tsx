@@ -833,7 +833,7 @@ mediaPool.addEventListener('click', (event) => {
     }
     if (editButton) {
         openEditMediaModal(mediaItem.dataset.mediaId);
-        return;
+        
     }
 });
 
@@ -1267,7 +1267,8 @@ export function CharacterSettingsPage({
                     <div class="flex min-w-0 items-center gap-3">
                         <img alt="Current profile image" class="h-14 w-14 shrink-0 rounded object-cover sm:h-16 sm:w-16"
                              data-character-profile-image-preview loading="lazy" src={profileImageUrl}/>
-                        <h1 class="min-w-0 break-words text-4xl font-bold sm:text-5xl" data-character-title>{character.name}</h1>
+                        <h1 class="min-w-0 wrap-break-word text-4xl font-bold sm:text-5xl"
+                            data-character-title>{character.name}</h1>
                     </div>
                     <div class="flex flex-wrap gap-2 sm:justify-end">
                         <a class="btn btn-primary" href={characterViewUrl}>View Character</a>
@@ -1286,8 +1287,8 @@ export function CharacterSettingsPage({
                         </div>
                     </fieldset>
                     <div class="hidden rounded-box border border-base-300 bg-base-100 p-3" data-character-profile-cropper>
-                        <div class="max-h-[22rem] overflow-hidden rounded-box bg-base-300">
-                            <img alt="Crop character profile image" class="block max-h-[22rem] w-full object-contain"
+                        <div class="max-h-88 overflow-hidden rounded-box bg-base-300">
+                            <img alt="Crop character profile image" class="block max-h-88 w-full object-contain"
                                  data-character-profile-crop-image/>
                         </div>
                         <p class="mt-2 text-xs text-base-content/60">Drag to choose the square profile crop. The saved
@@ -1368,7 +1369,8 @@ export function CharacterSettingsPage({
                 <GalleryTagDialogs/>
                 <MediaDialogs characterName={character.name}/>
                 <DeleteCharacterDialog characterName={character.name}/>
-                <div aria-live="polite" class="toast toast-top toast-end pointer-events-none z-[9999]" data-character-settings-toast-region></div>
+                <div aria-live="polite" class="toast toast-top toast-end pointer-events-none z-9999"
+                     data-character-settings-toast-region></div>
 
                 <script src="/vendor/cropperjs/cropper.min.js"></script>
                 <CharacterSettingsScript
