@@ -11,7 +11,10 @@ import {
     type UserRecord,
 } from '../../lib/auth/session'
 import {profilePhotoObjectKey, profilePhotoUrl} from '../../lib/media/url'
-import {getWebpDimensions} from '../../lib/media/webp'
+import {
+    PROFILE_IMAGE_MAX_REQUEST_BYTES,
+    validateProfileImagePayload,
+} from '../../lib/media/profileImage'
 import {FIXED_SOCIAL_LINKS, type UserSocialLink} from '../../lib/socialLinks'
 import type {Bindings} from '../../types/bindings'
 
@@ -28,6 +31,7 @@ type UpdateUserRequest = {
     username?: unknown
     bio?: unknown
     password?: unknown
+    displayNsfwMedia?: unknown
     customLinkLabel?: unknown
     customLinkUrl?: unknown
     socialLinks?: unknown
@@ -36,10 +40,6 @@ type UpdateUserRequest = {
 
 const PASSWORD_HASH_ROUNDS = 10
 const BIO_MAX_LENGTH = 255
-const PROFILE_PHOTO_SIZE = 512
-const PROFILE_PHOTO_MAX_BYTES = 2 * 1024 * 1024
-const PROFILE_PHOTO_MAX_REQUEST_BYTES = 3 * 1024 * 1024
-
 export const userRoutes = new Hono<{ Bindings: Bindings }>()
 
 userRoutes.post('/me/profile-photo', async (c) => {
@@ -51,7 +51,7 @@ userRoutes.post('/me/profile-photo', async (c) => {
 
     const contentLength = Number(c.req.header('content-length') ?? 0)
 
-    if (contentLength > PROFILE_PHOTO_MAX_REQUEST_BYTES) {
+    if (contentLength > PROFILE_IMAGE_MAX_REQUEST_BYTES) {
         return c.json({error: 'Profile photo upload is too large'}, 413)
     }
 
@@ -62,23 +62,14 @@ userRoutes.post('/me/profile-photo', async (c) => {
         return c.json({error: 'Profile photo is required'}, 400)
     }
 
-    if (file.type !== 'image/webp') {
-        return c.json({error: 'Profile photo must be a WebP image'}, 400)
-    }
-
-    if (file.size > PROFILE_PHOTO_MAX_BYTES) {
-        return c.json({error: 'Profile photo must be 2 MB or smaller'}, 400)
-    }
-
     const bytes = new Uint8Array(await file.arrayBuffer())
-    const dimensions = getWebpDimensions(bytes)
+    const validation = validateProfileImagePayload({
+        contentType: file.type,
+        bytes,
+    }, 'Profile photo')
 
-    if (!dimensions) {
-        return c.json({error: 'Profile photo must be a valid WebP image'}, 400)
-    }
-
-    if (dimensions.width !== PROFILE_PHOTO_SIZE || dimensions.height !== PROFILE_PHOTO_SIZE) {
-        return c.json({error: 'Profile photo must be exactly 512x512 pixels'}, 400)
+    if ('error' in validation) {
+        return c.json({error: validation.error}, validation.status)
     }
 
     const profilePhotoKey = crypto.randomUUID()
@@ -134,6 +125,7 @@ userRoutes.post('/me', async (c) => {
     const username = normalizeCredential(body.username)
     const bio = normalizeOptionalText(body.bio) ?? ''
     const password = normalizeOptionalText(body.password)
+    const displayNsfwMedia = parseBooleanPreference(body.displayNsfwMedia)
 
     if (!email || !username) {
         return respondToUpdate(c, {error: 'Email and username are required'}, 400)
@@ -185,19 +177,21 @@ userRoutes.post('/me', async (c) => {
                  SET email         = ?,
                      username      = ?,
                      bio           = ?,
+                     display_nsfw_media = ?,
                      password_hash = ?
                  WHERE id = ?`,
             )
-                .bind(email, username, bio, await hash(password, PASSWORD_HASH_ROUNDS), currentUser.id))
+                .bind(email, username, bio, displayNsfwMedia ? 1 : 0, await hash(password, PASSWORD_HASH_ROUNDS), currentUser.id))
         } else {
             statements.push(c.env.DB.prepare(
                 `UPDATE users
-                 SET email    = ?,
-                     username = ?,
-                     bio      = ?
+                 SET email              = ?,
+                     username           = ?,
+                     bio                = ?,
+                     display_nsfw_media = ?
                  WHERE id = ?`,
             )
-                .bind(email, username, bio, currentUser.id))
+                .bind(email, username, bio, displayNsfwMedia ? 1 : 0, currentUser.id))
         }
 
         statements.push(c.env.DB.prepare('DELETE FROM user_social_links WHERE user_id = ?').bind(currentUser.id))
@@ -272,15 +266,16 @@ userRoutes.post('/', async (c) => {
         password_hash: await hash(password, PASSWORD_HASH_ROUNDS),
         profile_photo_key: null,
         bio: '',
+        display_nsfw_media: 0,
         created_at: toSqlTimestamp(now),
     }
 
     try {
         await c.env.DB.prepare(
-            `INSERT INTO users (id, email, username, password_hash, bio, created_at)
-             VALUES (?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO users (id, email, username, password_hash, bio, display_nsfw_media, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
         )
-            .bind(user.id, user.email, user.username, user.password_hash, user.bio, user.created_at)
+            .bind(user.id, user.email, user.username, user.password_hash, user.bio, user.display_nsfw_media, user.created_at)
             .run()
     } catch (error) {
         if (isUniqueConstraintError(error)) {
@@ -310,6 +305,13 @@ function isUniqueConstraintError(error: unknown): boolean {
 
 function normalizeOptionalText(value: unknown): string | null {
     return typeof value === 'string' ? value.trim() : null
+}
+
+function parseBooleanPreference(value: unknown): boolean {
+    return value === true
+        || value === 'true'
+        || value === '1'
+        || value === 'on'
 }
 
 function parseSocialLinks(body: UpdateUserRequest): { links: UserSocialLink[] } | { error: string } {
@@ -417,6 +419,7 @@ async function parseUpdateUserRequest(req: UserRouteContext['req']): Promise<Upd
         username: form.get('username'),
         bio: form.get('bio'),
         password: form.get('password'),
+        displayNsfwMedia: form.get('displayNsfwMedia'),
         ...Object.fromEntries(FIXED_SOCIAL_LINKS.map((link) => [link.formName, form.get(link.formName)])),
         customLinkLabel: form.get('customLinkLabel'),
         customLinkUrl: form.get('customLinkUrl'),

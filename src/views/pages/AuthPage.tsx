@@ -234,7 +234,7 @@ export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPa
                                         <span class="label-text">Username</span>
                                         <span class="label-text-alt">3-32 letters, numbers, or underscores</span>
                                     </div>
-                                    <input autocomplete="username" class="input input-bordered w-full" maxLength={32} minLength={3} name="username" pattern="[A-Za-z0-9_]+" required type="text" />
+                                    <input autocomplete="username" class="input input-bordered w-full" maxLength={32} minLength={3} name="username" pattern="[A-Za-z0-9_]+" required title="Use 3-32 letters, numbers, or underscores." type="text" />
                                 </label>
 
                                 <label class="form-control w-full">
