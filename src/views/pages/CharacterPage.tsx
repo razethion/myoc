@@ -43,6 +43,10 @@ type CharacterPageProps = {
     mediaBaseUrl: string
 }
 
+function displayGalleryTabName(name: string): string {
+    return name === 'default' ? 'Default' : name
+}
+
 type DisplayMedia = CharacterPageMedia & {
     artist: string
     imageAlt: string
@@ -564,7 +568,8 @@ export function CharacterPage({
                         {tabs.map((tab, index) => (
                             <label class="cursor-pointer">
                                 <input checked={index === 0} class="peer sr-only" name="gallery-sort" type="radio" value={tab.name}/>
-                                <span class="btn btn-sm btn-outline rounded-full peer-checked:border-white peer-checked:bg-white peer-checked:text-black">{tab.name}</span>
+                                <span
+                                    class="btn btn-sm btn-outline rounded-full peer-checked:border-white peer-checked:bg-white peer-checked:text-black">{displayGalleryTabName(tab.name)}</span>
                             </label>
                         ))}
                     </fieldset>

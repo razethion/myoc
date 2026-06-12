@@ -81,7 +81,8 @@ const csrfToken = ${safeJson(csrfToken)};
 const mediaLibrary = new Map(${safeJson(media)}.map((item) => [item.id, item]));
 const tagLayouts = new Map(${safeJson(galleryTabs)}.map((tab) => [tab.id, tab]));
 let activeTagId = ${safeJson(galleryTabs[0]?.id ?? 'default')};
-let draggedItem = null;
+let dragCandidate = null;
+let dragState = null;
 let pendingDeleteMediaId = null;
 
 const mediaPool = document.getElementById('all-media-pool');
@@ -150,6 +151,10 @@ let editRemoveNsfw = false;
 let characterProfileCropperInstance = null;
 let characterProfileObjectUrl = null;
 
+function displayGalleryTabName(name) {
+    return name === 'default' ? 'Default' : name;
+}
+
 function createId() {
     return crypto.randomUUID ? crypto.randomUUID() : 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
 }
@@ -213,6 +218,9 @@ async function loadCharacterProfileForCropping(file) {
         autoCropArea: 1,
         background: false,
         viewMode: 1,
+        zoomable: false,
+        zoomOnTouch: false,
+        zoomOnWheel: false,
     });
 }
 
@@ -304,8 +312,11 @@ function createMediaThumb(media, variant) {
         ? 'media-pool-item group w-[calc((100%_-_1.5rem)/3)] cursor-grab active:cursor-grabbing sm:w-24'
         : 'gallery-image group relative aspect-square w-[calc((100%_-_1.5rem)/3)] cursor-grab overflow-hidden rounded bg-base-300 active:cursor-grabbing sm:h-24 sm:w-24';
     item.dataset.mediaId = media.id;
-    item.draggable = true;
+    item.dataset.galleryDraggable = '';
+    item.dataset.gallerySource = variant;
     item.tabIndex = 0;
+    item.role = 'button';
+    item.ariaLabel = variant === 'pool' ? 'Drag media into a gallery row' : 'Drag media to reorder';
 
     const thumb = document.createElement('div');
     thumb.className = 'relative aspect-square overflow-hidden rounded bg-base-300';
@@ -314,6 +325,8 @@ function createMediaThumb(media, variant) {
     image.className = 'h-full w-full object-cover';
     image.alt = mediaAlt(media);
     image.dataset.mediaThumbImage = '';
+    image.decoding = 'async';
+    image.draggable = false;
     image.loading = 'lazy';
     image.src = mediaDisplayUrl(media);
 
@@ -369,7 +382,7 @@ function renderTabs() {
         labelButton.dataset.tagId = tagId;
         labelButton.role = 'tab';
         labelButton.type = 'button';
-        labelButton.textContent = layout.name;
+        labelButton.textContent = displayGalleryTabName(layout.name);
         tab.append(labelButton);
         if (layout.name !== 'default') {
             const editButton = document.createElement('button');
@@ -417,6 +430,12 @@ function renderRows() {
         dropzone.className = 'gallery-dropzone flex min-h-28 flex-wrap gap-3 rounded border border-dashed border-base-300 bg-base-200 p-3';
         dropzone.dataset.dropzone = '';
         dropzone.dataset.rowIndex = String(rowIndex);
+        if (rowData.mediaIds.length === 0) {
+            const emptyRow = document.createElement('span');
+            emptyRow.className = 'gallery-empty-row self-center text-xs text-base-content/60';
+            emptyRow.textContent = 'No images in this row';
+            dropzone.append(emptyRow);
+        }
         rowData.mediaIds.forEach((mediaId) => {
             const media = mediaLibrary.get(mediaId);
             if (media) dropzone.append(createMediaThumb(media, 'row'));
@@ -425,7 +444,7 @@ function renderRows() {
         row.append(header, dropzone);
         galleryRows.append(row);
     });
-    activeGalleryTagTitle.textContent = layout.name;
+    activeGalleryTagTitle.textContent = displayGalleryTabName(layout.name);
     activeGalleryTagMeta.textContent = layout.rows.length + (layout.rows.length === 1 ? ' row' : ' rows') + ' / ' + getUsedMediaIds(activeTagId).size + ' images';
 }
 
@@ -441,21 +460,6 @@ function renderGallery() {
         : 'Delete ' + unusedMediaCount + ' unused media items before saving changes.';
 }
 
-function insertMediaInRow(mediaId, rowIndex, insertIndex) {
-    const layout = getActiveLayout();
-    const targetRow = layout.rows[rowIndex];
-    if (!targetRow || !mediaLibrary.has(mediaId)) return;
-    if (draggedItem && draggedItem.type === 'row') {
-        const sourceRow = layout.rows[draggedItem.rowIndex];
-        const sourceIndex = sourceRow.mediaIds.indexOf(mediaId);
-        if (sourceIndex >= 0) sourceRow.mediaIds.splice(sourceIndex, 1);
-    } else if (getUsedMediaIds(activeTagId).has(mediaId)) {
-        return;
-    }
-    targetRow.mediaIds.splice(Math.max(0, Math.min(insertIndex, targetRow.mediaIds.length)), 0, mediaId);
-    renderGallery();
-}
-
 function removeFromActiveRow(rowIndex, mediaId) {
     const row = getActiveLayout().rows[rowIndex];
     if (!row) return;
@@ -463,10 +467,193 @@ function removeFromActiveRow(rowIndex, mediaId) {
     renderGallery();
 }
 
-function getDropIndex(dropzone, x) {
-    const images = Array.from(dropzone.querySelectorAll('.gallery-image:not([aria-grabbed="true"])'));
-    const beforeImage = images.find((image) => x < image.getBoundingClientRect().left + image.getBoundingClientRect().width / 2);
-    return beforeImage ? images.indexOf(beforeImage) : images.length;
+function isNoopDrop(item, rowIndex, insertIndex) {
+    if (!item || item.type !== 'row' || item.rowIndex !== rowIndex) return false;
+    const sourceRow = getActiveLayout().rows[rowIndex];
+    const sourceIndex = sourceRow ? sourceRow.mediaIds.indexOf(item.mediaId) : -1;
+    return sourceIndex >= 0 && (insertIndex === sourceIndex || insertIndex === sourceIndex + 1);
+}
+
+function moveMediaToRow(item, rowIndex, insertIndex) {
+    if (!item || isNoopDrop(item, rowIndex, insertIndex)) return false;
+    const layout = getActiveLayout();
+    const targetRow = layout.rows[rowIndex];
+    const mediaId = item.mediaId;
+    if (!targetRow || !mediaLibrary.has(mediaId)) return;
+
+    let targetIndex = Math.max(0, Math.min(insertIndex, targetRow.mediaIds.length));
+    if (item.type === 'row') {
+        const sourceRow = layout.rows[item.rowIndex];
+        const sourceIndex = sourceRow ? sourceRow.mediaIds.indexOf(mediaId) : -1;
+        if (sourceIndex < 0) return false;
+        sourceRow.mediaIds.splice(sourceIndex, 1);
+        if (item.rowIndex === rowIndex && sourceIndex < targetIndex) targetIndex -= 1;
+    } else if (getUsedMediaIds(activeTagId).has(mediaId)) {
+        return false;
+    }
+
+    targetRow.mediaIds.splice(Math.max(0, Math.min(targetIndex, targetRow.mediaIds.length)), 0, mediaId);
+    return true;
+}
+
+function createDragGhost(source, x, y) {
+    const rect = source.getBoundingClientRect();
+    const ghost = document.createElement('div');
+    ghost.className = 'gallery-drag-ghost';
+    ghost.style.width = rect.width + 'px';
+    ghost.style.height = rect.height + 'px';
+    ghost.style.transform = 'translate3d(' + (x - rect.width / 2) + 'px,' + (y - rect.height / 2) + 'px,0)';
+    ghost.textContent = 'Move';
+    document.body.append(ghost);
+    return ghost;
+}
+
+function moveDragGhost(x, y) {
+    if (!dragState || !dragState.ghost) return;
+    dragState.ghost.style.transform = 'translate3d(' + (x - dragState.ghost.offsetWidth / 2) + 'px,' + (y - dragState.ghost.offsetHeight / 2) + 'px,0)';
+}
+
+function scrollDuringGalleryDrag(y) {
+    const edgeSize = 72;
+    const maxStep = 18;
+    let step = 0;
+    if (y < edgeSize) {
+        step = -Math.ceil(((edgeSize - y) / edgeSize) * maxStep);
+    } else if (y > window.innerHeight - edgeSize) {
+        step = Math.ceil(((y - (window.innerHeight - edgeSize)) / edgeSize) * maxStep);
+    }
+    if (step) window.scrollBy(0, step);
+}
+
+function getDropIndexForPoint(dropzone, x, y) {
+    const images = Array.from(dropzone.querySelectorAll('.gallery-image:not(.gallery-drag-source)'));
+    if (images.length === 0) return 0;
+
+    const rows = [];
+    images.forEach((image, index) => {
+        const rect = image.getBoundingClientRect();
+        const centerY = rect.top + rect.height / 2;
+        let row = rows.find((candidate) => Math.abs(candidate.centerY - centerY) < Math.max(12, rect.height / 2));
+        if (!row) {
+            row = { centerY, items: [] };
+            rows.push(row);
+        }
+        row.items.push({ image, index, rect });
+    });
+    rows.sort((a, b) => a.centerY - b.centerY);
+
+    let activeRow = rows[0];
+    let closestDistance = Math.abs(y - activeRow.centerY);
+    rows.forEach((row) => {
+        const distance = Math.abs(y - row.centerY);
+        if (distance < closestDistance) {
+            activeRow = row;
+            closestDistance = distance;
+        }
+    });
+    activeRow.items.sort((a, b) => a.rect.left - b.rect.left);
+
+    if (x <= activeRow.items[0].rect.left + activeRow.items[0].rect.width / 2) {
+        return activeRow.items[0].index;
+    }
+
+    for (const item of activeRow.items) {
+        if (x < item.rect.left + item.rect.width / 2) return item.index;
+    }
+
+    const lastItem = activeRow.items[activeRow.items.length - 1];
+    return lastItem.index + 1;
+}
+
+function updateDropMarker(x, y) {
+    if (!dragState) return;
+    const target = document.elementFromPoint(x, y);
+    const dropzone = target ? target.closest('[data-dropzone]') : null;
+    document.querySelectorAll('.gallery-dropzone.drop-active').forEach((zone) => zone.classList.remove('drop-active'));
+    if (!dropzone) {
+        dragState.drop = null;
+        dragState.marker.remove();
+        return;
+    }
+    const rowIndex = Number(dropzone.dataset.rowIndex);
+    const insertIndex = getDropIndexForPoint(dropzone, x, y);
+    dragState.drop = { rowIndex, insertIndex };
+    dropzone.classList.add('drop-active');
+    const images = Array.from(dropzone.querySelectorAll('.gallery-image:not(.gallery-drag-source)'));
+    const beforeImage = images[insertIndex];
+    if (beforeImage) {
+        dropzone.insertBefore(dragState.marker, beforeImage);
+    } else {
+        dropzone.append(dragState.marker);
+    }
+}
+
+function startGalleryDrag(candidate, event) {
+    const source = candidate.source;
+    dragState = {
+        type: candidate.type,
+        mediaId: candidate.mediaId,
+        rowIndex: candidate.rowIndex,
+        ghost: createDragGhost(source, event.clientX, event.clientY),
+        marker: document.createElement('div'),
+        drop: null,
+    };
+    dragState.marker.className = 'gallery-drop-marker';
+    source.classList.add('gallery-drag-source');
+    document.body.classList.add('gallery-is-dragging');
+    moveDragGhost(event.clientX, event.clientY);
+    updateDropMarker(event.clientX, event.clientY);
+}
+
+function cleanupGalleryDrag() {
+    document.body.classList.remove('gallery-is-dragging');
+    document.querySelectorAll('.gallery-drag-source').forEach((item) => item.classList.remove('gallery-drag-source'));
+    document.querySelectorAll('.gallery-dropzone.drop-active').forEach((zone) => zone.classList.remove('drop-active'));
+    if (dragState) {
+        dragState.ghost.remove();
+        dragState.marker.remove();
+    }
+    dragState = null;
+    dragCandidate = null;
+}
+
+function beginGalleryDragCandidate(event, item) {
+    if (event.button !== undefined && event.button !== 0) return;
+    if (event.target.closest('[data-edit-image-artist],[data-remove-image]')) return;
+    if (item.getAttribute('aria-disabled') === 'true') return;
+    event.preventDefault();
+    const row = item.closest('[data-gallery-row]');
+    dragCandidate = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        source: item,
+        type: item.dataset.gallerySource,
+        mediaId: item.dataset.mediaId,
+        rowIndex: row ? Number(row.dataset.galleryRow) : null,
+    };
+    item.setPointerCapture?.(event.pointerId);
+}
+
+function handleGalleryPointerMove(event) {
+    if (!dragCandidate || event.pointerId !== dragCandidate.pointerId) return;
+    const distance = Math.hypot(event.clientX - dragCandidate.startX, event.clientY - dragCandidate.startY);
+    if (!dragState && distance >= 6) startGalleryDrag(dragCandidate, event);
+    if (!dragState) return;
+    event.preventDefault();
+    moveDragGhost(event.clientX, event.clientY);
+    scrollDuringGalleryDrag(event.clientY);
+    updateDropMarker(event.clientX, event.clientY);
+}
+
+function handleGalleryPointerEnd(event) {
+    if (!dragCandidate || event.pointerId !== dragCandidate.pointerId) return;
+    if (dragState && dragState.drop && moveMediaToRow(dragState, dragState.drop.rowIndex, dragState.drop.insertIndex)) {
+        cleanupGalleryDrag();
+        renderGallery();
+        return;
+    }
+    cleanupGalleryDrag();
 }
 
 function renderImagePreview(preview, src, emptyText) {
@@ -609,50 +796,6 @@ function removeMediaFromLayouts(mediaId) {
     });
 }
 
-document.addEventListener('dragstart', (event) => {
-    if (event.target.closest('[data-edit-image-artist],[data-remove-image]')) {
-        event.preventDefault();
-        return;
-    }
-
-    const poolItem = event.target.closest('.media-pool-item');
-    const rowItem = event.target.closest('.gallery-image');
-    if (poolItem) {
-        if (poolItem.getAttribute('aria-disabled') === 'true') {
-            event.preventDefault();
-            return;
-        }
-        draggedItem = { type: 'pool', mediaId: poolItem.dataset.mediaId };
-        poolItem.setAttribute('aria-grabbed', 'true');
-        event.dataTransfer.effectAllowed = 'copy';
-        return;
-    }
-    if (rowItem) {
-        draggedItem = { type: 'row', mediaId: rowItem.dataset.mediaId, rowIndex: Number(rowItem.closest('[data-gallery-row]').dataset.galleryRow) };
-        rowItem.setAttribute('aria-grabbed', 'true');
-        event.dataTransfer.effectAllowed = 'move';
-    }
-});
-
-document.addEventListener('dragend', () => {
-    document.querySelectorAll('[aria-grabbed="true"]').forEach((item) => item.removeAttribute('aria-grabbed'));
-    draggedItem = null;
-});
-
-galleryRows.addEventListener('dragover', (event) => {
-    const dropzone = event.target.closest('[data-dropzone]');
-    if (!dropzone || !draggedItem) return;
-    event.preventDefault();
-});
-
-galleryRows.addEventListener('drop', (event) => {
-    const dropzone = event.target.closest('[data-dropzone]');
-    if (!dropzone || !draggedItem) return;
-    event.preventDefault();
-    insertMediaInRow(draggedItem.mediaId, Number(dropzone.dataset.rowIndex), getDropIndex(dropzone, event.clientX));
-    draggedItem = null;
-});
-
 galleryRows.addEventListener('click', (event) => {
     const removeImageButton = event.target.closest('[data-remove-image]');
     const editButton = event.target.closest('[data-edit-image-artist]');
@@ -688,8 +831,29 @@ mediaPool.addEventListener('click', (event) => {
         deleteMediaModal.showModal();
         return;
     }
-    if (editButton) openEditMediaModal(mediaItem.dataset.mediaId);
+    if (editButton) {
+        openEditMediaModal(mediaItem.dataset.mediaId);
+        
+    }
 });
+
+function preventNativeGalleryDrag(event) {
+    if (event.target.closest('[data-gallery-draggable]')) event.preventDefault();
+}
+
+function handleGalleryPointerDown(event) {
+    const item = event.target.closest('[data-gallery-draggable]');
+    if (!item) return;
+    beginGalleryDragCandidate(event, item);
+}
+
+galleryRows.addEventListener('dragstart', preventNativeGalleryDrag);
+mediaPool.addEventListener('dragstart', preventNativeGalleryDrag);
+galleryRows.addEventListener('pointerdown', handleGalleryPointerDown);
+mediaPool.addEventListener('pointerdown', handleGalleryPointerDown);
+window.addEventListener('pointermove', handleGalleryPointerMove, { passive: false });
+window.addEventListener('pointerup', handleGalleryPointerEnd);
+window.addEventListener('pointercancel', handleGalleryPointerEnd);
 
 galleryTagTabs.addEventListener('click', (event) => {
     const addTab = event.target.closest('[data-add-gallery-tag]');
@@ -1075,10 +1239,15 @@ export function CharacterSettingsPage({
             <Navbar currentUser={currentUser} guestInitial={currentUser.username.charAt(0).toUpperCase()} mediaBaseUrl={mediaBaseUrl}/>
             <main class="container mx-auto max-w-3xl px-3 py-6 sm:px-0">
                 <style>{`
-                    .media-pool-item[aria-grabbed="true"], .gallery-image[aria-grabbed="true"] { opacity: 0.5; }
+                    .media-pool-item, .gallery-image { contain: layout paint; touch-action: none; user-select: none; }
+                    .media-pool-item [data-media-thumb-image], .gallery-image [data-media-thumb-image] { pointer-events: none; -webkit-user-drag: none; user-select: none; }
+                    .media-pool-item.gallery-drag-source, .gallery-image.gallery-drag-source { opacity: 0.35; }
                     .media-pool-item[aria-disabled="true"] [data-media-thumb-image] { cursor: not-allowed; filter: grayscale(1); opacity: 0.35; }
-                    .gallery-dropzone.drag-over { outline: 2px dashed currentColor; outline-offset: 4px; }
-                    .gallery-dropzone:empty::before { color: currentColor; content: "Drop image in this row"; font-size: 0.75rem; opacity: 0.65; width: 100%; }
+                    .gallery-dropzone.drop-active { outline: 2px dashed currentColor; outline-offset: 4px; }
+                    .gallery-drop-marker { align-self: stretch; border: 2px dashed var(--color-primary); border-radius: var(--radius-field, 0.25rem); min-height: 5rem; width: calc((100% - 1.5rem) / 3); }
+                    @media (min-width: 40rem) { .gallery-drop-marker { width: 6rem; } }
+                    .gallery-drag-ghost { align-items: center; background: color-mix(in oklab, var(--color-primary) 18%, var(--color-base-300)); border: 2px solid var(--color-primary); border-radius: var(--radius-field, 0.25rem); box-shadow: 0 1rem 2.5rem rgb(0 0 0 / 0.28); color: var(--color-base-content); display: flex; font-size: 0.7rem; font-weight: 800; justify-content: center; left: 0; letter-spacing: 0; opacity: 0.95; pointer-events: none; position: fixed; text-transform: uppercase; top: 0; z-index: 9999; }
+                    .gallery-is-dragging, .gallery-is-dragging * { cursor: grabbing !important; }
                     .gallery-layout-tabs { gap: 0.25rem; scrollbar-width: thin; }
                     .gallery-layout-tab { align-items: center; border: 1px solid var(--color-base-300); border-bottom-color: transparent; border-radius: var(--radius-box, 0.5rem) var(--radius-box, 0.5rem) 0 0; display: inline-flex; gap: 0.5rem; min-height: 2.75rem; padding: 0 0.75rem; position: relative; top: 1px; white-space: nowrap; }
                     .gallery-layout-tab:not(.tab-active) { background: var(--color-base-300); border-bottom-color: var(--color-base-300); color: color-mix(in oklab, var(--color-base-content) 72%, transparent); }
@@ -1098,7 +1267,8 @@ export function CharacterSettingsPage({
                     <div class="flex min-w-0 items-center gap-3">
                         <img alt="Current profile image" class="h-14 w-14 shrink-0 rounded object-cover sm:h-16 sm:w-16"
                              data-character-profile-image-preview loading="lazy" src={profileImageUrl}/>
-                        <h1 class="min-w-0 break-words text-4xl font-bold sm:text-5xl" data-character-title>{character.name}</h1>
+                        <h1 class="min-w-0 wrap-break-word text-4xl font-bold sm:text-5xl"
+                            data-character-title>{character.name}</h1>
                     </div>
                     <div class="flex flex-wrap gap-2 sm:justify-end">
                         <a class="btn btn-primary" href={characterViewUrl}>View Character</a>
@@ -1117,11 +1287,12 @@ export function CharacterSettingsPage({
                         </div>
                     </fieldset>
                     <div class="hidden rounded-box border border-base-300 bg-base-100 p-3" data-character-profile-cropper>
-                        <div class="max-h-[22rem] overflow-hidden rounded-box bg-base-300">
-                            <img alt="Crop character profile image" class="block max-h-[22rem] w-full object-contain"
+                        <div class="max-h-88 overflow-hidden rounded-box bg-base-300">
+                            <img alt="Crop character profile image" class="block max-h-88 w-full object-contain"
                                  data-character-profile-crop-image/>
                         </div>
-                        <p class="mt-2 text-xs text-base-content/60">Drag and zoom to choose the square profile crop. The saved image will be converted to 512x512 WebP.</p>
+                        <p class="mt-2 text-xs text-base-content/60">Drag to choose the square profile crop. The saved
+                            image will be converted to 512x512 WebP.</p>
                     </div>
 
                     <fieldset class="fieldset">
@@ -1177,7 +1348,7 @@ export function CharacterSettingsPage({
                             <div class="gallery-layout-panel rounded-box border border-base-300 bg-base-200 p-4">
                                 <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                     <div>
-                                        <h4 class="font-semibold" id="active-gallery-tag-title">default</h4>
+                                        <h4 class="font-semibold" id="active-gallery-tag-title">Default</h4>
                                         <p class="text-sm text-base-content/70" id="active-gallery-tag-meta">0 rows</p>
                                     </div>
                                     <button class="btn btn-sm btn-primary" id="add-gallery-row" type="button">Add Row</button>
@@ -1198,7 +1369,8 @@ export function CharacterSettingsPage({
                 <GalleryTagDialogs/>
                 <MediaDialogs characterName={character.name}/>
                 <DeleteCharacterDialog characterName={character.name}/>
-                <div aria-live="polite" class="toast toast-top toast-end pointer-events-none z-[9999]" data-character-settings-toast-region></div>
+                <div aria-live="polite" class="toast toast-top toast-end pointer-events-none z-9999"
+                     data-character-settings-toast-region></div>
 
                 <script src="/vendor/cropperjs/cropper.min.js"></script>
                 <CharacterSettingsScript
@@ -1265,7 +1437,9 @@ function BulkUploadDialog() {
                     </div>
                 </form>
             </div>
-            <form class="modal-backdrop" method="dialog"><button>close</button></form>
+            <form class="modal-backdrop">
+                <button aria-label="Bulk upload backdrop" type="button">close</button>
+            </form>
         </dialog>
     )
 }
