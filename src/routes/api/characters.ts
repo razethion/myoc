@@ -168,6 +168,7 @@ const TREE_MAX_ITEMS = 500
 const TREE_MAX_DEPTH = 20
 const DISPLAY_NAME_ALLOWED_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 _'.()-]*$/
 const DISPLAY_NAME_RULES = 'letters, numbers, spaces, apostrophes, hyphens, underscores, periods, and parentheses'
+const DUPLICATE_CHARACTER_NAME_ERROR = 'Character name already exists on this account'
 const GALLERY_PNG_HTTP_METADATA = {
     cacheControl: 'public, max-age=31536000, immutable',
     contentType: 'image/png',
@@ -427,6 +428,10 @@ characterRoutes.post('/', async (c) => {
             await c.env.MEDIA_BUCKET.delete(profileImageObjectKey)
         }
 
+        if (isUniqueConstraintError(error)) {
+            return c.json({error: DUPLICATE_CHARACTER_NAME_ERROR}, 409)
+        }
+
         throw error
     }
 
@@ -468,16 +473,24 @@ characterRoutes.patch('/:id', async (c) => {
 
     const now = toSqlTimestamp(new Date())
 
-    await c.env.DB.prepare(
-        `UPDATE characters
-         SET name = ?,
-             description = ?,
-             updated_at = ?
-         WHERE id = ?
-           AND user_id = ?`,
-    )
-        .bind(nameResult.name, descriptionResult.description, now, character.id, currentUser.id)
-        .run()
+    try {
+        await c.env.DB.prepare(
+            `UPDATE characters
+             SET name        = ?,
+                 description = ?,
+                 updated_at  = ?
+             WHERE id = ?
+               AND user_id = ?`,
+        )
+            .bind(nameResult.name, descriptionResult.description, now, character.id, currentUser.id)
+            .run()
+    } catch (error) {
+        if (isUniqueConstraintError(error)) {
+            return c.json({error: DUPLICATE_CHARACTER_NAME_ERROR}, 409)
+        }
+
+        throw error
+    }
 
     return c.json({
         character: toPublicCharacter(c.env.MEDIA_PUBLIC_BASE_URL, {
@@ -2344,6 +2357,10 @@ function normalizePermanentConfirmation(value: unknown): boolean {
 
 function normalizeOptionalText(value: unknown): string | null {
     return typeof value === 'string' ? value.trim() : null
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+    return error instanceof Error && error.message.toLowerCase().includes('unique')
 }
 
 function normalizeMediaRating(value: unknown): 'sfw' | 'nsfw' | null {
