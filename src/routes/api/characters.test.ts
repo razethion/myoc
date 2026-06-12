@@ -183,6 +183,19 @@ async function postProfileImage(
     }, requestEnv(db, options.mediaBucket))
 }
 
+async function patchCharacter(
+    characterId: string,
+    body: unknown,
+    db: D1Database,
+    options: CharacterRequestOptions = {},
+): Promise<Response> {
+    return apiRoutes.request(`https://example.com/characters/${characterId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+        headers: createRequestHeaders(body, options),
+    }, requestEnv(db, options.mediaBucket))
+}
+
 async function putGallery(
     characterId: string,
     body: unknown,
@@ -1008,6 +1021,31 @@ describe('POST /characters', () => {
         expect(mediaBucket.put).not.toHaveBeenCalled()
     })
 
+    it('returns 409 when the character name already exists for the current user', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+            runError: new Error('UNIQUE constraint failed: characters.user_id, characters.name'),
+        })
+        const form = new FormData()
+        form.set('csrfToken', await createCsrfToken(sessionToken))
+        form.set('new-character-name', 'Ren')
+        form.set('new-character-profile-image', createWebpFile())
+
+        const response = await postCharacter(form, db, {
+            mediaBucket,
+            sessionToken,
+        })
+
+        expect(response.status).toBe(409)
+        expect(await response.json()).toEqual({
+            error: 'Character name already exists on this account',
+        })
+        const uploadedKey = vi.mocked(mediaBucket.put).mock.calls[0]?.[0]
+        expect(mediaBucket.delete).toHaveBeenCalledWith(uploadedKey)
+    })
+
     it('deletes the uploaded profile image when the D1 insert fails', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
@@ -1034,6 +1072,30 @@ describe('POST /characters', () => {
         } finally {
             error.mockRestore()
         }
+    })
+})
+
+describe('PATCH /characters/:id', () => {
+    it('returns 409 when renaming to another character name on the same account', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+            runError: new Error('UNIQUE constraint failed: characters.user_id, characters.name'),
+        })
+
+        const response = await patchCharacter(character.id, {
+            name: 'Ren',
+            description: 'Updated description',
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(409)
+        expect(await response.json()).toEqual({
+            error: 'Character name already exists on this account',
+        })
     })
 })
 
