@@ -132,9 +132,9 @@ The workflow behavior is:
 - Same-repository pull requests create or reuse a per-PR D1 database named `myoc-pr-<number>`.
 - Same-repository pull request previews bind media storage to the shared `myoc-dev` R2 bucket.
 - Pull request preview databases receive migrations and fake seed data from [`seeds/development.sql`](./seeds/development.sql).
-- Same-repository pull requests upload a Cloudflare preview version bound to that per-PR D1 database after checks pass.
-- Successful same-repository pull request previews get a bot comment with the live Cloudflare preview URL.
-- Closing a same-repository pull request deletes its `myoc-pr-<number>` D1 database.
+- Same-repository pull requests deploy a per-PR Worker named `myoc-pr-<number>` on `workers.dev`, bound to that per-PR D1 database after checks pass.
+- Successful same-repository pull request previews get a bot comment with the live `workers.dev` URL.
+- Closing a same-repository pull request deletes its `myoc-pr-<number>` D1 database and preview Worker.
 - Fork pull requests run checks only because Cloudflare secrets are not exposed to forked code.
 - Pushes to `master`, including merged pull requests, run checks, build, apply production D1 migrations, and then deploy with `wrangler deploy --minify`.
 

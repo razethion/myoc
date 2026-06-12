@@ -4,11 +4,13 @@ export type BoundStatement = {
     sql: string
     binds: unknown[]
     first: ReturnType<typeof vi.fn>
+    all: ReturnType<typeof vi.fn>
     run: ReturnType<typeof vi.fn>
 }
 
 type MockDbOptions = {
     firstResults?: unknown[]
+    allResults?: unknown[][]
     runError?: Error
 }
 
@@ -18,6 +20,7 @@ export function createMockDb(options: MockDbOptions = {}): {
 } {
     const boundStatements: BoundStatement[] = []
     const firstResults = [...(options.firstResults ?? [])]
+    const allResults = [...(options.allResults ?? [])]
 
     const db = {
         prepare: vi.fn((sql: string) => ({
@@ -26,6 +29,7 @@ export function createMockDb(options: MockDbOptions = {}): {
                     sql,
                     binds,
                     first: vi.fn(async () => firstResults.shift() ?? null),
+                    all: vi.fn(async () => ({results: allResults.shift() ?? []})),
                     run: vi.fn(async () => {
                         if (options.runError) {
                             throw options.runError

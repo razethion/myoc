@@ -74,6 +74,7 @@ jobs:
         if: ${{ steps.preview.outputs.preview_alias != '' }}
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PREVIEW_ALIAS: ${{ steps.preview.outputs.preview_alias }}
           DB_NAME: myoc-pr-${{ github.event.pull_request.number }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -117,11 +118,10 @@ jobs:
 
           cat > wrangler.preview.jsonc <<EOF
           {
-            "name": "myoc",
+            "name": "$PREVIEW_ALIAS",
             "main": "src/index.ts",
             "compatibility_date": "2026-06-10",
-            "workers_dev": false,
-            "preview_urls": true,
+            "workers_dev": true,
             "assets": {
               "directory": "./public"
             },
@@ -161,35 +161,25 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Upload branch preview
+      - name: Deploy branch preview
         id: upload-preview
         if: ${{ steps.preview.outputs.preview_alias != '' }}
         run: |
           set -euo pipefail
 
-          export WRANGLER_OUTPUT_FILE_PATH="${RUNNER_TEMP}/wrangler-preview-output.json"
-
-          npx wrangler versions upload --config wrangler.preview.jsonc --minify --preview-alias "${{ steps.preview.outputs.preview_alias }}" --message "GitHub Actions preview ${GITHUB_SHA}" 2>&1 | tee wrangler-preview.log
+          npx wrangler deploy --config wrangler.preview.jsonc --minify --message "GitHub Actions preview ${GITHUB_SHA}" 2>&1 | tee wrangler-preview.log
 
           preview_url="$(node -e "
             const fs = require('node:fs');
-            const outputFile = process.env.WRANGLER_OUTPUT_FILE_PATH;
-            if (!fs.existsSync(outputFile)) {
-              process.exit(0);
-            }
-            const entries = fs.readFileSync(outputFile, 'utf8')
-              .trim()
-              .split(/\n+/)
-              .filter(Boolean)
-              .map((line) => JSON.parse(line));
-            const upload = entries.reverse().find((entry) => entry.type === 'version-upload');
-            process.stdout.write(upload?.preview_alias_url || upload?.preview_url || '');
+            const log = fs.readFileSync('wrangler-preview.log', 'utf8');
+            const urls = [...log.matchAll(/https:\/\/[a-z0-9-]+\\.[a-z0-9-]+\\.workers\\.dev\\b/gi)].map((match) => match[0]);
+            process.stdout.write(urls.at(-1) || '');
           ")"
 
           if [ -z "$preview_url" ]; then
-            echo "::error::Wrangler uploaded the preview but did not return a preview URL. Check that Preview URLs are enabled for this Worker."
-            echo "Wrangler output file:"
-            cat "$WRANGLER_OUTPUT_FILE_PATH" || true
+            echo "::error::Wrangler deployed the preview Worker but did not print a workers.dev URL."
+            echo "Wrangler log:"
+            cat wrangler-preview.log || true
             exit 1
           fi
 
@@ -245,7 +235,7 @@ jobs:
             }
 
   cleanup-preview-db:
-    name: Cleanup Preview D1
+    name: Cleanup Preview
     if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
 
@@ -286,4 +276,18 @@ jobs:
             npx wrangler d1 delete "$DB_NAME" --skip-confirmation
           else
             echo "Preview D1 database $DB_NAME does not exist; nothing to delete."
+          fi
+
+      - name: Delete preview Worker
+        env:
+          WORKER_NAME: myoc-pr-${{ github.event.pull_request.number }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+
+          if npx wrangler delete "$WORKER_NAME" --force; then
+            echo "Deleted preview Worker $WORKER_NAME."
+          else
+            echo "Preview Worker $WORKER_NAME does not exist or could not be deleted; nothing to clean up."
           fi

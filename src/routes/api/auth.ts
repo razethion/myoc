@@ -54,7 +54,7 @@ authRoutes.post('/login', async (c) => {
     }
 
     const user = await c.env.DB.prepare(
-        `SELECT id, email, username, password_hash, profile_photo_key, bio, created_at
+        `SELECT id, email, username, password_hash, profile_photo_key, bio, display_nsfw_media, created_at
          FROM users
          WHERE username = ?
          LIMIT 1`,

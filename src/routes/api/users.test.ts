@@ -5,6 +5,8 @@ import {createCsrfToken} from '../../lib/auth/session'
 import {createMockDb} from '../../test/mockD1'
 import {createMockR2Bucket} from '../../test/mockR2'
 import {expectSessionCookie} from '../../test/assertions'
+import {createMalformedWebpFile, createOversizedWebpFile, createWebpFile} from '../../test/imageFixtures'
+import {createRequestHeaders, type TestRequestOptions} from '../../test/request'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
 const profilePhotoKeyPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
@@ -15,9 +17,12 @@ type CreateUserResponse = {
         username: string
         profilePhotoKey: string | null
         bio: string
+        displayNsfwMedia: boolean
         createdAt: string
     }
 }
+
+type UserRequestOptions = TestRequestOptions
 
 async function postUser(body: unknown, db: D1Database, url = 'https://example.com/users'): Promise<Response> {
     const mediaBucket = createMockR2Bucket()
@@ -38,25 +43,14 @@ async function postUser(body: unknown, db: D1Database, url = 'https://example.co
 async function postCurrentUserSettings(
     body: unknown,
     db: D1Database,
-    options: { sessionToken?: string; csrfToken?: string } = {},
+    options: UserRequestOptions = {},
 ): Promise<Response> {
     const mediaBucket = createMockR2Bucket()
-    const headers: Record<string, string> = {
-        'content-type': 'application/json',
-    }
-
-    if (options.sessionToken) {
-        headers.cookie = `myoc_session=${options.sessionToken}`
-    }
-
-    if (options.csrfToken) {
-        headers['x-csrf-token'] = options.csrfToken
-    }
 
     return apiRoutes.request('https://example.com/users/me', {
         method: 'POST',
-        body: JSON.stringify(body),
-        headers,
+        body: body instanceof FormData ? body : JSON.stringify(body),
+        headers: createRequestHeaders(body, options),
     }, {
         DB: db,
         MEDIA_BUCKET: mediaBucket,
@@ -95,55 +89,7 @@ const currentUserRecord = {
     username: 'olduser',
     profile_photo_key: null,
     bio: 'Old bio',
-}
-
-function createWebpFile(width = 512, height = 512, type = 'image/webp'): File {
-    return new File([createVp8xWebpBytes(width, height)], 'profile-photo.webp', {
-        type,
-    })
-}
-
-function createOversizedWebpFile(): File {
-    return new File([new Uint8Array((2 * 1024 * 1024) + 1)], 'profile-photo.webp', {
-        type: 'image/webp',
-    })
-}
-
-function createMalformedWebpFile(): File {
-    return new File([new Uint8Array([0, 1, 2, 3])], 'profile-photo.webp', {
-        type: 'image/webp',
-    })
-}
-
-function createVp8xWebpBytes(width: number, height: number): Uint8Array {
-    const bytes = new Uint8Array(30)
-    writeAscii(bytes, 0, 'RIFF')
-    writeUint32Le(bytes, 4, bytes.length - 8)
-    writeAscii(bytes, 8, 'WEBP')
-    writeAscii(bytes, 12, 'VP8X')
-    writeUint32Le(bytes, 16, 10)
-    writeUint24Le(bytes, 24, width - 1)
-    writeUint24Le(bytes, 27, height - 1)
-    return bytes
-}
-
-function writeAscii(bytes: Uint8Array, offset: number, value: string): void {
-    for (let index = 0; index < value.length; index += 1) {
-        bytes[offset + index] = value.charCodeAt(index)
-    }
-}
-
-function writeUint24Le(bytes: Uint8Array, offset: number, value: number): void {
-    bytes[offset] = value & 0xff
-    bytes[offset + 1] = (value >> 8) & 0xff
-    bytes[offset + 2] = (value >> 16) & 0xff
-}
-
-function writeUint32Le(bytes: Uint8Array, offset: number, value: number): void {
-    bytes[offset] = value & 0xff
-    bytes[offset + 1] = (value >> 8) & 0xff
-    bytes[offset + 2] = (value >> 16) & 0xff
-    bytes[offset + 3] = (value >> 24) & 0xff
+    display_nsfw_media: 0,
 }
 
 describe('POST /users', () => {
@@ -193,6 +139,21 @@ describe('POST /users', () => {
         const response = await postUser({
             email: 'test@example.com',
             username: 'bad-user',
+            password: 'password123',
+        }, db)
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Username must be 3-32 characters and contain only letters, numbers, and underscores',
+        })
+    })
+
+    it('returns 400 when the username contains URL-hostile characters', async () => {
+        const {db} = createMockDb()
+
+        const response = await postUser({
+            email: 'test@example.com',
+            username: 'bad/user',
             password: 'password123',
         }, db)
 
@@ -266,6 +227,7 @@ describe('POST /users', () => {
         expect(body.user.username).toBe('testuser')
         expect(body.user.profilePhotoKey).toBeNull()
         expect(body.user.bio).toBe('')
+        expect(body.user.displayNsfwMedia).toBe(false)
         expect(body.user.createdAt).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
         expect(JSON.stringify(body)).not.toContain('password_hash')
 
@@ -278,6 +240,7 @@ describe('POST /users', () => {
         expect(boundStatements[1]?.binds[1]).toBe('test@example.com')
         expect(boundStatements[1]?.binds[2]).toBe('testuser')
         expect(await compare('password123', boundStatements[1]?.binds[3] as string)).toBe(true)
+        expect(boundStatements[1]?.binds[5]).toBe(0)
         expect(boundStatements[2]?.sql).toContain(['DELETE FROM', 'sessions'].join(' '))
         expect(boundStatements[3]?.sql).toContain(['INSERT INTO', 'sessions'].join(' '))
         expect(boundStatements[3]?.binds[1]).toBe(boundStatements[1]?.binds[0])
@@ -317,6 +280,27 @@ describe('POST /users/me', () => {
         })
     })
 
+    it('returns 400 when the updated username contains URL-hostile characters', async () => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postCurrentUserSettings({
+            email: 'test@example.com',
+            username: 'bad/user',
+            bio: 'New bio',
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Username must be 3-32 characters and contain only letters, numbers, and underscores',
+        })
+    })
+
     it('updates the current user without changing the password', async () => {
         const sessionToken = 'session-token'
         const {db, boundStatements} = createMockDb({
@@ -344,9 +328,33 @@ describe('POST /users/me', () => {
         expect(boundStatements[1]?.binds).toEqual(['new@example.com', 'newuser', currentUserRecord.id])
         expect(boundStatements[2]?.sql).toContain('UPDATE users')
         expect(boundStatements[2]?.sql).not.toContain('password_hash')
-        expect(boundStatements[2]?.binds).toEqual(['new@example.com', 'newuser', 'Updated bio', currentUserRecord.id])
+        expect(boundStatements[2]?.binds).toEqual(['new@example.com', 'newuser', 'Updated bio', 0, currentUserRecord.id])
         expect(boundStatements[3]?.sql).toContain(['DELETE FROM', 'user_social_links'].join(' '))
         expect(boundStatements[3]?.binds).toEqual([currentUserRecord.id])
+    })
+
+    it('updates the NSFW media display preference from the settings form checkbox', async () => {
+        const sessionToken = 'session-token'
+        const form = new FormData()
+        form.set('email', 'new@example.com')
+        form.set('username', 'newuser')
+        form.set('bio', 'Updated bio')
+        form.set('password', '')
+        form.set('displayNsfwMedia', 'true')
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, null],
+        })
+
+        const response = await postCurrentUserSettings(form, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            ok: true,
+        })
+        expect(boundStatements[2]?.binds).toEqual(['new@example.com', 'newuser', 'Updated bio', 1, currentUserRecord.id])
     })
 
     it('returns 409 when the updated email or username already exists', async () => {
@@ -395,8 +403,9 @@ describe('POST /users/me', () => {
         expect(boundStatements[2]?.binds[0]).toBe('new@example.com')
         expect(boundStatements[2]?.binds[1]).toBe('newuser')
         expect(boundStatements[2]?.binds[2]).toBe('Updated bio')
-        expect(await compare('newpassword123', boundStatements[2]?.binds[3] as string)).toBe(true)
-        expect(boundStatements[2]?.binds[4]).toBe(currentUserRecord.id)
+        expect(boundStatements[2]?.binds[3]).toBe(0)
+        expect(await compare('newpassword123', boundStatements[2]?.binds[4] as string)).toBe(true)
+        expect(boundStatements[2]?.binds[5]).toBe(currentUserRecord.id)
     })
 
     it('replaces the current social links when settings are saved', async () => {
