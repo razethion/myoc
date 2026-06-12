@@ -477,6 +477,9 @@ function CharacterManagementScript({tree, csrfToken}: { tree: CharacterManagemen
                 autoCropArea: 1,
                 background: false,
                 viewMode: 1,
+                zoomable: false,
+                zoomOnTouch: false,
+                zoomOnWheel: false,
             });
         }
 
@@ -906,7 +909,7 @@ export function CharacterManagementPage({
                                 <img alt="Crop character profile image" class="block max-h-[22rem] w-full object-contain"
                                      data-character-profile-crop-image/>
                             </div>
-                            <p class="mt-2 text-xs text-base-content/60">Drag and zoom to choose the square profile crop.</p>
+                            <p class="mt-2 text-xs text-base-content/60">Drag to choose the square profile crop.</p>
                         </div>
                         <fieldset class="fieldset">
                             <label class="fieldset-label" for="new-character-folder">Folder</label>

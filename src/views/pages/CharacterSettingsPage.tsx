@@ -217,6 +217,9 @@ async function loadCharacterProfileForCropping(file) {
         autoCropArea: 1,
         background: false,
         viewMode: 1,
+        zoomable: false,
+        zoomOnTouch: false,
+        zoomOnWheel: false,
     });
 }
 
@@ -1125,7 +1128,8 @@ export function CharacterSettingsPage({
                             <img alt="Crop character profile image" class="block max-h-[22rem] w-full object-contain"
                                  data-character-profile-crop-image/>
                         </div>
-                        <p class="mt-2 text-xs text-base-content/60">Drag and zoom to choose the square profile crop. The saved image will be converted to 512x512 WebP.</p>
+                        <p class="mt-2 text-xs text-base-content/60">Drag to choose the square profile crop. The saved
+                            image will be converted to 512x512 WebP.</p>
                     </div>
 
                     <fieldset class="fieldset">

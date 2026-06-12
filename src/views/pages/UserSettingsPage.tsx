@@ -261,6 +261,9 @@ function UserSettingsPageScript() {
                 autoCropArea: 1,
                 background: false,
                 viewMode: 1,
+                zoomable: false,
+                zoomOnTouch: false,
+                zoomOnWheel: false,
             });
         }
 
@@ -562,11 +565,13 @@ export function UserSettingsPage({currentUser, socialLinks = [], mediaBaseUrl}: 
 
                                     <div class="mt-4 hidden rounded-box border border-base-300 bg-base-100 p-4"
                                          data-profile-photo-cropper>
-                                        <img alt="Selected profile photo crop editor" class="max-h-112 w-full"
-                                             data-profile-photo-crop-image/>
+                                        <div class="max-h-[22rem] overflow-hidden rounded-box bg-base-300">
+                                            <img alt="Selected profile photo crop editor"
+                                                 class="block max-h-[22rem] w-full object-contain"
+                                                 data-profile-photo-crop-image/>
+                                        </div>
                                         <p class="mt-3 text-xs text-base-content/60">
-                                            Drag the image or crop box to choose the square area. Scroll or pinch to
-                                            zoom.
+                                            Drag the image or crop box to choose the square area.
                                         </p>
                                     </div>
                                 </div>
