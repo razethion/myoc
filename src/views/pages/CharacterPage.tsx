@@ -507,7 +507,7 @@ export function CharacterPage({
             mediaIds: media.map((item) => item.id),
         }],
     }]
-    const defaultTabName = tabs[0]?.name ?? 'default'
+    const defaultTabName = tabs[0]?.name ?? 'Default'
     const ownerProfileImageUrl = profileImageFor(profileUser, mediaBaseUrl)
     const canEdit = currentUser?.id === profileUser.id
 
