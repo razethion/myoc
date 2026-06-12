@@ -123,6 +123,38 @@ function CharacterManagementStyles() {
                 line-height: 1;
             }
             .management-item[aria-grabbed="true"] .drag-handle { cursor: grabbing; }
+            #create-character-modal {
+                align-items: flex-start;
+                overflow-y: auto;
+                --create-character-modal-top-space: max(4rem, calc(env(safe-area-inset-top) + 3rem));
+                --create-character-modal-bottom-space: max(6rem, calc(env(safe-area-inset-bottom) + 5rem));
+                padding: var(--create-character-modal-top-space) 0.75rem var(--create-character-modal-bottom-space);
+            }
+            #create-character-modal .modal-box {
+                margin: 0;
+                max-height: calc(100dvh - var(--create-character-modal-top-space) - var(--create-character-modal-bottom-space));
+                max-height: calc(100svh - var(--create-character-modal-top-space) - var(--create-character-modal-bottom-space));
+                overflow-y: auto;
+                overscroll-behavior: contain;
+                padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
+            }
+            #create-character-modal [data-character-profile-cropper] [data-character-profile-crop-image],
+            #create-character-modal [data-character-profile-cropper] .cropper-container {
+                max-height: 40dvh !important;
+            }
+            @media (min-width: 640px) {
+                #create-character-modal {
+                    align-items: center;
+                    padding: 1rem;
+                }
+                #create-character-modal .modal-box {
+                    max-height: calc(100dvh - 2rem);
+                }
+                #create-character-modal [data-character-profile-cropper] [data-character-profile-crop-image],
+                #create-character-modal [data-character-profile-cropper] .cropper-container {
+                    max-height: 22rem !important;
+                }
+            }
             .toast-message { animation: toast-fade 2600ms ease forwards; }
             @keyframes toast-fade {
                 0%, 80% { opacity: 1; transform: translateY(0); }
@@ -905,8 +937,9 @@ export function CharacterManagementPage({
                             <p class="text-xs text-base-content/60">You'll be able to crop the image before uploading.</p>
                         </fieldset>
                         <div class="hidden rounded-box border border-base-300 bg-base-100 p-3" data-character-profile-cropper>
-                            <div class="max-h-[22rem] overflow-hidden rounded-box bg-base-300">
-                                <img alt="Crop character profile image" class="block max-h-[22rem] w-full object-contain"
+                            <div class="max-h-[40dvh] overflow-hidden rounded-box bg-base-300 sm:max-h-[22rem]">
+                                <img alt="Crop character profile image"
+                                     class="block max-h-[40dvh] w-full object-contain sm:max-h-[22rem]"
                                      data-character-profile-crop-image/>
                             </div>
                             <p class="mt-2 text-xs text-base-content/60">Drag to choose the square profile crop.</p>
