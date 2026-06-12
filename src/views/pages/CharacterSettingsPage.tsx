@@ -150,6 +150,10 @@ let editRemoveNsfw = false;
 let characterProfileCropperInstance = null;
 let characterProfileObjectUrl = null;
 
+function displayGalleryTabName(name) {
+    return name === 'default' ? 'Default' : name;
+}
+
 function createId() {
     return crypto.randomUUID ? crypto.randomUUID() : 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
 }
@@ -369,7 +373,7 @@ function renderTabs() {
         labelButton.dataset.tagId = tagId;
         labelButton.role = 'tab';
         labelButton.type = 'button';
-        labelButton.textContent = layout.name;
+        labelButton.textContent = displayGalleryTabName(layout.name);
         tab.append(labelButton);
         if (layout.name !== 'default') {
             const editButton = document.createElement('button');
@@ -425,7 +429,7 @@ function renderRows() {
         row.append(header, dropzone);
         galleryRows.append(row);
     });
-    activeGalleryTagTitle.textContent = layout.name;
+    activeGalleryTagTitle.textContent = displayGalleryTabName(layout.name);
     activeGalleryTagMeta.textContent = layout.rows.length + (layout.rows.length === 1 ? ' row' : ' rows') + ' / ' + getUsedMediaIds(activeTagId).size + ' images';
 }
 
@@ -1177,7 +1181,7 @@ export function CharacterSettingsPage({
                             <div class="gallery-layout-panel rounded-box border border-base-300 bg-base-200 p-4">
                                 <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                     <div>
-                                        <h4 class="font-semibold" id="active-gallery-tag-title">default</h4>
+                                        <h4 class="font-semibold" id="active-gallery-tag-title">Default</h4>
                                         <p class="text-sm text-base-content/70" id="active-gallery-tag-meta">0 rows</p>
                                     </div>
                                     <button class="btn btn-sm btn-primary" id="add-gallery-row" type="button">Add Row</button>
