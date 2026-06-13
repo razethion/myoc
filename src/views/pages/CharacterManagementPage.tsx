@@ -927,8 +927,8 @@ export function CharacterManagementPage({
                         <fieldset class="fieldset">
                             <label class="fieldset-label" for="new-character-name">Character Name</label>
                             <input class="input input-bordered w-full" id="new-character-name" maxLength={80}
-                                   pattern="[A-Za-z0-9][A-Za-z0-9 _'.()-]*" required
-                                   title="Use letters, numbers, spaces, apostrophes, hyphens, underscores, periods, and parentheses. Start with a letter or number."
+                                   pattern={"[A-Za-z0-9][A-Za-z0-9 _'.()\"-]*"} required
+                                   title="Use letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses. Start with a letter or number."
                                    type="text"/>
                         </fieldset>
                         <fieldset class="fieldset">

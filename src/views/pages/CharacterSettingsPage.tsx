@@ -1298,8 +1298,8 @@ export function CharacterSettingsPage({
                     <fieldset class="fieldset">
                         <label class="fieldset-label" for="character-name">Character Name</label>
                         <input class="input input-bordered w-full" id="character-name" maxLength={80}
-                               name="character-name" pattern="[A-Za-z0-9][A-Za-z0-9 _'.()-]*" required
-                               title="Use letters, numbers, spaces, apostrophes, hyphens, underscores, periods, and parentheses. Start with a letter or number."
+                               name="character-name" pattern={"[A-Za-z0-9][A-Za-z0-9 _'.()\"-]*"} required
+                               title="Use letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses. Start with a letter or number."
                                type="text" value={character.name}/>
                     </fieldset>
 
