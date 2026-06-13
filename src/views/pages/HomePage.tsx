@@ -64,6 +64,89 @@ type HomePageProps = {
     currentUser?: CurrentUser | null
     guestInitial: string
     mediaBaseUrl: string
+    siteUrl: string
+}
+
+const HOME_PAGE_TITLE = 'MyOC | High-Resolution Character Gallery'
+const HOME_PAGE_DESCRIPTION = 'Easily share character art without losing quality. No more fuss. Keep all your character assets organized in a simple gallery built around original-resolution files.'
+const HOME_PAGE_KEYWORDS = 'character art gallery, original character gallery, OC gallery, character reference, character media, art portfolio, furry character gallery'
+const HOME_PAGE_IMAGE_PATH = '/assets/myocbanner.webp'
+const HOME_PAGE_IMAGE_ALT = 'Easily share character art without losing quality. No fuss.'
+
+function absoluteUrl(siteUrl: string, path: string): string {
+    return new URL(path, siteUrl).toString()
+}
+
+function HomePageHead({siteUrl}: { siteUrl: string }) {
+    const canonicalUrl = absoluteUrl(siteUrl, '/')
+    const imageUrl = absoluteUrl(siteUrl, HOME_PAGE_IMAGE_PATH)
+    const structuredData = {
+        '@context': 'https://schema.org',
+        '@graph': [
+            {
+                '@type': 'WebSite',
+                '@id': `${canonicalUrl}#website`,
+                name: 'MyOC',
+                url: canonicalUrl,
+                description: HOME_PAGE_DESCRIPTION,
+                potentialAction: {
+                    '@type': 'SearchAction',
+                    target: `${absoluteUrl(siteUrl, '/search')}?q={search_term_string}`,
+                    'query-input': 'required name=search_term_string',
+                },
+            },
+            {
+                '@type': 'WebApplication',
+                '@id': `${canonicalUrl}#app`,
+                name: 'MyOC',
+                url: canonicalUrl,
+                applicationCategory: 'MultimediaApplication',
+                operatingSystem: 'Any',
+                description: HOME_PAGE_DESCRIPTION,
+                image: imageUrl,
+            },
+        ],
+    }
+
+    return (
+        <>
+            <meta content={HOME_PAGE_DESCRIPTION} name="description"/>
+            <meta content={HOME_PAGE_KEYWORDS} name="keywords"/>
+            <meta content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" name="robots"/>
+            <meta content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" name="googlebot"/>
+            <meta content="MyOC" name="application-name"/>
+            <meta content="MyOC" name="apple-mobile-web-app-title"/>
+            <meta content="#0f172a" name="theme-color"/>
+            <meta content="dark light" name="color-scheme"/>
+            <meta content="telephone=no" name="format-detection"/>
+            <meta content="strict-origin-when-cross-origin" name="referrer"/>
+            <link href={canonicalUrl} rel="canonical"/>
+
+            <meta content={HOME_PAGE_TITLE} property="og:title"/>
+            <meta content={HOME_PAGE_DESCRIPTION} property="og:description"/>
+            <meta content="website" property="og:type"/>
+            <meta content={canonicalUrl} property="og:url"/>
+            <meta content="MyOC" property="og:site_name"/>
+            <meta content={imageUrl} property="og:image"/>
+            <meta content="4000" property="og:image:width"/>
+            <meta content="5000" property="og:image:height"/>
+            <meta content="image/png" property="og:image:type"/>
+            <meta content={HOME_PAGE_IMAGE_ALT} property="og:image:alt"/>
+            <meta content="en_US" property="og:locale"/>
+
+            <meta content="summary_large_image" name="twitter:card"/>
+            <meta content={HOME_PAGE_TITLE} name="twitter:title"/>
+            <meta content={HOME_PAGE_DESCRIPTION} name="twitter:description"/>
+            <meta content={imageUrl} name="twitter:image"/>
+            <meta content={HOME_PAGE_IMAGE_ALT} name="twitter:image:alt"/>
+
+            <script
+                dangerouslySetInnerHTML={{__html: JSON.stringify(structuredData)}}
+                type="application/ld+json"
+            ></script>
+            <HomePageStyles/>
+        </>
+    )
 }
 
 function HomePageStyles() {
@@ -120,9 +203,9 @@ function HomePageStyles() {
     )
 }
 
-export function HomePage({currentUser, guestInitial, mediaBaseUrl}: HomePageProps) {
+export function HomePage({currentUser, guestInitial, mediaBaseUrl, siteUrl}: HomePageProps) {
     return (
-        <BaseLayout head={<HomePageStyles />} title="Home | MyOC">
+        <BaseLayout head={<HomePageHead siteUrl={siteUrl}/>} title={HOME_PAGE_TITLE}>
             <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl}/>
             <main>
                 <section class="hero-prism relative overflow-hidden border-b border-base-300 bg-base-100">

@@ -155,6 +155,22 @@ describe('public page redirects', () => {
         expect(loginResponse.status).toBe(200)
         expect(registerResponse.status).toBe(200)
     })
+
+    it('renders SEO metadata on the home page', async () => {
+        const response = await getAppPath('/')
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('<title>MyOC | High-Resolution Character Gallery</title>')
+        expect(html).toContain('<meta content="MyOC is a focused character art gallery')
+        expect(html).toContain('<link href="https://example.com/" rel="canonical"/>')
+        expect(html).toContain('<meta content="MyOC | High-Resolution Character Gallery" property="og:title"/>')
+        expect(html).toContain('<meta content="https://example.com/assets/razfalling.png" property="og:image"/>')
+        expect(html).toContain('<meta content="summary_large_image" name="twitter:card"/>')
+        expect(html).toContain('<script type="application/ld+json">')
+        expect(html).toContain('"@type":"WebSite"')
+        expect(html).toContain('"target":"https://example.com/search?q={search_term_string}"')
+    })
 })
 
 describe('GET /search', () => {

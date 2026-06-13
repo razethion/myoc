@@ -46,6 +46,7 @@ pageRoutes.get('/', async (c) => {
             currentUser={currentUser}
             guestInitial={getRandomLetter()}
             mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+            siteUrl={new URL(c.req.url).origin}
         />,
     )
 })
