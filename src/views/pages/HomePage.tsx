@@ -128,9 +128,9 @@ function HomePageHead({siteUrl}: { siteUrl: string }) {
             <meta content={canonicalUrl} property="og:url"/>
             <meta content="MyOC" property="og:site_name"/>
             <meta content={imageUrl} property="og:image"/>
-            <meta content="4000" property="og:image:width"/>
-            <meta content="5000" property="og:image:height"/>
-            <meta content="image/png" property="og:image:type"/>
+            <meta content="1200" property="og:image:width"/>
+            <meta content="630" property="og:image:height"/>
+            <meta content="image/webp" property="og:image:type"/>
             <meta content={HOME_PAGE_IMAGE_ALT} property="og:image:alt"/>
             <meta content="en_US" property="og:locale"/>
 
