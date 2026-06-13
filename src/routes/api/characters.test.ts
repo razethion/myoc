@@ -753,7 +753,7 @@ describe('POST /characters', () => {
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
-            error: 'Character name may contain only letters, numbers, spaces, apostrophes, hyphens, underscores, periods, and parentheses, and must start with a letter or number',
+            error: 'Character name may contain only letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses, and must start with a letter or number',
         })
     })
 
@@ -772,7 +772,7 @@ describe('POST /characters', () => {
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
-            error: 'Character name may contain only letters, numbers, spaces, apostrophes, hyphens, underscores, periods, and parentheses, and must start with a letter or number',
+            error: 'Character name may contain only letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses, and must start with a letter or number',
         })
     })
 
@@ -852,7 +852,7 @@ describe('POST /characters', () => {
         })
 
         const response = await postCharacter({
-            name: ' Vyn ',
+            name: ' Vyn "The Hawk" ',
             folderId: 'root',
             profileImageData: createWebpDataUrl(),
         }, db, {
@@ -864,12 +864,12 @@ describe('POST /characters', () => {
         expect(response.status).toBe(201)
 
         const body = await response.json() as CharacterResponse
-        expect(body.character.name).toBe('Vyn')
+        expect(body.character.name).toBe('Vyn "The Hawk"')
         expect(body.character.folderId).toBeNull()
         expectStoredCharacterProfileImage(mediaBucket, body.character)
         expect(boundStatements).toHaveLength(2)
         expect(boundStatements[1]?.sql).toContain(['INSERT INTO', 'characters'].join(' '))
-        expect(boundStatements[1]?.binds[2]).toBe('Vyn')
+        expect(boundStatements[1]?.binds[2]).toBe('Vyn "The Hawk"')
         expect(boundStatements[1]?.binds[3]).toBe(body.character.profileImageKey)
         expect(boundStatements[1]?.binds[4]).toBeNull()
         expect(boundStatements[1]?.binds[5]).toBe(0)
