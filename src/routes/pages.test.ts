@@ -23,64 +23,81 @@ function createProfilePageDb(options: {
     searchUserCount?: number
     searchCharacters?: unknown[]
     searchCharacterCount?: number
+    userCount?: number
+    characterCount?: number
+    mediaCount?: number
+    discoverCharacters?: unknown[]
 } = {}): D1Database {
+    const firstForSql = async (sql: string) => {
+        if (sql.includes('COUNT(*) AS count') && sql.includes('FROM character_media')) {
+            return {count: options.mediaCount ?? 0}
+        }
+
+        if (sql.includes('COUNT(*) AS count') && sql.includes('FROM users')) {
+            return {count: options.userCount ?? options.searchUserCount ?? options.searchUsers?.length ?? 0}
+        }
+
+        if (sql.includes('COUNT(*) AS count') && sql.includes('FROM characters')) {
+            return {count: options.characterCount ?? options.searchCharacterCount ?? options.searchCharacters?.length ?? 0}
+        }
+
+        if (sql.includes('FROM sessions')) {
+            return options.currentUser ?? null
+        }
+
+        if (sql.includes('FROM characters')) {
+            return options.characterSettings ?? null
+        }
+
+        return options.profileUser ?? null
+    }
+    const allForSql = async (sql: string): Promise<QueryResult> => {
+        if (sql.includes('eligible_characters')) {
+            return {results: options.discoverCharacters ?? []}
+        }
+
+        if (sql.includes('FROM users') && sql.includes('LEFT JOIN characters')) {
+            return {results: options.searchUsers ?? []}
+        }
+
+        if (sql.includes('FROM characters') && sql.includes('INNER JOIN users')) {
+            return {results: options.searchCharacters ?? []}
+        }
+
+        if (sql.includes('FROM user_social_links')) {
+            return {results: options.socialLinks ?? []}
+        }
+
+        if (sql.includes('FROM character_folders')) {
+            return {results: options.folders ?? []}
+        }
+
+        if (sql.includes('FROM character_media')) {
+            return {results: options.characterMedia ?? []}
+        }
+
+        if (sql.includes('FROM character_gallery_tabs')) {
+            return {results: options.galleryTabs ?? []}
+        }
+
+        if (sql.includes('FROM character_gallery_rows')) {
+            return {results: options.galleryRows ?? []}
+        }
+
+        if (sql.includes('FROM characters')) {
+            return {results: options.characters ?? []}
+        }
+
+        return {results: []}
+    }
+
     return {
         prepare: vi.fn((sql: string) => ({
+            first: vi.fn(() => firstForSql(sql)),
+            all: vi.fn(() => allForSql(sql)),
             bind: vi.fn(() => ({
-                first: vi.fn(async () => {
-                    if (sql.includes('COUNT(*) AS count') && sql.includes('FROM users')) {
-                        return {count: options.searchUserCount ?? options.searchUsers?.length ?? 0}
-                    }
-
-                    if (sql.includes('COUNT(*) AS count') && sql.includes('FROM characters')) {
-                        return {count: options.searchCharacterCount ?? options.searchCharacters?.length ?? 0}
-                    }
-
-                    if (sql.includes('FROM sessions')) {
-                        return options.currentUser ?? null
-                    }
-
-                    if (sql.includes('FROM characters')) {
-                        return options.characterSettings ?? null
-                    }
-
-                    return options.profileUser ?? null
-                }),
-                all: vi.fn(async (): Promise<QueryResult> => {
-                    if (sql.includes('FROM users') && sql.includes('LEFT JOIN characters')) {
-                        return {results: options.searchUsers ?? []}
-                    }
-
-                    if (sql.includes('FROM characters') && sql.includes('INNER JOIN users')) {
-                        return {results: options.searchCharacters ?? []}
-                    }
-
-                    if (sql.includes('FROM user_social_links')) {
-                        return {results: options.socialLinks ?? []}
-                    }
-
-                    if (sql.includes('FROM character_folders')) {
-                        return {results: options.folders ?? []}
-                    }
-
-                    if (sql.includes('FROM character_media')) {
-                        return {results: options.characterMedia ?? []}
-                    }
-
-                    if (sql.includes('FROM character_gallery_tabs')) {
-                        return {results: options.galleryTabs ?? []}
-                    }
-
-                    if (sql.includes('FROM character_gallery_rows')) {
-                        return {results: options.galleryRows ?? []}
-                    }
-
-                    if (sql.includes('FROM characters')) {
-                        return {results: options.characters ?? []}
-                    }
-
-                    return {results: []}
-                }),
+                first: vi.fn(() => firstForSql(sql)),
+                all: vi.fn(() => allForSql(sql)),
             })),
         })),
         batch: vi.fn(async () => []),
@@ -118,15 +135,51 @@ function createCurrentUserRecord(username = 'demo') {
 }
 
 describe('public page redirects', () => {
-    it('redirects logged-in users from home to their profile', async () => {
+    it('renders home for logged-in users', async () => {
         const response = await getAppPath('/', createProfilePageDb({
             currentUser: createCurrentUserRecord('demo'),
+            userCount: 24,
+            characterCount: 128,
+            mediaCount: 4096,
         }), {
             cookie: 'myoc_session=session-token',
         })
+        const html = await response.text()
 
-        expect(response.status).toBe(302)
-        expect(response.headers.get('location')).toBe('/u/demo')
+        expect(response.status).toBe(200)
+        expect(html).toContain('<title>MyOC | High-Resolution Character Gallery</title>')
+        expect(html).toContain('href="/u/demo"')
+        expect(html).toContain('24')
+        expect(html).toContain('128')
+        expect(html).toContain('4,096')
+    })
+
+    it('renders discover characters with at least five gallery images', async () => {
+        const response = await getAppPath('/', createProfilePageDb({
+            discoverCharacters: [
+                {
+                    id: 'character-1',
+                    user_id: 'owner-1',
+                    name: 'Quartz Dragon',
+                    profile_image_key: 'profile-key',
+                    owner_username: 'demo_owner',
+                    image_count: 7,
+                    preview_media_id: 'media-1',
+                    preview_image_key: 'preview-key',
+                    preview_artist: 'Demo Artist',
+                },
+            ],
+        }))
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Characters with galleries worth browsing.')
+        expect(html).toContain('Quartz Dragon')
+        expect(html).toContain('by @demo_owner')
+        expect(html).toContain('7 images')
+        expect(html).toContain('href="/u/demo_owner/Quartz%20Dragon"')
+        expect(html).toContain('https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview-key.png')
+        expect(html).toContain('https://m.myoc.art/characters/owner-1/character-1/profile/profile-key.webp')
     })
 
     it('redirects logged-in users away from login and register', async () => {

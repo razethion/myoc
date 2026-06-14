@@ -18,7 +18,7 @@ import {
     type CharacterManagementCharacter,
     type CharacterManagementFolder,
 } from '../views/pages/CharacterManagementPage'
-import { HomePage } from '../views/pages/HomePage'
+import {HomePage, type HomePageDiscoverCharacter, type HomePageStats} from '../views/pages/HomePage'
 import {NotFoundPage} from '../views/pages/NotFoundPage'
 import {ProfilePage, type ProfilePageUser} from '../views/pages/ProfilePage'
 import {SearchPage} from '../views/pages/SearchPage'
@@ -35,18 +35,20 @@ function getRandomLetter(): string {
 }
 
 pageRoutes.get('/', async (c) => {
-    const currentUser = await getCurrentUser(c)
-
-    if (currentUser) {
-        return c.redirect(userProfileUrl(currentUser.username))
-    }
+    const [currentUser, stats, discoverCharacters] = await Promise.all([
+        getCurrentUser(c),
+        getHomePageStats(c.env.DB),
+        getDiscoverCharacters(c.env.DB),
+    ])
 
     return c.html(
         <HomePage
             currentUser={currentUser}
+            discoverCharacters={discoverCharacters}
             guestInitial={getRandomLetter()}
             mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
             siteUrl={new URL(c.req.url).origin}
+            stats={stats}
         />,
     )
 })
@@ -228,6 +230,91 @@ function profileRedirectUrl(username: string, rawPath = ''): string {
     return suffix
         ? `${userProfileUrl(username)}/${suffix}`
         : userProfileUrl(username)
+}
+
+async function getHomePageStats(db: D1Database): Promise<HomePageStats> {
+    const [users, characters, mediaItems] = await Promise.all([
+        getTableCount(db, 'users'),
+        getTableCount(db, 'characters'),
+        getTableCount(db, 'character_media'),
+    ])
+
+    return {users, characters, mediaItems}
+}
+
+async function getTableCount(db: D1Database, tableName: 'users' | 'characters' | 'character_media'): Promise<number> {
+    const row = await db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).first<{count: number | string | null}>()
+    const count = Number(row?.count ?? 0)
+
+    return Number.isFinite(count) ? count : 0
+}
+
+async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCharacter[]> {
+    const result = await db.prepare(
+        `WITH eligible_characters AS (
+             SELECT characters.id,
+                    characters.user_id,
+                    characters.name,
+                    characters.profile_image_key,
+                    users.username AS owner_username,
+                    COUNT(character_media.id) AS image_count
+             FROM characters
+             INNER JOIN users ON users.id = characters.user_id
+             INNER JOIN character_media
+                ON character_media.character_id = characters.id
+               AND character_media.sfw_image_key IS NOT NULL
+             GROUP BY characters.id,
+                      characters.user_id,
+                      characters.name,
+                      characters.profile_image_key,
+                      users.username
+             HAVING COUNT(character_media.id) >= 5
+             ORDER BY RANDOM()
+             LIMIT 6
+         )
+         SELECT eligible_characters.id,
+                eligible_characters.user_id,
+                eligible_characters.name,
+                eligible_characters.profile_image_key,
+                eligible_characters.owner_username,
+                eligible_characters.image_count,
+                preview_media.id AS preview_media_id,
+                preview_media.sfw_image_key AS preview_image_key,
+                preview_media.sfw_artist AS preview_artist
+         FROM eligible_characters
+         INNER JOIN character_media AS preview_media
+            ON preview_media.id = (
+                SELECT id
+                FROM character_media
+                WHERE character_id = eligible_characters.id
+                  AND sfw_image_key IS NOT NULL
+                ORDER BY RANDOM()
+                LIMIT 1
+            )`,
+    )
+        .all<{
+            id: string
+            user_id: string
+            name: string
+            profile_image_key: string
+            owner_username: string
+            image_count: number | string
+            preview_media_id: string
+            preview_image_key: string
+            preview_artist: string | null
+        }>()
+
+    return (result.results ?? []).map((character) => ({
+        id: character.id,
+        userId: character.user_id,
+        name: character.name,
+        ownerUsername: character.owner_username,
+        profileImageKey: character.profile_image_key,
+        previewMediaId: character.preview_media_id,
+        previewImageKey: character.preview_image_key,
+        previewArtist: character.preview_artist ?? '',
+        imageCount: Number(character.image_count) || 0,
+    }))
 }
 
 function userProfileUrl(username: string): string {
