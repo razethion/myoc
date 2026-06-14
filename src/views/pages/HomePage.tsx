@@ -1,70 +1,93 @@
 import { Navbar } from '../components/Navbar'
 import { BaseLayout } from '../layouts/BaseLayout'
 import type {CurrentUser} from '../../lib/auth/session'
+import {characterMediaImageUrl, characterProfileImageUrl} from '../../lib/media/url'
 
-const features = [
+export type HomePageStats = {
+    users: number
+    characters: number
+    mediaItems: number
+}
+
+export type HomePageDiscoverCharacter = {
+    id: string
+    userId: string
+    name: string
+    ownerUsername: string
+    profileImageKey: string
+    previewMediaId: string
+    previewImageKey: string
+    previewArtist: string
+    imageCount: number
+}
+
+const productPillars = [
     {
-        label: 'Quality',
-        title: 'Original image fidelity',
-        body: 'Store full quality, uncompressed imagery while preserving the original color space so artwork stays true to the uploaded file.'
+        eyebrow: 'Original files',
+        title: 'Built around the art, not thumbnails',
+        body: 'Upload full-resolution character media and keep the gallery presentation focused on the actual asset. No watermark-heavy previews, no compressed reference sheets, no forced layout gimmicks.',
+        accent: 'from-cyan-300/24 to-blue-500/8',
     },
     {
-        label: 'Controls',
-        title: 'Content preferences',
-        body: 'Use content controls to filter the gallery and only see the kinds of media you want visible while browsing.'
+        eyebrow: 'Character-first',
+        title: 'Profiles that behave like organized libraries',
+        body: 'Separate characters, folders, references, variants, outfits, commissions, sketches, and older work without turning every profile into a maintenance project.',
+        accent: 'from-emerald-300/20 to-lime-500/8',
     },
     {
-        label: 'Organize',
-        title: 'Characters and folders',
-        body: 'Keep media sorted with simple character pages and folder management for references, outfits, sketches, commissions, and variants.'
+        eyebrow: 'Creator control',
+        title: 'Simple ownership and visibility tools',
+        body: 'Handle NSFW preferences, character transfers, profile updates, and gallery ordering with direct controls that stay out of the way until you need them.',
+        accent: 'from-fuchsia-300/20 to-rose-500/8',
     },
-    {
-        label: 'Transfers',
-        title: 'Character transfers',
-        body: 'Transfer characters cleanly when ownership changes, keeping the relevant media and asset organization attached.'
-    },
-    {
-        label: 'Layout',
-        title: 'Gallery ordering',
-        body: 'Arrange gallery items in the order that makes sense for each character, from primary references to alternate outfits, detail shots, and older work.'
-    },
-    {
-        label: 'Usability',
-        title: 'Modern infrastructure',
-        body: 'MyOC is built on modern infrastructure, including a scalable backend and a fast, responsive frontend.'
-    }
 ]
 
-const questions = [
+const workflowSteps = [
     {
-        badgeClass: 'badge-primary',
-        title: 'Why use MyOC?',
-        body: 'MyOC is a gallery for character media and assets. It allows you to do so simply, effectively, and without unnecessary extra gimmicks.'
+        step: '01',
+        title: 'Create a clean character profile',
+        body: 'Start with the character, then group media by folder, tab, or purpose so visitors land in the right context immediately.'
     },
     {
-        badgeClass: 'badge-secondary',
-        title: 'Does it preserve image quality?',
-        body: 'Yes. The focus is original-resolution uploads and clear previews, so high-detail artwork can be inspected instead of flattened into low-quality thumbnails.'
+        step: '02',
+        title: 'Upload gallery media at real resolution',
+        body: 'Keep source dimensions available for detail inspection while presenting a fast, responsive browsing experience.'
     },
     {
-        badgeClass: 'badge-accent',
-        title: "What's wrong with <other gallery site>?",
-        body: "MyOC does one thing: display media. No literature, no custom CSS, no gimmicks. Other sites do not retain quality, add watermarks, or have not been updated in years."
+        step: '03',
+        title: 'Arrange the profile like a reference desk',
+        body: 'Put primary references first, move supporting art into dedicated tabs, and keep older work available without making it the headline.'
     },
-    {
-        badgeClass: 'badge-accent',
-        title: 'Do you allow NSFW content?',
-        body: 'Yes, as long as it falls within our acceptable use policy. MyOC will never ban users for NSFW content.'
-    }
 ]
 
-const QUESTIONS_SECTION_ID = 'questions'
+const differentiators = [
+    {
+        title: 'No custom-CSS arms race',
+        body: 'Profiles stay consistent and readable, so the media is the focus instead of a fragile theme.'
+    },
+    {
+        title: 'Designed for reference browsing',
+        body: 'Character pages support practical organization patterns: main refs, alternate outfits, detail crops, tabs, and folders.'
+    },
+    {
+        title: 'Modern media delivery',
+        body: 'The app is built on a current stack with direct asset URLs, responsive pages, and infrastructure that can scale with the gallery.'
+    },
+    {
+        title: 'Preference-aware galleries',
+        body: 'Content controls let viewers decide what they want visible while allowing artists to host the work their characters need.'
+    },
+]
+
+const LEARN_MORE_SECTION_ID = 'platform'
 
 type HomePageProps = {
     currentUser?: CurrentUser | null
+    discoverCharacters: HomePageDiscoverCharacter[]
     guestInitial: string
     mediaBaseUrl: string
     siteUrl: string
+    stats: HomePageStats
 }
 
 const HOME_PAGE_TITLE = 'MyOC | High-Resolution Character Gallery'
@@ -75,6 +98,14 @@ const HOME_PAGE_IMAGE_ALT = 'Easily share character art without losing quality. 
 
 function absoluteUrl(siteUrl: string, path: string): string {
     return new URL(path, siteUrl).toString()
+}
+
+function formatCount(value: number): string {
+    return Math.max(0, value).toLocaleString('en-US')
+}
+
+function characterUrl(character: HomePageDiscoverCharacter): string {
+    return `/u/${encodeURIComponent(character.ownerUsername)}/${encodeURIComponent(character.name)}`
 }
 
 function HomePageHead({siteUrl}: { siteUrl: string }) {
@@ -176,6 +207,48 @@ function HomePageStyles() {
                 -webkit-backdrop-filter: blur(1px) saturate(145%);
             }
 
+            .home-depth {
+                background:
+                    radial-gradient(circle at 12% 8%, rgba(34, 211, 238, 0.12), transparent 30rem),
+                    radial-gradient(circle at 88% 28%, rgba(244, 114, 182, 0.10), transparent 28rem),
+                    linear-gradient(180deg, var(--color-base-100), var(--color-base-200) 46%, var(--color-base-100));
+            }
+
+            .stat-ribbon {
+                background:
+                    linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
+                    rgba(0, 0, 0, 0.16);
+                border: 1px solid rgba(165, 243, 252, 0.28);
+                box-shadow: 0 18px 60px rgba(0, 0, 0, 0.18);
+            }
+
+            .product-card {
+                background:
+                    linear-gradient(135deg, rgba(255, 255, 255, 0.055), transparent 42%),
+                    var(--color-base-100);
+                border: 1px solid var(--color-base-300);
+            }
+
+            .workflow-card {
+                background:
+                    linear-gradient(180deg, rgba(255, 255, 255, 0.055), transparent),
+                    var(--color-base-200);
+            }
+
+            .discover-card {
+                background:
+                    linear-gradient(135deg, rgba(34, 211, 238, 0.08), transparent 42%),
+                    var(--color-base-100);
+            }
+
+            .discover-card img {
+                transition: transform 260ms ease;
+            }
+
+            .discover-card:hover img {
+                transform: scale(1.04);
+            }
+
             .hero-prism::before {
                 content: "";
                 position: absolute;
@@ -203,7 +276,23 @@ function HomePageStyles() {
     )
 }
 
-export function HomePage({currentUser, guestInitial, mediaBaseUrl, siteUrl}: HomePageProps) {
+export function HomePage({currentUser, discoverCharacters, guestInitial, mediaBaseUrl, siteUrl, stats}: HomePageProps) {
+    const platformStats = [
+        {
+            label: 'users trust MyOC',
+            value: formatCount(stats.users),
+        },
+        {
+            label: 'characters hosted',
+            value: formatCount(stats.characters),
+        },
+        {
+            label: 'gallery items stored',
+            value: formatCount(stats.mediaItems),
+        },
+    ]
+    const hasDiscoverCharacters = discoverCharacters.length > 0
+
     return (
         <BaseLayout head={<HomePageHead siteUrl={siteUrl}/>} title={HOME_PAGE_TITLE}>
             <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl}/>
@@ -218,7 +307,15 @@ export function HomePage({currentUser, guestInitial, mediaBaseUrl, siteUrl}: Hom
                             </p>
                             <div class="mt-8 flex flex-col gap-3 sm:flex-row">
                                 <a class="btn btn-primary btn-lg" href="/register">Get started</a>
-                                <a class="btn btn-outline btn-lg" href={`#${QUESTIONS_SECTION_ID}`}>Learn more</a>
+                                <a class="btn btn-outline btn-lg" href={`#${LEARN_MORE_SECTION_ID}`}>Learn more</a>
+                            </div>
+                            <div class="stat-ribbon mt-10 grid gap-4 rounded-3xl p-4 sm:grid-cols-3">
+                                {platformStats.map((stat) => (
+                                    <div class="rounded-2xl border border-base-300/70 bg-base-100/50 p-4">
+                                        <p class="text-3xl font-black tracking-tight">{stat.value}</p>
+                                        <p class="mt-1 text-xs font-semibold uppercase tracking-[0.2em] opacity-65">{stat.label}</p>
+                                    </div>
+                                ))}
                             </div>
                         </div>
 
@@ -245,55 +342,180 @@ export function HomePage({currentUser, guestInitial, mediaBaseUrl, siteUrl}: Hom
                     </div>
                 </section>
 
-                <section class="bg-base-100 px-4 py-16 sm:px-6 lg:px-8">
-                    <div class="mx-auto max-w-7xl">
-                        <div class="mb-8 max-w-2xl">
-                            <p class="text-sm font-semibold uppercase tracking-widest text-primary">Site features</p>
-                            <h2 class="mt-2 text-3xl font-black sm:text-4xl">Built for character media libraries</h2>
-                            <p class="mt-4 leading-7 opacity-75">
-                                Practical tools for storing and arranging character assets without adding extra complexity to the gallery experience.
-                            </p>
-                        </div>
-
-                        <div class="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-                            {features.map((feature) => (
-                                <article class="card border border-base-300 bg-base-200 shadow">
-                                    <div class="card-body">
-                                        <span class="badge badge-primary badge-outline w-fit">{feature.label}</span>
-                                        <h3 class="card-title">{feature.title}</h3>
-                                        <p class="leading-7 opacity-80">{feature.body}</p>
+                <div class="home-depth">
+                    {hasDiscoverCharacters && (
+                        <section class="px-4 py-20 sm:px-6 lg:px-8">
+                            <div class="mx-auto max-w-7xl">
+                                <div class="mb-10 flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
+                                    <div class="max-w-3xl">
+                                        <p class="text-sm font-semibold uppercase tracking-[0.25em] text-primary">Discover</p>
+                                        <h2 class="mt-3 text-4xl font-black tracking-tight sm:text-5xl">Characters with galleries worth browsing.</h2>
+                                        <p class="mt-4 text-lg leading-8 opacity-75">
+                                            See just how far you can go with MyOC.
+                                        </p>
                                     </div>
-                                </article>
-                            ))}
-                        </div>
-                    </div>
-                </section>
+                                    <a class="btn btn-outline" href="/search">Search all profiles</a>
+                                </div>
 
-                <section class="bg-base-200 px-4 py-16 sm:px-6 lg:px-8" id={QUESTIONS_SECTION_ID}>
-                    <div class="mx-auto max-w-7xl">
-                        <div class="mb-8 flex flex-col justify-between gap-4 md:flex-row md:items-end">
-                            <div>
-                                <p class="text-sm font-semibold uppercase tracking-widest text-primary">Product basics</p>
-                                <h2 class="mt-2 text-3xl font-black sm:text-4xl">Quick answers</h2>
+                                <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                                    {discoverCharacters.map((character) => {
+                                        const previewUrl = characterMediaImageUrl(
+                                            mediaBaseUrl,
+                                            character.userId,
+                                            character.id,
+                                            character.previewMediaId,
+                                            character.previewImageKey,
+                                            'sfw',
+                                        )
+                                        const profileImageUrl = characterProfileImageUrl(
+                                            mediaBaseUrl,
+                                            character.userId,
+                                            character.id,
+                                            character.profileImageKey,
+                                        )
+                                        const artist = character.previewArtist || 'Unknown artist'
+
+                                        return (
+                                            <a class="discover-card group overflow-hidden rounded-3xl border border-base-300 shadow-xl" href={characterUrl(character)}>
+                                                <div class="relative aspect-4/3 overflow-hidden bg-base-300">
+                                                    <img
+                                                        alt={`${character.name} gallery preview by ${artist}`}
+                                                        class="h-full w-full object-cover"
+                                                        loading="lazy"
+                                                        src={previewUrl}
+                                                    />
+                                                    <div class="absolute inset-x-0 bottom-0 bg-linear-to-t from-black/80 to-transparent p-4 text-white">
+                                                        <p class="text-xs font-bold uppercase tracking-[0.2em] text-white/70">Featured gallery</p>
+                                                        <p class="mt-1 text-sm font-semibold">{formatCount(character.imageCount)} images</p>
+                                                    </div>
+                                                </div>
+                                                <div class="flex items-center gap-4 p-5">
+                                                    <img
+                                                        alt={`${character.name} profile image`}
+                                                        class="h-14 w-14 rounded-2xl object-cover ring-1 ring-base-300"
+                                                        loading="lazy"
+                                                        src={profileImageUrl}
+                                                    />
+                                                    <div class="min-w-0">
+                                                        <h3 class="truncate text-xl font-black">{character.name}</h3>
+                                                        <p class="truncate text-sm opacity-70">by @{character.ownerUsername}</p>
+                                                    </div>
+                                                </div>
+                                            </a>
+                                        )
+                                    })}
+                                </div>
                             </div>
-                            <p class="max-w-xl leading-7 opacity-75">
-                                MyOC has one job: deliver original-quality media to users who want it, with a simple interface and no gimmicks.
-                            </p>
-                        </div>
+                        </section>
+                    )}
 
-                        <div class="grid gap-5 md:grid-cols-2">
-                            {questions.map((question) => (
-                                <article class="card border border-base-300 bg-base-100 shadow">
-                                    <div class="card-body">
-                                        <span class={`badge ${question.badgeClass} badge-outline w-fit`}>Q</span>
-                                        <h3 class="card-title">{question.title}</h3>
-                                        <p class="leading-7 opacity-80">{question.body}</p>
-                                    </div>
-                                </article>
-                            ))}
+                    <section class="px-4 py-20 sm:px-6 lg:px-8" id={LEARN_MORE_SECTION_ID}>
+                        <div class="mx-auto max-w-7xl">
+                            <div class="grid gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-end">
+                                <div>
+                                    <p class="text-sm font-semibold uppercase tracking-[0.25em] text-primary">A sharper gallery platform</p>
+                                    <h2 class="mt-3 text-4xl font-black tracking-tight sm:text-5xl">Professional character pages without the bloat.</h2>
+                                </div>
+                                <p class="text-lg leading-8 opacity-75">
+                                    MyOC is for artists, commissioners, roleplayers, and character owners who need a durable home for visual references. It keeps the product surface small, the media quality high, and the organization model obvious.
+                                </p>
+                            </div>
+
+                            <div class="mt-10 grid gap-5 lg:grid-cols-3">
+                                {productPillars.map((pillar) => (
+                                    <article class="product-card overflow-hidden rounded-3xl shadow-xl">
+                                        <div class={`h-2 bg-linear-to-r ${pillar.accent}`}></div>
+                                        <div class="p-6">
+                                            <p class="text-xs font-bold uppercase tracking-[0.22em] text-primary">{pillar.eyebrow}</p>
+                                            <h3 class="mt-4 text-2xl font-black leading-tight">{pillar.title}</h3>
+                                            <p class="mt-4 leading-7 opacity-75">{pillar.body}</p>
+                                        </div>
+                                    </article>
+                                ))}
+                            </div>
                         </div>
-                    </div>
-                </section>
+                    </section>
+
+                    <section class="px-4 pb-20 sm:px-6 lg:px-8">
+                        <div class="mx-auto grid max-w-7xl gap-8 lg:grid-cols-[0.85fr_1.15fr] lg:items-start">
+                            <div class="sticky top-24 rounded-3xl border border-base-300 bg-base-100/75 p-6 shadow-xl backdrop-blur">
+                                <span class="badge badge-secondary badge-lg">Workflow</span>
+                                <h2 class="mt-5 text-3xl font-black tracking-tight sm:text-4xl">From loose uploads to a usable reference system.</h2>
+                                <p class="mt-4 leading-7 opacity-75">
+                                    Most galleries stop at image hosting. MyOC treats each character as the unit of organization, then gives you enough structure to keep growing without rebuilding the profile every few months.
+                                </p>
+                                <div class="mt-6 flex flex-col gap-3 sm:flex-row lg:flex-col xl:flex-row">
+                                    <a class="btn btn-primary" href="/register">Start a gallery</a>
+                                    <a class="btn btn-ghost" href="/search">Explore profiles</a>
+                                </div>
+                            </div>
+
+                            <div class="grid gap-5">
+                                {workflowSteps.map((item) => (
+                                    <article class="workflow-card rounded-3xl border border-base-300 p-6 shadow-lg">
+                                        <div class="flex flex-col gap-5 sm:flex-row">
+                                            <div class="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-primary/30 bg-primary/10 text-2xl font-black text-primary">
+                                                {item.step}
+                                            </div>
+                                            <div>
+                                                <h3 class="text-2xl font-black">{item.title}</h3>
+                                                <p class="mt-3 leading-7 opacity-75">{item.body}</p>
+                                            </div>
+                                        </div>
+                                    </article>
+                                ))}
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="px-4 pb-20 sm:px-6 lg:px-8">
+                        <div class="mx-auto max-w-7xl overflow-hidden rounded-4xl border border-base-300 bg-base-100 shadow-2xl">
+                            <div class="grid lg:grid-cols-[1fr_1.2fr]">
+                                <div class="border-b border-base-300 bg-base-200 p-8 lg:border-b-0 lg:border-r">
+                                    <p class="text-sm font-semibold uppercase tracking-[0.25em] text-primary">Why it feels different</p>
+                                    <h2 class="mt-3 text-3xl font-black tracking-tight sm:text-4xl">Focused enough to stay fast. Flexible enough to be useful.</h2>
+                                    <p class="mt-4 leading-7 opacity-75">
+                                        The goal is not to become a social network, writing platform, or theming engine. The goal is to make character art easy to store, browse, and hand off.
+                                    </p>
+                                </div>
+                                <div class="grid gap-px bg-base-300 sm:grid-cols-2">
+                                    {differentiators.map((item) => (
+                                        <article class="bg-base-100 p-6">
+                                            <div class="mb-5 h-1.5 w-14 rounded-full bg-linear-to-r from-primary via-secondary to-accent"></div>
+                                            <h3 class="text-xl font-black">{item.title}</h3>
+                                            <p class="mt-3 leading-7 opacity-75">{item.body}</p>
+                                        </article>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="px-4 pb-24 sm:px-6 lg:px-8">
+                        <div class="mx-auto max-w-7xl rounded-4xl border border-cyan-100/20 bg-neutral p-8 text-neutral-content shadow-2xl sm:p-10 lg:p-12">
+                            <div class="grid gap-8 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
+                                <div>
+                                    <p class="text-sm font-semibold uppercase tracking-[0.25em] text-cyan-200">Ready for serious character archives</p>
+                                    <h2 class="mt-3 text-4xl font-black tracking-tight sm:text-5xl">Give every character a gallery that can grow with them.</h2>
+                                    <p class="mt-5 max-w-2xl text-lg leading-8 text-neutral-content/75">
+                                        Build a clean public profile, preserve image detail, and keep the reference material organized enough for artists, friends, and future owners to understand.
+                                    </p>
+                                </div>
+                                <div class="rounded-3xl border border-white/10 bg-white/5 p-6">
+                                    <div class="grid grid-cols-3 gap-3 text-center">
+                                        {platformStats.map((stat) => (
+                                            <div class="rounded-2xl bg-black/20 p-4">
+                                                <p class="text-2xl font-black">{stat.value}</p>
+                                                <p class="mt-1 text-[0.65rem] font-bold uppercase tracking-[0.18em] text-neutral-content/60">{stat.label}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <a class="btn btn-primary mt-6 w-full" href="/register">Create your MyOC gallery</a>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
             </main>
         </BaseLayout>
     )
