@@ -1,6 +1,10 @@
 import {describe, expect, it} from 'vitest'
 import {apiRoutes} from '../api'
+import {createCsrfToken} from '../../lib/auth/session'
 import {createMockDb} from '../../test/mockD1'
+import {createMockR2Bucket} from '../../test/mockR2'
+
+const mediaPublicBaseUrl = 'https://m.myoc.art'
 
 function createCurrentUserRecord(role: 'user' | 'admin') {
     return {
@@ -14,12 +18,36 @@ function createCurrentUserRecord(role: 'user' | 'admin') {
     }
 }
 
-async function getAdminApi(db: D1Database, cookie?: string): Promise<Response> {
-    return apiRoutes.request('https://example.com/admin', {
-        headers: cookie ? {cookie} : undefined,
-    }, {
+function requestEnv(db: D1Database, mediaBucket = createMockR2Bucket()) {
+    return {
         DB: db,
-    })
+        MEDIA_BUCKET: mediaBucket,
+        MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+    }
+}
+
+async function getAdminApi(db: D1Database, cookie?: string, path = '/admin'): Promise<Response> {
+    return apiRoutes.request(`https://example.com${path}`, {
+        headers: cookie ? {cookie} : undefined,
+    }, requestEnv(db))
+}
+
+async function postImageApproval(
+    mediaId: string,
+    body: unknown,
+    db: D1Database,
+    mediaBucket: R2Bucket,
+    sessionToken = 'session-token',
+): Promise<Response> {
+    return apiRoutes.request(`https://example.com/admin/image-approvals/${mediaId}`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+        headers: {
+            'content-type': 'application/json',
+            cookie: `myoc_session=${sessionToken}`,
+            'x-csrf-token': await createCsrfToken(sessionToken),
+        },
+    }, requestEnv(db, mediaBucket))
 }
 
 describe('GET /admin', () => {
@@ -60,3 +88,187 @@ describe('GET /admin', () => {
         })
     })
 })
+
+describe('GET /admin/image-approvals', () => {
+    it('returns pending image approval data for admin users', async () => {
+        const {db} = createMockDb({
+            firstResults: [
+                createCurrentUserRecord('admin'),
+                createImageApprovalItemRow(),
+            ],
+            allResults: [[createImageApprovalQueueRow()], []],
+        })
+
+        const response = await getAdminApi(db, 'myoc_session=session-token', '/admin/image-approvals')
+        const body = await response.json() as {
+            current: { id: string; sfw: { objectKey: string } }
+            pending: unknown[]
+            history: unknown[]
+        }
+
+        expect(response.status).toBe(200)
+        expect(body.current.id).toBe('media-1')
+        expect(body.current.sfw.objectKey).toBe('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png')
+        expect(body.pending).toHaveLength(1)
+        expect(body.history).toHaveLength(0)
+    })
+
+    it('loads a selected historical media row even when it is not pending', async () => {
+        const {db} = createMockDb({
+            firstResults: [
+                createCurrentUserRecord('admin'),
+                {
+                    ...createImageApprovalItemRow(),
+                    id: 'history-media',
+                },
+            ],
+            allResults: [
+                [],
+                [{
+                    id: 'event-1',
+                    media_id: 'history-media',
+                    image_rating: 'sfw',
+                    action: 'approve_sfw_no_homepage',
+                    homepage_allowed: 0,
+                    moderator_username: 'admin_user',
+                    owner_username: 'uploader',
+                    character_name: 'Quartz',
+                    created_at: '2026-06-11 12:00:00',
+                }],
+            ],
+        })
+
+        const response = await getAdminApi(db, 'myoc_session=session-token', '/admin/image-approvals?mediaId=history-media')
+        const body = await response.json() as {
+            current: { id: string }
+            pending: unknown[]
+            history: Array<{ mediaId: string }>
+        }
+
+        expect(response.status).toBe(200)
+        expect(body.current.id).toBe('history-media')
+        expect(body.pending).toHaveLength(0)
+        expect(body.history[0]?.mediaId).toBe('history-media')
+    })
+})
+
+describe('POST /admin/image-approvals/:mediaId', () => {
+    it('approves an SFW image for homepage display', async () => {
+        const {db, boundStatements} = createMockDb({
+            firstResults: [
+                createCurrentUserRecord('admin'),
+                createModerationMediaRow(),
+            ],
+            allResults: [[], []],
+        })
+        const mediaBucket = createMockR2Bucket()
+
+        const response = await postImageApproval('media-1', {
+            sfwAction: 'approve_sfw_homepage',
+        }, db, mediaBucket)
+
+        expect(response.status).toBe(200)
+        expect(db.batch).toHaveBeenCalledTimes(1)
+        expect(boundStatements[2]?.sql).toContain('UPDATE character_media')
+        expect(boundStatements[2]?.binds[10]).toBe(1)
+        expect(boundStatements[2]?.binds[11]).toBe('approved')
+        expect(boundStatements[2]?.binds[16]).toBe(1)
+        expect(boundStatements[2]?.binds[17]).toBe(1)
+        expect(boundStatements[3]?.sql).toContain(['INSERT INTO', 'character_media_review_events'].join(' '))
+        expect(boundStatements[3]?.binds[3]).toBe('approve_sfw_homepage')
+    })
+
+    it('moves an SFW image to the NSFW path when marked NSFW', async () => {
+        const {db, boundStatements} = createMockDb({
+            firstResults: [
+                createCurrentUserRecord('admin'),
+                createModerationMediaRow(),
+            ],
+            allResults: [[], []],
+        })
+        const mediaBucket = createMockR2Bucket()
+        await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png', new Uint8Array([1, 2, 3]))
+
+        const response = await postImageApproval('media-1', {
+            sfwAction: 'mark_nsfw',
+        }, db, mediaBucket)
+
+        expect(response.status).toBe(200)
+        expect(mediaBucket.get).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png')
+        expect(mediaBucket.put).toHaveBeenCalledWith(
+            'characters/owner-1/character-1/media/media-1/nsfw/sfw-key.png',
+            expect.any(ArrayBuffer),
+            expect.any(Object),
+        )
+        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png')
+        expect(boundStatements[2]?.binds[0]).toBeNull()
+        expect(boundStatements[2]?.binds[1]).toBe('sfw-key')
+        expect(boundStatements[2]?.binds[18]).toBe(1)
+        expect(boundStatements[2]?.binds[19]).toBe('approved')
+        expect(boundStatements[3]?.binds[3]).toBe('mark_nsfw')
+    })
+})
+
+function createImageApprovalQueueRow() {
+    return {
+        id: 'media-1',
+        username: 'uploader',
+        character_name: 'Quartz',
+        sfw_image_key: 'sfw-key',
+        nsfw_image_key: null,
+        sfw_review_status: 'pending',
+        sfw_reviewed_at: null,
+        nsfw_review_status: 'pending',
+        nsfw_reviewed_at: null,
+        created_at: '2026-06-10 12:00:00',
+        updated_at: '2026-06-10 12:00:00',
+    }
+}
+
+function createImageApprovalItemRow() {
+    return {
+        id: 'media-1',
+        user_id: 'owner-1',
+        username: 'uploader',
+        email: 'uploader@example.test',
+        character_id: 'character-1',
+        character_name: 'Quartz',
+        sfw_image_key: 'sfw-key',
+        nsfw_image_key: null,
+        sfw_artist: 'Artist',
+        nsfw_artist: '',
+        sfw_width: 1200,
+        sfw_height: 900,
+        sfw_byte_size: 1024,
+        nsfw_width: null,
+        nsfw_height: null,
+        nsfw_byte_size: null,
+        sfw_review_status: 'pending',
+        sfw_reviewed_at: null,
+        sfw_approved_at: null,
+        sfw_homepage_allowed: 0,
+        nsfw_review_status: 'pending',
+        nsfw_reviewed_at: null,
+        nsfw_approved_at: null,
+        created_at: '2026-06-10 12:00:00',
+        updated_at: '2026-06-10 12:00:00',
+    }
+}
+
+function createModerationMediaRow() {
+    return {
+        id: 'media-1',
+        user_id: 'owner-1',
+        character_id: 'character-1',
+        sfw_image_key: 'sfw-key',
+        nsfw_image_key: null,
+        sfw_artist: 'Artist',
+        nsfw_artist: '',
+        sfw_width: 1200,
+        sfw_height: 900,
+        sfw_byte_size: 1024,
+        nsfw_width: null,
+        nsfw_height: null,
+        nsfw_byte_size: null,
+    }
+}

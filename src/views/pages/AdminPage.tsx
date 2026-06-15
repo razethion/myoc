@@ -1,4 +1,5 @@
 import type {CurrentUser} from '../../lib/auth/session'
+import type {Child} from 'hono/jsx'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 
@@ -10,6 +11,7 @@ export type AdminSection = 'image-approvals'
 
 type AdminPageProps = {
     activeSection: AdminSection
+    children?: Child
     currentUser: CurrentUser
     mediaBaseUrl: string
 }
@@ -26,7 +28,7 @@ export function isAdminSection(section: string): section is AdminSection {
     return adminNavItems.some((item) => item.section === section)
 }
 
-export function AdminPage({activeSection, currentUser, mediaBaseUrl}: AdminPageProps) {
+export function AdminPage({activeSection, children, currentUser, mediaBaseUrl}: AdminPageProps) {
     const activeItem = adminNavItems.find((item) => item.section === activeSection) ?? adminNavItems[0]
 
     return (
@@ -55,7 +57,9 @@ export function AdminPage({activeSection, currentUser, mediaBaseUrl}: AdminPageP
                     </nav>
                 </aside>
 
-                <section aria-label={`${activeItem.label} content`} class="min-w-0"></section>
+                <section aria-label={`${activeItem.label} content`} class="min-w-0">
+                    {children}
+                </section>
             </main>
         </BaseLayout>
     )
