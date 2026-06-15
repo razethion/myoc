@@ -426,7 +426,7 @@ describe('GET /admin', () => {
         expect(html).not.toContain('Admin | MyOC')
     })
 
-    it('renders a blank admin page for admin users', async () => {
+    it('renders the admin shell for admin users', async () => {
         const response = await getAppPath('/admin', createProfilePageDb({
             currentUser: {
                 ...createCurrentUserRecord('admin_user'),
@@ -438,9 +438,52 @@ describe('GET /admin', () => {
         const html = await response.text()
 
         expect(response.status).toBe(200)
-        expect(html).toContain('<title>Admin | MyOC</title>')
+        expect(html).toContain('<title>Image Approvals | Admin | MyOC</title>')
         expect(html).toContain('href="/admin"')
-        expect(html).toContain('<main class="min-h-[calc(100vh-4rem)]"></main>')
+        expect(html).toContain('aria-label="Admin sections"')
+        expect(html).toContain('href="/admin/image-approvals"')
+        expect(html).toContain('Image Approvals')
+        expect(html).toContain('href="/admin/moderate-images"')
+        expect(html).toContain('Moderate Images')
+        expect(html).toContain('href="/admin/moderate-characters"')
+        expect(html).toContain('Moderate Characters')
+        expect(html).toContain('href="/admin/moderate-users"')
+        expect(html).toContain('Moderate Users')
+        expect(html).toContain('href="/admin/reports"')
+        expect(html).toContain('Reports')
+        expect(html).toContain('aria-label="Image Approvals content"')
+    })
+
+    it('renders admin section routes with the matching section active', async () => {
+        const response = await getAppPath('/admin/moderate-users', createProfilePageDb({
+            currentUser: {
+                ...createCurrentUserRecord('admin_user'),
+                role: 'admin',
+            },
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('<title>Moderate Users | Admin | MyOC</title>')
+        expect(html).toContain('aria-current="page"')
+        expect(html).toContain('aria-label="Moderate Users content"')
+    })
+
+    it('returns not found for unknown admin sections', async () => {
+        const response = await getAppPath('/admin/unknown-section', createProfilePageDb({
+            currentUser: {
+                ...createCurrentUserRecord('admin_user'),
+                role: 'admin',
+            },
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+        const html = await response.text()
+
+        expect(response.status).toBe(404)
+        expect(html).toContain('404')
     })
 })
 
