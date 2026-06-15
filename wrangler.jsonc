@@ -17,6 +17,12 @@
 			"database_id": "909ada8f-fc57-47ad-83e1-18ffe863debb"
 		}
 	],
+  "kv_namespaces": [
+    {
+      "binding": "CACHE",
+      "id": "3f4e8c4c7ed648ed9a699a0a67b727a7"
+    }
+  ],
 	"r2_buckets": [
 		{
 			"binding": "MEDIA_BUCKET",

@@ -34,6 +34,10 @@ export const pageRoutes = new Hono<{ Bindings: Bindings }>()
 
 type PageRouteContext = Context<{ Bindings: Bindings }>
 
+const HOME_PAGE_STATS_CACHE_KEY = 'home:stats:v1'
+const HOME_PAGE_DISCOVER_CACHE_KEY = 'home:discover:v1'
+const HOME_PAGE_CACHE_TTL_SECONDS = 600
+
 function getRandomLetter(): string {
     const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
     return letters[Math.floor(Math.random() * letters.length)]
@@ -42,8 +46,8 @@ function getRandomLetter(): string {
 pageRoutes.get('/', async (c) => {
     const [currentUser, stats, discoverCharacters] = await Promise.all([
         getCurrentUser(c),
-        getHomePageStats(c.env.DB),
-        getDiscoverCharacters(c.env.DB),
+        getCachedHomePageStats(c.env.CACHE, c.env.DB),
+        getCachedDiscoverCharacters(c.env.CACHE, c.env.DB),
     ])
 
     return c.html(
@@ -299,6 +303,19 @@ async function getHomePageStats(db: D1Database): Promise<HomePageStats> {
     return {users, characters, mediaItems}
 }
 
+async function getCachedHomePageStats(cache: KVNamespace | undefined, db: D1Database): Promise<HomePageStats> {
+    const cached = await getCachedJson<HomePageStats>(cache, HOME_PAGE_STATS_CACHE_KEY)
+
+    if (isHomePageStats(cached)) {
+        return cached
+    }
+
+    const stats = await getHomePageStats(db)
+    await putCachedJson(cache, HOME_PAGE_STATS_CACHE_KEY, stats)
+
+    return stats
+}
+
 async function getTableCount(db: D1Database, tableName: 'users' | 'characters' | 'character_media'): Promise<number> {
     const row = await db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).first<{count: number | string | null}>()
     const count = Number(row?.count ?? 0)
@@ -306,26 +323,61 @@ async function getTableCount(db: D1Database, tableName: 'users' | 'characters' |
     return Number.isFinite(count) ? count : 0
 }
 
+async function getCachedDiscoverCharacters(cache: KVNamespace | undefined, db: D1Database): Promise<HomePageDiscoverCharacter[]> {
+    const cached = await getCachedJson<HomePageDiscoverCharacter[]>(cache, HOME_PAGE_DISCOVER_CACHE_KEY)
+
+    if (Array.isArray(cached) && cached.every(isHomePageDiscoverCharacter)) {
+        return cached
+    }
+
+    const characters = await getDiscoverCharacters(db)
+    await putCachedJson(cache, HOME_PAGE_DISCOVER_CACHE_KEY, characters)
+
+    return characters
+}
+
 async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCharacter[]> {
     const result = await db.prepare(
-        `WITH eligible_characters AS (
+        `WITH approved_sfw_media AS (SELECT id,
+                                            character_id,
+                                            sfw_image_key,
+                                            sfw_artist,
+                                            sfw_homepage_allowed
+                                     FROM character_media
+                                     WHERE sfw_image_key IS NOT NULL
+                                       AND sfw_review_status = 'approved'
+                                       AND sfw_approved_at IS NOT NULL
+                                       AND sfw_approved_at >= updated_at),
+              character_image_counts AS (SELECT character_id,
+                                                SUM(
+                                                        CASE WHEN sfw_image_key IS NOT NULL THEN 1 ELSE 0 END
+                                                            + CASE WHEN nsfw_image_key IS NOT NULL THEN 1 ELSE 0 END
+                                                ) AS image_count
+                                         FROM character_media
+                                         WHERE sfw_image_key IS NOT NULL
+                                            OR nsfw_image_key IS NOT NULL
+                                         GROUP BY character_id),
+              eligible_characters AS (
              SELECT characters.id,
                     characters.user_id,
                     characters.name,
                     characters.profile_image_key,
                     users.username AS owner_username,
-                    COUNT(character_media.id) AS image_count
+                    character_image_counts.image_count
              FROM characters
              INNER JOIN users ON users.id = characters.user_id
-             INNER JOIN character_media
-                ON character_media.character_id = characters.id
-               AND character_media.sfw_image_key IS NOT NULL
+             INNER JOIN character_image_counts
+                        ON character_image_counts.character_id = characters.id
+             INNER JOIN approved_sfw_media
+                        ON approved_sfw_media.character_id = characters.id
              GROUP BY characters.id,
                       characters.user_id,
                       characters.name,
                       characters.profile_image_key,
-                      users.username
-             HAVING COUNT(character_media.id) >= 5
+                      users.username,
+                      character_image_counts.image_count
+             HAVING COUNT(approved_sfw_media.id) >= 5
+                AND SUM(CASE WHEN approved_sfw_media.sfw_homepage_allowed = 1 THEN 1 ELSE 0 END) >= 1
              ORDER BY RANDOM()
              LIMIT 6
          )
@@ -339,12 +391,12 @@ async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCh
                 preview_media.sfw_image_key AS preview_image_key,
                 preview_media.sfw_artist AS preview_artist
          FROM eligible_characters
-         INNER JOIN character_media AS preview_media
+                  INNER JOIN approved_sfw_media AS preview_media
             ON preview_media.id = (
                 SELECT id
-                FROM character_media
+                FROM approved_sfw_media
                 WHERE character_id = eligible_characters.id
-                  AND sfw_image_key IS NOT NULL
+                  AND sfw_homepage_allowed = 1
                 ORDER BY RANDOM()
                 LIMIT 1
             )`,
@@ -372,6 +424,60 @@ async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCh
         previewArtist: character.preview_artist ?? '',
         imageCount: Number(character.image_count) || 0,
     }))
+}
+
+async function getCachedJson<T>(cache: KVNamespace | undefined, key: string): Promise<T | null> {
+    if (!cache) {
+        return null
+    }
+
+    try {
+        return await cache.get<T>(key, 'json')
+    } catch {
+        return null
+    }
+}
+
+async function putCachedJson(cache: KVNamespace | undefined, key: string, value: unknown): Promise<void> {
+    if (!cache) {
+        return
+    }
+
+    try {
+        await cache.put(key, JSON.stringify(value), {expirationTtl: HOME_PAGE_CACHE_TTL_SECONDS})
+    } catch {
+        // Homepage cache misses should not block rendering.
+    }
+}
+
+function isHomePageStats(value: unknown): value is HomePageStats {
+    if (!value || typeof value !== 'object') {
+        return false
+    }
+
+    const stats = value as Record<string, unknown>
+
+    return Number.isFinite(stats.users)
+        && Number.isFinite(stats.characters)
+        && Number.isFinite(stats.mediaItems)
+}
+
+function isHomePageDiscoverCharacter(value: unknown): value is HomePageDiscoverCharacter {
+    if (!value || typeof value !== 'object') {
+        return false
+    }
+
+    const character = value as Record<string, unknown>
+
+    return typeof character.id === 'string'
+        && typeof character.userId === 'string'
+        && typeof character.name === 'string'
+        && typeof character.ownerUsername === 'string'
+        && typeof character.profileImageKey === 'string'
+        && typeof character.previewMediaId === 'string'
+        && typeof character.previewImageKey === 'string'
+        && typeof character.previewArtist === 'string'
+        && Number.isFinite(character.imageCount)
 }
 
 function userProfileUrl(username: string): string {
