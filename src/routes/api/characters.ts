@@ -813,6 +813,8 @@ characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
 
     const uploadedKeys: string[] = []
     const deletedKeys: string[] = []
+    const sfwWasModified = removeSfw || Boolean(sfwUpload)
+    const nsfwWasModified = removeNsfw || Boolean(nsfwUpload)
     const nextMedia: CharacterMediaRecord = {
         ...media,
         sfw_artist: artists.sfwArtist,
@@ -831,40 +833,10 @@ characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
             await replaceMediaVariantWithChunkedUpload(c.env.MEDIA_BUCKET, currentUser.id, character.id, media, nextMedia, nsfwUpload, 'nsfw', uploadedKeys, deletedKeys)
         }
 
-        await c.env.DB.prepare(
-            `UPDATE character_media
-             SET sfw_image_key = ?,
-                 nsfw_image_key = ?,
-                 sfw_artist = ?,
-                 nsfw_artist = ?,
-                 sfw_width = ?,
-                 sfw_height = ?,
-                 sfw_byte_size = ?,
-                 nsfw_width = ?,
-                 nsfw_height = ?,
-                 nsfw_byte_size = ?,
-                 updated_at = ?
-             WHERE id = ?
-               AND character_id = ?
-               AND user_id = ?`,
-        )
-            .bind(
-                nextMedia.sfw_image_key,
-                nextMedia.nsfw_image_key,
-                nextMedia.sfw_artist,
-                nextMedia.nsfw_artist,
-                nextMedia.sfw_width,
-                nextMedia.sfw_height,
-                nextMedia.sfw_byte_size,
-                nextMedia.nsfw_width,
-                nextMedia.nsfw_height,
-                nextMedia.nsfw_byte_size,
-                nextMedia.updated_at,
-                nextMedia.id,
-                character.id,
-                currentUser.id,
-            )
-            .run()
+        await updateCharacterMediaRecord(c.env.DB, nextMedia, {
+            sfwWasModified,
+            nsfwWasModified,
+        })
 
         await deleteR2Objects(c.env.MEDIA_BUCKET, deletedKeys)
 
@@ -988,6 +960,8 @@ characterRoutes.patch('/:id/media/:mediaId', async (c) => {
 
     const uploadedKeys: string[] = []
     const deletedKeys: string[] = []
+    const sfwWasModified = removeSfw || Boolean(sfwImage)
+    const nsfwWasModified = removeNsfw || Boolean(nsfwImage)
     const nextMedia: CharacterMediaRecord = {
         ...media,
         sfw_artist: artists.sfwArtist,
@@ -1006,40 +980,10 @@ characterRoutes.patch('/:id/media/:mediaId', async (c) => {
     }
 
     try {
-        await c.env.DB.prepare(
-            `UPDATE character_media
-             SET sfw_image_key = ?,
-                 nsfw_image_key = ?,
-                 sfw_artist = ?,
-                 nsfw_artist = ?,
-                 sfw_width = ?,
-                 sfw_height = ?,
-                 sfw_byte_size = ?,
-                 nsfw_width = ?,
-                 nsfw_height = ?,
-                 nsfw_byte_size = ?,
-                 updated_at = ?
-             WHERE id = ?
-               AND character_id = ?
-               AND user_id = ?`,
-        )
-            .bind(
-                nextMedia.sfw_image_key,
-                nextMedia.nsfw_image_key,
-                nextMedia.sfw_artist,
-                nextMedia.nsfw_artist,
-                nextMedia.sfw_width,
-                nextMedia.sfw_height,
-                nextMedia.sfw_byte_size,
-                nextMedia.nsfw_width,
-                nextMedia.nsfw_height,
-                nextMedia.nsfw_byte_size,
-                nextMedia.updated_at,
-                nextMedia.id,
-                character.id,
-                currentUser.id,
-            )
-            .run()
+        await updateCharacterMediaRecord(c.env.DB, nextMedia, {
+            sfwWasModified,
+            nsfwWasModified,
+        })
     } catch (error) {
         await deleteR2Objects(c.env.MEDIA_BUCKET, uploadedKeys)
         throw error
@@ -1259,6 +1203,64 @@ function toPublicMedia(baseUrl: string, media: CharacterMediaRecord) {
         createdAt: media.created_at,
         updatedAt: media.updated_at,
     }
+}
+
+async function updateCharacterMediaRecord(
+    db: D1Database,
+    media: CharacterMediaRecord,
+    options: {
+        sfwWasModified: boolean
+        nsfwWasModified: boolean
+    },
+): Promise<void> {
+    await db.prepare(
+        `UPDATE character_media
+         SET sfw_image_key        = ?,
+             nsfw_image_key       = ?,
+             sfw_artist           = ?,
+             nsfw_artist          = ?,
+             sfw_width            = ?,
+             sfw_height           = ?,
+             sfw_byte_size        = ?,
+             nsfw_width           = ?,
+             nsfw_height          = ?,
+             nsfw_byte_size       = ?,
+             sfw_review_status    = CASE WHEN ? THEN 'pending' ELSE sfw_review_status END,
+             sfw_reviewed_at      = CASE WHEN ? THEN NULL ELSE sfw_reviewed_at END,
+             sfw_approved_at      = CASE WHEN ? THEN NULL ELSE sfw_approved_at END,
+             sfw_homepage_allowed = CASE WHEN ? THEN 0 ELSE sfw_homepage_allowed END,
+             nsfw_review_status   = CASE WHEN ? THEN 'pending' ELSE nsfw_review_status END,
+             nsfw_reviewed_at     = CASE WHEN ? THEN NULL ELSE nsfw_reviewed_at END,
+             nsfw_approved_at     = CASE WHEN ? THEN NULL ELSE nsfw_approved_at END,
+             updated_at           = ?
+         WHERE id = ?
+           AND character_id = ?
+           AND user_id = ?`,
+    )
+        .bind(
+            media.sfw_image_key,
+            media.nsfw_image_key,
+            media.sfw_artist,
+            media.nsfw_artist,
+            media.sfw_width,
+            media.sfw_height,
+            media.sfw_byte_size,
+            media.nsfw_width,
+            media.nsfw_height,
+            media.nsfw_byte_size,
+            options.sfwWasModified ? 1 : 0,
+            options.sfwWasModified ? 1 : 0,
+            options.sfwWasModified ? 1 : 0,
+            options.sfwWasModified ? 1 : 0,
+            options.nsfwWasModified ? 1 : 0,
+            options.nsfwWasModified ? 1 : 0,
+            options.nsfwWasModified ? 1 : 0,
+            media.updated_at,
+            media.id,
+            media.character_id,
+            media.user_id,
+        )
+        .run()
 }
 
 function toPublicFolder(folder: CharacterFolderRecord) {

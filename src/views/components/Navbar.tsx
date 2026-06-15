@@ -50,6 +50,9 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
                             <ul class="menu dropdown-content bg-base-100 rounded-box z-50 mt-3 w-56 p-2 shadow">
                                 <li><a href={`/u/${encodeURIComponent(currentUser.username)}`}>Profile</a></li>
                                 <li><a href="/characters">Characters</a></li>
+                                {currentUser.role === 'admin' && (
+                                    <li><a href="/admin">Admin</a></li>
+                                )}
                                 <li><a href="/settings">Settings</a></li>
                                 <div class="divider my-1"></div>
                                 <li><button class="text-error" form="logout-form" type="submit">Logout</button></li>

@@ -1,8 +1,13 @@
 import { Hono, type Context } from 'hono'
-import { getCurrentUser } from '../lib/auth/session'
+import {getCurrentUser, isAdminUser} from '../lib/auth/session'
+import {getImageApprovalData} from '../lib/admin/imageApprovals'
+import {getAdminReportsData} from '../lib/admin/reports'
 import type {UserSocialLink} from '../lib/socialLinks'
 import type { Bindings } from '../types/bindings'
 import { AuthPage } from '../views/pages/AuthPage'
+import {AdminPage, isAdminSection, type AdminSection} from '../views/pages/AdminPage'
+import {AdminImageApprovalsPage} from '../views/pages/AdminImageApprovalsPage'
+import {AdminReportsPage} from '../views/pages/AdminReportsPage'
 import {
     CharacterPage,
     type CharacterPageCharacter,
@@ -126,6 +131,58 @@ pageRoutes.get('/characters', async (c) => {
         />,
     )
 })
+
+pageRoutes.get('/admin', async (c) => {
+    return renderAdminPage(c, 'image-approvals')
+})
+
+pageRoutes.get('/admin/:adminSection', async (c) => {
+    const adminSection = c.req.param('adminSection')
+
+    if (!isAdminSection(adminSection)) {
+        return renderNotFoundPage(c)
+    }
+
+    return renderAdminPage(c, adminSection)
+})
+
+async function renderAdminPage(c: PageRouteContext, activeSection: AdminSection): Promise<Response> {
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return c.redirect('/login')
+    }
+
+    if (!isAdminUser(currentUser)) {
+        return renderNotFoundPage(c)
+    }
+
+    const content = activeSection === 'image-approvals'
+        ? (
+            <AdminImageApprovalsPage
+                csrfToken={currentUser.csrfToken}
+                data={await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, c.req.query('mediaId'))}
+            />
+        )
+        : activeSection === 'reports'
+            ? (
+                <AdminReportsPage
+                    csrfToken={currentUser.csrfToken}
+                    data={await getAdminReportsData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL)}
+                />
+            )
+            : null
+
+    return c.html(
+        <AdminPage
+            activeSection={activeSection}
+            currentUser={currentUser}
+            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+        >
+            {content}
+        </AdminPage>,
+    )
+}
 
 pageRoutes.get('/edit/:characterId', async (c) => {
     const currentUser = await getCurrentUser(c)
