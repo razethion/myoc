@@ -50,6 +50,25 @@ async function postImageApproval(
     }, requestEnv(db, mediaBucket))
 }
 
+async function postReportAction(
+    mediaId: string,
+    rating: 'sfw' | 'nsfw',
+    action: 'ignore' | 'delete-image' | 'delete-character' | 'ban-user',
+    db: D1Database,
+    mediaBucket: R2Bucket,
+    sessionToken = 'session-token',
+): Promise<Response> {
+    return apiRoutes.request(`https://example.com/admin/reports/images/${mediaId}/${rating}/${action}`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+        headers: {
+            'content-type': 'application/json',
+            cookie: `myoc_session=${sessionToken}`,
+            'x-csrf-token': await createCsrfToken(sessionToken),
+        },
+    }, requestEnv(db, mediaBucket))
+}
+
 describe('GET /admin', () => {
     it('returns 401 when the user is not logged in', async () => {
         const {db} = createMockDb()
@@ -209,6 +228,84 @@ describe('POST /admin/image-approvals/:mediaId', () => {
     })
 })
 
+describe('POST /admin/reports/images/:mediaId/:rating/:action', () => {
+    it('ignores an image report by moving it back to pending review', async () => {
+        const {db, boundStatements} = createMockDb({
+            firstResults: [
+                createCurrentUserRecord('admin'),
+                createReportedMediaRow(),
+            ],
+            allResults: [[]],
+        })
+        const mediaBucket = createMockR2Bucket()
+
+        const response = await postReportAction('media-1', 'sfw', 'ignore', db, mediaBucket)
+
+        expect(response.status).toBe(200)
+        expect(db.batch).toHaveBeenCalledTimes(1)
+        expect(boundStatements[2]?.sql).toContain('sfw_review_status')
+        expect(boundStatements[2]?.binds).toEqual(['media-1'])
+        expect(boundStatements[3]?.sql).toContain(['INSERT INTO', 'character_media_review_events'].join(' '))
+        expect(boundStatements[3]?.binds[3]).toBe('ignore_report')
+    })
+
+    it('deletes a reported image variant from D1 and R2', async () => {
+        const {db, boundStatements} = createMockDb({
+            firstResults: [
+                createCurrentUserRecord('admin'),
+                createReportedMediaRow(),
+            ],
+            allResults: [[]],
+        })
+        const mediaBucket = createMockR2Bucket()
+        await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png', new Uint8Array([1, 2, 3]))
+
+        const response = await postReportAction('media-1', 'sfw', 'delete-image', db, mediaBucket)
+
+        expect(response.status).toBe(200)
+        expect(boundStatements.some((statement) => statement.sql.includes('DELETE FROM character_media WHERE id = ?'))).toBe(true)
+        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png')
+    })
+
+    it('bans a user, deletes their content rows, clears sessions, and removes R2 objects', async () => {
+        const {db, boundStatements} = createMockDb({
+            firstResults: [
+                createCurrentUserRecord('admin'),
+                createReportedMediaRow(),
+                {profile_photo_key: 'profile-key'},
+            ],
+            allResults: [
+                [{
+                    id: 'character-1',
+                    user_id: 'owner-1',
+                    profile_image_key: 'character-profile-key',
+                }],
+                [{
+                    id: 'media-1',
+                    user_id: 'owner-1',
+                    character_id: 'character-1',
+                    sfw_image_key: 'sfw-key',
+                    nsfw_image_key: null,
+                }],
+                [],
+            ],
+        })
+        const mediaBucket = createMockR2Bucket()
+        await mediaBucket.put('users/owner-1/profile/profile-key.webp', new Uint8Array([1]))
+        await mediaBucket.put('characters/owner-1/character-1/profile/character-profile-key.webp', new Uint8Array([2]))
+        await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png', new Uint8Array([3]))
+
+        const response = await postReportAction('media-1', 'sfw', 'ban-user', db, mediaBucket)
+
+        expect(response.status).toBe(200)
+        expect(boundStatements.some((statement) => statement.sql.includes('DELETE FROM sessions WHERE user_id = ?'))).toBe(true)
+        expect(boundStatements.some((statement) => statement.sql.includes('UPDATE users') && statement.sql.includes('banned_at'))).toBe(true)
+        expect(mediaBucket.delete).toHaveBeenCalledWith('users/owner-1/profile/profile-key.webp')
+        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/profile/character-profile-key.webp')
+        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png')
+    })
+})
+
 function createImageApprovalQueueRow() {
     return {
         id: 'media-1',
@@ -270,5 +367,17 @@ function createModerationMediaRow() {
         nsfw_width: null,
         nsfw_height: null,
         nsfw_byte_size: null,
+    }
+}
+
+function createReportedMediaRow() {
+    return {
+        ...createModerationMediaRow(),
+        username: 'uploader',
+        profile_photo_key: null,
+        character_name: 'Quartz',
+        profile_image_key: 'character-profile-key',
+        sfw_review_status: 'reported',
+        nsfw_review_status: 'pending',
     }
 }

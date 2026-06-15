@@ -30,6 +30,7 @@ function createProfilePageDb(options: {
     imageApprovalItem?: unknown
     imageApprovalQueue?: unknown[]
     imageApprovalHistory?: unknown[]
+    adminReports?: unknown[]
 } = {}): D1Database {
     const firstForSql = async (sql: string) => {
         if (sql.includes('COUNT(*) AS count') && sql.includes('FROM character_media')) {
@@ -61,6 +62,10 @@ function createProfilePageDb(options: {
     const allForSql = async (sql: string): Promise<QueryResult> => {
         if (sql.includes('eligible_characters')) {
             return {results: options.discoverCharacters ?? []}
+        }
+
+        if (sql.includes('sfw_reported_by_username')) {
+            return {results: options.adminReports ?? []}
         }
 
         if (sql.includes('FROM character_media_review_events')) {
@@ -544,6 +549,44 @@ describe('GET /admin', () => {
         expect(html).toContain('"username":"uploader"')
         expect(html).toContain('admin-approval-image-grid')
         expect(html).not.toContain('/admin-image-approvals.js')
+    })
+
+    it('renders reported images on the reports page', async () => {
+        const response = await getAppPath('/admin/reports', createProfilePageDb({
+            currentUser: {
+                ...createCurrentUserRecord('admin_user'),
+                role: 'admin',
+            },
+            adminReports: [{
+                id: 'media-1',
+                user_id: 'owner-1',
+                username: 'uploader',
+                character_id: 'character-1',
+                character_name: 'Quartz',
+                sfw_image_key: 'sfw-key',
+                nsfw_image_key: null,
+                sfw_review_status: 'reported',
+                nsfw_review_status: 'pending',
+                sfw_reviewed_at: '2026-06-10 12:00:00',
+                nsfw_reviewed_at: null,
+                sfw_reported_by_username: 'admin_user',
+                nsfw_reported_by_username: null,
+            }],
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('<title>Reports | Admin | MyOC</title>')
+        expect(html).toContain('SFW image report')
+        expect(html).toContain('Reported by @admin_user in Image Approvals.')
+        expect(html).toContain('href="/u/uploader/Quartz"')
+        expect(html).toContain('href="/u/uploader"')
+        expect(html).toContain('Resubmit for Approval')
+        expect(html).toContain('Delete Image')
+        expect(html).toContain('Ban User')
+        expect(html).toContain('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png')
     })
 
     it('returns not found for unknown admin sections', async () => {

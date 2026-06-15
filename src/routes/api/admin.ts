@@ -1,4 +1,4 @@
-import {Hono} from 'hono'
+import {Hono, type Context} from 'hono'
 import {requireAdminApiUser} from '../../lib/auth/authorization'
 import {
     getImageApprovalData,
@@ -6,10 +6,17 @@ import {
     type ImageApprovalAction,
 } from '../../lib/admin/imageApprovals'
 import {toSqlTimestamp} from '../../lib/auth/session'
-import {characterMediaImageObjectKey} from '../../lib/media/url'
+import {
+    characterMediaImageObjectKey,
+    characterProfileImageObjectKey,
+    profilePhotoObjectKey,
+} from '../../lib/media/url'
+import {getAdminReportsData} from '../../lib/admin/reports'
 import type {Bindings} from '../../types/bindings'
 
 export const adminRoutes = new Hono<{ Bindings: Bindings }>()
+
+type AdminRouteContext = Context<{ Bindings: Bindings }>
 
 type ImageApprovalRequest = {
     sfwAction?: unknown
@@ -30,6 +37,31 @@ type ModerationMediaRow = {
     nsfw_width: number | null
     nsfw_height: number | null
     nsfw_byte_size: number | null
+}
+
+type ReportAction = 'ignore' | 'delete-image' | 'delete-character' | 'ban-user'
+
+type ReportMediaRow = ModerationMediaRow & {
+    username: string
+    profile_photo_key: string | null
+    character_name: string
+    profile_image_key: string | null
+    sfw_review_status: string
+    nsfw_review_status: string
+}
+
+type CharacterCleanupRow = {
+    id: string
+    user_id: string
+    profile_image_key: string | null
+}
+
+type MediaCleanupRow = {
+    id: string
+    user_id: string
+    character_id: string
+    sfw_image_key: string | null
+    nsfw_image_key: string | null
 }
 
 type MediaVariantMove = {
@@ -164,6 +196,49 @@ adminRoutes.post('/image-approvals/:mediaId', async (c) => {
     return c.json(await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL))
 })
 
+adminRoutes.post('/reports/images/:mediaId/:rating/:action', async (c) => {
+    const authorization = await requireAdminApiUser(c)
+
+    if ('response' in authorization) {
+        return authorization.response
+    }
+
+    const rating = normalizeReportRating(c.req.param('rating'))
+    const action = normalizeReportAction(c.req.param('action'))
+
+    if (!rating || !action) {
+        return respondToReportAction(c, {error: 'Report action is invalid'}, 400)
+    }
+
+    const media = await getReportMedia(c.env.DB, c.req.param('mediaId'))
+
+    if (!media) {
+        return respondToReportAction(c, {error: 'Reported media not found'}, 404)
+    }
+
+    if (!reportedImageKey(media, rating)) {
+        return respondToReportAction(c, {error: 'Reported image not found'}, 404)
+    }
+
+    if (reportedStatus(media, rating) !== 'reported') {
+        return respondToReportAction(c, {error: 'Image is not currently reported'}, 400)
+    }
+
+    const now = toSqlTimestamp(new Date())
+
+    if (action === 'ignore') {
+        await ignoreImageReport(c.env.DB, media.id, rating, authorization.currentUser.id, now)
+    } else if (action === 'delete-image') {
+        await deleteReportedImage(c.env.DB, c.env.MEDIA_BUCKET, media, rating)
+    } else if (action === 'delete-character') {
+        await deleteReportedCharacter(c.env.DB, c.env.MEDIA_BUCKET, media)
+    } else {
+        await banReportedUser(c.env.DB, c.env.MEDIA_BUCKET, media.user_id, authorization.currentUser.id, now)
+    }
+
+    return respondToReportAction(c, {ok: true})
+})
+
 async function getModerationMedia(db: D1Database, mediaId: string): Promise<ModerationMediaRow | null> {
     return await db.prepare(
         `SELECT id,
@@ -185,6 +260,192 @@ async function getModerationMedia(db: D1Database, mediaId: string): Promise<Mode
     )
         .bind(mediaId)
         .first<ModerationMediaRow>()
+}
+
+async function getReportMedia(db: D1Database, mediaId: string): Promise<ReportMediaRow | null> {
+    return await db.prepare(
+        `SELECT character_media.id,
+                character_media.user_id,
+                character_media.character_id,
+                character_media.sfw_image_key,
+                character_media.nsfw_image_key,
+                character_media.sfw_artist,
+                character_media.nsfw_artist,
+                character_media.sfw_width,
+                character_media.sfw_height,
+                character_media.sfw_byte_size,
+                character_media.nsfw_width,
+                character_media.nsfw_height,
+                character_media.nsfw_byte_size,
+                character_media.sfw_review_status,
+                character_media.nsfw_review_status,
+                users.username,
+                users.profile_photo_key,
+                characters.name AS character_name,
+                characters.profile_image_key
+         FROM character_media
+         INNER JOIN users ON users.id = character_media.user_id
+         INNER JOIN characters ON characters.id = character_media.character_id
+         WHERE character_media.id = ?
+         LIMIT 1`,
+    )
+        .bind(mediaId)
+        .first<ReportMediaRow>()
+}
+
+async function ignoreImageReport(
+    db: D1Database,
+    mediaId: string,
+    rating: 'sfw' | 'nsfw',
+    moderatorId: string,
+    now: string,
+): Promise<void> {
+    const statements = rating === 'sfw'
+        ? [
+            db.prepare(
+                `UPDATE character_media
+                 SET sfw_review_status = 'pending',
+                     sfw_reviewed_at = NULL,
+                     sfw_approved_at = NULL,
+                     sfw_homepage_allowed = 0
+                 WHERE id = ?`,
+            ).bind(mediaId),
+            createReportEventStatement(db, mediaId, rating, 'ignore_report', moderatorId, now),
+        ]
+        : [
+            db.prepare(
+                `UPDATE character_media
+                 SET nsfw_review_status = 'pending',
+                     nsfw_reviewed_at = NULL,
+                     nsfw_approved_at = NULL
+                 WHERE id = ?`,
+            ).bind(mediaId),
+            createReportEventStatement(db, mediaId, rating, 'ignore_report', moderatorId, now),
+        ]
+
+    await db.batch(statements)
+}
+
+async function deleteReportedImage(
+    db: D1Database,
+    bucket: R2Bucket,
+    media: ReportMediaRow,
+    rating: 'sfw' | 'nsfw',
+): Promise<void> {
+    const objectKey = reportedImageObjectKey(media, rating)
+    const otherImageKey = rating === 'sfw' ? media.nsfw_image_key : media.sfw_image_key
+
+    if (otherImageKey) {
+        const statement = rating === 'sfw'
+            ? db.prepare(
+                `UPDATE character_media
+                 SET sfw_image_key = NULL,
+                     sfw_artist = '',
+                     sfw_width = NULL,
+                     sfw_height = NULL,
+                     sfw_byte_size = NULL,
+                     sfw_review_status = 'pending',
+                     sfw_reviewed_at = NULL,
+                     sfw_approved_at = NULL,
+                     sfw_homepage_allowed = 0
+                 WHERE id = ?`,
+            ).bind(media.id)
+            : db.prepare(
+                `UPDATE character_media
+                 SET nsfw_image_key = NULL,
+                     nsfw_artist = '',
+                     nsfw_width = NULL,
+                     nsfw_height = NULL,
+                     nsfw_byte_size = NULL,
+                     nsfw_review_status = 'pending',
+                     nsfw_reviewed_at = NULL,
+                     nsfw_approved_at = NULL
+                 WHERE id = ?`,
+            ).bind(media.id)
+
+        await statement.run()
+    } else {
+        await db.batch([
+            db.prepare('DELETE FROM character_gallery_row_media WHERE media_id = ?').bind(media.id),
+            db.prepare('DELETE FROM character_media_review_events WHERE media_id = ?').bind(media.id),
+            db.prepare('DELETE FROM character_media WHERE id = ?').bind(media.id),
+        ])
+    }
+
+    if (objectKey) {
+        await deleteR2Objects(bucket, [objectKey])
+    }
+}
+
+async function deleteReportedCharacter(db: D1Database, bucket: R2Bucket, media: ReportMediaRow): Promise<void> {
+    const mediaRows = await getCharacterMediaForCleanup(db, media.character_id)
+    const objectKeys = characterObjectKeys([{
+        id: media.character_id,
+        user_id: media.user_id,
+        profile_image_key: media.profile_image_key,
+    }], mediaRows)
+
+    await db.batch([
+        db.prepare(
+            `DELETE FROM character_media_review_events
+             WHERE media_id IN (SELECT id FROM character_media WHERE character_id = ?)`,
+        ).bind(media.character_id),
+        db.prepare(
+            `DELETE FROM character_gallery_row_media
+             WHERE media_id IN (SELECT id FROM character_media WHERE character_id = ?)`,
+        ).bind(media.character_id),
+        db.prepare('DELETE FROM character_gallery_rows WHERE character_id = ?').bind(media.character_id),
+        db.prepare('DELETE FROM character_gallery_tabs WHERE character_id = ?').bind(media.character_id),
+        db.prepare('DELETE FROM character_media WHERE character_id = ?').bind(media.character_id),
+        db.prepare('DELETE FROM characters WHERE id = ?').bind(media.character_id),
+    ])
+
+    await deleteR2Objects(bucket, objectKeys)
+}
+
+async function banReportedUser(
+    db: D1Database,
+    bucket: R2Bucket,
+    userId: string,
+    moderatorId: string,
+    now: string,
+): Promise<void> {
+    const [user, characters, mediaRows] = await Promise.all([
+        getUserForCleanup(db, userId),
+        getUserCharactersForCleanup(db, userId),
+        getUserMediaForCleanup(db, userId),
+    ])
+    const objectKeys = [
+        ...(user?.profile_photo_key ? [profilePhotoObjectKey(userId, user.profile_photo_key)] : []),
+        ...characterObjectKeys(characters, mediaRows),
+    ]
+
+    await db.batch([
+        db.prepare(
+            `DELETE FROM character_media_review_events
+             WHERE media_id IN (SELECT id FROM character_media WHERE user_id = ?)`,
+        ).bind(userId),
+        db.prepare(
+            `DELETE FROM character_gallery_row_media
+             WHERE media_id IN (SELECT id FROM character_media WHERE user_id = ?)`,
+        ).bind(userId),
+        db.prepare('DELETE FROM character_gallery_rows WHERE user_id = ?').bind(userId),
+        db.prepare('DELETE FROM character_gallery_tabs WHERE user_id = ?').bind(userId),
+        db.prepare('DELETE FROM character_media WHERE user_id = ?').bind(userId),
+        db.prepare('DELETE FROM characters WHERE user_id = ?').bind(userId),
+        db.prepare('DELETE FROM character_folders WHERE user_id = ?').bind(userId),
+        db.prepare('DELETE FROM user_social_links WHERE user_id = ?').bind(userId),
+        db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userId),
+        db.prepare(
+            `UPDATE users
+             SET banned_at = ?,
+                 banned_by_user_id = ?,
+                 profile_photo_key = NULL
+             WHERE id = ?`,
+        ).bind(now, moderatorId, userId),
+    ])
+
+    await deleteR2Objects(bucket, objectKeys)
 }
 
 function buildMediaReviewUpdate(
@@ -373,6 +634,139 @@ function createMove(
         sourceObjectKey: characterMediaImageObjectKey(media.user_id, media.character_id, media.id, imageKey, sourceRating),
         targetObjectKey: characterMediaImageObjectKey(media.user_id, media.character_id, media.id, imageKey, targetRating),
     }
+}
+
+function normalizeReportRating(value: string): 'sfw' | 'nsfw' | null {
+    return value === 'sfw' || value === 'nsfw' ? value : null
+}
+
+function normalizeReportAction(value: string): ReportAction | null {
+    return value === 'ignore'
+    || value === 'delete-image'
+    || value === 'delete-character'
+    || value === 'ban-user'
+        ? value
+        : null
+}
+
+function reportedImageKey(media: ReportMediaRow, rating: 'sfw' | 'nsfw'): string | null {
+    return rating === 'sfw' ? media.sfw_image_key : media.nsfw_image_key
+}
+
+function reportedStatus(media: ReportMediaRow, rating: 'sfw' | 'nsfw'): string {
+    return rating === 'sfw' ? media.sfw_review_status : media.nsfw_review_status
+}
+
+function reportedImageObjectKey(media: ReportMediaRow, rating: 'sfw' | 'nsfw'): string | null {
+    const imageKey = reportedImageKey(media, rating)
+
+    return imageKey
+        ? characterMediaImageObjectKey(media.user_id, media.character_id, media.id, imageKey, rating)
+        : null
+}
+
+function createReportEventStatement(
+    db: D1Database,
+    mediaId: string,
+    rating: 'sfw' | 'nsfw',
+    action: string,
+    moderatorId: string,
+    now: string,
+): D1PreparedStatement {
+    return db.prepare(
+        `INSERT INTO character_media_review_events (
+             id, media_id, image_rating, action, homepage_allowed, moderator_id, created_at
+         )
+         VALUES (?, ?, ?, ?, 0, ?, ?)`,
+    ).bind(crypto.randomUUID(), mediaId, rating, action, moderatorId, now)
+}
+
+async function getCharacterMediaForCleanup(db: D1Database, characterId: string): Promise<MediaCleanupRow[]> {
+    const result = await db.prepare(
+        `SELECT id, user_id, character_id, sfw_image_key, nsfw_image_key
+         FROM character_media
+         WHERE character_id = ?`,
+    )
+        .bind(characterId)
+        .all<MediaCleanupRow>()
+
+    return result.results ?? []
+}
+
+async function getUserForCleanup(
+    db: D1Database,
+    userId: string,
+): Promise<{ profile_photo_key: string | null } | null> {
+    return await db.prepare(
+        `SELECT profile_photo_key
+         FROM users
+         WHERE id = ?
+         LIMIT 1`,
+    )
+        .bind(userId)
+        .first<{ profile_photo_key: string | null }>()
+}
+
+async function getUserCharactersForCleanup(db: D1Database, userId: string): Promise<CharacterCleanupRow[]> {
+    const result = await db.prepare(
+        `SELECT id, user_id, profile_image_key
+         FROM characters
+         WHERE user_id = ?`,
+    )
+        .bind(userId)
+        .all<CharacterCleanupRow>()
+
+    return result.results ?? []
+}
+
+async function getUserMediaForCleanup(db: D1Database, userId: string): Promise<MediaCleanupRow[]> {
+    const result = await db.prepare(
+        `SELECT id, user_id, character_id, sfw_image_key, nsfw_image_key
+         FROM character_media
+         WHERE user_id = ?`,
+    )
+        .bind(userId)
+        .all<MediaCleanupRow>()
+
+    return result.results ?? []
+}
+
+function characterObjectKeys(characters: CharacterCleanupRow[], mediaRows: MediaCleanupRow[]): string[] {
+    const objectKeys: string[] = []
+
+    for (const character of characters) {
+        if (character.profile_image_key) {
+            objectKeys.push(characterProfileImageObjectKey(character.user_id, character.id, character.profile_image_key))
+        }
+    }
+
+    for (const media of mediaRows) {
+        if (media.sfw_image_key) {
+            objectKeys.push(characterMediaImageObjectKey(media.user_id, media.character_id, media.id, media.sfw_image_key, 'sfw'))
+        }
+
+        if (media.nsfw_image_key) {
+            objectKeys.push(characterMediaImageObjectKey(media.user_id, media.character_id, media.id, media.nsfw_image_key, 'nsfw'))
+        }
+    }
+
+    return objectKeys
+}
+
+async function respondToReportAction(
+    c: AdminRouteContext,
+    body: { ok: true } | { error: string },
+    status: 200 | 400 | 404 = 200,
+): Promise<Response> {
+    if (c.req.header('accept')?.includes('text/html')) {
+        return c.redirect('/admin/reports', status === 200 ? 303 : 303)
+    }
+
+    if ('ok' in body) {
+        return c.json(await getAdminReportsData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL))
+    }
+
+    return c.json(body, status)
 }
 
 async function copyR2Object(bucket: R2Bucket, sourceObjectKey: string, targetObjectKey: string): Promise<void> {
