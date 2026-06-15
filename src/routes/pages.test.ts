@@ -176,8 +176,8 @@ describe('public page redirects', () => {
         expect(html).toContain('4,096')
     })
 
-    it('renders discover characters with at least five gallery images', async () => {
-        const response = await getAppPath('/', createProfilePageDb({
+    it('renders discover characters with at least five approved SFW images and a homepage-approved preview', async () => {
+        const db = createProfilePageDb({
             discoverCharacters: [
                 {
                     id: 'character-1',
@@ -191,8 +191,12 @@ describe('public page redirects', () => {
                     preview_artist: 'Demo Artist',
                 },
             ],
-        }))
+        })
+        const response = await getAppPath('/', db)
         const html = await response.text()
+        const preparedSql = (db.prepare as unknown as { mock: { calls: [string][] } }).mock.calls
+            .map(([sql]) => sql)
+            .join('\n')
 
         expect(response.status).toBe(200)
         expect(html).toContain('Characters with galleries worth browsing.')
@@ -202,6 +206,13 @@ describe('public page redirects', () => {
         expect(html).toContain('href="/u/demo_owner/Quartz%20Dragon"')
         expect(html).toContain('https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview-key.png')
         expect(html).toContain('https://m.myoc.art/characters/owner-1/character-1/profile/profile-key.webp')
+        expect(preparedSql).toContain("sfw_review_status = 'approved'")
+        expect(preparedSql).toContain('character_image_counts.image_count')
+        expect(preparedSql).toContain('CASE WHEN nsfw_image_key IS NOT NULL THEN 1 ELSE 0 END')
+        expect(preparedSql).toContain('HAVING COUNT(approved_sfw_media.id) >= 5')
+        expect(preparedSql).toContain('SUM(CASE WHEN approved_sfw_media.sfw_homepage_allowed = 1 THEN 1 ELSE 0 END) >= 1')
+        expect(preparedSql).toContain('AND sfw_homepage_allowed = 1')
+        expect(preparedSql).toContain('sfw_approved_at >= updated_at')
     })
 
     it('redirects logged-in users away from login and register', async () => {

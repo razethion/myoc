@@ -308,24 +308,46 @@ async function getTableCount(db: D1Database, tableName: 'users' | 'characters' |
 
 async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCharacter[]> {
     const result = await db.prepare(
-        `WITH eligible_characters AS (
+        `WITH approved_sfw_media AS (SELECT id,
+                                            character_id,
+                                            sfw_image_key,
+                                            sfw_artist,
+                                            sfw_homepage_allowed
+                                     FROM character_media
+                                     WHERE sfw_image_key IS NOT NULL
+                                       AND sfw_review_status = 'approved'
+                                       AND sfw_approved_at IS NOT NULL
+                                       AND sfw_approved_at >= updated_at),
+              character_image_counts AS (SELECT character_id,
+                                                SUM(
+                                                        CASE WHEN sfw_image_key IS NOT NULL THEN 1 ELSE 0 END
+                                                            + CASE WHEN nsfw_image_key IS NOT NULL THEN 1 ELSE 0 END
+                                                ) AS image_count
+                                         FROM character_media
+                                         WHERE sfw_image_key IS NOT NULL
+                                            OR nsfw_image_key IS NOT NULL
+                                         GROUP BY character_id),
+              eligible_characters AS (
              SELECT characters.id,
                     characters.user_id,
                     characters.name,
                     characters.profile_image_key,
                     users.username AS owner_username,
-                    COUNT(character_media.id) AS image_count
+                    character_image_counts.image_count
              FROM characters
              INNER JOIN users ON users.id = characters.user_id
-             INNER JOIN character_media
-                ON character_media.character_id = characters.id
-               AND character_media.sfw_image_key IS NOT NULL
+             INNER JOIN character_image_counts
+                        ON character_image_counts.character_id = characters.id
+             INNER JOIN approved_sfw_media
+                        ON approved_sfw_media.character_id = characters.id
              GROUP BY characters.id,
                       characters.user_id,
                       characters.name,
                       characters.profile_image_key,
-                      users.username
-             HAVING COUNT(character_media.id) >= 5
+                      users.username,
+                      character_image_counts.image_count
+             HAVING COUNT(approved_sfw_media.id) >= 5
+                AND SUM(CASE WHEN approved_sfw_media.sfw_homepage_allowed = 1 THEN 1 ELSE 0 END) >= 1
              ORDER BY RANDOM()
              LIMIT 6
          )
@@ -339,12 +361,12 @@ async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCh
                 preview_media.sfw_image_key AS preview_image_key,
                 preview_media.sfw_artist AS preview_artist
          FROM eligible_characters
-         INNER JOIN character_media AS preview_media
+                  INNER JOIN approved_sfw_media AS preview_media
             ON preview_media.id = (
                 SELECT id
-                FROM character_media
+                FROM approved_sfw_media
                 WHERE character_id = eligible_characters.id
-                  AND sfw_image_key IS NOT NULL
+                  AND sfw_homepage_allowed = 1
                 ORDER BY RANDOM()
                 LIMIT 1
             )`,
