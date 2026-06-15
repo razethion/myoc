@@ -27,10 +27,6 @@ function createProfilePageDb(options: {
     characterCount?: number
     mediaCount?: number
     discoverCharacters?: unknown[]
-    imageApprovalItem?: unknown
-    imageApprovalQueue?: unknown[]
-    imageApprovalHistory?: unknown[]
-    adminReports?: unknown[]
 } = {}): D1Database {
     const firstForSql = async (sql: string) => {
         if (sql.includes('COUNT(*) AS count') && sql.includes('FROM character_media')) {
@@ -49,10 +45,6 @@ function createProfilePageDb(options: {
             return options.currentUser ?? null
         }
 
-        if (sql.includes('FROM character_media') && sql.includes('INNER JOIN users')) {
-            return options.imageApprovalItem ?? null
-        }
-
         if (sql.includes('FROM characters')) {
             return options.characterSettings ?? null
         }
@@ -62,18 +54,6 @@ function createProfilePageDb(options: {
     const allForSql = async (sql: string): Promise<QueryResult> => {
         if (sql.includes('eligible_characters')) {
             return {results: options.discoverCharacters ?? []}
-        }
-
-        if (sql.includes('sfw_reported_by_username')) {
-            return {results: options.adminReports ?? []}
-        }
-
-        if (sql.includes('FROM character_media_review_events')) {
-            return {results: options.imageApprovalHistory ?? []}
-        }
-
-        if (sql.includes('FROM character_media') && sql.includes('sfw_review_status')) {
-            return {results: options.imageApprovalQueue ?? []}
         }
 
         if (sql.includes('FROM users') && sql.includes('LEFT JOIN characters')) {
@@ -446,7 +426,7 @@ describe('GET /admin', () => {
         expect(html).not.toContain('Admin | MyOC')
     })
 
-    it('renders the admin shell for admin users', async () => {
+    it('renders a blank admin page for admin users', async () => {
         const response = await getAppPath('/admin', createProfilePageDb({
             currentUser: {
                 ...createCurrentUserRecord('admin_user'),
@@ -458,150 +438,9 @@ describe('GET /admin', () => {
         const html = await response.text()
 
         expect(response.status).toBe(200)
-        expect(html).toContain('<title>Image Approvals | Admin | MyOC</title>')
+        expect(html).toContain('<title>Admin | MyOC</title>')
         expect(html).toContain('href="/admin"')
-        expect(html).toContain('aria-label="Admin sections"')
-        expect(html).toContain('href="/admin/image-approvals"')
-        expect(html).toContain('Image Approvals')
-        expect(html).toContain('href="/admin/moderate-images"')
-        expect(html).toContain('Moderate Images')
-        expect(html).toContain('href="/admin/moderate-characters"')
-        expect(html).toContain('Moderate Characters')
-        expect(html).toContain('href="/admin/moderate-users"')
-        expect(html).toContain('Moderate Users')
-        expect(html).toContain('href="/admin/reports"')
-        expect(html).toContain('Reports')
-        expect(html).toContain('aria-label="Image Approvals content"')
-    })
-
-    it('renders admin section routes with the matching section active', async () => {
-        const response = await getAppPath('/admin/moderate-users', createProfilePageDb({
-            currentUser: {
-                ...createCurrentUserRecord('admin_user'),
-                role: 'admin',
-            },
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
-        const html = await response.text()
-
-        expect(response.status).toBe(200)
-        expect(html).toContain('<title>Moderate Users | Admin | MyOC</title>')
-        expect(html).toContain('aria-current="page"')
-        expect(html).toContain('aria-label="Moderate Users content"')
-    })
-
-    it('embeds image approval data for the image approvals page', async () => {
-        const response = await getAppPath('/admin/image-approvals', createProfilePageDb({
-            currentUser: {
-                ...createCurrentUserRecord('admin_user'),
-                role: 'admin',
-            },
-            imageApprovalQueue: [{
-                id: 'media-1',
-                username: 'uploader',
-                character_name: 'Quartz',
-                sfw_image_key: 'sfw-key',
-                nsfw_image_key: null,
-                sfw_review_status: 'pending',
-                sfw_reviewed_at: null,
-                nsfw_review_status: 'pending',
-                nsfw_reviewed_at: null,
-                created_at: '2026-06-10 12:00:00',
-                updated_at: '2026-06-10 12:00:00',
-            }],
-            imageApprovalItem: {
-                id: 'media-1',
-                user_id: 'owner-1',
-                username: 'uploader',
-                email: 'uploader@example.test',
-                character_id: 'character-1',
-                character_name: 'Quartz',
-                sfw_image_key: 'sfw-key',
-                nsfw_image_key: null,
-                sfw_artist: 'Artist',
-                nsfw_artist: '',
-                sfw_width: 1200,
-                sfw_height: 900,
-                sfw_byte_size: 1024,
-                nsfw_width: null,
-                nsfw_height: null,
-                nsfw_byte_size: null,
-                sfw_review_status: 'pending',
-                sfw_reviewed_at: null,
-                sfw_approved_at: null,
-                sfw_homepage_allowed: 0,
-                nsfw_review_status: 'pending',
-                nsfw_reviewed_at: null,
-                nsfw_approved_at: null,
-                created_at: '2026-06-10 12:00:00',
-                updated_at: '2026-06-10 12:00:00',
-            },
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
-        const html = await response.text()
-
-        expect(response.status).toBe(200)
-        expect(html).toContain('<title>Image Approvals | Admin | MyOC</title>')
-        expect(html).toContain('data-image-approvals')
-        expect(html).toContain('"objectKey":"characters/owner-1/character-1/media/media-1/sfw/sfw-key.png"')
-        expect(html).toContain('"username":"uploader"')
-        expect(html).toContain('admin-approval-image-grid')
-        expect(html).not.toContain('/admin-image-approvals.js')
-    })
-
-    it('renders reported images on the reports page', async () => {
-        const response = await getAppPath('/admin/reports', createProfilePageDb({
-            currentUser: {
-                ...createCurrentUserRecord('admin_user'),
-                role: 'admin',
-            },
-            adminReports: [{
-                id: 'media-1',
-                user_id: 'owner-1',
-                username: 'uploader',
-                character_id: 'character-1',
-                character_name: 'Quartz',
-                sfw_image_key: 'sfw-key',
-                nsfw_image_key: null,
-                sfw_review_status: 'reported',
-                nsfw_review_status: 'pending',
-                sfw_reviewed_at: '2026-06-10 12:00:00',
-                nsfw_reviewed_at: null,
-                sfw_reported_by_username: 'admin_user',
-                nsfw_reported_by_username: null,
-            }],
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
-        const html = await response.text()
-
-        expect(response.status).toBe(200)
-        expect(html).toContain('<title>Reports | Admin | MyOC</title>')
-        expect(html).toContain('SFW image report')
-        expect(html).toContain('Reported by @admin_user in Image Approvals.')
-        expect(html).toContain('href="/u/uploader/Quartz"')
-        expect(html).toContain('href="/u/uploader"')
-        expect(html).toContain('Resubmit for Approval')
-        expect(html).toContain('Delete Image')
-        expect(html).toContain('Ban User')
-        expect(html).toContain('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png')
-    })
-
-    it('returns not found for unknown admin sections', async () => {
-        const response = await getAppPath('/admin/unknown-section', createProfilePageDb({
-            currentUser: {
-                ...createCurrentUserRecord('admin_user'),
-                role: 'admin',
-            },
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
-        const html = await response.text()
-
-        expect(response.status).toBe(404)
-        expect(html).toContain('404')
+        expect(html).toContain('<main class="min-h-[calc(100vh-4rem)]"></main>')
     })
 })
 

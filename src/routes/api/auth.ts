@@ -62,21 +62,16 @@ authRoutes.post('/login', async (c) => {
                 profile_photo_key,
                 bio,
                 display_nsfw_media,
-                created_at,
-                banned_at
+                created_at
          FROM users
          WHERE username = ?
          LIMIT 1`,
     )
         .bind(username)
-        .first<UserRecord & { banned_at: string | null }>()
+        .first<UserRecord>()
 
     if (!user || !(await compare(password, user.password_hash))) {
         return c.json({error: 'Invalid username or password'}, 401)
-    }
-
-    if (user.banned_at) {
-        return c.json({error: 'Account is banned'}, 403)
     }
 
     const sessionToken = await createSession(c.env.DB, user.id)
