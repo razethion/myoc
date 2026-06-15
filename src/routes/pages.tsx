@@ -1,8 +1,9 @@
 import { Hono, type Context } from 'hono'
-import { getCurrentUser } from '../lib/auth/session'
+import {getCurrentUser, isAdminUser} from '../lib/auth/session'
 import type {UserSocialLink} from '../lib/socialLinks'
 import type { Bindings } from '../types/bindings'
 import { AuthPage } from '../views/pages/AuthPage'
+import {AdminPage} from '../views/pages/AdminPage'
 import {
     CharacterPage,
     type CharacterPageCharacter,
@@ -122,6 +123,25 @@ pageRoutes.get('/characters', async (c) => {
             characters={characters}
             currentUser={currentUser}
             folders={folders}
+            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+        />,
+    )
+})
+
+pageRoutes.get('/admin', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return c.redirect('/login')
+    }
+
+    if (!isAdminUser(currentUser)) {
+        return renderNotFoundPage(c)
+    }
+
+    return c.html(
+        <AdminPage
+            currentUser={currentUser}
             mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
         />,
     )

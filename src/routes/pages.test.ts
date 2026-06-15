@@ -129,8 +129,10 @@ function createCurrentUserRecord(username = 'demo') {
         id: 'current-user',
         email: `${username}@example.test`,
         username,
+        role: 'user',
         profile_photo_key: null,
         bio: '',
+        display_nsfw_media: 0,
     }
 }
 
@@ -400,6 +402,45 @@ describe('GET /edit/:characterId', () => {
 
         expect(response.status).toBe(404)
         expect(html).toContain('404')
+    })
+})
+
+describe('GET /admin', () => {
+    it('redirects logged-out users to login', async () => {
+        const response = await getAppPath('/admin')
+
+        expect(response.status).toBe(302)
+        expect(response.headers.get('location')).toBe('/login')
+    })
+
+    it('returns not found for logged-in users who are not admins', async () => {
+        const response = await getAppPath('/admin', createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo'),
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+        const html = await response.text()
+
+        expect(response.status).toBe(404)
+        expect(html).toContain('404')
+        expect(html).not.toContain('Admin | MyOC')
+    })
+
+    it('renders a blank admin page for admin users', async () => {
+        const response = await getAppPath('/admin', createProfilePageDb({
+            currentUser: {
+                ...createCurrentUserRecord('admin_user'),
+                role: 'admin',
+            },
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('<title>Admin | MyOC</title>')
+        expect(html).toContain('href="/admin"')
+        expect(html).toContain('<main class="min-h-[calc(100vh-4rem)]"></main>')
     })
 })
 

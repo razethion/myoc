@@ -264,6 +264,7 @@ userRoutes.post('/', async (c) => {
         email,
         username,
         password_hash: await hash(password, PASSWORD_HASH_ROUNDS),
+        role: 'user',
         profile_photo_key: null,
         bio: '',
         display_nsfw_media: 0,
@@ -272,10 +273,10 @@ userRoutes.post('/', async (c) => {
 
     try {
         await c.env.DB.prepare(
-            `INSERT INTO users (id, email, username, password_hash, bio, display_nsfw_media, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO users (id, email, username, password_hash, role, bio, display_nsfw_media, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-            .bind(user.id, user.email, user.username, user.password_hash, user.bio, user.display_nsfw_media, user.created_at)
+            .bind(user.id, user.email, user.username, user.password_hash, user.role, user.bio, user.display_nsfw_media, user.created_at)
             .run()
     } catch (error) {
         if (isUniqueConstraintError(error)) {

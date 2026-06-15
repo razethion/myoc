@@ -15,6 +15,7 @@ type CreateUserResponse = {
     user: {
         email: string
         username: string
+        role: 'user' | 'admin'
         profilePhotoKey: string | null
         bio: string
         displayNsfwMedia: boolean
@@ -87,6 +88,7 @@ const currentUserRecord = {
     id: 'current-user',
     email: 'old@example.com',
     username: 'olduser',
+    role: 'user',
     profile_photo_key: null,
     bio: 'Old bio',
     display_nsfw_media: 0,
@@ -225,6 +227,7 @@ describe('POST /users', () => {
         const body = await response.json() as CreateUserResponse
         expect(body.user.email).toBe('test@example.com')
         expect(body.user.username).toBe('testuser')
+        expect(body.user.role).toBe('user')
         expect(body.user.profilePhotoKey).toBeNull()
         expect(body.user.bio).toBe('')
         expect(body.user.displayNsfwMedia).toBe(false)
@@ -240,7 +243,8 @@ describe('POST /users', () => {
         expect(boundStatements[1]?.binds[1]).toBe('test@example.com')
         expect(boundStatements[1]?.binds[2]).toBe('testuser')
         expect(await compare('password123', boundStatements[1]?.binds[3] as string)).toBe(true)
-        expect(boundStatements[1]?.binds[5]).toBe(0)
+        expect(boundStatements[1]?.binds[4]).toBe('user')
+        expect(boundStatements[1]?.binds[6]).toBe(0)
         expect(boundStatements[2]?.sql).toContain(['DELETE FROM', 'sessions'].join(' '))
         expect(boundStatements[3]?.sql).toContain(['INSERT INTO', 'sessions'].join(' '))
         expect(boundStatements[3]?.binds[1]).toBe(boundStatements[1]?.binds[0])
