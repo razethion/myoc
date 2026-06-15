@@ -1,11 +1,13 @@
 import { Hono, type Context } from 'hono'
 import {getCurrentUser, isAdminUser} from '../lib/auth/session'
 import {getImageApprovalData} from '../lib/admin/imageApprovals'
+import {getAdminReportsData} from '../lib/admin/reports'
 import type {UserSocialLink} from '../lib/socialLinks'
 import type { Bindings } from '../types/bindings'
 import { AuthPage } from '../views/pages/AuthPage'
 import {AdminPage, isAdminSection, type AdminSection} from '../views/pages/AdminPage'
 import {AdminImageApprovalsPage} from '../views/pages/AdminImageApprovalsPage'
+import {AdminReportsPage} from '../views/pages/AdminReportsPage'
 import {
     CharacterPage,
     type CharacterPageCharacter,
@@ -162,7 +164,14 @@ async function renderAdminPage(c: PageRouteContext, activeSection: AdminSection)
                 data={await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, c.req.query('mediaId'))}
             />
         )
-        : null
+        : activeSection === 'reports'
+            ? (
+                <AdminReportsPage
+                    csrfToken={currentUser.csrfToken}
+                    data={await getAdminReportsData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL)}
+                />
+            )
+            : null
 
     return c.html(
         <AdminPage

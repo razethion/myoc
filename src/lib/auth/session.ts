@@ -76,6 +76,7 @@ export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promis
          INNER JOIN users ON users.id = sessions.user_id
          WHERE sessions.session_hash = ?
            AND sessions.expires_at > ?
+           AND users.banned_at IS NULL
          LIMIT 1`,
     )
         .bind(sessionHash, toSqlTimestamp(new Date()))
