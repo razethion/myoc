@@ -54,16 +54,29 @@ authRoutes.post('/login', async (c) => {
     }
 
     const user = await c.env.DB.prepare(
-        `SELECT id, email, username, password_hash, profile_photo_key, bio, display_nsfw_media, created_at
+        `SELECT id,
+                email,
+                username,
+                password_hash,
+                role,
+                profile_photo_key,
+                bio,
+                display_nsfw_media,
+                created_at,
+                banned_at
          FROM users
          WHERE username = ?
          LIMIT 1`,
     )
         .bind(username)
-        .first<UserRecord>()
+        .first<UserRecord & { banned_at: string | null }>()
 
     if (!user || !(await compare(password, user.password_hash))) {
         return c.json({error: 'Invalid username or password'}, 401)
+    }
+
+    if (user.banned_at) {
+        return c.json({error: 'Account is banned'}, 403)
     }
 
     const sessionToken = await createSession(c.env.DB, user.id)

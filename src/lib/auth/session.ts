@@ -7,16 +7,20 @@ export type UserRecord = {
     email: string
     username: string
     password_hash: string
+    role: UserRole
     profile_photo_key: string | null
     bio: string
     display_nsfw_media: number
     created_at: string
 }
 
+export type UserRole = 'user' | 'admin'
+
 export type CurrentUser = {
     id: string
     email: string
     username: string
+    role: UserRole
     profilePhotoKey: string | null
     bio: string
     displayNsfwMedia: boolean
@@ -64,6 +68,7 @@ export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promis
         `SELECT users.id,
                 users.email,
                 users.username,
+                users.role,
                 users.profile_photo_key,
                 users.bio,
                 users.display_nsfw_media
@@ -71,6 +76,7 @@ export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promis
          INNER JOIN users ON users.id = sessions.user_id
          WHERE sessions.session_hash = ?
            AND sessions.expires_at > ?
+           AND users.banned_at IS NULL
          LIMIT 1`,
     )
         .bind(sessionHash, toSqlTimestamp(new Date()))
@@ -78,6 +84,7 @@ export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promis
             id: string
             email: string
             username: string
+            role: string | null
             profile_photo_key: string | null
             bio: string
             display_nsfw_media: number
@@ -91,6 +98,7 @@ export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promis
         id: user.id,
         email: user.email,
         username: user.username,
+        role: normalizeUserRole(user.role),
         profilePhotoKey: user.profile_photo_key,
         bio: user.bio,
         displayNsfwMedia: Boolean(user.display_nsfw_media),
@@ -148,6 +156,7 @@ export function toPublicUser(user: UserRecord) {
         id: user.id,
         email: user.email,
         username: user.username,
+        role: normalizeUserRole(user.role),
         profilePhotoKey: user.profile_photo_key,
         bio: user.bio,
         displayNsfwMedia: Boolean(user.display_nsfw_media),
@@ -157,6 +166,14 @@ export function toPublicUser(user: UserRecord) {
 
 export function toSqlTimestamp(date: Date): string {
     return date.toISOString().replace('T', ' ').slice(0, 19)
+}
+
+export function isAdminUser(user: CurrentUser | null): user is CurrentUser & { role: 'admin' } {
+    return user?.role === 'admin'
+}
+
+export function normalizeUserRole(role: unknown): UserRole {
+    return role === 'admin' ? 'admin' : 'user'
 }
 
 function createSessionToken(): string {
