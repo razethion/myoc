@@ -3,7 +3,7 @@ import {getCurrentUser, isAdminUser} from '../lib/auth/session'
 import type {UserSocialLink} from '../lib/socialLinks'
 import type { Bindings } from '../types/bindings'
 import { AuthPage } from '../views/pages/AuthPage'
-import {AdminPage} from '../views/pages/AdminPage'
+import {AdminPage, isAdminSection, type AdminSection} from '../views/pages/AdminPage'
 import {
     CharacterPage,
     type CharacterPageCharacter,
@@ -129,6 +129,20 @@ pageRoutes.get('/characters', async (c) => {
 })
 
 pageRoutes.get('/admin', async (c) => {
+    return renderAdminPage(c, 'image-approvals')
+})
+
+pageRoutes.get('/admin/:adminSection', async (c) => {
+    const adminSection = c.req.param('adminSection')
+
+    if (!isAdminSection(adminSection)) {
+        return renderNotFoundPage(c)
+    }
+
+    return renderAdminPage(c, adminSection)
+})
+
+async function renderAdminPage(c: PageRouteContext, activeSection: AdminSection): Promise<Response> {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
@@ -141,11 +155,12 @@ pageRoutes.get('/admin', async (c) => {
 
     return c.html(
         <AdminPage
+            activeSection={activeSection}
             currentUser={currentUser}
             mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
         />,
     )
-})
+}
 
 pageRoutes.get('/edit/:characterId', async (c) => {
     const currentUser = await getCurrentUser(c)
