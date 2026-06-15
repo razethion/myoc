@@ -1,6 +1,7 @@
 import {describe, expect, it, vi} from 'vitest'
 import {pageRoutes} from './pages'
 import app from '../index'
+import {createMockKVNamespace} from '../test/mockKV'
 import {createMockR2Bucket} from '../test/mockR2'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
@@ -130,14 +131,21 @@ async function getProfile(username: string, db: D1Database): Promise<Response> {
 
 async function getProfilePath(path: string, db: D1Database): Promise<Response> {
     return pageRoutes.request(`https://example.com${path}`, {}, {
+        CACHE: createMockKVNamespace(),
         DB: db,
         MEDIA_BUCKET: createMockR2Bucket(),
         MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
     });
 }
 
-async function getAppPath(path: string, db = createProfilePageDb(), headers: Record<string, string> = {}): Promise<Response> {
+async function getAppPath(
+    path: string,
+    db = createProfilePageDb(),
+    headers: Record<string, string> = {},
+    cache = createMockKVNamespace(),
+): Promise<Response> {
     return app.request(`https://example.com${path}`, {headers}, {
+        CACHE: cache,
         DB: db,
         MEDIA_BUCKET: createMockR2Bucket(),
         MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
@@ -213,6 +221,43 @@ describe('public page redirects', () => {
         expect(preparedSql).toContain('SUM(CASE WHEN approved_sfw_media.sfw_homepage_allowed = 1 THEN 1 ELSE 0 END) >= 1')
         expect(preparedSql).toContain('AND sfw_homepage_allowed = 1')
         expect(preparedSql).toContain('sfw_approved_at >= updated_at')
+    })
+
+    it('renders homepage stats and discover characters from KV cache', async () => {
+        const db = createProfilePageDb()
+        const cache = createMockKVNamespace({
+            values: {
+                'home:stats:v1': {
+                    users: 12,
+                    characters: 34,
+                    mediaItems: 56,
+                },
+                'home:discover:v1': [
+                    {
+                        id: 'cached-character',
+                        userId: 'cached-owner',
+                        name: 'Cached Quartz',
+                        ownerUsername: 'cached_user',
+                        profileImageKey: 'cached-profile-key',
+                        previewMediaId: 'cached-media',
+                        previewImageKey: 'cached-preview-key',
+                        previewArtist: 'Cached Artist',
+                        imageCount: 42,
+                    },
+                ],
+            },
+        })
+        const response = await getAppPath('/', db, {}, cache)
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('12')
+        expect(html).toContain('34')
+        expect(html).toContain('56')
+        expect(html).toContain('Cached Quartz')
+        expect(html).toContain('42 images')
+        expect(html).toContain('https://m.myoc.art/characters/cached-owner/cached-character/media/cached-media/sfw/cached-preview-key.png')
+        expect(db.prepare).not.toHaveBeenCalled()
     })
 
     it('redirects logged-in users away from login and register', async () => {

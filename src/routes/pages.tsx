@@ -34,6 +34,10 @@ export const pageRoutes = new Hono<{ Bindings: Bindings }>()
 
 type PageRouteContext = Context<{ Bindings: Bindings }>
 
+const HOME_PAGE_STATS_CACHE_KEY = 'home:stats:v1'
+const HOME_PAGE_DISCOVER_CACHE_KEY = 'home:discover:v1'
+const HOME_PAGE_CACHE_TTL_SECONDS = 600
+
 function getRandomLetter(): string {
     const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
     return letters[Math.floor(Math.random() * letters.length)]
@@ -42,8 +46,8 @@ function getRandomLetter(): string {
 pageRoutes.get('/', async (c) => {
     const [currentUser, stats, discoverCharacters] = await Promise.all([
         getCurrentUser(c),
-        getHomePageStats(c.env.DB),
-        getDiscoverCharacters(c.env.DB),
+        getCachedHomePageStats(c.env.CACHE, c.env.DB),
+        getCachedDiscoverCharacters(c.env.CACHE, c.env.DB),
     ])
 
     return c.html(
@@ -299,11 +303,37 @@ async function getHomePageStats(db: D1Database): Promise<HomePageStats> {
     return {users, characters, mediaItems}
 }
 
+async function getCachedHomePageStats(cache: KVNamespace | undefined, db: D1Database): Promise<HomePageStats> {
+    const cached = await getCachedJson<HomePageStats>(cache, HOME_PAGE_STATS_CACHE_KEY)
+
+    if (isHomePageStats(cached)) {
+        return cached
+    }
+
+    const stats = await getHomePageStats(db)
+    await putCachedJson(cache, HOME_PAGE_STATS_CACHE_KEY, stats)
+
+    return stats
+}
+
 async function getTableCount(db: D1Database, tableName: 'users' | 'characters' | 'character_media'): Promise<number> {
     const row = await db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).first<{count: number | string | null}>()
     const count = Number(row?.count ?? 0)
 
     return Number.isFinite(count) ? count : 0
+}
+
+async function getCachedDiscoverCharacters(cache: KVNamespace | undefined, db: D1Database): Promise<HomePageDiscoverCharacter[]> {
+    const cached = await getCachedJson<HomePageDiscoverCharacter[]>(cache, HOME_PAGE_DISCOVER_CACHE_KEY)
+
+    if (Array.isArray(cached) && cached.every(isHomePageDiscoverCharacter)) {
+        return cached
+    }
+
+    const characters = await getDiscoverCharacters(db)
+    await putCachedJson(cache, HOME_PAGE_DISCOVER_CACHE_KEY, characters)
+
+    return characters
 }
 
 async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCharacter[]> {
@@ -394,6 +424,60 @@ async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCh
         previewArtist: character.preview_artist ?? '',
         imageCount: Number(character.image_count) || 0,
     }))
+}
+
+async function getCachedJson<T>(cache: KVNamespace | undefined, key: string): Promise<T | null> {
+    if (!cache) {
+        return null
+    }
+
+    try {
+        return await cache.get<T>(key, 'json')
+    } catch {
+        return null
+    }
+}
+
+async function putCachedJson(cache: KVNamespace | undefined, key: string, value: unknown): Promise<void> {
+    if (!cache) {
+        return
+    }
+
+    try {
+        await cache.put(key, JSON.stringify(value), {expirationTtl: HOME_PAGE_CACHE_TTL_SECONDS})
+    } catch {
+        // Homepage cache misses should not block rendering.
+    }
+}
+
+function isHomePageStats(value: unknown): value is HomePageStats {
+    if (!value || typeof value !== 'object') {
+        return false
+    }
+
+    const stats = value as Record<string, unknown>
+
+    return Number.isFinite(stats.users)
+        && Number.isFinite(stats.characters)
+        && Number.isFinite(stats.mediaItems)
+}
+
+function isHomePageDiscoverCharacter(value: unknown): value is HomePageDiscoverCharacter {
+    if (!value || typeof value !== 'object') {
+        return false
+    }
+
+    const character = value as Record<string, unknown>
+
+    return typeof character.id === 'string'
+        && typeof character.userId === 'string'
+        && typeof character.name === 'string'
+        && typeof character.ownerUsername === 'string'
+        && typeof character.profileImageKey === 'string'
+        && typeof character.previewMediaId === 'string'
+        && typeof character.previewImageKey === 'string'
+        && typeof character.previewArtist === 'string'
+        && Number.isFinite(character.imageCount)
 }
 
 function userProfileUrl(username: string): string {
