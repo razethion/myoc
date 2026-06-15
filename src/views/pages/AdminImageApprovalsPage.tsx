@@ -55,6 +55,22 @@ function AdminImageApprovalsStyles() {
                 max-width: 100%;
             }
 
+            .admin-approval-link {
+                display: inline-block;
+                border-radius: 0.25rem;
+                background: color-mix(in oklab, var(--color-warning) 22%, transparent);
+                color: var(--color-base-content);
+                font-weight: 700;
+                text-decoration: underline;
+                text-decoration-color: var(--color-warning);
+                text-decoration-thickness: 2px;
+                text-underline-offset: 3px;
+            }
+
+            .admin-approval-link:hover {
+                background: color-mix(in oklab, var(--color-warning) 34%, transparent);
+            }
+
             .admin-approval-sidebar-card {
                 display: block;
                 width: 100%;

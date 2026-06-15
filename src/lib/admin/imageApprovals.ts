@@ -37,10 +37,12 @@ export type ImageApprovalItem = {
         id: string
         username: string
         email: string
+        profileUrl: string
     }
     character: {
         id: string
         name: string
+        url: string
     }
     sfw: ImageApprovalVariant | null
     nsfw: ImageApprovalVariant | null
@@ -303,10 +305,12 @@ function toImageApprovalItem(row: ImageApprovalRow, mediaBaseUrl: string): Image
             id: row.user_id,
             username: row.username,
             email: row.email,
+            profileUrl: `/u/${encodeURIComponent(row.username)}`,
         },
         character: {
             id: row.character_id,
             name: row.character_name,
+            url: `/u/${encodeURIComponent(row.username)}/${encodeURIComponent(row.character_name)}`,
         },
         sfw: row.sfw_image_key ? {
             rating: 'sfw',

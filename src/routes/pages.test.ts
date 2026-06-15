@@ -547,7 +547,12 @@ describe('GET /admin', () => {
         expect(html).toContain('data-image-approvals')
         expect(html).toContain('"objectKey":"characters/owner-1/character-1/media/media-1/sfw/sfw-key.png"')
         expect(html).toContain('"username":"uploader"')
+        expect(html).toContain('"profileUrl":"/u/uploader"')
+        expect(html).toContain('"url":"/u/uploader/Quartz"')
         expect(html).toContain('admin-approval-image-grid')
+        expect(html).toContain('handleKeyboardShortcuts')
+        expect(html).toContain("a: ['sfw', 'approve_sfw_homepage']")
+        expect(html).toContain("openVariantInNewTab('nsfw')")
         expect(html).not.toContain('/admin-image-approvals.js')
     })
 
