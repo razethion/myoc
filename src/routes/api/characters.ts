@@ -813,6 +813,8 @@ characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
 
     const uploadedKeys: string[] = []
     const deletedKeys: string[] = []
+    const sfwWasModified = removeSfw || Boolean(sfwUpload)
+    const nsfwWasModified = removeNsfw || Boolean(nsfwUpload)
     const nextMedia: CharacterMediaRecord = {
         ...media,
         sfw_artist: artists.sfwArtist,
@@ -843,6 +845,13 @@ characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
                  nsfw_width = ?,
                  nsfw_height = ?,
                  nsfw_byte_size = ?,
+                 sfw_review_status    = CASE WHEN ? THEN 'pending' ELSE sfw_review_status END,
+                 sfw_reviewed_at      = CASE WHEN ? THEN NULL ELSE sfw_reviewed_at END,
+                 sfw_approved_at      = CASE WHEN ? THEN NULL ELSE sfw_approved_at END,
+                 sfw_homepage_allowed = CASE WHEN ? THEN 0 ELSE sfw_homepage_allowed END,
+                 nsfw_review_status   = CASE WHEN ? THEN 'pending' ELSE nsfw_review_status END,
+                 nsfw_reviewed_at     = CASE WHEN ? THEN NULL ELSE nsfw_reviewed_at END,
+                 nsfw_approved_at     = CASE WHEN ? THEN NULL ELSE nsfw_approved_at END,
                  updated_at = ?
              WHERE id = ?
                AND character_id = ?
@@ -859,6 +868,13 @@ characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
                 nextMedia.nsfw_width,
                 nextMedia.nsfw_height,
                 nextMedia.nsfw_byte_size,
+                sfwWasModified ? 1 : 0,
+                sfwWasModified ? 1 : 0,
+                sfwWasModified ? 1 : 0,
+                sfwWasModified ? 1 : 0,
+                nsfwWasModified ? 1 : 0,
+                nsfwWasModified ? 1 : 0,
+                nsfwWasModified ? 1 : 0,
                 nextMedia.updated_at,
                 nextMedia.id,
                 character.id,
@@ -988,6 +1004,8 @@ characterRoutes.patch('/:id/media/:mediaId', async (c) => {
 
     const uploadedKeys: string[] = []
     const deletedKeys: string[] = []
+    const sfwWasModified = removeSfw || Boolean(sfwImage)
+    const nsfwWasModified = removeNsfw || Boolean(nsfwImage)
     const nextMedia: CharacterMediaRecord = {
         ...media,
         sfw_artist: artists.sfwArtist,
@@ -1018,6 +1036,13 @@ characterRoutes.patch('/:id/media/:mediaId', async (c) => {
                  nsfw_width = ?,
                  nsfw_height = ?,
                  nsfw_byte_size = ?,
+                 sfw_review_status    = CASE WHEN ? THEN 'pending' ELSE sfw_review_status END,
+                 sfw_reviewed_at      = CASE WHEN ? THEN NULL ELSE sfw_reviewed_at END,
+                 sfw_approved_at      = CASE WHEN ? THEN NULL ELSE sfw_approved_at END,
+                 sfw_homepage_allowed = CASE WHEN ? THEN 0 ELSE sfw_homepage_allowed END,
+                 nsfw_review_status   = CASE WHEN ? THEN 'pending' ELSE nsfw_review_status END,
+                 nsfw_reviewed_at     = CASE WHEN ? THEN NULL ELSE nsfw_reviewed_at END,
+                 nsfw_approved_at     = CASE WHEN ? THEN NULL ELSE nsfw_approved_at END,
                  updated_at = ?
              WHERE id = ?
                AND character_id = ?
@@ -1034,6 +1059,13 @@ characterRoutes.patch('/:id/media/:mediaId', async (c) => {
                 nextMedia.nsfw_width,
                 nextMedia.nsfw_height,
                 nextMedia.nsfw_byte_size,
+                sfwWasModified ? 1 : 0,
+                sfwWasModified ? 1 : 0,
+                sfwWasModified ? 1 : 0,
+                sfwWasModified ? 1 : 0,
+                nsfwWasModified ? 1 : 0,
+                nsfwWasModified ? 1 : 0,
+                nsfwWasModified ? 1 : 0,
                 nextMedia.updated_at,
                 nextMedia.id,
                 character.id,

@@ -27,6 +27,9 @@ function createProfilePageDb(options: {
     characterCount?: number
     mediaCount?: number
     discoverCharacters?: unknown[]
+    imageApprovalItem?: unknown
+    imageApprovalQueue?: unknown[]
+    imageApprovalHistory?: unknown[]
 } = {}): D1Database {
     const firstForSql = async (sql: string) => {
         if (sql.includes('COUNT(*) AS count') && sql.includes('FROM character_media')) {
@@ -45,6 +48,10 @@ function createProfilePageDb(options: {
             return options.currentUser ?? null
         }
 
+        if (sql.includes('FROM character_media') && sql.includes('INNER JOIN users')) {
+            return options.imageApprovalItem ?? null
+        }
+
         if (sql.includes('FROM characters')) {
             return options.characterSettings ?? null
         }
@@ -54,6 +61,14 @@ function createProfilePageDb(options: {
     const allForSql = async (sql: string): Promise<QueryResult> => {
         if (sql.includes('eligible_characters')) {
             return {results: options.discoverCharacters ?? []}
+        }
+
+        if (sql.includes('FROM character_media_review_events')) {
+            return {results: options.imageApprovalHistory ?? []}
+        }
+
+        if (sql.includes('FROM character_media') && sql.includes('sfw_review_status')) {
+            return {results: options.imageApprovalQueue ?? []}
         }
 
         if (sql.includes('FROM users') && sql.includes('LEFT JOIN characters')) {
@@ -469,6 +484,66 @@ describe('GET /admin', () => {
         expect(html).toContain('<title>Moderate Users | Admin | MyOC</title>')
         expect(html).toContain('aria-current="page"')
         expect(html).toContain('aria-label="Moderate Users content"')
+    })
+
+    it('embeds image approval data for the image approvals page', async () => {
+        const response = await getAppPath('/admin/image-approvals', createProfilePageDb({
+            currentUser: {
+                ...createCurrentUserRecord('admin_user'),
+                role: 'admin',
+            },
+            imageApprovalQueue: [{
+                id: 'media-1',
+                username: 'uploader',
+                character_name: 'Quartz',
+                sfw_image_key: 'sfw-key',
+                nsfw_image_key: null,
+                sfw_review_status: 'pending',
+                sfw_reviewed_at: null,
+                nsfw_review_status: 'pending',
+                nsfw_reviewed_at: null,
+                created_at: '2026-06-10 12:00:00',
+                updated_at: '2026-06-10 12:00:00',
+            }],
+            imageApprovalItem: {
+                id: 'media-1',
+                user_id: 'owner-1',
+                username: 'uploader',
+                email: 'uploader@example.test',
+                character_id: 'character-1',
+                character_name: 'Quartz',
+                sfw_image_key: 'sfw-key',
+                nsfw_image_key: null,
+                sfw_artist: 'Artist',
+                nsfw_artist: '',
+                sfw_width: 1200,
+                sfw_height: 900,
+                sfw_byte_size: 1024,
+                nsfw_width: null,
+                nsfw_height: null,
+                nsfw_byte_size: null,
+                sfw_review_status: 'pending',
+                sfw_reviewed_at: null,
+                sfw_approved_at: null,
+                sfw_homepage_allowed: 0,
+                nsfw_review_status: 'pending',
+                nsfw_reviewed_at: null,
+                nsfw_approved_at: null,
+                created_at: '2026-06-10 12:00:00',
+                updated_at: '2026-06-10 12:00:00',
+            },
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('<title>Image Approvals | Admin | MyOC</title>')
+        expect(html).toContain('data-image-approvals')
+        expect(html).toContain('"objectKey":"characters/owner-1/character-1/media/media-1/sfw/sfw-key.png"')
+        expect(html).toContain('"username":"uploader"')
+        expect(html).toContain('admin-approval-image-grid')
+        expect(html).not.toContain('/admin-image-approvals.js')
     })
 
     it('returns not found for unknown admin sections', async () => {
