@@ -280,7 +280,7 @@ function HomePageStyles() {
                 justify-content: center;
                 pointer-events: none;
                 position: absolute;
-                z-index: 4;
+                z-index: 20;
             }
 
             .home-loading-media.image-loading .home-image-loader {
@@ -472,11 +472,11 @@ export function HomePage({currentUser, discoverCharacters, guestInitial, mediaBa
                                                         loading="lazy"
                                                         src={previewUrl}
                                                     />
-                                                    <HomeImageLoader/>
                                                     <div class="absolute inset-x-0 bottom-0 bg-linear-to-t from-black/80 to-transparent p-4 text-white">
                                                         <p class="text-xs font-bold uppercase tracking-[0.2em] text-white/70">Featured gallery</p>
                                                         <p class="mt-1 text-sm font-semibold">{formatCount(character.imageCount)} images</p>
                                                     </div>
+                                                    <HomeImageLoader/>
                                                 </div>
                                                 <div class="flex items-center gap-4 p-5">
                                                     <div

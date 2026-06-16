@@ -166,7 +166,7 @@ const GALLERY_MAX_ROWS = 100
 const GALLERY_MAX_MEDIA_PLACEMENTS = 500
 const TREE_MAX_ITEMS = 500
 const TREE_MAX_DEPTH = 20
-const CHARACTER_NAME_ALLOWED_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 _'".()-]*$/
+const CHARACTER_NAME_ALLOWED_PATTERN = /^(?=.*[A-Za-z0-9])[A-Za-z0-9 _'".()-]+$/
 const CHARACTER_NAME_RULES = 'letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses'
 const DISPLAY_NAME_ALLOWED_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 _'.()-]*$/
 const DISPLAY_NAME_RULES = 'letters, numbers, spaces, apostrophes, hyphens, underscores, periods, and parentheses'
@@ -1735,7 +1735,7 @@ function normalizeCharacterName(value: unknown): { name: string } | { error: str
     }
 
     if (!CHARACTER_NAME_ALLOWED_PATTERN.test(name)) {
-        return {error: `Character name may contain only ${CHARACTER_NAME_RULES}, and must start with a letter or number`}
+        return {error: `Character name may contain only ${CHARACTER_NAME_RULES}, and must include at least one letter or number`}
     }
 
     return {name}

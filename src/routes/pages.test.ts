@@ -119,6 +119,7 @@ function createProfilePageDb(options: {
             bind: vi.fn(() => ({
                 first: vi.fn(() => firstForSql(sql)),
                 all: vi.fn(() => allForSql(sql)),
+                run: vi.fn(async () => ({success: true})),
             })),
         })),
         batch: vi.fn(async () => []),
@@ -161,7 +162,27 @@ function createCurrentUserRecord(username = 'demo') {
         profile_photo_key: null,
         bio: '',
         display_nsfw_media: 0,
+        last_seen_version: null,
     }
+}
+
+function expectPatternAllowsReportedCharacterNames(html: string, inputId: string): void {
+    const match = new RegExp(`id="${inputId}"[^>]*pattern="([^"]+)"`).exec(html)
+    const pattern = match?.[1]
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+
+    expect(pattern).toBeTruthy()
+
+    if (!pattern) {
+        throw new Error(`Pattern attribute was not rendered for ${inputId}`)
+    }
+
+    const regex = new RegExp(`^(?:${pattern})$`, 'v')
+
+    expect(regex.test('DRD-5548 "Ivo"')).toBe(true)
+    expect(regex.test('"Ivo"')).toBe(true)
+    expect(regex.test('---')).toBe(false)
 }
 
 describe('public page redirects', () => {
@@ -216,6 +237,10 @@ describe('public page redirects', () => {
         expect(html).toContain('by @demo_owner')
         expect(html).toContain('7 images')
         expect(html).toContain('href="/u/demo_owner/Quartz%20Dragon"')
+        expect(html).toContain('home-loading-media image-loading aspect-4/3 bg-base-300')
+        expect(html).toContain('home-loading-media image-loading h-14 w-14 shrink-0')
+        expect(html).toContain('loading loading-spinner loading-lg text-base-content')
+        expect(html).toContain('loading loading-spinner loading-sm text-base-content')
         expect(html).toContain('https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview-key.png')
         expect(html).toContain('https://m.myoc.art/characters/owner-1/character-1/profile/profile-key.webp')
         expect(preparedSql).toContain("sfw_review_status = 'approved'")
@@ -289,6 +314,45 @@ describe('public page redirects', () => {
         expect(homeResponse.status).toBe(200)
         expect(loginResponse.status).toBe(200)
         expect(registerResponse.status).toBe(200)
+    })
+
+    it('renders the what is new page with sequential version entries', async () => {
+        const response = await getAppPath('/whats-new')
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('<title>What&#39;s New | MyOC</title>')
+        expect(html).toContain('What&#39;s new')
+        expect(html).toContain('data-app-version="2026.06.16.01"')
+        expect(html).toContain('v2026.06.16.01')
+        expect(html).toContain('v2026.06.15.02')
+        expect(html).toContain('v2026.06.15.01')
+        expect(html).toContain('Version notifications')
+        expect(html).toContain('Signed-in users now have their latest seen version saved across devices.')
+        expect(html).toContain('Bug fixes.')
+        expect(html).toContain('Some symbols weren&#39;t allowed in character names, but should have been. This has been fixed.')
+        expect(html).toContain('What&#39;s New page')
+        expect(html).toContain('Added this What&#39;s New page with a dedicated block for each app version.')
+        expect(html).toContain('href="/whats-new"')
+    })
+
+    it('marks the current version seen when logged-in users visit the what is new page', async () => {
+        const db = createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo'),
+        })
+        const response = await getAppPath('/whats-new', db, {
+            cookie: 'myoc_session=session-token',
+        })
+        const html = await response.text()
+        const preparedSql = (db.prepare as unknown as { mock: { calls: [string][] } }).mock.calls
+            .map(([sql]) => sql)
+            .join('\n')
+
+        expect(response.status).toBe(200)
+        expect(preparedSql).toContain('UPDATE users')
+        expect(preparedSql).toContain('last_seen_version')
+        expect(html).toContain('data-version-notification')
+        expect(html).toContain('hidden"')
     })
 
     it('renders SEO metadata on the home page', async () => {
@@ -463,6 +527,7 @@ describe('GET /edit/:characterId', () => {
         expect(html).toContain('https://m.myoc.art/characters/current-user/character-1/media/media-1/sfw/sfw-image-key.png')
         expect(html).toContain('Gallery Sorting')
         expect(html).toContain('const csrfToken =')
+        expectPatternAllowsReportedCharacterNames(html, 'character-name')
     })
 
     it('redirects logged-out users to login', async () => {
@@ -482,6 +547,21 @@ describe('GET /edit/:characterId', () => {
 
         expect(response.status).toBe(404)
         expect(html).toContain('404')
+    })
+})
+
+describe('GET /characters', () => {
+    it('renders a valid character name pattern for creating characters', async () => {
+        const response = await getAppPath('/characters', createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo'),
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Character Management | MyOC')
+        expectPatternAllowsReportedCharacterNames(html, 'new-character-name')
     })
 })
 

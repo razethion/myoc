@@ -28,7 +28,9 @@ import {NotFoundPage} from '../views/pages/NotFoundPage'
 import {ProfilePage, type ProfilePageUser} from '../views/pages/ProfilePage'
 import {SearchPage} from '../views/pages/SearchPage'
 import {UserSettingsPage} from '../views/pages/UserSettingsPage'
+import {WhatsNewPage} from '../views/pages/WhatsNewPage'
 import {searchAll} from '../lib/search'
+import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 
 export const pageRoutes = new Hono<{ Bindings: Bindings }>()
 
@@ -230,6 +232,34 @@ pageRoutes.get('/search', async (c) => {
         />,
     )
 })
+
+pageRoutes.get('/whats-new', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    if (currentUser && currentUser.lastSeenVersion !== APP_VERSION) {
+        await markCurrentVersionSeen(c.env.DB, currentUser.id)
+        currentUser.lastSeenVersion = APP_VERSION
+    }
+
+    return c.html(
+        <WhatsNewPage
+            currentUser={currentUser}
+            guestInitial={getRandomLetter()}
+            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+            releases={RELEASE_NOTES}
+        />,
+    )
+})
+
+async function markCurrentVersionSeen(db: D1Database, userId: string): Promise<void> {
+    await db.prepare(
+        `UPDATE users
+         SET last_seen_version = ?
+         WHERE id = ?`,
+    )
+        .bind(APP_VERSION, userId)
+        .run()
+}
 
 pageRoutes.get('/u/:username/:profilePath{.+}', async (c) => {
     return renderProfilePage(c, c.req.param('username'), c.req.param('profilePath'))

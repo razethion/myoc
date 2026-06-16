@@ -19,6 +19,7 @@ type CreateUserResponse = {
         profilePhotoKey: string | null
         bio: string
         displayNsfwMedia: boolean
+        lastSeenVersion: string | null
         createdAt: string
     }
 }
@@ -59,6 +60,23 @@ async function postCurrentUserSettings(
     });
 }
 
+async function postCurrentUserReleaseView(
+    db: D1Database,
+    options: UserRequestOptions = {},
+): Promise<Response> {
+    const mediaBucket = createMockR2Bucket()
+
+    return apiRoutes.request('https://example.com/users/me/release-view', {
+        method: 'POST',
+        body: JSON.stringify({}),
+        headers: createRequestHeaders({}, options),
+    }, {
+        DB: db,
+        MEDIA_BUCKET: mediaBucket,
+        MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+    });
+}
+
 async function postProfilePhoto(
     db: D1Database,
     mediaBucket: R2Bucket,
@@ -92,6 +110,7 @@ const currentUserRecord = {
     profile_photo_key: null,
     bio: 'Old bio',
     display_nsfw_media: 0,
+    last_seen_version: null,
 }
 
 describe('POST /users', () => {
@@ -231,6 +250,7 @@ describe('POST /users', () => {
         expect(body.user.profilePhotoKey).toBeNull()
         expect(body.user.bio).toBe('')
         expect(body.user.displayNsfwMedia).toBe(false)
+        expect(body.user.lastSeenVersion).toBeNull()
         expect(body.user.createdAt).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
         expect(JSON.stringify(body)).not.toContain('password_hash')
 
@@ -496,6 +516,53 @@ describe('POST /users/me', () => {
         })
         expect(db.batch).not.toHaveBeenCalled()
         expect(boundStatements).toHaveLength(1)
+    })
+})
+
+describe('POST /users/me/release-view', () => {
+    it('returns 401 when the user is not logged in', async () => {
+        const {db} = createMockDb()
+
+        const response = await postCurrentUserReleaseView(db)
+
+        expect(response.status).toBe(401)
+        expect(await response.json()).toEqual({
+            error: 'Authentication required',
+        })
+    })
+
+    it('returns 403 when a logged-in request is missing CSRF protection', async () => {
+        const {db} = createMockDb()
+
+        const response = await postCurrentUserReleaseView(db, {
+            sessionToken: 'session-token',
+        })
+
+        expect(response.status).toBe(403)
+        expect(await response.json()).toEqual({
+            error: 'Invalid CSRF token',
+        })
+    })
+
+    it('stores the current app version as seen for the current user', async () => {
+        const sessionToken = 'session-token'
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postCurrentUserReleaseView(db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            ok: true,
+            version: '2026.06.16.01',
+        })
+        expect(boundStatements[1]?.sql).toContain('UPDATE users')
+        expect(boundStatements[1]?.sql).toContain('last_seen_version')
+        expect(boundStatements[1]?.binds).toEqual(['2026.06.16.01', currentUserRecord.id])
     })
 })
 

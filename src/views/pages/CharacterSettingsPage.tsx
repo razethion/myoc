@@ -41,6 +41,9 @@ type CharacterSettingsPageProps = {
     mediaBaseUrl: string
 }
 
+const CHARACTER_NAME_INPUT_PATTERN = String.raw`(?=.*[A-Za-z0-9])[A-Za-z0-9 _'.\(\)"\-]+`
+const CHARACTER_NAME_INPUT_TITLE = 'Use letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses. Include at least one letter or number.'
+
 function safeJson(value: unknown): string {
     return JSON.stringify(value)
         .replace(/</g, '\\u003c')
@@ -1298,8 +1301,8 @@ export function CharacterSettingsPage({
                     <fieldset class="fieldset">
                         <label class="fieldset-label" for="character-name">Character Name</label>
                         <input class="input input-bordered w-full" id="character-name" maxLength={80}
-                               name="character-name" pattern={"[A-Za-z0-9][A-Za-z0-9 _'.()\"-]*"} required
-                               title="Use letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses. Start with a letter or number."
+                               name="character-name" pattern={CHARACTER_NAME_INPUT_PATTERN} required
+                               title={CHARACTER_NAME_INPUT_TITLE}
                                type="text" value={character.name}/>
                     </fieldset>
 

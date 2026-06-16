@@ -155,6 +155,7 @@ describe('POST /login', () => {
                 profilePhotoKey: user.profile_photo_key,
                 bio: user.bio,
                 displayNsfwMedia: false,
+                lastSeenVersion: null,
                 createdAt: user.created_at,
             },
         })
@@ -242,6 +243,7 @@ async function createTestUser(password: string): Promise<UserRecord> {
         profile_photo_key: null,
         bio: '',
         display_nsfw_media: 0,
+        last_seen_version: null,
         created_at: '2026-06-10 12:00:00',
     }
 }

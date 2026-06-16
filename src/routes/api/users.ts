@@ -10,6 +10,7 @@ import {
     toSqlTimestamp,
     type UserRecord,
 } from '../../lib/auth/session'
+import {APP_VERSION} from '../../lib/releases'
 import {profilePhotoObjectKey, profilePhotoUrl} from '../../lib/media/url'
 import {
     PROFILE_IMAGE_MAX_REQUEST_BYTES,
@@ -41,6 +42,27 @@ type UpdateUserRequest = {
 const PASSWORD_HASH_ROUNDS = 10
 const BIO_MAX_LENGTH = 255
 export const userRoutes = new Hono<{ Bindings: Bindings }>()
+
+userRoutes.post('/me/release-view', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return c.json({error: 'Authentication required'}, 401)
+    }
+
+    await c.env.DB.prepare(
+        `UPDATE users
+         SET last_seen_version = ?
+         WHERE id = ?`,
+    )
+        .bind(APP_VERSION, currentUser.id)
+        .run()
+
+    return c.json({
+        ok: true,
+        version: APP_VERSION,
+    })
+})
 
 userRoutes.post('/me/profile-photo', async (c) => {
     const currentUser = await getCurrentUser(c)
@@ -268,6 +290,7 @@ userRoutes.post('/', async (c) => {
         profile_photo_key: null,
         bio: '',
         display_nsfw_media: 0,
+        last_seen_version: null,
         created_at: toSqlTimestamp(now),
     }
 

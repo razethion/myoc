@@ -753,18 +753,18 @@ describe('POST /characters', () => {
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
-            error: 'Character name may contain only letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses, and must start with a letter or number',
+            error: 'Character name may contain only letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses, and must include at least one letter or number',
         })
     })
 
-    it('returns 400 when the character name does not start with a letter or number', async () => {
+    it('returns 400 when the character name does not include a letter or number', async () => {
         const sessionToken = 'session-token'
         const {db} = createMockDb({
             firstResults: [currentUserRecord],
         })
 
         const response = await postCharacter({
-            name: '.Vyn',
+            name: '---',
         }, db, {
             sessionToken,
             csrfToken: await createCsrfToken(sessionToken),
@@ -772,7 +772,7 @@ describe('POST /characters', () => {
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
-            error: 'Character name may contain only letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses, and must start with a letter or number',
+            error: 'Character name may contain only letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses, and must include at least one letter or number',
         })
     })
 
@@ -873,6 +873,31 @@ describe('POST /characters', () => {
         expect(boundStatements[1]?.binds[3]).toBe(body.character.profileImageKey)
         expect(boundStatements[1]?.binds[4]).toBeNull()
         expect(boundStatements[1]?.binds[5]).toBe(0)
+    })
+
+    it('creates characters with allowed punctuation at the start and within the name', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postCharacter({
+            name: ' "Ivo" ',
+            folderId: 'root',
+            profileImageData: createWebpDataUrl(),
+        }, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(201)
+
+        const body = await response.json() as CharacterResponse
+        expect(body.character.name).toBe('"Ivo"')
+        expect(boundStatements[1]?.sql).toContain(['INSERT INTO', 'characters'].join(' '))
+        expect(boundStatements[1]?.binds[2]).toBe('"Ivo"')
     })
 
     it('creates a character with a profile image from the reference form fields', async () => {
@@ -1076,6 +1101,29 @@ describe('POST /characters', () => {
 })
 
 describe('PATCH /characters/:id', () => {
+    it('updates a character name with quoted text and hyphenated numbers', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+
+        const response = await patchCharacter(character.id, {
+            name: 'DRD-5548 "Ivo"',
+            description: 'Updated description',
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+
+        const body = await response.json() as CharacterResponse
+        expect(body.character.name).toBe('DRD-5548 "Ivo"')
+        expect(boundStatements.at(-1)?.sql).toContain('UPDATE characters')
+        expect(boundStatements.at(-1)?.binds[0]).toBe('DRD-5548 "Ivo"')
+    })
+
     it('returns 409 when renaming to another character name on the same account', async () => {
         const sessionToken = 'session-token'
         const character = createCharacterRecord()
