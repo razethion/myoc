@@ -178,6 +178,10 @@ describe('public page redirects', () => {
 
         expect(response.status).toBe(200)
         expect(html).toContain('<title>MyOC | High-Resolution Character Gallery</title>')
+        expect(html).toContain('MyOC is source available.')
+        expect(html).toContain('href="https://github.com/razethion/myoc"')
+        expect(html).toContain('home-loading-image')
+        expect(html).toContain('data-gallery-image-loader')
         expect(html).toContain('href="/u/demo"')
         expect(html).toContain('24')
         expect(html).toContain('128')

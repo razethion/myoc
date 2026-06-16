@@ -77,6 +77,12 @@ const differentiators = [
         title: 'Preference-aware galleries',
         body: 'Content controls let viewers decide what they want visible while allowing artists to host the work their characters need.'
     },
+    {
+        title: 'Source available',
+        body: 'MyOC is source available. Inspect how the gallery works and follow development in public.',
+        href: 'https://github.com/razethion/myoc',
+        linkLabel: 'View the code on GitHub',
+    },
 ]
 
 const LEARN_MORE_SECTION_ID = 'platform'
@@ -249,6 +255,38 @@ function HomePageStyles() {
                 transform: scale(1.04);
             }
 
+            .home-loading-media {
+                overflow: hidden;
+                position: relative;
+            }
+
+            .home-loading-image {
+                display: block;
+                opacity: 1;
+                transition:
+                    opacity 160ms ease,
+                    transform 260ms ease;
+            }
+
+            .home-loading-media.image-loading .home-loading-image {
+                opacity: 0.35;
+            }
+
+            .home-image-loader {
+                align-items: center;
+                background: color-mix(in oklab, var(--color-base-300) 65%, transparent);
+                display: none;
+                inset: 0;
+                justify-content: center;
+                pointer-events: none;
+                position: absolute;
+                z-index: 4;
+            }
+
+            .home-loading-media.image-loading .home-image-loader {
+                display: flex;
+            }
+
             .hero-prism::before {
                 content: "";
                 position: absolute;
@@ -274,6 +312,47 @@ function HomePageStyles() {
             }
         `}</style>
     )
+}
+
+function HomeImageLoader({size = 'loading-lg'}: { size?: string }) {
+    return (
+        <div aria-hidden="true" class="home-image-loader" data-gallery-image-loader>
+            <span class={`loading loading-spinner ${size} text-base-content`}></span>
+        </div>
+    )
+}
+
+function HomePageImageLoadingScript() {
+    const script = `
+function setHomeImageLoading(image, isLoading) {
+    const media = image.closest('.home-loading-media');
+    if (!media) return;
+    media.classList.toggle('image-loading', Boolean(isLoading));
+    const loader = media.querySelector('[data-gallery-image-loader]');
+    if (loader) loader.hidden = !isLoading;
+}
+
+function refreshHomeImageLoading(image) {
+    setHomeImageLoading(image, !(image.complete && image.naturalWidth > 0));
+}
+
+function initHomeImageLoading() {
+    document.querySelectorAll('.home-loading-image').forEach((image) => {
+        if (image.dataset.loadingBound === 'true') {
+            refreshHomeImageLoading(image);
+            return;
+        }
+        image.dataset.loadingBound = 'true';
+        image.addEventListener('load', () => setHomeImageLoading(image, false));
+        image.addEventListener('error', () => setHomeImageLoading(image, false));
+        refreshHomeImageLoading(image);
+    });
+}
+
+initHomeImageLoading();
+`
+
+    return <script dangerouslySetInnerHTML={{__html: script}}></script>
 }
 
 export function HomePage({currentUser, discoverCharacters, guestInitial, mediaBaseUrl, siteUrl, stats}: HomePageProps) {
@@ -321,7 +400,15 @@ export function HomePage({currentUser, discoverCharacters, guestInitial, mediaBa
 
                         <div class="glass-preview-card rounded-3xl p-4">
                             <div class="relative">
-                                <img alt="Character artwork preview" class="aspect-4/5 w-full rounded-2xl object-cover" src="/assets/razfalling.png" />
+                                <div class="home-loading-media image-loading aspect-4/5 w-full rounded-2xl bg-base-300">
+                                    <img
+                                        alt="Character artwork preview"
+                                        class="home-loading-image h-full w-full object-cover"
+                                        decoding="async"
+                                        src="/assets/razfalling.png"
+                                    />
+                                    <HomeImageLoader/>
+                                </div>
                                 <div class="absolute bottom-3 right-3 w-32 rounded-2xl border border-cyan-100/30 bg-base-100/80 p-2 shadow-xl backdrop-blur-md sm:bottom-4 sm:right-4 sm:w-56">
                                     <div
                                         aria-hidden="true"
@@ -377,25 +464,32 @@ export function HomePage({currentUser, discoverCharacters, guestInitial, mediaBa
 
                                         return (
                                             <a class="discover-card group overflow-hidden rounded-3xl border border-base-300 shadow-xl" href={characterUrl(character)}>
-                                                <div class="relative aspect-4/3 overflow-hidden bg-base-300">
+                                                <div class="home-loading-media image-loading aspect-4/3 bg-base-300">
                                                     <img
                                                         alt={`${character.name} gallery preview by ${artist}`}
-                                                        class="h-full w-full object-cover"
+                                                        class="home-loading-image h-full w-full object-cover"
+                                                        decoding="async"
                                                         loading="lazy"
                                                         src={previewUrl}
                                                     />
+                                                    <HomeImageLoader/>
                                                     <div class="absolute inset-x-0 bottom-0 bg-linear-to-t from-black/80 to-transparent p-4 text-white">
                                                         <p class="text-xs font-bold uppercase tracking-[0.2em] text-white/70">Featured gallery</p>
                                                         <p class="mt-1 text-sm font-semibold">{formatCount(character.imageCount)} images</p>
                                                     </div>
                                                 </div>
                                                 <div class="flex items-center gap-4 p-5">
-                                                    <img
-                                                        alt={`${character.name} profile image`}
-                                                        class="h-14 w-14 rounded-2xl object-cover ring-1 ring-base-300"
-                                                        loading="lazy"
-                                                        src={profileImageUrl}
-                                                    />
+                                                    <div
+                                                        class="home-loading-media image-loading h-14 w-14 shrink-0 rounded-2xl bg-base-300 ring-1 ring-base-300">
+                                                        <img
+                                                            alt={`${character.name} profile image`}
+                                                            class="home-loading-image h-full w-full object-cover"
+                                                            decoding="async"
+                                                            loading="lazy"
+                                                            src={profileImageUrl}
+                                                        />
+                                                        <HomeImageLoader size="loading-sm"/>
+                                                    </div>
                                                     <div class="min-w-0">
                                                         <h3 class="truncate text-xl font-black">{character.name}</h3>
                                                         <p class="truncate text-sm opacity-70">by @{character.ownerUsername}</p>
@@ -438,7 +532,8 @@ export function HomePage({currentUser, discoverCharacters, guestInitial, mediaBa
 
                     <section class="px-4 pb-20 sm:px-6 lg:px-8">
                         <div class="mx-auto grid max-w-7xl gap-8 lg:grid-cols-[0.85fr_1.15fr] lg:items-start">
-                            <div class="sticky top-24 rounded-3xl border border-base-300 bg-base-100/75 p-6 shadow-xl backdrop-blur">
+                            <div
+                                class="rounded-3xl border border-base-300 bg-base-100/75 p-6 shadow-xl backdrop-blur lg:sticky lg:top-24">
                                 <span class="badge badge-secondary badge-lg">Workflow</span>
                                 <h2 class="mt-5 text-3xl font-black tracking-tight sm:text-4xl">From loose uploads to a usable reference system.</h2>
                                 <p class="mt-4 leading-7 opacity-75">
@@ -484,6 +579,10 @@ export function HomePage({currentUser, discoverCharacters, guestInitial, mediaBa
                                             <div class="mb-5 h-1.5 w-14 rounded-full bg-linear-to-r from-primary via-secondary to-accent"></div>
                                             <h3 class="text-xl font-black">{item.title}</h3>
                                             <p class="mt-3 leading-7 opacity-75">{item.body}</p>
+                                            {'href' in item && (
+                                                <a class="btn btn-outline btn-sm mt-5" href={item.href} rel="noreferrer"
+                                                   target="_blank">{item.linkLabel}</a>
+                                            )}
                                         </article>
                                     ))}
                                 </div>
@@ -502,7 +601,7 @@ export function HomePage({currentUser, discoverCharacters, guestInitial, mediaBa
                                     </p>
                                 </div>
                                 <div class="rounded-3xl border border-white/10 bg-white/5 p-6">
-                                    <div class="grid grid-cols-3 gap-3 text-center">
+                                    <div class="grid gap-3 text-center sm:grid-cols-3">
                                         {platformStats.map((stat) => (
                                             <div class="rounded-2xl bg-black/20 p-4">
                                                 <p class="text-2xl font-black">{stat.value}</p>
@@ -517,6 +616,7 @@ export function HomePage({currentUser, discoverCharacters, guestInitial, mediaBa
                     </section>
                 </div>
             </main>
+            <HomePageImageLoadingScript/>
         </BaseLayout>
     )
 }
