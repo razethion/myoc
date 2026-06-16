@@ -36,8 +36,9 @@ export function characterMediaImageObjectKey(
     mediaId: string,
     imageKey: string,
     rating: 'sfw' | 'nsfw',
+    contentType: string | null | undefined = 'image/png',
 ): string {
-    return `characters/${userId}/${characterId}/media/${mediaId}/${rating}/${imageKey}.png`
+    return `characters/${userId}/${characterId}/media/${mediaId}/${rating}/${imageKey}.${extensionForImageContentType(contentType)}`
 }
 
 export function characterMediaImageUrl(
@@ -47,6 +48,23 @@ export function characterMediaImageUrl(
     mediaId: string,
     imageKey: string,
     rating: 'sfw' | 'nsfw',
+    contentType: string | null | undefined = 'image/png',
 ): string {
-    return mediaUrlForKey(baseUrl, characterMediaImageObjectKey(userId, characterId, mediaId, imageKey, rating))
+    return mediaUrlForKey(baseUrl, characterMediaImageObjectKey(userId, characterId, mediaId, imageKey, rating, contentType))
+}
+
+export function extensionForImageContentType(contentType: string | null | undefined): string {
+    switch ((contentType ?? 'image/png').toLowerCase()) {
+        case 'image/jpeg':
+            return 'jpg'
+        case 'image/gif':
+            return 'gif'
+        case 'image/webp':
+            return 'webp'
+        case 'image/avif':
+            return 'avif'
+        case 'image/png':
+        default:
+            return 'png'
+    }
 }

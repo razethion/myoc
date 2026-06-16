@@ -28,7 +28,9 @@ import {NotFoundPage} from '../views/pages/NotFoundPage'
 import {ProfilePage, type ProfilePageUser} from '../views/pages/ProfilePage'
 import {SearchPage} from '../views/pages/SearchPage'
 import {UserSettingsPage} from '../views/pages/UserSettingsPage'
+import {WhatsNewPage} from '../views/pages/WhatsNewPage'
 import {searchAll} from '../lib/search'
+import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 
 export const pageRoutes = new Hono<{ Bindings: Bindings }>()
 
@@ -231,6 +233,34 @@ pageRoutes.get('/search', async (c) => {
     )
 })
 
+pageRoutes.get('/whats-new', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    if (currentUser && currentUser.lastSeenVersion !== APP_VERSION) {
+        await markCurrentVersionSeen(c.env.DB, currentUser.id)
+        currentUser.lastSeenVersion = APP_VERSION
+    }
+
+    return c.html(
+        <WhatsNewPage
+            currentUser={currentUser}
+            guestInitial={getRandomLetter()}
+            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+            releases={RELEASE_NOTES}
+        />,
+    )
+})
+
+async function markCurrentVersionSeen(db: D1Database, userId: string): Promise<void> {
+    await db.prepare(
+        `UPDATE users
+         SET last_seen_version = ?
+         WHERE id = ?`,
+    )
+        .bind(APP_VERSION, userId)
+        .run()
+}
+
 pageRoutes.get('/u/:username/:profilePath{.+}', async (c) => {
     return renderProfilePage(c, c.req.param('username'), c.req.param('profilePath'))
 })
@@ -339,10 +369,11 @@ async function getCachedDiscoverCharacters(cache: KVNamespace | undefined, db: D
 async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCharacter[]> {
     const result = await db.prepare(
         `WITH approved_sfw_media AS (SELECT id,
-                                            character_id,
-                                            sfw_image_key,
-                                            sfw_artist,
-                                            sfw_homepage_allowed
+              character_id,
+              sfw_image_key,
+              sfw_content_type,
+              sfw_artist,
+              sfw_homepage_allowed
                                      FROM character_media
                                      WHERE sfw_image_key IS NOT NULL
                                        AND sfw_review_status = 'approved'
@@ -389,6 +420,7 @@ async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCh
                 eligible_characters.image_count,
                 preview_media.id AS preview_media_id,
                 preview_media.sfw_image_key AS preview_image_key,
+                preview_media.sfw_content_type AS preview_content_type,
                 preview_media.sfw_artist AS preview_artist
          FROM eligible_characters
                   INNER JOIN approved_sfw_media AS preview_media
@@ -410,6 +442,7 @@ async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCh
             image_count: number | string
             preview_media_id: string
             preview_image_key: string
+            preview_content_type: string | null
             preview_artist: string | null
         }>()
 
@@ -421,6 +454,7 @@ async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCh
         profileImageKey: character.profile_image_key,
         previewMediaId: character.preview_media_id,
         previewImageKey: character.preview_image_key,
+        previewContentType: character.preview_content_type ?? 'image/png',
         previewArtist: character.preview_artist ?? '',
         imageCount: Number(character.image_count) || 0,
     }))
@@ -765,6 +799,8 @@ async function getCharacterSettingsMedia(
         `SELECT id,
                 sfw_image_key,
                 nsfw_image_key,
+                sfw_content_type,
+                nsfw_content_type,
                 sfw_artist,
                 nsfw_artist,
                 sfw_width,
@@ -781,6 +817,8 @@ async function getCharacterSettingsMedia(
             id: string
             sfw_image_key: string | null
             nsfw_image_key: string | null
+            sfw_content_type: string | null
+            nsfw_content_type: string | null
             sfw_artist: string
             nsfw_artist: string
             sfw_width: number | null
@@ -793,6 +831,8 @@ async function getCharacterSettingsMedia(
         id: media.id,
         sfwImageKey: media.sfw_image_key,
         nsfwImageKey: media.nsfw_image_key,
+        sfwContentType: media.sfw_content_type ?? (media.sfw_image_key ? 'image/png' : null),
+        nsfwContentType: media.nsfw_content_type ?? (media.nsfw_image_key ? 'image/png' : null),
         sfwArtist: media.sfw_artist,
         nsfwArtist: media.nsfw_artist,
         sfwWidth: media.sfw_width,

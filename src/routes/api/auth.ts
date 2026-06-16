@@ -62,6 +62,7 @@ authRoutes.post('/login', async (c) => {
                 profile_photo_key,
                 bio,
                 display_nsfw_media,
+                last_seen_version,
                 created_at,
                 banned_at
          FROM users

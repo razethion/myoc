@@ -1,4 +1,5 @@
 import type {CurrentUser} from '../../lib/auth/session'
+import {APP_VERSION} from '../../lib/releases'
 import {profilePhotoUrl} from '../../lib/media/url'
 
 type NavbarProps = {
@@ -6,6 +7,8 @@ type NavbarProps = {
     guestInitial?: string
     mediaBaseUrl: string
 }
+
+const LAST_SEEN_VERSION_STORAGE_KEY = 'myoc:lastSeenVersion'
 
 export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarProps) {
     const avatarName = currentUser?.username ?? guestInitial
@@ -26,6 +29,8 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
         </form>
     )
 
+    const shouldShowVersionNotification = Boolean(currentUser && currentUser.lastSeenVersion !== APP_VERSION)
+
     return (
         <header class="sticky top-0 z-50 border-b border-base-300 bg-base-200/95 px-4 py-2 backdrop-blur sm:px-6">
             <div class="navbar min-h-0 p-0">
@@ -36,7 +41,6 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
                 <div class="mx-3 hidden w-full max-w-md flex-none md:block">
                     {search}
                 </div>
-
                 <div class="flex-none">
                     {currentUser ? (
                         <details class="dropdown dropdown-end">
@@ -50,6 +54,7 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
                             <ul class="menu dropdown-content bg-base-100 rounded-box z-50 mt-3 w-56 p-2 shadow">
                                 <li><a href={`/u/${encodeURIComponent(currentUser.username)}`}>Profile</a></li>
                                 <li><a href="/characters">Characters</a></li>
+                                <li><a href="/whats-new">What's new</a></li>
                                 {currentUser.role === 'admin' && (
                                     <li><a href="/admin">Admin</a></li>
                                 )}
@@ -73,6 +78,127 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
             <div class="mt-2 md:hidden">
                 {search}
             </div>
+
+            <div class="mt-2 flex justify-end sm:hidden">
+                <a class="btn btn-ghost btn-xs" href="/whats-new">What's new</a>
+            </div>
+
+            <VersionNotification
+                csrfToken={currentUser?.csrfToken ?? null}
+                isAuthenticated={Boolean(currentUser)}
+                showInitially={shouldShowVersionNotification}
+            />
         </header>
     )
+}
+
+function VersionNotification({
+                                 csrfToken,
+                                 isAuthenticated,
+                                 showInitially,
+                             }: {
+    csrfToken: string | null
+    isAuthenticated: boolean
+    showInitially: boolean
+}) {
+    return (
+        <>
+            <div
+                class={`mt-2 rounded border border-primary/35 bg-primary/10 px-3 py-2 text-sm ${showInitially ? '' : 'hidden'}`}
+                data-authenticated={isAuthenticated ? 'true' : 'false'}
+                data-version-notification
+            >
+                <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <p class="font-semibold">New in v{APP_VERSION}</p>
+                    <div class="flex items-center gap-2">
+                        <a class="btn btn-primary btn-xs" href="/whats-new" data-version-notification-link>What's
+                            new</a>
+                        <button
+                            aria-label="Dismiss version notification"
+                            class="btn btn-ghost btn-xs btn-square"
+                            data-version-notification-dismiss
+                            type="button"
+                        >
+                            x
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <VersionNotificationScript csrfToken={csrfToken} isAuthenticated={isAuthenticated}/>
+        </>
+    )
+}
+
+function VersionNotificationScript({
+                                       csrfToken,
+                                       isAuthenticated,
+                                   }: {
+    csrfToken: string | null
+    isAuthenticated: boolean
+}) {
+    const script = `
+(function () {
+    const appVersion = ${JSON.stringify(APP_VERSION)};
+    const storageKey = ${JSON.stringify(LAST_SEEN_VERSION_STORAGE_KEY)};
+    const isAuthenticated = ${JSON.stringify(isAuthenticated)};
+    const csrfToken = ${JSON.stringify(csrfToken)};
+    const notification = document.querySelector('[data-version-notification]');
+
+    function markLocalSeen() {
+        try {
+            window.localStorage.setItem(storageKey, appVersion);
+        } catch {}
+    }
+
+    async function markRemoteSeen() {
+        if (!isAuthenticated || !csrfToken) return;
+
+        try {
+            await fetch('/api/users/me/release-view', {
+                method: 'POST',
+                headers: {
+                    'content-type': 'application/json',
+                    'x-csrf-token': csrfToken,
+                },
+                body: JSON.stringify({version: appVersion}),
+            });
+        } catch {}
+    }
+
+    function hideNotification() {
+        if (notification) {
+            notification.classList.add('hidden');
+        }
+    }
+
+    if (window.location.pathname === '/whats-new') {
+        markLocalSeen();
+        hideNotification();
+        return;
+    }
+
+    if (!isAuthenticated && notification) {
+        try {
+            if (window.localStorage.getItem(storageKey) !== appVersion) {
+                notification.classList.remove('hidden');
+            }
+        } catch {
+            notification.classList.remove('hidden');
+        }
+    }
+
+    document.querySelector('[data-version-notification-dismiss]')?.addEventListener('click', () => {
+        markLocalSeen();
+        hideNotification();
+        void markRemoteSeen();
+    });
+
+    document.querySelector('[data-version-notification-link]')?.addEventListener('click', () => {
+        markLocalSeen();
+        void markRemoteSeen();
+    });
+})();
+`
+
+    return <script dangerouslySetInnerHTML={{__html: script}}></script>
 }

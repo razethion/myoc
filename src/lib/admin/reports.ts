@@ -37,6 +37,8 @@ type ReportedMediaRow = {
     character_name: string
     sfw_image_key: string | null
     nsfw_image_key: string | null
+    sfw_content_type: string | null
+    nsfw_content_type: string | null
     sfw_review_status: string
     nsfw_review_status: string
     sfw_reviewed_at: string | null
@@ -56,6 +58,8 @@ export async function getAdminReportsData(db: D1Database, mediaBaseUrl: string):
                 characters.name AS character_name,
                 character_media.sfw_image_key,
                 character_media.nsfw_image_key,
+                character_media.sfw_content_type,
+                character_media.nsfw_content_type,
                 character_media.sfw_review_status,
                 character_media.nsfw_review_status,
                 character_media.sfw_reviewed_at,
@@ -110,11 +114,11 @@ function toImageReports(row: ReportedMediaRow, mediaBaseUrl: string): AdminImage
     const reports: AdminImageReport[] = []
 
     if (row.sfw_image_key && row.sfw_review_status === 'reported') {
-        reports.push(toImageReport(row, mediaBaseUrl, 'sfw', row.sfw_image_key, row.sfw_reviewed_at, row.sfw_reported_by_username))
+        reports.push(toImageReport(row, mediaBaseUrl, 'sfw', row.sfw_image_key, row.sfw_content_type, row.sfw_reviewed_at, row.sfw_reported_by_username))
     }
 
     if (row.nsfw_image_key && row.nsfw_review_status === 'reported') {
-        reports.push(toImageReport(row, mediaBaseUrl, 'nsfw', row.nsfw_image_key, row.nsfw_reviewed_at, row.nsfw_reported_by_username))
+        reports.push(toImageReport(row, mediaBaseUrl, 'nsfw', row.nsfw_image_key, row.nsfw_content_type, row.nsfw_reviewed_at, row.nsfw_reported_by_username))
     }
 
     return reports
@@ -125,6 +129,7 @@ function toImageReport(
     mediaBaseUrl: string,
     rating: 'sfw' | 'nsfw',
     imageKey: string,
+    contentType: string | null,
     reportedAt: string | null,
     reportedByUsername: string | null,
 ): AdminImageReport {
@@ -133,8 +138,8 @@ function toImageReport(
         id: `${row.id}:${rating}`,
         mediaId: row.id,
         rating,
-        imageUrl: characterMediaImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, imageKey, rating),
-        objectKey: characterMediaImageObjectKey(row.user_id, row.character_id, row.id, imageKey, rating),
+        imageUrl: characterMediaImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, imageKey, rating, contentType),
+        objectKey: characterMediaImageObjectKey(row.user_id, row.character_id, row.id, imageKey, rating, contentType),
         reviewStatus: 'reported',
         reportedAt: reportedAt ?? '',
         reportedByUsername,

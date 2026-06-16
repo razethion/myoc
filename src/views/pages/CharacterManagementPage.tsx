@@ -70,6 +70,9 @@ function formatCount(count: number, singular: string, plural = `${singular}s`): 
     return `${count} ${count === 1 ? singular : plural}`
 }
 
+const CHARACTER_NAME_INPUT_PATTERN = String.raw`(?=.*[A-Za-z0-9])[A-Za-z0-9 _'.\(\)"\-]+`
+const CHARACTER_NAME_INPUT_TITLE = 'Use letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses. Include at least one letter or number.'
+
 function CharacterManagementStyles() {
     return (
         <style>{`
@@ -927,8 +930,8 @@ export function CharacterManagementPage({
                         <fieldset class="fieldset">
                             <label class="fieldset-label" for="new-character-name">Character Name</label>
                             <input class="input input-bordered w-full" id="new-character-name" maxLength={80}
-                                   pattern={"[A-Za-z0-9][A-Za-z0-9 _'.()\"-]*"} required
-                                   title="Use letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses. Start with a letter or number."
+                                   pattern={CHARACTER_NAME_INPUT_PATTERN} required
+                                   title={CHARACTER_NAME_INPUT_TITLE}
                                    type="text"/>
                         </fieldset>
                         <fieldset class="fieldset">

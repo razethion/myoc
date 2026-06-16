@@ -17,6 +17,8 @@ export type CharacterPageMedia = {
     id: string
     sfwImageKey: string | null
     nsfwImageKey: string | null
+    sfwContentType: string | null
+    nsfwContentType: string | null
     sfwArtist: string
     nsfwArtist: string
     sfwWidth: number | null
@@ -112,6 +114,7 @@ function displayMediaFor(
             media.id,
             imageKey,
             useNsfw ? 'nsfw' : 'sfw',
+            useNsfw ? media.nsfwContentType : media.sfwContentType,
         ),
         displayWidth: width && width > 0 ? width : 1,
         isNsfw: useNsfw,
@@ -119,7 +122,7 @@ function displayMediaFor(
         nsfwArtist,
         nsfwDisplayHeight: media.nsfwHeight && media.nsfwHeight > 0 ? media.nsfwHeight : null,
         nsfwDisplayUrl: media.nsfwImageKey
-            ? characterMediaImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwImageKey, 'nsfw')
+            ? characterMediaImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwImageKey, 'nsfw', media.nsfwContentType)
             : null,
         nsfwDisplayWidth: media.nsfwWidth && media.nsfwWidth > 0 ? media.nsfwWidth : null,
         nsfwImageAlt: media.nsfwImageKey
