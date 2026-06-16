@@ -11,6 +11,7 @@ export type UserRecord = {
     profile_photo_key: string | null
     bio: string
     display_nsfw_media: number
+    last_seen_version: string | null
     created_at: string
 }
 
@@ -24,6 +25,7 @@ export type CurrentUser = {
     profilePhotoKey: string | null
     bio: string
     displayNsfwMedia: boolean
+    lastSeenVersion: string | null
     csrfToken: string
 }
 
@@ -71,7 +73,8 @@ export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promis
                 users.role,
                 users.profile_photo_key,
                 users.bio,
-                users.display_nsfw_media
+                users.display_nsfw_media,
+                users.last_seen_version
          FROM sessions
          INNER JOIN users ON users.id = sessions.user_id
          WHERE sessions.session_hash = ?
@@ -88,6 +91,7 @@ export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promis
             profile_photo_key: string | null
             bio: string
             display_nsfw_media: number
+            last_seen_version: string | null
         }>()
 
     if (!user) {
@@ -102,6 +106,7 @@ export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promis
         profilePhotoKey: user.profile_photo_key,
         bio: user.bio,
         displayNsfwMedia: Boolean(user.display_nsfw_media),
+        lastSeenVersion: user.last_seen_version ?? null,
         csrfToken: await createCsrfToken(sessionToken),
     }
 }
@@ -160,6 +165,7 @@ export function toPublicUser(user: UserRecord) {
         profilePhotoKey: user.profile_photo_key,
         bio: user.bio,
         displayNsfwMedia: Boolean(user.display_nsfw_media),
+        lastSeenVersion: user.last_seen_version ?? null,
         createdAt: user.created_at,
     }
 }

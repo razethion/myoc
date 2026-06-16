@@ -16,6 +16,8 @@ export type CharacterSettingsMedia = {
     id: string
     sfwImageKey: string | null
     nsfwImageKey: string | null
+    sfwContentType: string | null
+    nsfwContentType: string | null
     sfwArtist: string
     nsfwArtist: string
     sfwWidth: number | null
@@ -41,6 +43,9 @@ type CharacterSettingsPageProps = {
     mediaBaseUrl: string
 }
 
+const CHARACTER_NAME_INPUT_PATTERN = String.raw`(?=.*[A-Za-z0-9])[A-Za-z0-9 _'.\(\)"\-]+`
+const CHARACTER_NAME_INPUT_TITLE = 'Use letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses. Include at least one letter or number.'
+
 function safeJson(value: unknown): string {
     return JSON.stringify(value)
         .replace(/</g, '\\u003c')
@@ -54,10 +59,10 @@ function mediaWithUrls(mediaBaseUrl: string, character: CharacterSettingsCharact
     return {
         ...media,
         sfwImageUrl: media.sfwImageKey
-            ? characterMediaImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.sfwImageKey, 'sfw')
+            ? characterMediaImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.sfwImageKey, 'sfw', media.sfwContentType)
             : null,
         nsfwImageUrl: media.nsfwImageKey
-            ? characterMediaImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwImageKey, 'nsfw')
+            ? characterMediaImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwImageKey, 'nsfw', media.nsfwContentType)
             : null,
     }
 }
@@ -677,13 +682,15 @@ function renderFilePreview(input, preview, emptyText) {
     renderImagePreview(preview, file && file.type.startsWith('image/') ? URL.createObjectURL(file) : '', emptyText);
 }
 
-async function convertImageFileToPng(file) {
+const allowedGalleryImageTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'];
+
+async function prepareOriginalImageFile(file) {
     if (!file) return null;
     if (!file.type.startsWith('image/')) {
-        throw new Error('Choose an image file. PNG, JPG, WebP, GIF, AVIF, and other browser-supported image files are accepted.');
+        throw new Error('Choose an image file. PNG, JPG, WebP, GIF, and AVIF are accepted.');
     }
-    if (file.type === 'image/png') {
-        return file;
+    if (!allowedGalleryImageTypes.includes(file.type)) {
+        throw new Error('Choose a PNG, JPG, WebP, GIF, or AVIF image.');
     }
     let bitmap;
     try {
@@ -691,45 +698,38 @@ async function convertImageFileToPng(file) {
     } catch {
         throw new Error('Could not read this image. Try PNG, JPG, WebP, GIF, or AVIF.');
     }
-    const canvas = document.createElement('canvas');
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    const context = canvas.getContext('2d', { alpha: true, colorSpace: 'srgb' }) || canvas.getContext('2d');
-    context.drawImage(bitmap, 0, 0);
+    const image = {
+        file,
+        contentType: file.type,
+        width: bitmap.width,
+        height: bitmap.height
+    };
     bitmap.close();
-    return await new Promise((resolve, reject) => {
-        canvas.toBlob((blob) => {
-            if (!blob) {
-                reject(new Error('Unable to convert image to PNG'));
-                return;
-            }
-            resolve(new File([blob], file.name.replace(/\\.[^.]+$/, '') + '.png', { type: 'image/png' }));
-        }, 'image/png');
-    });
+    return image;
 }
 
 async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}) {
-    const [sfwPng, nsfwPng] = await Promise.all([
-        sfwFile ? convertImageFileToPng(sfwFile) : null,
-        nsfwFile ? convertImageFileToPng(nsfwFile) : null
+    const [sfwImage, nsfwImage] = await Promise.all([
+        sfwFile ? prepareOriginalImageFile(sfwFile) : null,
+        nsfwFile ? prepareOriginalImageFile(nsfwFile) : null
     ]);
-    const ratings = [];
-    if (sfwPng) ratings.push('sfw');
-    if (nsfwPng) ratings.push('nsfw');
-    if (ratings.length === 0) throw new Error('At least one image is required.');
+    const uploads = [];
+    if (sfwImage) uploads.push({ rating: 'sfw', contentType: sfwImage.contentType });
+    if (nsfwImage) uploads.push({ rating: 'nsfw', contentType: nsfwImage.contentType });
+    if (uploads.length === 0) throw new Error('At least one image is required.');
 
     const initResult = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/chunked/init', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ratings })
+        body: JSON.stringify({ uploads })
     });
     const completeBody = {
         mediaId: initResult.mediaId,
         sfwArtist: sfwArtist || '',
         nsfwArtist: nsfwArtist || ''
     };
-    if (sfwPng) completeBody.sfwUpload = await uploadChunkedPng(initResult.mediaId, 'sfw', sfwPng, initResult.uploads.sfw);
-    if (nsfwPng) completeBody.nsfwUpload = await uploadChunkedPng(initResult.mediaId, 'nsfw', nsfwPng, initResult.uploads.nsfw);
+    if (sfwImage) completeBody.sfwUpload = await uploadChunkedImage(initResult.mediaId, 'sfw', sfwImage, initResult.uploads.sfw);
+    if (nsfwImage) completeBody.nsfwUpload = await uploadChunkedImage(initResult.mediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw);
 
     const result = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/chunked/complete', {
         method: 'POST',
@@ -744,21 +744,23 @@ async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}) {
     return result.media;
 }
 
-async function uploadChunkedPng(mediaId, rating, file, upload) {
+async function uploadChunkedImage(mediaId, rating, image, upload) {
     if (!upload) throw new Error('Upload could not be initialized.');
+    const file = image.file;
     const chunkSize = upload.chunkSize || (8 * 1024 * 1024);
     const parts = [];
     let partNumber = 1;
 
     for (let offset = 0; offset < file.size; offset += chunkSize) {
-        const chunk = file.slice(offset, Math.min(offset + chunkSize, file.size), 'image/png');
+        const chunk = file.slice(offset, Math.min(offset + chunkSize, file.size), image.contentType);
         const part = await apiFetch(
             '/api/characters/' + encodeURIComponent(character.id)
             + '/media/chunked/' + encodeURIComponent(mediaId)
             + '/' + encodeURIComponent(rating)
             + '/' + encodeURIComponent(upload.uploadId)
             + '/' + encodeURIComponent(String(partNumber))
-            + '?imageKey=' + encodeURIComponent(upload.imageKey),
+            + '?imageKey=' + encodeURIComponent(upload.imageKey)
+            + '&contentType=' + encodeURIComponent(image.contentType),
             {
                 method: 'PUT',
                 body: chunk
@@ -771,6 +773,9 @@ async function uploadChunkedPng(mediaId, rating, file, upload) {
     return {
         uploadId: upload.uploadId,
         imageKey: upload.imageKey,
+        contentType: image.contentType,
+        width: image.width,
+        height: image.height,
         parts
     };
 }
@@ -1043,19 +1048,19 @@ editImageArtistForm.addEventListener('submit', async (event) => {
     const submitButton = editImageArtistForm.querySelector('button[type="submit"]');
     try {
         setLoading(submitButton, true, 'Saving...');
-        const [sfwPng, nsfwPng] = await Promise.all([
-            editImageSfwFileInput.files[0] ? convertImageFileToPng(editImageSfwFileInput.files[0]) : null,
-            editImageNsfwFileInput.files[0] ? convertImageFileToPng(editImageNsfwFileInput.files[0]) : null
+        const [sfwImage, nsfwImage] = await Promise.all([
+            editImageSfwFileInput.files[0] ? prepareOriginalImageFile(editImageSfwFileInput.files[0]) : null,
+            editImageNsfwFileInput.files[0] ? prepareOriginalImageFile(editImageNsfwFileInput.files[0]) : null
         ]);
-        const ratings = [];
-        if (sfwPng) ratings.push('sfw');
-        if (nsfwPng) ratings.push('nsfw');
-        const hasUploads = ratings.length > 0;
+        const uploads = [];
+        if (sfwImage) uploads.push({ rating: 'sfw', contentType: sfwImage.contentType });
+        if (nsfwImage) uploads.push({ rating: 'nsfw', contentType: nsfwImage.contentType });
+        const hasUploads = uploads.length > 0;
         const initResult = hasUploads
             ? await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/' + encodeURIComponent(editTargetMediaId) + '/chunked/init', {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ ratings })
+                body: JSON.stringify({ uploads })
             })
             : null;
         const completeBody = {
@@ -1064,8 +1069,8 @@ editImageArtistForm.addEventListener('submit', async (event) => {
             removeSfw: editRemoveSfw,
             removeNsfw: editRemoveNsfw
         };
-        if (initResult && sfwPng) completeBody.sfwUpload = await uploadChunkedPng(editTargetMediaId, 'sfw', sfwPng, initResult.uploads.sfw);
-        if (initResult && nsfwPng) completeBody.nsfwUpload = await uploadChunkedPng(editTargetMediaId, 'nsfw', nsfwPng, initResult.uploads.nsfw);
+        if (initResult && sfwImage) completeBody.sfwUpload = await uploadChunkedImage(editTargetMediaId, 'sfw', sfwImage, initResult.uploads.sfw);
+        if (initResult && nsfwImage) completeBody.nsfwUpload = await uploadChunkedImage(editTargetMediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw);
         const result = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/' + encodeURIComponent(editTargetMediaId) + '/chunked/complete', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
@@ -1298,8 +1303,8 @@ export function CharacterSettingsPage({
                     <fieldset class="fieldset">
                         <label class="fieldset-label" for="character-name">Character Name</label>
                         <input class="input input-bordered w-full" id="character-name" maxLength={80}
-                               name="character-name" pattern={"[A-Za-z0-9][A-Za-z0-9 _'.()\"-]*"} required
-                               title="Use letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses. Start with a letter or number."
+                               name="character-name" pattern={CHARACTER_NAME_INPUT_PATTERN} required
+                               title={CHARACTER_NAME_INPUT_TITLE}
                                type="text" value={character.name}/>
                     </fieldset>
 
@@ -1391,7 +1396,8 @@ function UploadDialog() {
                 <form method="dialog"><button aria-label="Close upload dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button></form>
                 <h2 class="text-xl font-bold">Upload Image</h2>
                 <form class="mt-5 space-y-4" id="upload-image-form">
-                    <p class="text-sm text-base-content/70">PNG, JPG, WebP, GIF, AVIF, and other browser-supported images are accepted. Files are stored as original-dimension PNGs.</p>
+                    <p class="text-sm text-base-content/70">PNG, JPG, WebP, GIF, and AVIF images are accepted. Files are
+                        stored unmodified.</p>
                     <div class="grid gap-3 sm:grid-cols-2">
                         <fieldset class="fieldset rounded border border-base-300 bg-base-200 p-3">
                             <label class="fieldset-label" for="gallery-image-sfw-file">SFW</label>
@@ -1505,7 +1511,8 @@ function MediaDialogs({characterName}: { characterName: string }) {
                     <form method="dialog"><button aria-label="Close artist dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button></form>
                     <h2 class="text-xl font-bold">Edit Image</h2>
                     <form class="mt-5 space-y-4" id="edit-image-artist-form">
-                        <p class="text-sm text-base-content/70">PNG, JPG, WebP, GIF, AVIF, and other browser-supported replacements are accepted. Files are stored as original-dimension PNGs.</p>
+                        <p class="text-sm text-base-content/70">PNG, JPG, WebP, GIF, and AVIF replacements are accepted.
+                            Files are stored unmodified.</p>
                         <div class="grid gap-3 sm:grid-cols-2">
                             <fieldset class="fieldset rounded border border-base-300 bg-base-200 p-3">
                                 <label class="fieldset-label" for="edit-gallery-image-sfw-file">SFW</label>
