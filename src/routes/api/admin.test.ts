@@ -189,10 +189,10 @@ describe('POST /admin/image-approvals/:mediaId', () => {
         expect(response.status).toBe(200)
         expect(db.batch).toHaveBeenCalledTimes(1)
         expect(boundStatements[2]?.sql).toContain('UPDATE character_media')
-        expect(boundStatements[2]?.binds[10]).toBe(1)
-        expect(boundStatements[2]?.binds[11]).toBe('approved')
-        expect(boundStatements[2]?.binds[16]).toBe(1)
-        expect(boundStatements[2]?.binds[17]).toBe(1)
+        expect(boundStatements[2]?.binds[12]).toBe(1)
+        expect(boundStatements[2]?.binds[13]).toBe('approved')
+        expect(boundStatements[2]?.binds[18]).toBe(1)
+        expect(boundStatements[2]?.binds[19]).toBe(1)
         expect(boundStatements[3]?.sql).toContain(['INSERT INTO', 'character_media_review_events'].join(' '))
         expect(boundStatements[3]?.binds[3]).toBe('approve_sfw_homepage')
     })
@@ -222,8 +222,8 @@ describe('POST /admin/image-approvals/:mediaId', () => {
         expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png')
         expect(boundStatements[2]?.binds[0]).toBeNull()
         expect(boundStatements[2]?.binds[1]).toBe('sfw-key')
-        expect(boundStatements[2]?.binds[18]).toBe(1)
-        expect(boundStatements[2]?.binds[19]).toBe('approved')
+        expect(boundStatements[2]?.binds[20]).toBe(1)
+        expect(boundStatements[2]?.binds[21]).toBe('approved')
         expect(boundStatements[3]?.binds[3]).toBe('mark_nsfw')
     })
 })
@@ -286,6 +286,8 @@ describe('POST /admin/reports/images/:mediaId/:rating/:action', () => {
                     character_id: 'character-1',
                     sfw_image_key: 'sfw-key',
                     nsfw_image_key: null,
+                    sfw_content_type: 'image/png',
+                    nsfw_content_type: null,
                 }],
                 [],
             ],
@@ -313,6 +315,8 @@ function createImageApprovalQueueRow() {
         character_name: 'Quartz',
         sfw_image_key: 'sfw-key',
         nsfw_image_key: null,
+        sfw_content_type: 'image/png',
+        nsfw_content_type: null,
         sfw_review_status: 'pending',
         sfw_reviewed_at: null,
         nsfw_review_status: 'pending',
@@ -332,6 +336,8 @@ function createImageApprovalItemRow() {
         character_name: 'Quartz',
         sfw_image_key: 'sfw-key',
         nsfw_image_key: null,
+        sfw_content_type: 'image/png',
+        nsfw_content_type: null,
         sfw_artist: 'Artist',
         nsfw_artist: '',
         sfw_width: 1200,
@@ -359,6 +365,8 @@ function createModerationMediaRow() {
         character_id: 'character-1',
         sfw_image_key: 'sfw-key',
         nsfw_image_key: null,
+        sfw_content_type: 'image/png',
+        nsfw_content_type: null,
         sfw_artist: 'Artist',
         nsfw_artist: '',
         sfw_width: 1200,

@@ -27,6 +27,12 @@ export function createPngFile(width = 100, height = 80, type = 'image/png', name
     })
 }
 
+export function createGifFile(width = 100, height = 80, name = 'gallery.gif'): File {
+    return new File([createGifBytes(width, height)], name, {
+        type: 'image/gif',
+    })
+}
+
 export function createWebpDataUrl(width = 512, height = 512): string {
     const bytes = createVp8xWebpBytes(width, height)
     let binary = ''
@@ -45,6 +51,14 @@ function createPngBytes(width: number, height: number): Uint8Array {
     writeAscii(bytes, 12, 'IHDR')
     writeUint32Be(bytes, 16, width)
     writeUint32Be(bytes, 20, height)
+    return bytes
+}
+
+function createGifBytes(width: number, height: number): Uint8Array {
+    const bytes = new Uint8Array(10)
+    writeAscii(bytes, 0, 'GIF89a')
+    writeUint16Le(bytes, 6, width)
+    writeUint16Le(bytes, 8, height)
     return bytes
 }
 
@@ -70,6 +84,11 @@ function writeUint24Le(bytes: Uint8Array, offset: number, value: number): void {
     bytes[offset] = value & 0xff
     bytes[offset + 1] = (value >> 8) & 0xff
     bytes[offset + 2] = (value >> 16) & 0xff
+}
+
+function writeUint16Le(bytes: Uint8Array, offset: number, value: number): void {
+    bytes[offset] = value & 0xff
+    bytes[offset + 1] = (value >> 8) & 0xff
 }
 
 function writeUint32Le(bytes: Uint8Array, offset: number, value: number): void {

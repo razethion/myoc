@@ -1,4 +1,4 @@
-export const APP_VERSION = '2026.06.15.01'
+export const APP_VERSION = '2026.06.16.02'
 
 export type ReleaseNote = {
     version: string
@@ -10,7 +10,40 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
     {
-        version: APP_VERSION,
+        version: '2026.06.16.02',
+        releasedOn: 'June 16, 2026',
+        title: 'Original File Uploads',
+        summary: 'Gallery uploads now keep the file the user chose instead of converting it.',
+        changes: [
+            'Gallery art uploads now preserve the original file format and bytes instead of converting to PNG.',
+            'Animated GIF uploads stay GIFs.',
+            'Embedded image metadata, including color profiles, is left intact when the original file includes it.',
+        ],
+    },
+    {
+        version: '2026.06.16.01',
+        releasedOn: 'June 16, 2026',
+        title: 'Version notifications',
+        summary: 'New releases can now be surfaced to signed-in users.',
+        changes: [
+            'Signed-in users now have their latest seen version saved across devices.',
+            'A notification appears when there is a newer release note they have not viewed yet.',
+            'Visiting the What\'s New page marks the current version as seen.',
+        ],
+    },
+    {
+        version: '2026.06.15.02',
+        releasedOn: 'June 15, 2026',
+        title: 'Bug fixes.',
+        summary: 'Character names now accept the intended punctuation.',
+        changes: [
+            'Some symbols weren\'t allowed in character names, but should have been. This has been fixed.',
+            'Quoted character names such as "Ivo" are now accepted.',
+            'Character-name validation no longer emits an invalid browser pattern warning.',
+        ],
+    },
+    {
+        version: '2026.06.15.01',
         releasedOn: 'June 15, 2026',
         title: 'What\'s New, Bugfixes, and more!',
         summary: 'Now you can see what\'s happening on the site as it\'s happening!.',

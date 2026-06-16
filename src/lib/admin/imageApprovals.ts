@@ -16,6 +16,7 @@ export type ImageApprovalAction =
 export type ImageApprovalVariant = {
     rating: 'sfw' | 'nsfw'
     imageKey: string
+    contentType: string
     imageUrl: string
     objectKey: string
     artist: string
@@ -84,6 +85,8 @@ type ImageApprovalRow = {
     character_name: string
     sfw_image_key: string | null
     nsfw_image_key: string | null
+    sfw_content_type: string | null
+    nsfw_content_type: string | null
     sfw_artist: string
     nsfw_artist: string
     sfw_width: number | null
@@ -170,6 +173,8 @@ export async function getImageApprovalItem(
                 characters.name AS character_name,
                 character_media.sfw_image_key,
                 character_media.nsfw_image_key,
+                character_media.sfw_content_type,
+                character_media.nsfw_content_type,
                 character_media.sfw_artist,
                 character_media.nsfw_artist,
                 character_media.sfw_width,
@@ -315,8 +320,9 @@ function toImageApprovalItem(row: ImageApprovalRow, mediaBaseUrl: string): Image
         sfw: row.sfw_image_key ? {
             rating: 'sfw',
             imageKey: row.sfw_image_key,
-            imageUrl: characterMediaImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, row.sfw_image_key, 'sfw'),
-            objectKey: characterMediaImageObjectKey(row.user_id, row.character_id, row.id, row.sfw_image_key, 'sfw'),
+            contentType: row.sfw_content_type ?? 'image/png',
+            imageUrl: characterMediaImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, row.sfw_image_key, 'sfw', row.sfw_content_type),
+            objectKey: characterMediaImageObjectKey(row.user_id, row.character_id, row.id, row.sfw_image_key, 'sfw', row.sfw_content_type),
             artist: row.sfw_artist,
             width: row.sfw_width,
             height: row.sfw_height,
@@ -330,8 +336,9 @@ function toImageApprovalItem(row: ImageApprovalRow, mediaBaseUrl: string): Image
         nsfw: row.nsfw_image_key ? {
             rating: 'nsfw',
             imageKey: row.nsfw_image_key,
-            imageUrl: characterMediaImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, row.nsfw_image_key, 'nsfw'),
-            objectKey: characterMediaImageObjectKey(row.user_id, row.character_id, row.id, row.nsfw_image_key, 'nsfw'),
+            contentType: row.nsfw_content_type ?? 'image/png',
+            imageUrl: characterMediaImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, row.nsfw_image_key, 'nsfw', row.nsfw_content_type),
+            objectKey: characterMediaImageObjectKey(row.user_id, row.character_id, row.id, row.nsfw_image_key, 'nsfw', row.nsfw_content_type),
             artist: row.nsfw_artist,
             width: row.nsfw_width,
             height: row.nsfw_height,

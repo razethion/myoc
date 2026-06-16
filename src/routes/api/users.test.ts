@@ -558,11 +558,11 @@ describe('POST /users/me/release-view', () => {
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({
             ok: true,
-            version: '2026.06.16.01',
+            version: '2026.06.16.02',
         })
         expect(boundStatements[1]?.sql).toContain('UPDATE users')
         expect(boundStatements[1]?.sql).toContain('last_seen_version')
-        expect(boundStatements[1]?.binds).toEqual(['2026.06.16.01', currentUserRecord.id])
+        expect(boundStatements[1]?.binds).toEqual(['2026.06.16.02', currentUserRecord.id])
     })
 })
 

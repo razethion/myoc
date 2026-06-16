@@ -4,6 +4,7 @@ import {createCsrfToken} from '../../lib/auth/session'
 import {createMockDb} from '../../test/mockD1'
 import {createMockR2Bucket} from '../../test/mockR2'
 import {
+    createGifFile,
     createMalformedWebpFile,
     createOversizedWebpFile,
     createPngFile,
@@ -145,9 +146,10 @@ async function putChunkedMediaPart(
     body: BodyInit,
     db: D1Database,
     options: CharacterRequestOptions = {},
+    contentType = 'image/png',
 ): Promise<Response> {
     return apiRoutes.request(
-        `https://example.com/characters/${characterId}/media/chunked/${mediaId}/${rating}/${encodeURIComponent(uploadId)}/${partNumber}?imageKey=${encodeURIComponent(imageKey)}`,
+        `https://example.com/characters/${characterId}/media/chunked/${mediaId}/${rating}/${encodeURIComponent(uploadId)}/${partNumber}?imageKey=${encodeURIComponent(imageKey)}&contentType=${encodeURIComponent(contentType)}`,
         {
             method: 'PUT',
             body,
@@ -1240,10 +1242,12 @@ describe('POST /characters/:id/media', () => {
                 sfw: {
                     uploadId: string
                     imageKey: string
+                    contentType: string
                     chunkSize: number
                 }
             }
         }
+        expect(initBody.uploads.sfw.contentType).toBe('image/png')
 
         const pngFile = createPngFile(10000, 10000)
         const partResponse = await putChunkedMediaPart(
@@ -1270,6 +1274,9 @@ describe('POST /characters/:id/media', () => {
             sfwUpload: {
                 uploadId: initBody.uploads.sfw.uploadId,
                 imageKey: initBody.uploads.sfw.imageKey,
+                contentType: 'image/png',
+                width: 10000,
+                height: 10000,
                 parts: [uploadedPart],
             },
         }, db, {
@@ -1284,6 +1291,7 @@ describe('POST /characters/:id/media', () => {
                 id: string
                 sfwImageKey: string
                 sfwImageUrl: string
+                sfwContentType: string
                 sfwWidth: number
                 sfwHeight: number
                 sfwByteSize: number
@@ -1293,6 +1301,7 @@ describe('POST /characters/:id/media', () => {
 
         expect(body.media.id).toBe(initBody.mediaId)
         expect(body.media.sfwImageKey).toBe(initBody.uploads.sfw.imageKey)
+        expect(body.media.sfwContentType).toBe('image/png')
         expect(body.media.sfwImageUrl).toBe(`${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.png`)
         expect(body.media.sfwWidth).toBe(10000)
         expect(body.media.sfwHeight).toBe(10000)
@@ -1300,16 +1309,107 @@ describe('POST /characters/:id/media', () => {
         expect(body.media.sfwArtist).toBe('Chunk Artist')
         expect(mediaBucket.createMultipartUpload).toHaveBeenCalledTimes(1)
         expect(mediaBucket.resumeMultipartUpload).toHaveBeenCalledTimes(2)
-        expect(mediaBucket.get).toHaveBeenCalledWith(
-            `characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.png`,
-            {range: {offset: 0, length: 33}},
-        )
+        expect(mediaBucket.get).not.toHaveBeenCalled()
         expect(boundStatements.at(-1)?.sql).toContain(['INSERT INTO', 'character_media'].join(' '))
-        expect(boundStatements.at(-1)?.binds[7]).toBe(10000)
-        expect(boundStatements.at(-1)?.binds[8]).toBe(10000)
+        expect(boundStatements.at(-1)?.binds[5]).toBe('image/png')
+        expect(boundStatements.at(-1)?.binds[9]).toBe(10000)
+        expect(boundStatements.at(-1)?.binds[10]).toBe(10000)
     })
 
-    it('uploads original-dimension PNG gallery media for the current user', async () => {
+    it('keeps chunked GIF gallery media as GIF', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character, currentUserRecord, character, currentUserRecord, character],
+        })
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await initChunkedMedia(character.id, {
+            uploads: [{rating: 'sfw', contentType: 'image/gif'}],
+        }, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+        expect(initResponse.status).toBe(200)
+        const initBody = await initResponse.json() as {
+            mediaId: string
+            uploads: {
+                sfw: {
+                    uploadId: string
+                    imageKey: string
+                    contentType: string
+                    chunkSize: number
+                }
+            }
+        }
+        expect(initBody.uploads.sfw.contentType).toBe('image/gif')
+        expect(mediaBucket.createMultipartUpload).toHaveBeenCalledWith(
+            `characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.gif`,
+            {
+                httpMetadata: {
+                    cacheControl: 'public, max-age=31536000, immutable',
+                    contentType: 'image/gif',
+                },
+            },
+        )
+
+        const gifFile = createGifFile(320, 240)
+        const partResponse = await putChunkedMediaPart(
+            character.id,
+            initBody.mediaId,
+            'sfw',
+            initBody.uploads.sfw.uploadId,
+            1,
+            initBody.uploads.sfw.imageKey,
+            gifFile,
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+            'image/gif',
+        )
+        expect(partResponse.status).toBe(200)
+        const uploadedPart = await partResponse.json() as R2UploadedPart
+
+        const completeResponse = await completeChunkedMedia(character.id, {
+            mediaId: initBody.mediaId,
+            sfwUpload: {
+                uploadId: initBody.uploads.sfw.uploadId,
+                imageKey: initBody.uploads.sfw.imageKey,
+                contentType: 'image/gif',
+                width: 320,
+                height: 240,
+                parts: [uploadedPart],
+            },
+        }, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+
+        expect(completeResponse.status).toBe(201)
+        const body = await completeResponse.json() as {
+            media: {
+                sfwContentType: string
+                sfwImageUrl: string
+                sfwWidth: number
+                sfwHeight: number
+                sfwByteSize: number
+            }
+        }
+        expect(body.media.sfwContentType).toBe('image/gif')
+        expect(body.media.sfwImageUrl).toBe(`${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.gif`)
+        expect(body.media.sfwWidth).toBe(320)
+        expect(body.media.sfwHeight).toBe(240)
+        expect(body.media.sfwByteSize).toBe(gifFile.size)
+        expect(boundStatements.at(-1)?.binds[5]).toBe('image/gif')
+    })
+
+    it('uploads original gallery media for the current user', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
         const character = createCharacterRecord()
@@ -1333,6 +1433,7 @@ describe('POST /characters/:id/media', () => {
                 id: string
                 sfwImageKey: string
                 sfwImageUrl: string
+                sfwContentType: string
                 sfwWidth: number
                 sfwHeight: number
                 sfwArtist: string
@@ -1341,6 +1442,7 @@ describe('POST /characters/:id/media', () => {
 
         expect(body.media.id).toMatch(new RegExp(`^${uuidPattern}$`))
         expect(body.media.sfwImageKey).toMatch(new RegExp(`^${uuidPattern}$`))
+        expect(body.media.sfwContentType).toBe('image/png')
         expect(body.media.sfwImageUrl).toBe(`${mediaPublicBaseUrl}/characters/current-user/character-id/media/${body.media.id}/sfw/${body.media.sfwImageKey}.png`)
         expect(body.media.sfwWidth).toBe(640)
         expect(body.media.sfwHeight).toBe(480)
@@ -1356,8 +1458,55 @@ describe('POST /characters/:id/media', () => {
             },
         )
         expect(boundStatements[2]?.sql).toContain(['INSERT INTO', 'character_media'].join(' '))
-        expect(boundStatements[2]?.binds[7]).toBe(640)
-        expect(boundStatements[2]?.binds[8]).toBe(480)
+        expect(boundStatements[2]?.binds[5]).toBe('image/png')
+        expect(boundStatements[2]?.binds[9]).toBe(640)
+        expect(boundStatements[2]?.binds[10]).toBe(480)
+    })
+
+    it('uploads GIF gallery media without converting it to PNG', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+        const form = new FormData()
+        form.set('sfwImage', createGifFile(320, 240))
+
+        const response = await postMedia(character.id, form, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(201)
+
+        const body = await response.json() as {
+            media: {
+                id: string
+                sfwImageKey: string
+                sfwImageUrl: string
+                sfwContentType: string
+                sfwWidth: number
+                sfwHeight: number
+            }
+        }
+
+        expect(body.media.sfwContentType).toBe('image/gif')
+        expect(body.media.sfwImageUrl).toBe(`${mediaPublicBaseUrl}/characters/current-user/character-id/media/${body.media.id}/sfw/${body.media.sfwImageKey}.gif`)
+        expect(body.media.sfwWidth).toBe(320)
+        expect(body.media.sfwHeight).toBe(240)
+        expect(mediaBucket.put).toHaveBeenCalledWith(
+            `characters/current-user/character-id/media/${body.media.id}/sfw/${body.media.sfwImageKey}.gif`,
+            expect.any(Uint8Array),
+            {
+                httpMetadata: {
+                    cacheControl: 'public, max-age=31536000, immutable',
+                    contentType: 'image/gif',
+                },
+            },
+        )
+        expect(boundStatements[2]?.binds[5]).toBe('image/gif')
     })
 
     it('accepts huge-dimension PNG gallery media without an app pixel cap', async () => {
@@ -1386,11 +1535,11 @@ describe('POST /characters/:id/media', () => {
 
         expect(body.media.sfwWidth).toBe(10000)
         expect(body.media.sfwHeight).toBe(10000)
-        expect(boundStatements[2]?.binds[7]).toBe(10000)
-        expect(boundStatements[2]?.binds[8]).toBe(10000)
+        expect(boundStatements[2]?.binds[9]).toBe(10000)
+        expect(boundStatements[2]?.binds[10]).toBe(10000)
     })
 
-    it('rejects gallery media that bypasses the image converter', async () => {
+    it('rejects unsupported gallery media types', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
         const character = createCharacterRecord()
@@ -1398,7 +1547,7 @@ describe('POST /characters/:id/media', () => {
             firstResults: [currentUserRecord, character],
         })
         const form = new FormData()
-        form.set('sfwImage', createPngFile(100, 100, 'image/jpeg'))
+        form.set('sfwImage', new File([new Uint8Array([1, 2, 3])], 'gallery.bmp', {type: 'image/bmp'}))
 
         const response = await postMedia(character.id, form, db, {
             mediaBucket,
@@ -1408,7 +1557,7 @@ describe('POST /characters/:id/media', () => {
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
-            error: 'SFW image must be uploaded through the image converter',
+            error: 'Image must be PNG, JPG, GIF, WebP, or AVIF',
         })
         expect(mediaBucket.put).not.toHaveBeenCalled()
     })

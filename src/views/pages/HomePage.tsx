@@ -17,6 +17,7 @@ export type HomePageDiscoverCharacter = {
     profileImageKey: string
     previewMediaId: string
     previewImageKey: string
+    previewContentType: string | null
     previewArtist: string
     imageCount: number
 }
@@ -453,6 +454,7 @@ export function HomePage({currentUser, discoverCharacters, guestInitial, mediaBa
                                             character.previewMediaId,
                                             character.previewImageKey,
                                             'sfw',
+                                            character.previewContentType,
                                         )
                                         const profileImageUrl = characterProfileImageUrl(
                                             mediaBaseUrl,

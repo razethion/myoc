@@ -8,6 +8,7 @@ import {
     characterProfileImageUrl,
 } from '../../lib/media/url'
 import {getPngDimensions} from '../../lib/media/png'
+import {getWebpDimensions} from '../../lib/media/webp'
 import {
     PROFILE_IMAGE_MAX_REQUEST_BYTES,
     validateProfileImagePayload,
@@ -55,6 +56,7 @@ type GalleryLayoutRequest = {
 }
 
 type ChunkedMediaInitRequest = {
+    uploads?: unknown
     ratings?: unknown
 }
 
@@ -73,6 +75,9 @@ type MediaRating = 'sfw' | 'nsfw'
 type CompletedChunkedUpload = {
     uploadId: string
     imageKey: string
+    contentType: string
+    width: number
+    height: number
     parts: R2UploadedPart[]
 }
 
@@ -90,8 +95,9 @@ type ParsedMediaForm = {
     removeNsfw: unknown
 }
 
-type GalleryPng = {
+type GalleryImage = {
     bytes: Uint8Array
+    contentType: string
     width: number
     height: number
 }
@@ -106,8 +112,8 @@ type ParsedChunkedMediaComplete = {
 type ParsedValidatedMediaForm = {
     parsed: ParsedMediaForm
     artists: ParsedMediaArtists
-    sfwImage: GalleryPng | null
-    nsfwImage: GalleryPng | null
+    sfwImage: GalleryImage | null
+    nsfwImage: GalleryImage | null
 }
 
 type JsonProfileImage = {
@@ -133,6 +139,8 @@ type CharacterMediaRecord = {
     character_id: string
     sfw_image_key: string | null
     nsfw_image_key: string | null
+    sfw_content_type: string | null
+    nsfw_content_type: string | null
     sfw_artist: string
     nsfw_artist: string
     sfw_width: number | null
@@ -171,9 +179,27 @@ const CHARACTER_NAME_RULES = 'letters, numbers, spaces, apostrophes, quotation m
 const DISPLAY_NAME_ALLOWED_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 _'.()-]*$/
 const DISPLAY_NAME_RULES = 'letters, numbers, spaces, apostrophes, hyphens, underscores, periods, and parentheses'
 const DUPLICATE_CHARACTER_NAME_ERROR = 'Character name already exists on this account'
-const GALLERY_PNG_HTTP_METADATA = {
-    cacheControl: 'public, max-age=31536000, immutable',
-    contentType: 'image/png',
+const GALLERY_IMAGE_ALLOWED_CONTENT_TYPES = new Set([
+    'image/png',
+    'image/jpeg',
+    'image/gif',
+    'image/webp',
+    'image/avif',
+])
+
+const GALLERY_IMAGE_CACHE_CONTROL = 'public, max-age=31536000, immutable'
+
+type ChunkedUploadInit = {
+    rating: MediaRating
+    contentType: string
+}
+
+type CompletedGalleryUpload = {
+    imageKey: string
+    contentType: string
+    width: number
+    height: number
+    byteSize: number
 }
 
 export const characterRoutes = new Hono<{ Bindings: Bindings }>()
@@ -601,16 +627,16 @@ characterRoutes.post('/:id/media/chunked/init', async (c) => {
         return c.json({error: 'Invalid JSON body'}, 400)
     }
 
-    const ratings = parseChunkedUploadRatings(body.ratings)
+    const uploads = parseChunkedUploadInits(body.uploads ?? body.ratings)
 
-    if ('error' in ratings) {
-        return c.json({error: ratings.error}, 400)
+    if ('error' in uploads) {
+        return c.json({error: uploads.error}, 400)
     }
 
     const mediaId = crypto.randomUUID()
-    const uploads = await createChunkedGalleryUploads(c.env.MEDIA_BUCKET, currentUser.id, character.id, mediaId, ratings.ratings)
+    const chunkedUploads = await createChunkedGalleryUploads(c.env.MEDIA_BUCKET, currentUser.id, character.id, mediaId, uploads.uploads)
 
-    return c.json({mediaId, uploads})
+    return c.json({mediaId, uploads: chunkedUploads})
 })
 
 characterRoutes.put('/:id/media/chunked/:mediaId/:rating/:uploadId/:partNumber', async (c) => {
@@ -630,6 +656,7 @@ characterRoutes.put('/:id/media/chunked/:mediaId/:rating/:uploadId/:partNumber',
 
     const mediaId = normalizeUploadIdentifier(c.req.param('mediaId'), 'Media id')
     const imageKey = normalizeUploadIdentifier(c.req.query('imageKey'), 'Image key')
+    const contentType = normalizeGalleryImageContentType(c.req.query('contentType'))
     const uploadId = c.req.param('uploadId')
     const partNumber = Number(c.req.param('partNumber'))
 
@@ -641,6 +668,10 @@ characterRoutes.put('/:id/media/chunked/:mediaId/:rating/:uploadId/:partNumber',
         return c.json({error: imageKey.error}, 400)
     }
 
+    if ('error' in contentType) {
+        return c.json({error: contentType.error}, 400)
+    }
+
     if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > 10000) {
         return c.json({error: 'Part number must be between 1 and 10000'}, 400)
     }
@@ -649,7 +680,7 @@ characterRoutes.put('/:id/media/chunked/:mediaId/:rating/:uploadId/:partNumber',
         return c.json({error: 'Chunk body is required'}, 400)
     }
 
-    const objectKey = characterMediaImageObjectKey(currentUser.id, character.id, mediaId.value, imageKey.value, rating)
+    const objectKey = characterMediaImageObjectKey(currentUser.id, character.id, mediaId.value, imageKey.value, rating, contentType.contentType)
     const upload = c.env.MEDIA_BUCKET.resumeMultipartUpload(objectKey, uploadId)
     const uploadedPart = await upload.uploadPart(partNumber, c.req.raw.body)
 
@@ -686,17 +717,17 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
     const completedKeys: string[] = []
 
     try {
-        let sfwImage: { imageKey: string; width: number; height: number; byteSize: number } | null = null
-        let nsfwImage: { imageKey: string; width: number; height: number; byteSize: number } | null = null
+        let sfwImage: CompletedGalleryUpload | null = null
+        let nsfwImage: CompletedGalleryUpload | null = null
 
         if (sfwUpload && !('error' in sfwUpload)) {
             sfwImage = await completeChunkedGalleryUpload(c.env.MEDIA_BUCKET, currentUser.id, character.id, mediaId.value, sfwUpload, 'sfw', 'SFW image')
-            completedKeys.push(characterMediaImageObjectKey(currentUser.id, character.id, mediaId.value, sfwImage.imageKey, 'sfw'))
+            completedKeys.push(characterMediaImageObjectKey(currentUser.id, character.id, mediaId.value, sfwImage.imageKey, 'sfw', sfwImage.contentType))
         }
 
         if (nsfwUpload && !('error' in nsfwUpload)) {
             nsfwImage = await completeChunkedGalleryUpload(c.env.MEDIA_BUCKET, currentUser.id, character.id, mediaId.value, nsfwUpload, 'nsfw', 'NSFW image')
-            completedKeys.push(characterMediaImageObjectKey(currentUser.id, character.id, mediaId.value, nsfwImage.imageKey, 'nsfw'))
+            completedKeys.push(characterMediaImageObjectKey(currentUser.id, character.id, mediaId.value, nsfwImage.imageKey, 'nsfw', nsfwImage.contentType))
         }
 
         const now = toSqlTimestamp(new Date())
@@ -706,6 +737,8 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
             character_id: character.id,
             sfw_image_key: sfwImage?.imageKey ?? null,
             nsfw_image_key: nsfwImage?.imageKey ?? null,
+            sfw_content_type: sfwImage?.contentType ?? null,
+            nsfw_content_type: nsfwImage?.contentType ?? null,
             sfw_artist: artists.sfwArtist,
             nsfw_artist: artists.nsfwArtist,
             sfw_width: sfwImage?.width ?? null,
@@ -721,12 +754,12 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
         await c.env.DB.prepare(
             `INSERT INTO character_media (
                  id, user_id, character_id,
-                 sfw_image_key, nsfw_image_key, sfw_artist, nsfw_artist,
+                 sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type, sfw_artist, nsfw_artist,
                  sfw_width, sfw_height, sfw_byte_size,
                  nsfw_width, nsfw_height, nsfw_byte_size,
                  created_at, updated_at
              )
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
             .bind(
                 media.id,
@@ -734,6 +767,8 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
                 media.character_id,
                 media.sfw_image_key,
                 media.nsfw_image_key,
+                media.sfw_content_type,
+                media.nsfw_content_type,
                 media.sfw_artist,
                 media.nsfw_artist,
                 media.sfw_width,
@@ -775,15 +810,15 @@ characterRoutes.post('/:id/media/:mediaId/chunked/init', async (c) => {
         return c.json({error: 'Invalid JSON body'}, 400)
     }
 
-    const ratings = parseChunkedUploadRatings(body.ratings)
+    const uploads = parseChunkedUploadInits(body.uploads ?? body.ratings)
 
-    if ('error' in ratings) {
-        return c.json({error: ratings.error}, 400)
+    if ('error' in uploads) {
+        return c.json({error: uploads.error}, 400)
     }
 
-    const uploads = await createChunkedGalleryUploads(c.env.MEDIA_BUCKET, currentUser.id, character.id, media.id, ratings.ratings)
+    const chunkedUploads = await createChunkedGalleryUploads(c.env.MEDIA_BUCKET, currentUser.id, character.id, media.id, uploads.uploads)
 
-    return c.json({mediaId: media.id, uploads})
+    return c.json({mediaId: media.id, uploads: chunkedUploads})
 })
 
 characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
@@ -884,6 +919,8 @@ characterRoutes.post('/:id/media', async (c) => {
         character_id: character.id,
         sfw_image_key: sfwImageKey,
         nsfw_image_key: nsfwImageKey,
+        sfw_content_type: sfwImage?.contentType ?? null,
+        nsfw_content_type: nsfwImage?.contentType ?? null,
         sfw_artist: artists.sfwArtist,
         nsfw_artist: artists.nsfwArtist,
         sfw_width: sfwImage?.width ?? null,
@@ -900,12 +937,12 @@ characterRoutes.post('/:id/media', async (c) => {
         await c.env.DB.prepare(
             `INSERT INTO character_media (
                 id, user_id, character_id,
-                sfw_image_key, nsfw_image_key, sfw_artist, nsfw_artist,
+                sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type, sfw_artist, nsfw_artist,
                 sfw_width, sfw_height, sfw_byte_size,
                 nsfw_width, nsfw_height, nsfw_byte_size,
                 created_at, updated_at
              )
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
             .bind(
                 media.id,
@@ -913,6 +950,8 @@ characterRoutes.post('/:id/media', async (c) => {
                 media.character_id,
                 media.sfw_image_key,
                 media.nsfw_image_key,
+                media.sfw_content_type,
+                media.nsfw_content_type,
                 media.sfw_artist,
                 media.nsfw_artist,
                 media.sfw_width,
@@ -972,11 +1011,11 @@ characterRoutes.patch('/:id/media/:mediaId', async (c) => {
     applyMediaVariantRemovals(currentUser.id, character.id, media, nextMedia, removeSfw, removeNsfw, deletedKeys)
 
     if (sfwImage) {
-        await replaceMediaVariantWithPng(c.env.MEDIA_BUCKET, currentUser.id, character.id, media, nextMedia, sfwImage, 'sfw', uploadedKeys, deletedKeys)
+        await replaceMediaVariantWithImage(c.env.MEDIA_BUCKET, currentUser.id, character.id, media, nextMedia, sfwImage, 'sfw', uploadedKeys, deletedKeys)
     }
 
     if (nsfwImage) {
-        await replaceMediaVariantWithPng(c.env.MEDIA_BUCKET, currentUser.id, character.id, media, nextMedia, nsfwImage, 'nsfw', uploadedKeys, deletedKeys)
+        await replaceMediaVariantWithImage(c.env.MEDIA_BUCKET, currentUser.id, character.id, media, nextMedia, nsfwImage, 'nsfw', uploadedKeys, deletedKeys)
     }
 
     try {
@@ -1186,11 +1225,13 @@ function toPublicMedia(baseUrl: string, media: CharacterMediaRecord) {
         id: media.id,
         sfwImageKey: media.sfw_image_key,
         nsfwImageKey: media.nsfw_image_key,
+        sfwContentType: media.sfw_content_type ?? (media.sfw_image_key ? 'image/png' : null),
+        nsfwContentType: media.nsfw_content_type ?? (media.nsfw_image_key ? 'image/png' : null),
         sfwImageUrl: media.sfw_image_key
-            ? characterMediaImageUrl(baseUrl, media.user_id, media.character_id, media.id, media.sfw_image_key, 'sfw')
+            ? characterMediaImageUrl(baseUrl, media.user_id, media.character_id, media.id, media.sfw_image_key, 'sfw', media.sfw_content_type)
             : null,
         nsfwImageUrl: media.nsfw_image_key
-            ? characterMediaImageUrl(baseUrl, media.user_id, media.character_id, media.id, media.nsfw_image_key, 'nsfw')
+            ? characterMediaImageUrl(baseUrl, media.user_id, media.character_id, media.id, media.nsfw_image_key, 'nsfw', media.nsfw_content_type)
             : null,
         sfwArtist: media.sfw_artist,
         nsfwArtist: media.nsfw_artist,
@@ -1217,6 +1258,8 @@ async function updateCharacterMediaRecord(
         `UPDATE character_media
          SET sfw_image_key        = ?,
              nsfw_image_key       = ?,
+             sfw_content_type     = ?,
+             nsfw_content_type    = ?,
              sfw_artist           = ?,
              nsfw_artist          = ?,
              sfw_width            = ?,
@@ -1240,6 +1283,8 @@ async function updateCharacterMediaRecord(
         .bind(
             media.sfw_image_key,
             media.nsfw_image_key,
+            media.sfw_content_type,
+            media.nsfw_content_type,
             media.sfw_artist,
             media.nsfw_artist,
             media.sfw_width,
@@ -1435,20 +1480,34 @@ async function createChunkedGalleryUploads(
     userId: string,
     characterId: string,
     mediaId: string,
-    ratings: MediaRating[],
-): Promise<Partial<Record<MediaRating, { uploadId: string; imageKey: string; chunkSize: number }>>> {
-    const uploads: Partial<Record<MediaRating, { uploadId: string; imageKey: string; chunkSize: number }>> = {}
+    uploadInits: ChunkedUploadInit[],
+): Promise<Partial<Record<MediaRating, {
+    uploadId: string;
+    imageKey: string;
+    contentType: string;
+    chunkSize: number
+}>>> {
+    const uploads: Partial<Record<MediaRating, {
+        uploadId: string;
+        imageKey: string;
+        contentType: string;
+        chunkSize: number
+    }>> = {}
 
-    for (const rating of ratings) {
+    for (const uploadInit of uploadInits) {
         const imageKey = crypto.randomUUID()
-        const objectKey = characterMediaImageObjectKey(userId, characterId, mediaId, imageKey, rating)
+        const objectKey = characterMediaImageObjectKey(userId, characterId, mediaId, imageKey, uploadInit.rating, uploadInit.contentType)
         const upload = await bucket.createMultipartUpload(objectKey, {
-            httpMetadata: GALLERY_PNG_HTTP_METADATA,
+            httpMetadata: {
+                cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
+                contentType: uploadInit.contentType,
+            },
         })
 
-        uploads[rating] = {
+        uploads[uploadInit.rating] = {
             uploadId: upload.uploadId,
             imageKey,
+            contentType: uploadInit.contentType,
             chunkSize: GALLERY_CHUNK_SIZE,
         }
     }
@@ -1458,6 +1517,10 @@ async function createChunkedGalleryUploads(
 
 function existingMediaVariantKey(media: CharacterMediaRecord, rating: MediaRating): string | null {
     return rating === 'sfw' ? media.sfw_image_key : media.nsfw_image_key
+}
+
+function existingMediaVariantContentType(media: CharacterMediaRecord, rating: MediaRating): string | null {
+    return rating === 'sfw' ? media.sfw_content_type : media.nsfw_content_type
 }
 
 function queueExistingMediaVariantDelete(
@@ -1470,13 +1533,14 @@ function queueExistingMediaVariantDelete(
     const imageKey = existingMediaVariantKey(media, rating)
 
     if (imageKey) {
-        deletedKeys.push(characterMediaImageObjectKey(userId, characterId, media.id, imageKey, rating))
+        deletedKeys.push(characterMediaImageObjectKey(userId, characterId, media.id, imageKey, rating, existingMediaVariantContentType(media, rating)))
     }
 }
 
 function clearMediaVariant(nextMedia: CharacterMediaRecord, rating: MediaRating): void {
     if (rating === 'sfw') {
         nextMedia.sfw_image_key = null
+        nextMedia.sfw_content_type = null
         nextMedia.sfw_width = null
         nextMedia.sfw_height = null
         nextMedia.sfw_byte_size = null
@@ -1484,6 +1548,7 @@ function clearMediaVariant(nextMedia: CharacterMediaRecord, rating: MediaRating)
     }
 
     nextMedia.nsfw_image_key = null
+    nextMedia.nsfw_content_type = null
     nextMedia.nsfw_width = null
     nextMedia.nsfw_height = null
     nextMedia.nsfw_byte_size = null
@@ -1492,10 +1557,11 @@ function clearMediaVariant(nextMedia: CharacterMediaRecord, rating: MediaRating)
 function assignMediaVariant(
     nextMedia: CharacterMediaRecord,
     rating: MediaRating,
-    image: { imageKey: string; width: number; height: number; byteSize: number },
+    image: { imageKey: string; contentType: string; width: number; height: number; byteSize: number },
 ): void {
     if (rating === 'sfw') {
         nextMedia.sfw_image_key = image.imageKey
+        nextMedia.sfw_content_type = image.contentType
         nextMedia.sfw_width = image.width
         nextMedia.sfw_height = image.height
         nextMedia.sfw_byte_size = image.byteSize
@@ -1503,6 +1569,7 @@ function assignMediaVariant(
     }
 
     nextMedia.nsfw_image_key = image.imageKey
+    nextMedia.nsfw_content_type = image.contentType
     nextMedia.nsfw_width = image.width
     nextMedia.nsfw_height = image.height
     nextMedia.nsfw_byte_size = image.byteSize
@@ -1523,28 +1590,29 @@ async function replaceMediaVariantWithChunkedUpload(
     const label = rating === 'sfw' ? 'SFW image' : 'NSFW image'
     const image = await completeChunkedGalleryUpload(bucket, userId, characterId, media.id, upload, rating, label)
     assignMediaVariant(nextMedia, rating, image)
-    uploadedKeys.push(characterMediaImageObjectKey(userId, characterId, media.id, image.imageKey, rating))
+    uploadedKeys.push(characterMediaImageObjectKey(userId, characterId, media.id, image.imageKey, rating, image.contentType))
 }
 
-async function replaceMediaVariantWithPng(
+async function replaceMediaVariantWithImage(
     bucket: R2Bucket,
     userId: string,
     characterId: string,
     media: CharacterMediaRecord,
     nextMedia: CharacterMediaRecord,
-    image: GalleryPng,
+    image: GalleryImage,
     rating: MediaRating,
     uploadedKeys: string[],
     deletedKeys: string[],
 ): Promise<void> {
     queueExistingMediaVariantDelete(userId, characterId, media, rating, deletedKeys)
     const imageKey = crypto.randomUUID()
-    const objectKey = characterMediaImageObjectKey(userId, characterId, media.id, imageKey, rating)
+    const objectKey = characterMediaImageObjectKey(userId, characterId, media.id, imageKey, rating, image.contentType)
 
-    await putGalleryPngObject(bucket, objectKey, image.bytes)
+    await putGalleryImageObject(bucket, objectKey, image)
 
     assignMediaVariant(nextMedia, rating, {
         imageKey,
+        contentType: image.contentType,
         width: image.width,
         height: image.height,
         byteSize: image.bytes.byteLength,
@@ -1557,22 +1625,25 @@ async function putNewMediaVariant(
     userId: string,
     characterId: string,
     mediaId: string,
-    image: GalleryPng,
+    image: GalleryImage,
     rating: MediaRating,
     uploadedKeys: string[],
 ): Promise<string> {
     const imageKey = crypto.randomUUID()
-    const objectKey = characterMediaImageObjectKey(userId, characterId, mediaId, imageKey, rating)
+    const objectKey = characterMediaImageObjectKey(userId, characterId, mediaId, imageKey, rating, image.contentType)
 
-    await putGalleryPngObject(bucket, objectKey, image.bytes)
+    await putGalleryImageObject(bucket, objectKey, image)
 
     uploadedKeys.push(objectKey)
     return imageKey
 }
 
-async function putGalleryPngObject(bucket: R2Bucket, objectKey: string, bytes: Uint8Array): Promise<void> {
-    await bucket.put(objectKey, bytes, {
-        httpMetadata: GALLERY_PNG_HTTP_METADATA,
+async function putGalleryImageObject(bucket: R2Bucket, objectKey: string, image: GalleryImage): Promise<void> {
+    await bucket.put(objectKey, image.bytes, {
+        httpMetadata: {
+            cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
+            contentType: image.contentType,
+        },
     })
 }
 
@@ -1703,14 +1774,14 @@ async function parseMediaForm(req: CharacterRouteContext['req']): Promise<Parsed
 }
 
 async function validateMediaFormImages(parsed: ParsedMediaForm): Promise<{
-    sfwImage: GalleryPng | null
-    nsfwImage: GalleryPng | null
+    sfwImage: GalleryImage | null
+    nsfwImage: GalleryImage | null
 } | {
     error: string
     status: 400
 }> {
-    const sfwImage = parsed.sfwFile ? await validateGalleryPng(parsed.sfwFile, 'SFW image') : null
-    const nsfwImage = parsed.nsfwFile ? await validateGalleryPng(parsed.nsfwFile, 'NSFW image') : null
+    const sfwImage = parsed.sfwFile ? await validateGalleryImage(parsed.sfwFile, 'SFW image') : null
+    const nsfwImage = parsed.nsfwFile ? await validateGalleryImage(parsed.nsfwFile, 'NSFW image') : null
 
     if (sfwImage && 'error' in sfwImage) {
         return {error: sfwImage.error, status: sfwImage.status}
@@ -2182,6 +2253,8 @@ async function getOwnedCharacterMedia(
                 character_id,
                 sfw_image_key,
                 nsfw_image_key,
+                sfw_content_type,
+                nsfw_content_type,
                 sfw_artist,
                 nsfw_artist,
                 sfw_width,
@@ -2213,6 +2286,8 @@ async function getCharacterMedia(
                 character_id,
                 sfw_image_key,
                 nsfw_image_key,
+                sfw_content_type,
+                nsfw_content_type,
                 sfw_artist,
                 nsfw_artist,
                 sfw_width,
@@ -2234,27 +2309,39 @@ async function getCharacterMedia(
     return result.results ?? []
 }
 
-async function validateGalleryPng(file: File, label: string): Promise<{
+async function validateGalleryImage(file: File, label: string): Promise<{
     bytes: Uint8Array
+    contentType: string
     width: number
     height: number
 } | {
     error: string
     status: 400
 }> {
-    if (file.type !== 'image/png') {
-        return {error: `${label} must be uploaded through the image converter`, status: 400}
+    const contentType = normalizeGalleryImageContentType(file.type)
+
+    if ('error' in contentType) {
+        return {error: contentType.error, status: 400}
     }
 
     const bytes = new Uint8Array(await file.arrayBuffer())
-    const dimensions = getPngDimensions(bytes)
 
-    if (!dimensions) {
-        return {error: `${label} must be a valid PNG image`, status: 400}
+    if (bytes.byteLength <= 0) {
+        return {error: `${label} is empty`, status: 400}
+    }
+
+    const dimensions = readGalleryImageDimensions(bytes, contentType.contentType) ?? normalizeGalleryImageDimensions(
+        'width' in file ? (file as File & { width?: unknown }).width : undefined,
+        'height' in file ? (file as File & { height?: unknown }).height : undefined,
+    )
+
+    if ('error' in dimensions) {
+        return {error: `${label} dimensions are required`, status: 400}
     }
 
     return {
         bytes,
+        contentType: contentType.contentType,
         width: dimensions.width,
         height: dimensions.height,
     }
@@ -2264,11 +2351,11 @@ async function deleteCharacterMediaObjects(bucket: R2Bucket, media: CharacterMed
     const objectKeys: string[] = []
 
     if (media.sfw_image_key) {
-        objectKeys.push(characterMediaImageObjectKey(media.user_id, media.character_id, media.id, media.sfw_image_key, 'sfw'))
+        objectKeys.push(characterMediaImageObjectKey(media.user_id, media.character_id, media.id, media.sfw_image_key, 'sfw', media.sfw_content_type))
     }
 
     if (media.nsfw_image_key) {
-        objectKeys.push(characterMediaImageObjectKey(media.user_id, media.character_id, media.id, media.nsfw_image_key, 'nsfw'))
+        objectKeys.push(characterMediaImageObjectKey(media.user_id, media.character_id, media.id, media.nsfw_image_key, 'nsfw', media.nsfw_content_type))
     }
 
     await deleteR2Objects(bucket, objectKeys)
@@ -2385,35 +2472,72 @@ function normalizeUploadIdentifier(value: unknown, label: string): { value: stri
     return {value: normalized}
 }
 
-function parseChunkedUploadRatings(value: unknown): { ratings: ('sfw' | 'nsfw')[] } | { error: string } {
+function normalizeGalleryImageContentType(value: unknown): { contentType: string } | { error: string } {
+    if (typeof value !== 'string') {
+        return {error: 'Image content type is required'}
+    }
+
+    const contentType = value.trim().toLowerCase()
+
+    if (!GALLERY_IMAGE_ALLOWED_CONTENT_TYPES.has(contentType)) {
+        return {error: 'Image must be PNG, JPG, GIF, WebP, or AVIF'}
+    }
+
+    return {contentType}
+}
+
+function normalizeGalleryImageDimensions(widthValue: unknown, heightValue: unknown): {
+    width: number
+    height: number
+} | { error: string } {
+    const width = Number(widthValue)
+    const height = Number(heightValue)
+
+    if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0) {
+        return {error: 'Image dimensions are required'}
+    }
+
+    return {width, height}
+}
+
+function parseChunkedUploadInits(value: unknown): { uploads: ChunkedUploadInit[] } | { error: string } {
     if (!Array.isArray(value)) {
         return {error: 'Upload ratings are required'}
     }
 
-    const ratings: ('sfw' | 'nsfw')[] = []
+    const uploads: ChunkedUploadInit[] = []
 
     for (const item of value) {
-        const rating = normalizeMediaRating(item)
+        const rating = normalizeMediaRating(isRecord(item) ? item.rating : item)
 
         if (!rating) {
             return {error: 'Upload ratings must be sfw or nsfw'}
         }
 
-        if (!ratings.includes(rating)) {
-            ratings.push(rating)
+        const contentType = normalizeGalleryImageContentType(isRecord(item) ? item.contentType : 'image/png')
+
+        if ('error' in contentType) {
+            return {error: contentType.error}
+        }
+
+        if (!uploads.some((upload) => upload.rating === rating)) {
+            uploads.push({rating, contentType: contentType.contentType})
         }
     }
 
-    if (ratings.length === 0) {
+    if (uploads.length === 0) {
         return {error: 'At least one upload rating is required'}
     }
 
-    return {ratings}
+    return {uploads}
 }
 
 function parseCompletedChunkedUpload(value: unknown): {
     uploadId: string
     imageKey: string
+    contentType: string
+    width: number
+    height: number
     parts: R2UploadedPart[]
 } | { error: string } | null {
     if (value === undefined || value === null) {
@@ -2426,6 +2550,8 @@ function parseCompletedChunkedUpload(value: unknown): {
 
     const uploadId = normalizeOptionalText(value.uploadId)
     const imageKey = normalizeUploadIdentifier(value.imageKey, 'Image key')
+    const contentType = normalizeGalleryImageContentType(value.contentType)
+    const dimensions = normalizeGalleryImageDimensions(value.width, value.height)
 
     if (!uploadId) {
         return {error: 'upload id is required'}
@@ -2433,6 +2559,14 @@ function parseCompletedChunkedUpload(value: unknown): {
 
     if ('error' in imageKey) {
         return {error: imageKey.error}
+    }
+
+    if ('error' in contentType) {
+        return {error: contentType.error}
+    }
+
+    if ('error' in dimensions) {
+        return {error: dimensions.error}
     }
 
     if (!Array.isArray(value.parts) || value.parts.length === 0) {
@@ -2461,8 +2595,91 @@ function parseCompletedChunkedUpload(value: unknown): {
     return {
         uploadId,
         imageKey: imageKey.value,
+        contentType: contentType.contentType,
+        width: dimensions.width,
+        height: dimensions.height,
         parts,
     }
+}
+
+function readGalleryImageDimensions(bytes: Uint8Array, contentType: string): { width: number; height: number } | null {
+    if (contentType === 'image/png') {
+        return getPngDimensions(bytes)
+    }
+
+    if (contentType === 'image/webp') {
+        return getWebpDimensions(bytes)
+    }
+
+    if (contentType === 'image/gif') {
+        return readGifDimensions(bytes)
+    }
+
+    if (contentType === 'image/jpeg') {
+        return readJpegDimensions(bytes)
+    }
+
+    return null
+}
+
+function readGifDimensions(bytes: Uint8Array): { width: number; height: number } | null {
+    if (bytes.length < 10) {
+        return null
+    }
+
+    const signature = String.fromCharCode(...bytes.slice(0, 6))
+
+    if (signature !== 'GIF87a' && signature !== 'GIF89a') {
+        return null
+    }
+
+    return {
+        width: bytes[6] | (bytes[7] << 8),
+        height: bytes[8] | (bytes[9] << 8),
+    }
+}
+
+function readJpegDimensions(bytes: Uint8Array): { width: number; height: number } | null {
+    if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) {
+        return null
+    }
+
+    let offset = 2
+
+    while (offset + 9 < bytes.length) {
+        if (bytes[offset] !== 0xff) {
+            return null
+        }
+
+        const marker = bytes[offset + 1]
+        offset += 2
+
+        if (marker === 0xd9 || marker === 0xda) {
+            return null
+        }
+
+        const length = (bytes[offset] << 8) | bytes[offset + 1]
+
+        if (length < 2 || offset + length > bytes.length) {
+            return null
+        }
+
+        if (
+            (marker >= 0xc0 && marker <= 0xc3)
+            || (marker >= 0xc5 && marker <= 0xc7)
+            || (marker >= 0xc9 && marker <= 0xcb)
+            || (marker >= 0xcd && marker <= 0xcf)
+        ) {
+            return {
+                height: (bytes[offset + 3] << 8) | bytes[offset + 4],
+                width: (bytes[offset + 5] << 8) | bytes[offset + 6],
+            }
+        }
+
+        offset += length
+    }
+
+    return null
 }
 
 async function completeChunkedGalleryUpload(
@@ -2470,52 +2687,26 @@ async function completeChunkedGalleryUpload(
     userId: string,
     characterId: string,
     mediaId: string,
-    upload: { uploadId: string; imageKey: string; parts: R2UploadedPart[] },
+    upload: CompletedChunkedUpload,
     rating: 'sfw' | 'nsfw',
     label: string,
-): Promise<{ imageKey: string; width: number; height: number; byteSize: number }> {
-    const objectKey = characterMediaImageObjectKey(userId, characterId, mediaId, upload.imageKey, rating)
+): Promise<CompletedGalleryUpload> {
+    const objectKey = characterMediaImageObjectKey(userId, characterId, mediaId, upload.imageKey, rating, upload.contentType)
     const multipartUpload = bucket.resumeMultipartUpload(objectKey, upload.uploadId)
     const completedObject = await multipartUpload.complete(upload.parts)
 
-    try {
-        const dimensions = await getGalleryPngDimensionsFromR2(bucket, objectKey, label)
-
-        return {
-            imageKey: upload.imageKey,
-            width: dimensions.width,
-            height: dimensions.height,
-            byteSize: completedObject.size,
-        }
-    } catch (error) {
+    if (completedObject.size <= 0) {
         await deleteR2Objects(bucket, [objectKey])
-        throw error
-    }
-}
-
-async function getGalleryPngDimensionsFromR2(
-    bucket: R2Bucket,
-    objectKey: string,
-    label: string,
-): Promise<{ width: number; height: number }> {
-    const object = await bucket.get(objectKey, {
-        range: {
-            offset: 0,
-            length: 33,
-        },
-    })
-
-    if (!object) {
-        throw new Error(`${label} could not be read after upload`)
+        throw new Error(`${label} is empty`)
     }
 
-    const dimensions = getPngDimensions(new Uint8Array(await object.arrayBuffer()))
-
-    if (!dimensions) {
-        throw new Error(`${label} must be a valid PNG image`)
+    return {
+        imageKey: upload.imageKey,
+        contentType: upload.contentType,
+        width: upload.width,
+        height: upload.height,
+        byteSize: completedObject.size,
     }
-
-    return dimensions
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
