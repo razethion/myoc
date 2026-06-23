@@ -2,6 +2,7 @@ import {compare} from 'bcryptjs'
 import {describe, expect, it, vi} from 'vitest'
 import {apiRoutes} from '../api'
 import {createCsrfToken} from '../../lib/auth/session'
+import {APP_VERSION} from '../../lib/releases'
 import {createMockDb} from '../../test/mockD1'
 import {createMockR2Bucket} from '../../test/mockR2'
 import {expectSessionCookie} from '../../test/assertions'
@@ -558,11 +559,11 @@ describe('POST /users/me/release-view', () => {
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({
             ok: true,
-            version: '2026.06.16.02',
+            version: APP_VERSION,
         })
         expect(boundStatements[1]?.sql).toContain('UPDATE users')
         expect(boundStatements[1]?.sql).toContain('last_seen_version')
-        expect(boundStatements[1]?.binds).toEqual(['2026.06.16.02', currentUserRecord.id])
+        expect(boundStatements[1]?.binds).toEqual([APP_VERSION, currentUserRecord.id])
     })
 })
 
