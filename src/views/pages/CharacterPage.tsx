@@ -11,6 +11,7 @@ export type CharacterPageCharacter = {
     profileImageKey: string
     description: string
     galleryFullsizeLastRow: boolean
+    hasHeightChart: boolean
 }
 
 export type CharacterPageMedia = {
@@ -80,6 +81,35 @@ function profileImageFor(user: ProfilePageUser, mediaBaseUrl: string): string {
 
     const letter = user.username.trim().charAt(0).toUpperCase() || 'U'
     return `https://ui-avatars.com/api/?name=${encodeURIComponent(letter)}&background=ccc&color=000`
+}
+
+function encodeLayoutValue(layout: unknown): string {
+    const bytes = new TextEncoder().encode(JSON.stringify(layout))
+    let binary = ''
+
+    bytes.forEach((byte) => {
+        binary += String.fromCharCode(byte)
+    })
+
+    return btoa(binary)
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/g, '')
+}
+
+function sizeChartUrlForCharacter(characterId: string): string {
+    const layout = {
+        version: 1,
+        selectedId: characterId,
+        characters: [{
+            id: characterId,
+            xPct: 50,
+            flipped: false,
+            layer: 1,
+        }],
+    }
+
+    return `/size-chart?layout=${encodeLayoutValue(layout)}`
 }
 
 function displayMediaFor(
@@ -556,6 +586,14 @@ export function CharacterPage({
                 <h1 class="mb-4 break-words text-center text-5xl font-bold sm:text-6xl">{character.name}</h1>
                 {character.description ? (
                     <p class="mx-auto mb-6 max-w-3xl whitespace-pre-wrap text-center font-light">{character.description}</p>
+                ) : null}
+
+                {character.hasHeightChart ? (
+                    <div class="mb-6 flex justify-center">
+                        <a class="btn btn-sm btn-outline rounded-full" href={sizeChartUrlForCharacter(character.id)}>
+                            View in Size Chart
+                        </a>
+                    </div>
                 ) : null}
 
                 {allowGuestNsfwReveal ? (
