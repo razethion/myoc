@@ -1277,6 +1277,8 @@ export function CharacterSettingsPage({
                     </div>
                     <div class="flex flex-wrap gap-2 sm:justify-end">
                         <a class="btn btn-primary" href={characterViewUrl}>View Character</a>
+                        <a class="btn btn-secondary" href={`/edit/${encodeURIComponent(character.id)}/height-chart`}>Height
+                            Chart</a>
                         <a class="btn btn-secondary" href="/characters">Back to Characters</a>
                         <button class="btn btn-error" id="delete-character-button" type="button">Delete Character</button>
                     </div>

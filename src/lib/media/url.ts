@@ -41,6 +41,25 @@ export function characterMediaImageObjectKey(
     return `characters/${userId}/${characterId}/media/${mediaId}/${rating}/${imageKey}.${extensionForImageContentType(contentType)}`
 }
 
+export function characterHeightChartImageObjectKey(
+    userId: string,
+    characterId: string,
+    imageKey: string,
+    contentType: string | null | undefined = 'image/png',
+): string {
+    return `characters/${userId}/${characterId}/height-chart/${imageKey}.${extensionForImageContentType(contentType)}`
+}
+
+export function characterHeightChartImageUrl(
+    baseUrl: string,
+    userId: string,
+    characterId: string,
+    imageKey: string,
+    contentType: string | null | undefined = 'image/png',
+): string {
+    return mediaUrlForKey(baseUrl, characterHeightChartImageObjectKey(userId, characterId, imageKey, contentType))
+}
+
 export function characterMediaImageUrl(
     baseUrl: string,
     userId: string,

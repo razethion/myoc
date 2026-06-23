@@ -1,4 +1,4 @@
-export const APP_VERSION = '2026.06.16.02'
+export const APP_VERSION = '2026.06.22.01'
 
 export type ReleaseNote = {
     version: string
@@ -9,6 +9,17 @@ export type ReleaseNote = {
 }
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+    {
+        version: '2026.06.22.01',
+        releasedOn: 'June 22, 2026',
+        title: 'Character Size Chart',
+        summary: 'Compare your characters by height with the new size chart feature.',
+        changes: [
+            'Added a size chart feature for characters! You can tell MyOC your character\'s height and see them next to each other!',
+            'You can also compare your characters to others with the global search tool!',
+            'Size charts can be exported as an image or URL for sharing with others!',
+        ],
+    },
     {
         version: '2026.06.16.02',
         releasedOn: 'June 16, 2026',

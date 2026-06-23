@@ -2,6 +2,8 @@ import {Hono} from 'hono'
 import type {Context} from 'hono'
 import {getCurrentUser, toSqlTimestamp, type CurrentUser} from '../../lib/auth/session'
 import {
+    characterHeightChartImageObjectKey,
+    characterHeightChartImageUrl,
     characterMediaImageObjectKey,
     characterMediaImageUrl,
     characterProfileImageObjectKey,
@@ -48,6 +50,12 @@ type SortTreeRequest = {
 type UpdateCharacterRequest = {
     name?: unknown
     description?: unknown
+}
+
+type HeightChartSaveRequest = {
+    height?: unknown
+    image?: unknown
+    calibration?: unknown
 }
 
 type GalleryLayoutRequest = {
@@ -129,8 +137,27 @@ type CharacterRecord = {
     sort_order: number
     description?: string
     gallery_fullsize_last_row?: number
+    height_chart_json?: string
     created_at: string
     updated_at: string
+}
+
+type CharacterHeightChartJson = {
+    version: 1
+    height: {
+        meters: number
+    }
+    image: null | {
+        key: string
+        contentType: string
+        naturalWidth: number
+        naturalHeight: number
+    }
+    calibration: {
+        headYPercent: number
+        footYPercent: number
+        footIsVirtual: boolean
+    }
 }
 
 type CharacterMediaRecord = {
@@ -188,6 +215,10 @@ const GALLERY_IMAGE_ALLOWED_CONTENT_TYPES = new Set([
 ])
 
 const GALLERY_IMAGE_CACHE_CONTROL = 'public, max-age=31536000, immutable'
+const HEIGHT_CHART_JSON_MAX_LENGTH = 2048
+const HEIGHT_CHART_MIN_METERS = 0.01
+const HEIGHT_CHART_MAX_METERS = 100
+const HEIGHT_CHART_MAX_FOOT_PERCENT = 180
 
 type ChunkedUploadInit = {
     rating: MediaRating
@@ -531,31 +562,19 @@ characterRoutes.patch('/:id', async (c) => {
 })
 
 characterRoutes.post('/:id/profile-image', async (c) => {
-    const currentUser = await getCurrentUser(c)
-
-    if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
-    }
-
     const contentLength = Number(c.req.header('content-length') ?? 0)
 
     if (contentLength > PROFILE_IMAGE_MAX_REQUEST_BYTES) {
         return c.json({error: 'Character profile image upload is too large'}, 413)
     }
 
-    const character = await getOwnedCharacter(c.env.DB, currentUser.id, c.req.param('id') ?? '')
+    const owned = await requireOwnedCharacterMultipartForm(c)
 
-    if (!character) {
-        return c.json({error: 'Character not found'}, 404)
+    if (owned instanceof Response) {
+        return owned
     }
 
-    const contentType = c.req.header('content-type') ?? ''
-
-    if (!contentType.includes('multipart/form-data')) {
-        return c.json({error: 'Multipart form data is required'}, 400)
-    }
-
-    const form = await c.req.formData()
+    const {currentUser, character, form} = owned
     const file = form.get('profileImage') ?? form.get('character-profile-photo')
     const profileImageResult = await validateProfileImage(file instanceof File ? file : null)
 
@@ -610,6 +629,104 @@ characterRoutes.post('/:id/profile-image', async (c) => {
     })
 })
 
+characterRoutes.put('/:id/height-chart', async (c) => {
+    const owned = await requireOwnedCharacterMultipartForm(c)
+
+    if (owned instanceof Response) {
+        return owned
+    }
+
+    const {currentUser, character, form} = owned
+    const rawJson = form.get('heightChartJson')
+
+    if (typeof rawJson !== 'string') {
+        return c.json({error: 'Height chart JSON is required'}, 400)
+    }
+
+    const existingHeightChart = parseCharacterHeightChartJson(character.height_chart_json)
+    const imageFileValue = form.get('heightChartImage')
+    const imageFile = imageFileValue instanceof File && imageFileValue.size > 0 ? imageFileValue : null
+    let uploadedImage: CompletedGalleryUpload | null = null
+    let uploadedObjectKey: string | null = null
+
+    if (imageFile) {
+        const imageResult = await validateGalleryImage(imageFile, 'Height chart image')
+
+        if ('error' in imageResult) {
+            return c.json({error: imageResult.error}, imageResult.status)
+        }
+
+        const imageKey = crypto.randomUUID()
+        uploadedImage = {
+            imageKey,
+            contentType: imageResult.contentType,
+            width: imageResult.width,
+            height: imageResult.height,
+            byteSize: imageResult.bytes.byteLength,
+        }
+        uploadedObjectKey = characterHeightChartImageObjectKey(
+            currentUser.id,
+            character.id,
+            imageKey,
+            imageResult.contentType,
+        )
+
+        await c.env.MEDIA_BUCKET.put(uploadedObjectKey, imageResult.bytes, {
+            httpMetadata: {
+                cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
+                contentType: imageResult.contentType,
+            },
+        })
+    }
+
+    const normalized = normalizeHeightChartJson(rawJson, existingHeightChart, uploadedImage)
+
+    if ('error' in normalized) {
+        if (uploadedObjectKey) {
+            await c.env.MEDIA_BUCKET.delete(uploadedObjectKey)
+        }
+
+        return c.json({error: normalized.error}, 400)
+    }
+
+    const previousImage = existingHeightChart?.image ?? null
+    const nextImage = normalized.heightChart.image
+    const now = toSqlTimestamp(new Date())
+
+    try {
+        await c.env.DB.prepare(
+            `UPDATE characters
+             SET height_chart_json = ?,
+                 updated_at        = ?
+             WHERE id = ?
+               AND user_id = ?`,
+        )
+            .bind(JSON.stringify(normalized.heightChart), now, character.id, currentUser.id)
+            .run()
+    } catch (error) {
+        if (uploadedObjectKey) {
+            await c.env.MEDIA_BUCKET.delete(uploadedObjectKey)
+        }
+
+        throw error
+    }
+
+    if (previousImage && previousImage.key !== nextImage?.key) {
+        await deleteR2Objects(c.env.MEDIA_BUCKET, [
+            characterHeightChartImageObjectKey(
+                currentUser.id,
+                character.id,
+                previousImage.key,
+                previousImage.contentType,
+            ),
+        ])
+    }
+
+    return c.json({
+        heightChart: toPublicHeightChart(c.env.MEDIA_PUBLIC_BASE_URL, currentUser.id, character.id, normalized.heightChart),
+    })
+})
+
 characterRoutes.post('/:id/media/chunked/init', async (c) => {
     const owned = await requireOwnedCharacter(c)
 
@@ -619,18 +736,10 @@ characterRoutes.post('/:id/media/chunked/init', async (c) => {
 
     const {currentUser, character} = owned
 
-    let body: ChunkedMediaInitRequest
+    const uploads = await parseChunkedUploadInitRequest(c)
 
-    try {
-        body = await c.req.json<ChunkedMediaInitRequest>()
-    } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
-    }
-
-    const uploads = parseChunkedUploadInits(body.uploads ?? body.ratings)
-
-    if ('error' in uploads) {
-        return c.json({error: uploads.error}, 400)
+    if (uploads instanceof Response) {
+        return uploads
     }
 
     const mediaId = crypto.randomUUID()
@@ -802,18 +911,10 @@ characterRoutes.post('/:id/media/:mediaId/chunked/init', async (c) => {
 
     const {currentUser, character, media} = owned
 
-    let body: ChunkedMediaInitRequest
+    const uploads = await parseChunkedUploadInitRequest(c)
 
-    try {
-        body = await c.req.json<ChunkedMediaInitRequest>()
-    } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
-    }
-
-    const uploads = parseChunkedUploadInits(body.uploads ?? body.ratings)
-
-    if ('error' in uploads) {
-        return c.json({error: uploads.error}, 400)
+    if (uploads instanceof Response) {
+        return uploads
     }
 
     const chunkedUploads = await createChunkedGalleryUploads(c.env.MEDIA_BUCKET, currentUser.id, character.id, media.id, uploads.uploads)
@@ -1158,7 +1259,15 @@ characterRoutes.delete('/:id', async (c) => {
     }
 
     const character = await c.env.DB.prepare(
-        `SELECT id, user_id, name, profile_image_key, folder_id, sort_order, created_at, updated_at
+        `SELECT id,
+                user_id,
+                name,
+                profile_image_key,
+                folder_id,
+                sort_order,
+                height_chart_json,
+                created_at,
+                updated_at
          FROM characters
          WHERE id = ?
            AND user_id = ?
@@ -1201,6 +1310,18 @@ characterRoutes.delete('/:id', async (c) => {
         await deleteCharacterMediaObjects(c.env.MEDIA_BUCKET, media)
     }
 
+    const heightChart = parseCharacterHeightChartJson(character.height_chart_json)
+    if (heightChart?.image) {
+        await deleteR2Objects(c.env.MEDIA_BUCKET, [
+            characterHeightChartImageObjectKey(
+                currentUser.id,
+                character.id,
+                heightChart.image.key,
+                heightChart.image.contentType,
+            ),
+        ])
+    }
+
     return c.body(null, 204)
 })
 
@@ -1217,6 +1338,33 @@ function toPublicCharacter(baseUrl: string, character: CharacterRecord) {
         galleryFullsizeLastRow: Boolean(character.gallery_fullsize_last_row),
         createdAt: character.created_at,
         updatedAt: character.updated_at,
+    }
+}
+
+function toPublicHeightChart(
+    baseUrl: string,
+    userId: string,
+    characterId: string,
+    heightChart: CharacterHeightChartJson | null,
+) {
+    if (!heightChart) {
+        return null
+    }
+
+    return {
+        ...heightChart,
+        image: heightChart.image
+            ? {
+                ...heightChart.image,
+                url: characterHeightChartImageUrl(
+                    baseUrl,
+                    userId,
+                    characterId,
+                    heightChart.image.key,
+                    heightChart.image.contentType,
+                ),
+            }
+            : null,
     }
 }
 
@@ -1337,6 +1485,29 @@ async function requireOwnedCharacter(c: CharacterRouteContext): Promise<{
     return {currentUser, character}
 }
 
+async function requireOwnedCharacterMultipartForm(c: CharacterRouteContext): Promise<{
+    currentUser: CurrentUser
+    character: CharacterRecord
+    form: FormData
+} | Response> {
+    const owned = await requireOwnedCharacter(c)
+
+    if (owned instanceof Response) {
+        return owned
+    }
+
+    const contentType = c.req.header('content-type') ?? ''
+
+    if (!contentType.includes('multipart/form-data')) {
+        return c.json({error: 'Multipart form data is required'}, 400)
+    }
+
+    return {
+        ...owned,
+        form: await c.req.formData(),
+    }
+}
+
 async function requireOwnedCharacterMedia(c: CharacterRouteContext): Promise<{
     currentUser: CurrentUser
     character: CharacterRecord
@@ -1355,6 +1526,26 @@ async function requireOwnedCharacterMedia(c: CharacterRouteContext): Promise<{
     }
 
     return {...owned, media}
+}
+
+async function parseChunkedUploadInitRequest(c: CharacterRouteContext): Promise<{
+    uploads: ChunkedUploadInit[]
+} | Response> {
+    let body: ChunkedMediaInitRequest
+
+    try {
+        body = await c.req.json<ChunkedMediaInitRequest>()
+    } catch {
+        return c.json({error: 'Invalid JSON body'}, 400)
+    }
+
+    const uploads = parseChunkedUploadInits(body.uploads ?? body.ratings)
+
+    if ('error' in uploads) {
+        return c.json({error: uploads.error}, 400)
+    }
+
+    return uploads
 }
 
 function parseMediaArtists(sfwValue: unknown, nsfwValue: unknown): ParsedMediaArtists | { error: string } {
@@ -2202,6 +2393,124 @@ function readJsonProfileImage(body: CreateCharacterRequest): JsonProfileImage | 
     return null
 }
 
+function parseCharacterHeightChartJson(value: string | null | undefined): CharacterHeightChartJson | null {
+    if (!value) {
+        return null
+    }
+
+    try {
+        const parsed = JSON.parse(value) as unknown
+
+        if (!isRecord(parsed) || !isRecord(parsed.height) || !isRecord(parsed.calibration)) {
+            return null
+        }
+
+        const image = isRecord(parsed.image) ? parsed.image : null
+        const meters = Number(parsed.height.meters)
+        const headYPercent = Number(parsed.calibration.headYPercent)
+        const footYPercent = Number(parsed.calibration.footYPercent)
+
+        if (!Number.isFinite(meters) || !Number.isFinite(headYPercent) || !Number.isFinite(footYPercent)) {
+            return null
+        }
+
+        return {
+            version: 1,
+            height: {
+                meters,
+            },
+            image: image
+                ? {
+                    key: typeof image.key === 'string' ? image.key : '',
+                    contentType: typeof image.contentType === 'string' ? image.contentType : 'image/png',
+                    naturalWidth: Number(image.naturalWidth) || 1,
+                    naturalHeight: Number(image.naturalHeight) || 1,
+                }
+                : null,
+            calibration: {
+                headYPercent,
+                footYPercent,
+                footIsVirtual: Boolean(parsed.calibration.footIsVirtual),
+            },
+        }
+    } catch {
+        return null
+    }
+}
+
+function normalizeHeightChartJson(
+    rawJson: string,
+    existingHeightChart: CharacterHeightChartJson | null,
+    uploadedImage: CompletedGalleryUpload | null,
+): { heightChart: CharacterHeightChartJson } | { error: string } {
+    if (rawJson.length > HEIGHT_CHART_JSON_MAX_LENGTH) {
+        return {error: 'Height chart JSON is too large'}
+    }
+
+    let body: HeightChartSaveRequest
+
+    try {
+        body = JSON.parse(rawJson) as HeightChartSaveRequest
+    } catch {
+        return {error: 'Height chart JSON is invalid'}
+    }
+
+    if (!isRecord(body.height) || !isRecord(body.calibration)) {
+        return {error: 'Height and calibration data are required'}
+    }
+
+    const meters = Number(body.height.meters)
+
+    if (!Number.isFinite(meters) || meters < HEIGHT_CHART_MIN_METERS || meters > HEIGHT_CHART_MAX_METERS) {
+        return {error: 'Height must be between 0.01 and 100 meters'}
+    }
+
+    const footIsVirtual = Boolean(body.calibration.footIsVirtual)
+    const maxFootPercent = footIsVirtual ? HEIGHT_CHART_MAX_FOOT_PERCENT : 100
+    const headYPercent = Number(body.calibration.headYPercent)
+    const footYPercent = Number(body.calibration.footYPercent)
+
+    if (!Number.isFinite(headYPercent) || headYPercent < 0 || headYPercent > 100) {
+        return {error: 'Head marker must be between 0 and 100 percent'}
+    }
+
+    if (!Number.isFinite(footYPercent) || footYPercent < 0 || footYPercent > maxFootPercent) {
+        return {error: footIsVirtual ? 'Virtual foot marker must be between 0 and 180 percent' : 'Foot marker must be between 0 and 100 percent'}
+    }
+
+    if (footYPercent - headYPercent < 2) {
+        return {error: 'Foot marker must be below the head marker'}
+    }
+
+    let image: CharacterHeightChartJson['image'] = null
+
+    if (uploadedImage) {
+        image = {
+            key: uploadedImage.imageKey,
+            contentType: uploadedImage.contentType,
+            naturalWidth: uploadedImage.width,
+            naturalHeight: uploadedImage.height,
+        }
+    } else if (isRecord(body.image) && existingHeightChart?.image && body.image.key === existingHeightChart.image.key) {
+        image = existingHeightChart.image
+    }
+
+    return {
+        heightChart: {
+            version: 1,
+            height: {
+                meters: Number(meters.toFixed(4)),
+            },
+            image,
+            calibration: {
+                headYPercent: Number(headYPercent.toFixed(2)),
+                footYPercent: Number(footYPercent.toFixed(2)),
+                footIsVirtual,
+            },
+        },
+    }
+}
+
 function isValidTreeId(value: string): boolean {
     return value.length <= FOLDER_ID_MAX_LENGTH && /^[A-Za-z0-9_-]+$/.test(value)
 }
@@ -2230,6 +2539,7 @@ async function getOwnedCharacter(db: D1Database, userId: string, characterId: st
                 sort_order,
                 description,
                 gallery_fullsize_last_row,
+                height_chart_json,
                 created_at,
                 updated_at
          FROM characters
