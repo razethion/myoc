@@ -1,6 +1,7 @@
 import {describe, expect, it, vi} from 'vitest'
 import {pageRoutes} from './pages'
 import app from '../index'
+import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import {createMockKVNamespace} from '../test/mockKV'
 import {createMockR2Bucket} from '../test/mockR2'
 
@@ -323,11 +324,10 @@ describe('public page redirects', () => {
         expect(response.status).toBe(200)
         expect(html).toContain('<title>What&#39;s New | MyOC</title>')
         expect(html).toContain('What&#39;s new')
-        expect(html).toContain('data-app-version="2026.06.16.02"')
-        expect(html).toContain('v2026.06.16.02')
-        expect(html).toContain('v2026.06.16.01')
-        expect(html).toContain('v2026.06.15.02')
-        expect(html).toContain('v2026.06.15.01')
+        expect(html).toContain(`data-app-version="${APP_VERSION}"`)
+        for (const release of RELEASE_NOTES) {
+            expect(html).toContain(`v${release.version}`)
+        }
         expect(html).toContain('Original File Uploads')
         expect(html).toContain('Gallery art uploads now preserve the original file format and bytes instead of converting to PNG.')
         expect(html).toContain('Version notifications')

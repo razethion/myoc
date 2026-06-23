@@ -19,6 +19,11 @@ import {
     type CharacterSettingsMedia,
 } from '../views/pages/CharacterSettingsPage'
 import {
+    CharacterHeightChartEditorPage,
+    type CharacterHeightChartEditorCharacter,
+    type CharacterHeightChartEditorData,
+} from '../views/pages/CharacterHeightChartEditorPage'
+import {
     CharacterManagementPage,
     type CharacterManagementCharacter,
     type CharacterManagementFolder,
@@ -27,10 +32,12 @@ import {HomePage, type HomePageDiscoverCharacter, type HomePageStats} from '../v
 import {NotFoundPage} from '../views/pages/NotFoundPage'
 import {ProfilePage, type ProfilePageUser} from '../views/pages/ProfilePage'
 import {SearchPage} from '../views/pages/SearchPage'
+import {SizeChartViewerPage} from '../views/pages/SizeChartViewerPage'
 import {UserSettingsPage} from '../views/pages/UserSettingsPage'
 import {WhatsNewPage} from '../views/pages/WhatsNewPage'
 import {searchAll} from '../lib/search'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
+import {characterHeightChartImageUrl} from '../lib/media/url'
 
 export const pageRoutes = new Hono<{ Bindings: Bindings }>()
 
@@ -190,6 +197,28 @@ async function renderAdminPage(c: PageRouteContext, activeSection: AdminSection)
     )
 }
 
+pageRoutes.get('/edit/:characterId/height-chart', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return c.redirect('/login')
+    }
+
+    const character = await getCharacterHeightChartEditorCharacter(c.env.DB, currentUser.id, c.req.param('characterId'), c.env.MEDIA_PUBLIC_BASE_URL)
+
+    if (!character) {
+        return renderNotFoundPage(c, 'That character does not exist or you do not have access to edit it.')
+    }
+
+    return c.html(
+        <CharacterHeightChartEditorPage
+            character={character}
+            currentUser={currentUser}
+            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+        />,
+    )
+})
+
 pageRoutes.get('/edit/:characterId', async (c) => {
     const currentUser = await getCurrentUser(c)
 
@@ -229,6 +258,18 @@ pageRoutes.get('/search', async (c) => {
             guestInitial={getRandomLetter()}
             mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
             results={results}
+        />,
+    )
+})
+
+pageRoutes.get('/size-chart', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    return c.html(
+        <SizeChartViewerPage
+            currentUser={currentUser}
+            guestInitial={currentUser?.username.charAt(0).toUpperCase() ?? getRandomLetter()}
+            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
         />,
     )
 })
@@ -603,7 +644,8 @@ async function getCharacterPageCharacter(
                 name,
                 profile_image_key,
                 description,
-                gallery_fullsize_last_row
+                gallery_fullsize_last_row,
+                height_chart_json
          FROM characters
          WHERE user_id = ?
            AND name = ?
@@ -617,6 +659,7 @@ async function getCharacterPageCharacter(
             profile_image_key: string
             description: string | null
             gallery_fullsize_last_row: number | null
+            height_chart_json: string
         }>()
 
     if (!character) {
@@ -630,6 +673,41 @@ async function getCharacterPageCharacter(
         profileImageKey: character.profile_image_key,
         description: character.description ?? '',
         galleryFullsizeLastRow: Boolean(character.gallery_fullsize_last_row),
+        hasHeightChart: hasUsableHeightChart(character.height_chart_json),
+    }
+}
+
+function hasUsableHeightChart(value: string | null | undefined): boolean {
+    if (!value) {
+        return false
+    }
+
+    try {
+        const parsed = JSON.parse(value) as unknown
+
+        if (!parsed || typeof parsed !== 'object') {
+            return false
+        }
+
+        const chart = parsed as Record<string, unknown>
+        const image = chart.image && typeof chart.image === 'object' ? chart.image as Record<string, unknown> : null
+        const height = chart.height && typeof chart.height === 'object' ? chart.height as Record<string, unknown> : null
+        const calibration = chart.calibration && typeof chart.calibration === 'object' ? chart.calibration as Record<string, unknown> : null
+
+        return Boolean(
+            image
+            && typeof image.key === 'string'
+            && image.key
+            && Number.isFinite(Number(image.naturalWidth))
+            && Number.isFinite(Number(image.naturalHeight))
+            && height
+            && Number.isFinite(Number(height.meters))
+            && calibration
+            && Number.isFinite(Number(calibration.headYPercent))
+            && Number.isFinite(Number(calibration.footYPercent)),
+        )
+    } catch {
+        return false
     }
 }
 
@@ -787,6 +865,117 @@ async function getCharacterSettingsCharacter(
         profileImageKey: character.profile_image_key,
         description: character.description ?? '',
         galleryFullsizeLastRow: Boolean(character.gallery_fullsize_last_row),
+    }
+}
+
+async function getCharacterHeightChartEditorCharacter(
+    db: D1Database,
+    userId: string,
+    characterId: string,
+    mediaBaseUrl: string,
+): Promise<CharacterHeightChartEditorCharacter | null> {
+    const character = await db.prepare(
+        `SELECT id,
+                user_id,
+                name,
+                height_chart_json
+         FROM characters
+         WHERE id = ?
+           AND user_id = ?
+         LIMIT 1`,
+    )
+        .bind(characterId, userId)
+        .first<{
+            id: string
+            user_id: string
+            name: string
+            height_chart_json: string
+        }>()
+
+    if (!character) {
+        return null
+    }
+
+    return {
+        id: character.id,
+        userId: character.user_id,
+        name: character.name,
+        heightChart: parseCharacterHeightChartEditorData(
+            character.height_chart_json,
+            mediaBaseUrl,
+            character.user_id,
+            character.id,
+        ),
+    }
+}
+
+function parseCharacterHeightChartEditorData(
+    value: string | null | undefined,
+    mediaBaseUrl: string,
+    userId: string,
+    characterId: string,
+): CharacterHeightChartEditorData | null {
+    if (!value) {
+        return null
+    }
+
+    try {
+        const parsed = JSON.parse(value) as unknown
+
+        if (!parsed || typeof parsed !== 'object') {
+            return null
+        }
+
+        const chart = parsed as Record<string, unknown>
+        const height = chart.height && typeof chart.height === 'object'
+            ? chart.height as Record<string, unknown>
+            : null
+        const calibration = chart.calibration && typeof chart.calibration === 'object'
+            ? chart.calibration as Record<string, unknown>
+            : null
+        const image = chart.image && typeof chart.image === 'object'
+            ? chart.image as Record<string, unknown>
+            : null
+
+        if (!height || !calibration) {
+            return null
+        }
+
+        const meters = Number(height.meters)
+        const headYPercent = Number(calibration.headYPercent)
+        const footYPercent = Number(calibration.footYPercent)
+
+        if (!Number.isFinite(meters) || !Number.isFinite(headYPercent) || !Number.isFinite(footYPercent)) {
+            return null
+        }
+
+        const imageKey = typeof image?.key === 'string' ? image.key : ''
+        const contentType = typeof image?.contentType === 'string' ? image.contentType : 'image/png'
+        const naturalWidth = Number(image?.naturalWidth)
+        const naturalHeight = Number(image?.naturalHeight)
+
+        return {
+            version: 1,
+            height: {
+                meters,
+            },
+            image: imageKey && Number.isFinite(naturalWidth) && Number.isFinite(naturalHeight)
+                ? {
+                    key: imageKey,
+                    contentType,
+                    naturalWidth,
+                    naturalHeight,
+                    url: characterHeightChartImageUrl(mediaBaseUrl, userId, characterId, imageKey, contentType),
+                }
+                : null,
+            calibration: {
+                headYPercent,
+                footYPercent,
+                footIsVirtual: Boolean(calibration.footIsVirtual),
+            },
+        }
+    } catch {
+        return null
     }
 }
 
