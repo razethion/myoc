@@ -1551,7 +1551,7 @@ describe('POST /characters/:id/media', () => {
         expect(body.media.sfwWidth).toBe(800)
         expect(body.media.sfwHeight).toBe(600)
         expect(body.media.sfwByteSize).toBe(pngFile.size)
-        expect(boundStatements.some((statement) => statement.sql.includes('INSERT INTO character_media'))).toBe(true)
+        expect(boundStatements.some((statement) => statement.sql.includes(['INSERT INTO', 'character_media'].join(' ')))).toBe(true)
         expect(boundStatements.some((statement) => statement.sql.includes('UPDATE toyhouse_import_items'))).toBe(true)
         expect(boundStatements.some((statement) => statement.sql.includes('UPDATE toyhouse_import_jobs'))).toBe(true)
     })

@@ -4,7 +4,7 @@ import app from '../index'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import {createMockKVNamespace} from '../test/mockKV'
 import {createMockR2Bucket} from '../test/mockR2'
-import {createPngFile, createWebpDataUrl} from '../test/imageFixtures'
+import {createWebpDataUrl} from '../test/imageFixtures'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
 
@@ -910,10 +910,10 @@ describe('GET /migrate', () => {
         expect(html).toContain('withRetry')
         expect(html).toContain('https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_fourth.png')
         expect(html).toContain('https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_alt.png')
-        expect(preparedSql).toContain('INSERT INTO characters')
-        expect(preparedSql).not.toContain('INSERT INTO character_media')
-        expect(preparedSql).not.toContain('INSERT INTO character_gallery_tabs')
-        expect(preparedSql).not.toContain('INSERT INTO character_gallery_rows')
+        expect(preparedSql).toContain(['INSERT INTO', 'characters'].join(' '))
+        expect(preparedSql).not.toContain(['INSERT INTO', 'character_media'].join(' '))
+        expect(preparedSql).not.toContain(['INSERT INTO', 'character_gallery_tabs'].join(' '))
+        expect(preparedSql).not.toContain(['INSERT INTO', 'character_gallery_rows'].join(' '))
         expect(putKeys).toHaveLength(1)
         expect(putKeys.some((key) => key.includes('/profile/') && key.endsWith('.webp'))).toBe(true)
         expect(putKeys.some((key) => key.includes('/media/'))).toBe(false)

@@ -45,11 +45,8 @@ import {searchAll} from '../lib/search'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import {
     characterHeightChartImageUrl,
-    characterMediaImageObjectKey,
     characterProfileImageObjectKey,
 } from '../lib/media/url'
-import {getPngDimensions} from '../lib/media/png'
-import {getWebpDimensions} from '../lib/media/webp'
 import {validateProfileImagePayload} from '../lib/media/profileImage'
 
 export const pageRoutes = new Hono<{ Bindings: Bindings }>()
@@ -59,9 +56,7 @@ type PageRouteContext = Context<{ Bindings: Bindings }>
 const CHARACTER_NAME_MAX_LENGTH = 80
 const CHARACTER_NAME_ALLOWED_PATTERN = /^(?=.*[A-Za-z0-9])[A-Za-z0-9 _'".()-]+$/
 const CHARACTER_NAME_RULES = 'letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses'
-const GALLERY_IMAGE_ALLOWED_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'])
 const GALLERY_IMAGE_CACHE_CONTROL = 'public, max-age=31536000, immutable'
-const TOYHOUSE_IMPORT_IMAGES_PER_GALLERY_ROW = 3
 
 const HOME_PAGE_STATS_CACHE_KEY = 'home:stats:v1'
 const HOME_PAGE_DISCOVER_CACHE_KEY = 'home:discover:v1'
@@ -220,31 +215,34 @@ pageRoutes.post('/migrate/import', async (c) => {
     let migrationResult: ToyhouseMigrationResult | null = null
     let migrationError = ''
 
-    try {
-        if (!currentUser) {
-            throw new Error('Sign in to MyOC, then run the Toyhou.se import bookmarklet again.')
+    if (!currentUser) {
+        migrationError = 'Sign in to MyOC, then run the Toyhou.se import bookmarklet again.'
+    } else {
+        try {
+            const formData = await c.req.formData()
+            const payload = formData.get('toyhousePayload')
+
+            if (typeof payload !== 'string') {
+                migrationError = 'Toyhou.se data was missing. Run the bookmarklet again from the Toyhou.se character page.'
+            } else {
+                migrationResult = parseToyhouseMigrationPayload(payload)
+
+                if (migrationResult.myocUserId && migrationResult.myocUserId !== currentUser.id) {
+                    migrationError = 'Toyhou.se import was verified for a different MyOC account. Sign in to that account or create a fresh bookmarklet.'
+                    migrationResult = null
+                } else {
+                    migrationResult = await buildToyhouseMigrationReview(
+                        c.env.DB,
+                        migrationResult,
+                        currentUser.id,
+                    )
+                }
+            }
+        } catch (error) {
+            migrationError = error instanceof Error ? error.message : 'Toyhou.se data could not be read.'
         }
-
-        const formData = await c.req.formData()
-        const payload = formData.get('toyhousePayload')
-
-        if (typeof payload !== 'string') {
-            throw new Error('Toyhou.se data was missing. Run the bookmarklet again from the Toyhou.se character page.')
-        }
-
-        migrationResult = parseToyhouseMigrationPayload(payload)
-        if (migrationResult.myocUserId && migrationResult.myocUserId !== currentUser.id) {
-            throw new Error('Toyhou.se import was verified for a different MyOC account. Sign in to that account or create a fresh bookmarklet.')
-        }
-
-        migrationResult = await buildToyhouseMigrationReview(
-            c.env.DB,
-            migrationResult,
-            currentUser.id,
-        )
-    } catch (error) {
-        migrationError = error instanceof Error ? error.message : 'Toyhou.se data could not be read.'
     }
+
 
     return c.html(
         <MigratePage
@@ -265,28 +263,29 @@ pageRoutes.post('/migrate/import/confirm', async (c) => {
     let importResult: ToyhouseImportResult | null = null
     let migrationError = ''
 
-    try {
-        if (!currentUser) {
-            throw new Error('Sign in to MyOC, then submit the Toyhou.se import again.')
+    if (!currentUser) {
+        migrationError = 'Sign in to MyOC, then submit the Toyhou.se import again.'
+    } else {
+        try {
+            const formData = await c.req.formData()
+            const payload = formData.get('toyhousePayload')
+
+            if (typeof payload !== 'string') {
+                migrationError = 'Toyhou.se data was missing. Run the bookmarklet again from the Toyhou.se character page.'
+            } else {
+                const migrationResult = parseToyhouseMigrationPayload(payload)
+
+                if (migrationResult.myocUserId && migrationResult.myocUserId !== currentUser.id) {
+                    migrationError = 'Toyhou.se import was verified for a different MyOC account. Sign in to that account or create a fresh bookmarklet.'
+                } else {
+                    const reviewed = await buildToyhouseMigrationReview(c.env.DB, migrationResult, currentUser.id)
+                    const selection = parseToyhouseImportSelection(formData, reviewed)
+                    clientImportPlan = await prepareToyhouseClientImportPlan(c.env.DB, c.env.MEDIA_BUCKET, currentUser.id, reviewed, selection)
+                }
+            }
+        } catch (error) {
+            migrationError = error instanceof Error ? error.message : 'Toyhou.se import could not be completed.'
         }
-
-        const formData = await c.req.formData()
-        const payload = formData.get('toyhousePayload')
-
-        if (typeof payload !== 'string') {
-            throw new Error('Toyhou.se data was missing. Run the bookmarklet again from the Toyhou.se character page.')
-        }
-
-        const migrationResult = parseToyhouseMigrationPayload(payload)
-        if (migrationResult.myocUserId && migrationResult.myocUserId !== currentUser.id) {
-            throw new Error('Toyhou.se import was verified for a different MyOC account. Sign in to that account or create a fresh bookmarklet.')
-        }
-
-        const reviewed = await buildToyhouseMigrationReview(c.env.DB, migrationResult, currentUser.id)
-        const selection = parseToyhouseImportSelection(formData, reviewed)
-        clientImportPlan = await prepareToyhouseClientImportPlan(c.env.DB, c.env.MEDIA_BUCKET, currentUser.id, reviewed, selection)
-    } catch (error) {
-        migrationError = error instanceof Error ? error.message : 'Toyhou.se import could not be completed.'
     }
 
     return c.html(
@@ -710,13 +709,6 @@ type StagedToyhouseCharacter = {
     isNew: boolean
 }
 
-type GalleryImage = {
-    bytes: Uint8Array
-    contentType: string
-    width: number | null
-    height: number | null
-}
-
 type ToyhouseImportItemRecord = {
     id: string
     status: 'pending' | 'uploading' | 'imported' | 'failed'
@@ -808,6 +800,9 @@ async function prepareToyhouseClientImportPlan(
     const itemIds: string[] = []
     const importJobId = crypto.randomUUID()
     const now = toSqlTimestamp(new Date())
+    let clientImportPlan: ToyhouseClientImportPlan | null = null
+    let stagingError: Error | null = null
+    let unexpectedError: unknown = null
 
     try {
         staged.statements.push(db.prepare(
@@ -832,7 +827,8 @@ async function prepareToyhouseClientImportPlan(
                 : await stageToyhouseImportedCharacter(db, bucket, userId, character, selection.profileImagesByCharacterId.get(characterId) ?? '', staged)
 
             if (!targetCharacter.id) {
-                throw new Error(`Could not resolve import target for ${character.name}.`)
+                stagingError = new Error(`Could not resolve import target for ${character.name}.`)
+                break
             }
 
             if (!targetCharacter.isNew) {
@@ -883,49 +879,62 @@ async function prepareToyhouseClientImportPlan(
             })
         }
 
-        const totalImages = planCharacters.reduce((total, character) => total + character.images.length, 0)
-        if (totalImages === 0) {
-            throw new Error('Select at least one image to import.')
-        }
+        if (!stagingError) {
+            const totalImages = planCharacters.reduce((total, character) => total + character.images.length, 0)
+            if (totalImages === 0) {
+                stagingError = new Error('Select at least one image to import.')
+            } else {
+                staged.statements.push(db.prepare(
+                    `UPDATE toyhouse_import_jobs
+                     SET total_images = ?,
+                         updated_at   = ?
+                     WHERE id = ?
+                       AND user_id = ?`,
+                ).bind(totalImages, now, importJobId, userId))
 
-        staged.statements.push(db.prepare(
-            `UPDATE toyhouse_import_jobs
-             SET total_images = ?,
-                 updated_at = ?
-             WHERE id = ?
-               AND user_id = ?`,
-        ).bind(totalImages, now, importJobId, userId))
+                if (staged.statements.length > 0) {
+                    await db.batch(staged.statements)
+                }
 
-        if (staged.statements.length > 0) {
-            await db.batch(staged.statements)
-        }
+                const itemStates = await getToyhouseImportItemsByIds(db, userId, itemIds)
 
-        const itemStates = await getToyhouseImportItemsByIds(db, userId, itemIds)
+                clientImportPlan = {
+                    characters: planCharacters.map((character) => ({
+                        ...character,
+                        images: character.images.map((image) => {
+                            const itemState = itemStates.get(image.importItemId)
 
-        return {
-            characters: planCharacters.map((character) => ({
-                ...character,
-                images: character.images.map((image) => {
-                    const itemState = itemStates.get(image.importItemId)
-
-                    return itemState
-                        ? {
-                            ...image,
-                            mediaId: itemState.media_id,
-                            status: itemState.status,
-                        }
-                        : image
-                }),
-            })),
-            createdCharacters: staged.createdCharacters,
-            importJobId,
-            totalImages,
-            updatedCharacters: staged.updatedCharacterIds.size,
+                            return itemState
+                                ? {
+                                    ...image,
+                                    mediaId: itemState.media_id,
+                                    status: itemState.status,
+                                }
+                                : image
+                        }),
+                    })),
+                    createdCharacters: staged.createdCharacters,
+                    importJobId,
+                    totalImages,
+                    updatedCharacters: staged.updatedCharacterIds.size,
+                }
+            }
         }
     } catch (error) {
-        await deleteR2Objects(bucket, staged.uploadedKeys)
-        throw error
+        unexpectedError = error
     }
+
+    if (unexpectedError || stagingError) {
+        await deleteR2Objects(bucket, staged.uploadedKeys)
+
+        if (unexpectedError) {
+            throw unexpectedError
+        }
+
+        throw stagingError
+    }
+
+    return clientImportPlan!
 }
 
 async function hasActiveToyhouseImportJob(db: D1Database, userId: string): Promise<boolean> {
@@ -1064,84 +1073,6 @@ async function getToyhouseImportItemsByIds(
     return new Map((result.results ?? []).map((item) => [item.id, item]))
 }
 
-async function importToyhouseSelection(
-    db: D1Database,
-    bucket: R2Bucket,
-    userId: string,
-    migrationResult: ToyhouseMigrationResult,
-    selection: ToyhouseImportSelection,
-): Promise<ToyhouseImportResult> {
-    const staged: StagedToyhouseImport = {
-        createdCharacters: 0,
-        importedImages: 0,
-        statements: [],
-        updatedCharacterIds: new Set(),
-        uploadedKeys: [],
-    }
-
-    try {
-        await stageToyhouseSelection(db, bucket, userId, migrationResult, selection, staged)
-
-        if (staged.statements.length === 0) {
-            throw new Error('Select at least one image to import.')
-        }
-
-        await db.batch(staged.statements)
-
-        return {
-            createdCharacters: staged.createdCharacters,
-            updatedCharacters: staged.updatedCharacterIds.size,
-            importedImages: staged.importedImages,
-            skippedImages: 0,
-        }
-    } catch (error) {
-        await deleteR2Objects(bucket, staged.uploadedKeys)
-        throw error
-    }
-}
-
-async function stageToyhouseSelection(
-    db: D1Database,
-    bucket: R2Bucket,
-    userId: string,
-    migrationResult: ToyhouseMigrationResult,
-    selection: ToyhouseImportSelection,
-    staged: StagedToyhouseImport,
-): Promise<void> {
-    const charactersById = new Map(migrationResult.characters.map((character) => [character.id, character]))
-
-    for (const characterId of selection.characterIds) {
-        const character = charactersById.get(characterId)
-        if (!character || character.canImport === false) {
-            continue
-        }
-
-        const targetCharacter = character.importMode === 'existing'
-            ? {id: character.targetCharacterId ?? '', isNew: false}
-            : await stageToyhouseImportedCharacter(db, bucket, userId, character, selection.profileImagesByCharacterId.get(characterId) ?? '', staged)
-
-        if (!targetCharacter.id) {
-            throw new Error(`Could not resolve import target for ${character.name}.`)
-        }
-
-        const nsfwImages = selection.nsfwImagesByCharacterId.get(characterId) ?? new Set<string>()
-        const importedMediaIds: string[] = []
-
-        for (const imageUrl of selection.imagesByCharacterId.get(characterId) ?? []) {
-            const rating = nsfwImages.has(imageUrl) ? 'nsfw' : 'sfw'
-            importedMediaIds.push(await stageToyhouseImage(db, bucket, userId, targetCharacter.id, imageUrl, rating, staged))
-        }
-
-        if (targetCharacter.isNew && importedMediaIds.length > 0) {
-            stageToyhouseImportedCharacterGallery(db, userId, targetCharacter.id, importedMediaIds, staged)
-        }
-
-        if (!targetCharacter.isNew && (selection.imagesByCharacterId.get(characterId)?.size ?? 0) > 0) {
-            staged.updatedCharacterIds.add(targetCharacter.id)
-        }
-    }
-}
-
 async function stageToyhouseImportedCharacter(
     db: D1Database,
     bucket: R2Bucket,
@@ -1186,43 +1117,6 @@ async function stageToyhouseImportedCharacter(
     return {id: characterId, isNew: true}
 }
 
-function stageToyhouseImportedCharacterGallery(
-    db: D1Database,
-    userId: string,
-    characterId: string,
-    mediaIds: string[],
-    staged: StagedToyhouseImport,
-): void {
-    const now = toSqlTimestamp(new Date())
-    const tabId = crypto.randomUUID()
-
-    staged.statements.push(db.prepare(
-        `INSERT INTO character_gallery_tabs (id, user_id, character_id, name, sort_order, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    )
-        .bind(tabId, userId, characterId, 'default', 0, now, now))
-
-    for (let rowIndex = 0; rowIndex < mediaIds.length; rowIndex += TOYHOUSE_IMPORT_IMAGES_PER_GALLERY_ROW) {
-        const rowId = crypto.randomUUID()
-        const rowMediaIds = mediaIds.slice(rowIndex, rowIndex + TOYHOUSE_IMPORT_IMAGES_PER_GALLERY_ROW)
-        const rowSortOrder = rowIndex / TOYHOUSE_IMPORT_IMAGES_PER_GALLERY_ROW
-
-        staged.statements.push(db.prepare(
-            `INSERT INTO character_gallery_rows (id, user_id, character_id, tab_id, sort_order, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        )
-            .bind(rowId, userId, characterId, tabId, rowSortOrder, now, now))
-
-        rowMediaIds.forEach((mediaId, mediaIndex) => {
-            staged.statements.push(db.prepare(
-                `INSERT INTO character_gallery_row_media (row_id, media_id, sort_order)
-                 VALUES (?, ?, ?)`,
-            )
-                .bind(rowId, mediaId, mediaIndex))
-        })
-    }
-}
-
 function readWebpDataUrl(value: string): { contentType: string; bytes: Uint8Array } | { error: string } {
     const match = /^data:(image\/webp);base64,(.+)$/i.exec(value)
 
@@ -1247,100 +1141,6 @@ function readWebpDataUrl(value: string): { contentType: string; bytes: Uint8Arra
     }
 }
 
-async function stageToyhouseImage(
-    db: D1Database,
-    bucket: R2Bucket,
-    userId: string,
-    characterId: string,
-    imageUrl: string,
-    rating: 'sfw' | 'nsfw',
-    staged: StagedToyhouseImport,
-): Promise<string> {
-    const image = await downloadToyhouseImage(imageUrl)
-
-    if (!image) {
-        throw new Error(`Could not download Toyhou.se image: ${imageUrl}`)
-    }
-
-    const now = toSqlTimestamp(new Date())
-    const mediaId = crypto.randomUUID()
-    const imageKey = crypto.randomUUID()
-    const objectKey = characterMediaImageObjectKey(userId, characterId, mediaId, imageKey, rating, image.contentType)
-
-    await bucket.put(objectKey, image.bytes, {
-        httpMetadata: {
-            cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
-            contentType: image.contentType,
-        },
-    })
-    staged.uploadedKeys.push(objectKey)
-
-    staged.statements.push(db.prepare(
-        `INSERT INTO character_media (
-                id, user_id, character_id,
-                sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type, sfw_artist, nsfw_artist,
-                sfw_width, sfw_height, sfw_byte_size,
-                nsfw_width, nsfw_height, nsfw_byte_size,
-                created_at, updated_at
-             )
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-        .bind(
-            mediaId,
-            userId,
-            characterId,
-            rating === 'sfw' ? imageKey : null,
-            rating === 'nsfw' ? imageKey : null,
-            rating === 'sfw' ? image.contentType : null,
-            rating === 'nsfw' ? image.contentType : null,
-            '',
-            '',
-            rating === 'sfw' ? image.width : null,
-            rating === 'sfw' ? image.height : null,
-            rating === 'sfw' ? image.bytes.byteLength : null,
-            rating === 'nsfw' ? image.width : null,
-            rating === 'nsfw' ? image.height : null,
-            rating === 'nsfw' ? image.bytes.byteLength : null,
-            now,
-            now,
-        ))
-    staged.importedImages += 1
-
-    return mediaId
-}
-
-async function downloadToyhouseImage(url: string): Promise<{
-    bytes: Uint8Array
-    contentType: string
-    width: number | null
-    height: number | null
-}> {
-    const response = await fetch(url)
-
-    if (!response.ok) {
-        throw new Error(`Toyhou.se returned ${response.status} for ${url}`)
-    }
-
-    const contentType = normalizeImageContentType(response.headers.get('content-type'), url)
-    if (!contentType) {
-        throw new Error(`Toyhou.se image had an unsupported content type: ${url}`)
-    }
-
-    const bytes = new Uint8Array(await response.arrayBuffer())
-    if (bytes.byteLength <= 0) {
-        throw new Error(`Toyhou.se image was empty: ${url}`)
-    }
-
-    const dimensions = readImageDimensions(bytes, contentType)
-
-    return {
-        bytes,
-        contentType,
-        width: dimensions?.width ?? null,
-        height: dimensions?.height ?? null,
-    }
-}
-
 async function deleteR2Objects(bucket: R2Bucket, objectKeys: string[]): Promise<void> {
     for (const objectKey of objectKeys) {
         try {
@@ -1349,79 +1149,6 @@ async function deleteR2Objects(bucket: R2Bucket, objectKeys: string[]): Promise<
             console.warn('Unable to delete imported media object', error)
         }
     }
-}
-
-function normalizeImageContentType(value: string | null, url: string): string | null {
-    const rawContentType = (value ?? '').split(';')[0].trim().toLowerCase()
-    const contentType = normalizeToyhouseImageContentType(rawContentType) || contentTypeFromUrl(url)
-
-    return GALLERY_IMAGE_ALLOWED_CONTENT_TYPES.has(contentType) ? contentType : null
-}
-
-function normalizeToyhouseImageContentType(value: string): string | null {
-    if (value === 'png' || value === 'png32') return 'image/png'
-    if (value === 'jpg' || value === 'jpeg' || value === 'image/jpg' || value === 'image/pjpeg') return 'image/jpeg'
-    return value || null
-}
-
-function contentTypeFromUrl(url: string): string {
-    const pathname = new URL(url).pathname.toLowerCase()
-
-    if (pathname.endsWith('.jpg') || pathname.endsWith('.jpeg')) return 'image/jpeg'
-    if (pathname.endsWith('.gif')) return 'image/gif'
-    if (pathname.endsWith('.webp')) return 'image/webp'
-    if (pathname.endsWith('.avif')) return 'image/avif'
-    return 'image/png'
-}
-
-function readImageDimensions(bytes: Uint8Array, contentType: string): { width: number; height: number } | null {
-    if (contentType === 'image/png') return getPngDimensions(bytes)
-    if (contentType === 'image/webp') return getWebpDimensions(bytes)
-    if (contentType === 'image/gif') return readGifDimensions(bytes)
-    if (contentType === 'image/jpeg') return readJpegDimensions(bytes)
-    return null
-}
-
-function readGifDimensions(bytes: Uint8Array): { width: number; height: number } | null {
-    if (bytes.length < 10) return null
-    const signature = String.fromCharCode(...bytes.slice(0, 6))
-    if (signature !== 'GIF87a' && signature !== 'GIF89a') return null
-
-    return {
-        width: bytes[6] | (bytes[7] << 8),
-        height: bytes[8] | (bytes[9] << 8),
-    }
-}
-
-function readJpegDimensions(bytes: Uint8Array): { width: number; height: number } | null {
-    if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null
-    let offset = 2
-
-    while (offset + 9 < bytes.length) {
-        if (bytes[offset] !== 0xff) return null
-        const marker = bytes[offset + 1]
-        offset += 2
-
-        if (marker === 0xd9 || marker === 0xda) return null
-        const length = (bytes[offset] << 8) | bytes[offset + 1]
-        if (length < 2 || offset + length > bytes.length) return null
-
-        if (
-            (marker >= 0xc0 && marker <= 0xc3)
-            || (marker >= 0xc5 && marker <= 0xc7)
-            || (marker >= 0xc9 && marker <= 0xcb)
-            || (marker >= 0xcd && marker <= 0xcf)
-        ) {
-            return {
-                height: (bytes[offset + 3] << 8) | bytes[offset + 4],
-                width: (bytes[offset + 5] << 8) | bytes[offset + 6],
-            }
-        }
-
-        offset += length
-    }
-
-    return null
 }
 
 function parseToyhouseCharacterPayload(value: unknown): ToyhouseMigrationResult['characters'][number] | null {
