@@ -347,6 +347,9 @@ describe('public page redirects', () => {
         for (const release of RELEASE_NOTES) {
             expect(html).toContain(`v${release.version}`)
         }
+        expect(html).toContain('Toyhou.se Migration')
+        expect(html).toContain('Import characters and gallery images from Toyhou.se into MyOC.')
+        expect(html).toContain('Added client-side chunked uploads with retry handling so large imports can survive unstable connections.')
         expect(html).toContain('Original File Uploads')
         expect(html).toContain('Gallery art uploads now preserve the original file format and bytes instead of converting to PNG.')
         expect(html).toContain('Version notifications')
