@@ -346,18 +346,12 @@ describe('public page redirects', () => {
         expect(html).toContain(`data-app-version="${APP_VERSION}"`)
         for (const release of RELEASE_NOTES) {
             expect(html).toContain(`v${release.version}`)
+            expect(html).toContain(release.title.replace(/'/g, '&#39;'))
         }
-        expect(html).toContain('Toyhou.se Migration')
-        expect(html).toContain('Import characters and gallery images from Toyhou.se into MyOC.')
-        expect(html).toContain('Added client-side chunked uploads with retry handling so large imports can survive unstable connections.')
-        expect(html).toContain('Original File Uploads')
-        expect(html).toContain('Gallery art uploads now preserve the original file format and bytes instead of converting to PNG.')
-        expect(html).toContain('Version notifications')
-        expect(html).toContain('Signed-in users now have their latest seen version saved across devices.')
-        expect(html).toContain('Bug fixes.')
-        expect(html).toContain('Some symbols weren&#39;t allowed in character names, but should have been. This has been fixed.')
-        expect(html).toContain('What&#39;s New page')
-        expect(html).toContain('Added this What&#39;s New page with a dedicated block for each app version.')
+        expect(html).toContain('Current version')
+        expect(html).toContain('Release Notes')
+        expect(html).toContain('badge badge-primary')
+        expect(html).toContain('badge badge-outline')
         expect(html).toContain('href="/whats-new"')
     })
 
