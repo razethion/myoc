@@ -1,4 +1,4 @@
-export const APP_VERSION = '2026.06.22.01'
+export const APP_VERSION = '2026.06.25.01'
 
 export type ReleaseNote = {
     version: string
@@ -9,6 +9,17 @@ export type ReleaseNote = {
 }
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+    {
+        version: '2026.06.25.01',
+        releasedOn: 'June 25, 2026',
+        title: 'Toyhou.se Migration Prep',
+        summary: 'A new migration page is ready for Toyhou.se profile imports.',
+        changes: [
+            'Added a Migrate from Toyhou.se page for signed-in users.',
+            'Added a Toyhou.se profile URL form to begin the import flow.',
+            'Added setup instructions for making characters and full-size images publicly accessible before importing.',
+        ],
+    },
     {
         version: '2026.06.22.01',
         releasedOn: 'June 22, 2026',

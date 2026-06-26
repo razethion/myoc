@@ -172,6 +172,32 @@ async function completeChunkedMedia(
     }, requestEnv(db, options.mediaBucket))
 }
 
+async function completeToyhouseImportItem(
+    itemId: string,
+    body: unknown,
+    db: D1Database,
+    options: CharacterRequestOptions = {},
+): Promise<Response> {
+    return apiRoutes.request(`https://example.com/characters/toyhouse-import-items/${itemId}/complete`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+        headers: createRequestHeaders(body, options),
+    }, requestEnv(db, options.mediaBucket))
+}
+
+async function failToyhouseImportItem(
+    itemId: string,
+    body: unknown,
+    db: D1Database,
+    options: CharacterRequestOptions = {},
+): Promise<Response> {
+    return apiRoutes.request(`https://example.com/characters/toyhouse-import-items/${itemId}/fail`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+        headers: createRequestHeaders(body, options),
+    }, requestEnv(db, options.mediaBucket))
+}
+
 async function postProfileImage(
     characterId: string,
     body: FormData,
@@ -1409,6 +1435,163 @@ describe('POST /characters/:id/media', () => {
         expect(boundStatements.at(-1)?.binds[5]).toBe('image/gif')
     })
 
+    it('marks Toyhou.se import items and their jobs as failed', async () => {
+        const sessionToken = 'session-token'
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await failToyhouseImportItem('toyhouse-import-item', {
+            error: 'Toyhou.se returned 404',
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ok: true})
+        expect(db.batch).toHaveBeenCalledTimes(1)
+        expect(boundStatements).toHaveLength(3)
+        expect(boundStatements[1]?.sql).toContain('UPDATE toyhouse_import_items')
+        expect(boundStatements[1]?.binds[0]).toBe('failed')
+        expect(boundStatements[1]?.binds[1]).toBe('Toyhou.se returned 404')
+        expect(boundStatements[2]?.sql).toContain('UPDATE toyhouse_import_jobs')
+        expect(boundStatements[2]?.binds[0]).toBe('failed')
+    })
+
+    it('completes Toyhou.se import items through chunked gallery media upload', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const importItem = {
+            id: 'toyhouse-import-item',
+            job_id: 'toyhouse-import-job',
+            user_id: currentUserRecord.id,
+            character_id: character.id,
+            rating: 'sfw',
+            status: 'pending',
+            media_id: null,
+        }
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character, currentUserRecord, character, currentUserRecord, importItem, {count: 0}],
+        })
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await initChunkedMedia(character.id, {
+            uploads: [{rating: 'sfw', contentType: 'image/png'}],
+        }, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+        expect(initResponse.status).toBe(200)
+        const initBody = await initResponse.json() as {
+            mediaId: string
+            uploads: {
+                sfw: {
+                    uploadId: string
+                    imageKey: string
+                    contentType: string
+                    chunkSize: number
+                }
+            }
+        }
+
+        const pngFile = createPngFile(800, 600)
+        const partResponse = await putChunkedMediaPart(
+            character.id,
+            initBody.mediaId,
+            'sfw',
+            initBody.uploads.sfw.uploadId,
+            1,
+            initBody.uploads.sfw.imageKey,
+            pngFile,
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
+        expect(partResponse.status).toBe(200)
+        const uploadedPart = await partResponse.json() as R2UploadedPart
+
+        const completeResponse = await completeToyhouseImportItem(importItem.id, {
+            mediaId: initBody.mediaId,
+            sfwUpload: {
+                uploadId: initBody.uploads.sfw.uploadId,
+                imageKey: initBody.uploads.sfw.imageKey,
+                contentType: 'image/png',
+                width: 800,
+                height: 600,
+                parts: [uploadedPart],
+            },
+        }, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+
+        expect(completeResponse.status).toBe(201)
+        const body = await completeResponse.json() as {
+            media: {
+                id: string
+                sfwImageKey: string
+                sfwContentType: string
+                sfwWidth: number
+                sfwHeight: number
+                sfwByteSize: number
+            }
+            skipped: boolean
+        }
+        expect(body.skipped).toBe(false)
+        expect(body.media.id).toBe(initBody.mediaId)
+        expect(body.media.sfwImageKey).toBe(initBody.uploads.sfw.imageKey)
+        expect(body.media.sfwContentType).toBe('image/png')
+        expect(body.media.sfwWidth).toBe(800)
+        expect(body.media.sfwHeight).toBe(600)
+        expect(body.media.sfwByteSize).toBe(pngFile.size)
+        expect(boundStatements.some((statement) => statement.sql.includes('INSERT INTO character_media'))).toBe(true)
+        expect(boundStatements.some((statement) => statement.sql.includes('UPDATE toyhouse_import_items'))).toBe(true)
+        expect(boundStatements.some((statement) => statement.sql.includes('UPDATE toyhouse_import_jobs'))).toBe(true)
+    })
+
+    it('returns existing media when a Toyhou.se import item is already imported', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const media = createMediaRecord({character_id: character.id})
+        const importItem = {
+            id: 'toyhouse-import-item',
+            job_id: 'toyhouse-import-job',
+            user_id: currentUserRecord.id,
+            character_id: character.id,
+            rating: 'sfw',
+            status: 'imported',
+            media_id: media.id,
+        }
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, importItem, media],
+        })
+
+        const response = await completeToyhouseImportItem(importItem.id, {}, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toMatchObject({
+            media: {
+                id: media.id,
+                sfwImageKey: media.sfw_image_key,
+            },
+            skipped: true,
+        })
+        expect(mediaBucket.resumeMultipartUpload).not.toHaveBeenCalled()
+        expect(db.batch).not.toHaveBeenCalled()
+    })
+
     it('uploads original gallery media for the current user', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
@@ -1874,6 +2057,47 @@ function createCharacterRecord(overrides: Partial<{
         name: 'Vyn',
         profile_image_key: null,
         folder_id: null,
+        created_at: '2026-06-11 12:00:00',
+        updated_at: '2026-06-11 12:00:00',
+        ...overrides,
+    }
+}
+
+function createMediaRecord(overrides: Partial<{
+    id: string
+    user_id: string
+    character_id: string
+    sfw_image_key: string | null
+    nsfw_image_key: string | null
+    sfw_content_type: string | null
+    nsfw_content_type: string | null
+    sfw_artist: string
+    nsfw_artist: string
+    sfw_width: number | null
+    sfw_height: number | null
+    sfw_byte_size: number | null
+    nsfw_width: number | null
+    nsfw_height: number | null
+    nsfw_byte_size: number | null
+    created_at: string
+    updated_at: string
+}> = {}) {
+    return {
+        id: 'media-id',
+        user_id: currentUserRecord.id,
+        character_id: 'character-id',
+        sfw_image_key: 'sfw-image-key',
+        nsfw_image_key: null,
+        sfw_content_type: 'image/png',
+        nsfw_content_type: null,
+        sfw_artist: '',
+        nsfw_artist: '',
+        sfw_width: 800,
+        sfw_height: 600,
+        sfw_byte_size: 1234,
+        nsfw_width: null,
+        nsfw_height: null,
+        nsfw_byte_size: null,
         created_at: '2026-06-11 12:00:00',
         updated_at: '2026-06-11 12:00:00',
         ...overrides,

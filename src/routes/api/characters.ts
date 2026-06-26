@@ -180,6 +180,16 @@ type CharacterMediaRecord = {
     updated_at: string
 }
 
+type ToyhouseImportItemRecord = {
+    id: string
+    job_id: string
+    user_id: string
+    character_id: string
+    rating: MediaRating
+    status: 'pending' | 'uploading' | 'imported' | 'failed'
+    media_id: string | null
+}
+
 type CharacterFolderRecord = {
     id: string
     user_id: string
@@ -794,6 +804,216 @@ characterRoutes.put('/:id/media/chunked/:mediaId/:rating/:uploadId/:partNumber',
     const uploadedPart = await upload.uploadPart(partNumber, c.req.raw.body)
 
     return c.json(uploadedPart)
+})
+
+characterRoutes.delete('/:id/media/chunked/:mediaId/:rating/:uploadId', async (c) => {
+    const owned = await requireOwnedCharacter(c)
+
+    if (owned instanceof Response) {
+        return owned
+    }
+
+    const {currentUser, character} = owned
+    const rating = normalizeMediaRating(c.req.param('rating'))
+
+    if (!rating) {
+        return c.json({error: 'Media rating must be sfw or nsfw'}, 400)
+    }
+
+    const mediaId = normalizeUploadIdentifier(c.req.param('mediaId'), 'Media id')
+    const imageKey = normalizeUploadIdentifier(c.req.query('imageKey'), 'Image key')
+    const contentType = normalizeGalleryImageContentType(c.req.query('contentType'))
+    const uploadId = c.req.param('uploadId')
+
+    if ('error' in mediaId) {
+        return c.json({error: mediaId.error}, 400)
+    }
+
+    if ('error' in imageKey) {
+        return c.json({error: imageKey.error}, 400)
+    }
+
+    if ('error' in contentType) {
+        return c.json({error: contentType.error}, 400)
+    }
+
+    const objectKey = characterMediaImageObjectKey(currentUser.id, character.id, mediaId.value, imageKey.value, rating, contentType.contentType)
+    const upload = c.env.MEDIA_BUCKET.resumeMultipartUpload(objectKey, uploadId)
+    await upload.abort()
+
+    return c.body(null, 204)
+})
+
+characterRoutes.post('/toyhouse-import-items/:itemId/fail', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return c.json({error: 'Authentication required'}, 401)
+    }
+
+    const itemId = normalizeUploadIdentifier(c.req.param('itemId'), 'Import item id')
+
+    if ('error' in itemId) {
+        return c.json({error: itemId.error}, 400)
+    }
+
+    let body: { error?: unknown }
+
+    try {
+        body = await c.req.json<{ error?: unknown }>()
+    } catch {
+        body = {}
+    }
+
+    await markToyhouseImportItemFailed(c.env.DB, currentUser.id, itemId.value, typeof body.error === 'string' ? body.error : 'Import item failed')
+
+    return c.json({ok: true})
+})
+
+characterRoutes.post('/toyhouse-import-items/:itemId/complete', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return c.json({error: 'Authentication required'}, 401)
+    }
+
+    const itemId = normalizeUploadIdentifier(c.req.param('itemId'), 'Import item id')
+
+    if ('error' in itemId) {
+        return c.json({error: itemId.error}, 400)
+    }
+
+    const complete = await parseChunkedMediaCompleteBody(c)
+
+    if ('error' in complete) {
+        return c.json({error: complete.error}, complete.status)
+    }
+
+    const item = await getToyhouseImportItem(c.env.DB, currentUser.id, itemId.value)
+
+    if (!item) {
+        return c.json({error: 'Import item not found'}, 404)
+    }
+
+    if (item.status === 'imported' && item.media_id) {
+        const existingMedia = await getOwnedCharacterMedia(c.env.DB, currentUser.id, item.character_id, item.media_id)
+
+        if (existingMedia) {
+            return c.json({media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, existingMedia), skipped: true})
+        }
+    }
+
+    const mediaId = normalizeUploadIdentifier(complete.body.mediaId, 'Media id')
+
+    if ('error' in mediaId) {
+        return c.json({error: mediaId.error}, 400)
+    }
+
+    const upload = item.rating === 'sfw' ? complete.sfwUpload : complete.nsfwUpload
+    const oppositeUpload = item.rating === 'sfw' ? complete.nsfwUpload : complete.sfwUpload
+
+    if (!upload) {
+        return c.json({error: `${item.rating.toUpperCase()} upload is required for this import item`}, 400)
+    }
+
+    if (oppositeUpload) {
+        return c.json({error: 'Import item can only complete one media rating'}, 400)
+    }
+
+    const completedKeys: string[] = []
+
+    try {
+        const now = toSqlTimestamp(new Date())
+
+        await c.env.DB.prepare(
+            `UPDATE toyhouse_import_items
+             SET status = ?,
+                 error = '',
+                 updated_at = ?
+             WHERE id = ?
+               AND user_id = ?`,
+        )
+            .bind('uploading', now, item.id, currentUser.id)
+            .run()
+
+        const completedImage = await completeChunkedGalleryUpload(c.env.MEDIA_BUCKET, currentUser.id, item.character_id, mediaId.value, upload, item.rating, 'Toyhou.se image')
+        completedKeys.push(characterMediaImageObjectKey(currentUser.id, item.character_id, mediaId.value, completedImage.imageKey, item.rating, completedImage.contentType))
+
+        const media: CharacterMediaRecord = {
+            id: mediaId.value,
+            user_id: currentUser.id,
+            character_id: item.character_id,
+            sfw_image_key: item.rating === 'sfw' ? completedImage.imageKey : null,
+            nsfw_image_key: item.rating === 'nsfw' ? completedImage.imageKey : null,
+            sfw_content_type: item.rating === 'sfw' ? completedImage.contentType : null,
+            nsfw_content_type: item.rating === 'nsfw' ? completedImage.contentType : null,
+            sfw_artist: '',
+            nsfw_artist: '',
+            sfw_width: item.rating === 'sfw' ? completedImage.width : null,
+            sfw_height: item.rating === 'sfw' ? completedImage.height : null,
+            sfw_byte_size: item.rating === 'sfw' ? completedImage.byteSize : null,
+            nsfw_width: item.rating === 'nsfw' ? completedImage.width : null,
+            nsfw_height: item.rating === 'nsfw' ? completedImage.height : null,
+            nsfw_byte_size: item.rating === 'nsfw' ? completedImage.byteSize : null,
+            created_at: now,
+            updated_at: now,
+        }
+
+        await c.env.DB.batch([
+            c.env.DB.prepare(
+                `INSERT INTO character_media (
+                     id, user_id, character_id,
+                     sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type, sfw_artist, nsfw_artist,
+                     sfw_width, sfw_height, sfw_byte_size,
+                     nsfw_width, nsfw_height, nsfw_byte_size,
+                     created_at, updated_at
+                 )
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            )
+                .bind(
+                    media.id,
+                    media.user_id,
+                    media.character_id,
+                    media.sfw_image_key,
+                    media.nsfw_image_key,
+                    media.sfw_content_type,
+                    media.nsfw_content_type,
+                    media.sfw_artist,
+                    media.nsfw_artist,
+                    media.sfw_width,
+                    media.sfw_height,
+                    media.sfw_byte_size,
+                    media.nsfw_width,
+                    media.nsfw_height,
+                    media.nsfw_byte_size,
+                    media.created_at,
+                    media.updated_at,
+                ),
+            c.env.DB.prepare(
+                `UPDATE toyhouse_import_items
+                 SET status = ?,
+                     media_id = ?,
+                     error = '',
+                     updated_at = ?
+                 WHERE id = ?
+                   AND user_id = ?`,
+            )
+                .bind('imported', media.id, now, item.id, currentUser.id),
+        ])
+
+        await updateToyhouseImportJobStatus(c.env.DB, currentUser.id, item.job_id)
+
+        return c.json({media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, media), skipped: false}, 201)
+    } catch (error) {
+        await deleteR2Objects(c.env.MEDIA_BUCKET, completedKeys)
+        await markToyhouseImportItemFailed(c.env.DB, currentUser.id, item.id, error instanceof Error ? error.message : 'Import item failed')
+
+        if (error instanceof Error && error.message) {
+            return c.json({error: error.message}, 400)
+        }
+
+        throw error
+    }
 })
 
 characterRoutes.post('/:id/media/chunked/complete', async (c) => {
@@ -2583,6 +2803,91 @@ async function getOwnedCharacterMedia(
     )
         .bind(mediaId, characterId, userId)
         .first<CharacterMediaRecord>()
+}
+
+async function getToyhouseImportItem(
+    db: D1Database,
+    userId: string,
+    itemId: string,
+): Promise<ToyhouseImportItemRecord | null> {
+    return await db.prepare(
+        `SELECT id,
+                job_id,
+                user_id,
+                character_id,
+                rating,
+                status,
+                media_id
+         FROM toyhouse_import_items
+         WHERE id = ?
+           AND user_id = ?
+         LIMIT 1`,
+    )
+        .bind(itemId, userId)
+        .first<ToyhouseImportItemRecord>()
+}
+
+async function markToyhouseImportItemFailed(
+    db: D1Database,
+    userId: string,
+    itemId: string,
+    error: string,
+): Promise<void> {
+    const now = toSqlTimestamp(new Date())
+
+    await db.batch([
+        db.prepare(
+            `UPDATE toyhouse_import_items
+             SET status = ?,
+                 error = ?,
+                 updated_at = ?
+             WHERE id = ?
+               AND user_id = ?`,
+        )
+            .bind('failed', error.slice(0, 500), now, itemId, userId),
+        db.prepare(
+            `UPDATE toyhouse_import_jobs
+             SET status = ?,
+                 updated_at = ?
+             WHERE user_id = ?
+               AND id = (
+                   SELECT job_id
+                   FROM toyhouse_import_items
+                   WHERE id = ?
+                     AND user_id = ?
+                   LIMIT 1
+               )`,
+        )
+            .bind('failed', now, userId, itemId, userId),
+    ])
+}
+
+async function updateToyhouseImportJobStatus(
+    db: D1Database,
+    userId: string,
+    jobId: string,
+): Promise<void> {
+    const remaining = await db.prepare(
+        `SELECT COUNT(*) AS count
+         FROM toyhouse_import_items
+         WHERE job_id = ?
+           AND user_id = ?
+           AND status <> 'imported'`,
+    )
+        .bind(jobId, userId)
+        .first<{ count: number }>()
+    const status = (remaining?.count ?? 0) === 0 ? 'complete' : 'running'
+    const now = toSqlTimestamp(new Date())
+
+    await db.prepare(
+        `UPDATE toyhouse_import_jobs
+         SET status = ?,
+             updated_at = ?
+         WHERE id = ?
+           AND user_id = ?`,
+    )
+        .bind(status, now, jobId, userId)
+        .run()
 }
 
 async function getCharacterMedia(
