@@ -556,6 +556,54 @@ describe('GET /migrate', () => {
         expect(html).not.toContain('href="/login">Login</a>')
     })
 
+    it('proxies Toyhou.se images for signed-in users', async () => {
+        const fetchMock = vi.fn(async () => new Response('image-bytes', {
+            headers: {
+                'content-type': 'image/png',
+            },
+        }))
+        vi.stubGlobal('fetch', fetchMock)
+
+        const response = await getAppPath(
+            '/migrate/toyhouse-image?url=' + encodeURIComponent('https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485'),
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+
+        expect(response.status).toBe(200)
+        expect(response.headers.get('content-type')).toBe('image/png')
+        expect(await response.text()).toBe('image-bytes')
+        expect(fetchMock).toHaveBeenCalledWith('https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485', {
+            redirect: 'follow',
+        })
+    })
+
+    it('rejects Toyhou.se image proxy requests for untrusted URLs', async () => {
+        const fetchMock = vi.fn()
+        vi.stubGlobal('fetch', fetchMock)
+
+        const response = await getAppPath(
+            '/migrate/toyhouse-image?url=' + encodeURIComponent('https://example.com/image.png'),
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+                accept: 'application/json',
+            },
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Toyhou.se image URL is invalid',
+        })
+        expect(fetchMock).not.toHaveBeenCalled()
+    })
+
     it('redirects the migration start page to confirm when an import job is active', async () => {
         const response = await getAppPath('/migrate', createProfilePageDb({
             currentUser: createCurrentUserRecord('demo'),
@@ -898,6 +946,7 @@ describe('GET /migrate', () => {
         expect(response.status).toBe(200)
         expect(html).toContain('Uploading Toyhou.se Images')
         expect(html).toContain('upload each image in chunks and retry temporary failures')
+        expect(html).toContain('/migrate/toyhouse-image?url=')
         expect(html).toContain('/media/chunked/init')
         expect(html).toContain('/api/characters/toyhouse-import-items/')
         expect(html).toContain('/complete')

@@ -162,6 +162,35 @@ pageRoutes.get('/migrate', async (c) => {
     )
 })
 
+pageRoutes.get('/migrate/toyhouse-image', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return c.json({error: 'Authentication required'}, 401)
+    }
+
+    const imageUrl = parseToyhouseImageProxyUrl(c.req.query('url'))
+
+    if (!imageUrl) {
+        return c.json({error: 'Toyhou.se image URL is invalid'}, 400)
+    }
+
+    const upstream = await fetch(imageUrl, {
+        redirect: 'follow',
+    })
+
+    if (!upstream.ok || !upstream.body) {
+        return c.json({error: `Toyhou.se returned ${upstream.status} for image URL`}, 502)
+    }
+
+    return new Response(upstream.body, {
+        headers: {
+            'cache-control': 'private, no-store',
+            'content-type': upstream.headers.get('content-type') ?? 'application/octet-stream',
+        },
+    })
+})
+
 pageRoutes.get('/migrate/import', async (c) => {
     const currentUser = await getCurrentUser(c)
 
@@ -1243,6 +1272,29 @@ function sanitizeHttpsUrl(value: unknown): string | null {
         const url = new URL(value)
 
         return url.protocol === 'https:' ? url.toString() : null
+    } catch {
+        return null
+    }
+}
+
+function parseToyhouseImageProxyUrl(value: unknown): string | null {
+    if (typeof value !== 'string' || value.length > 2048) {
+        return null
+    }
+
+    try {
+        const url = new URL(value)
+        const host = url.hostname.toLowerCase()
+
+        if (url.protocol !== 'https:') {
+            return null
+        }
+
+        if (host !== 'toyhou.se' && !host.endsWith('.toyhou.se')) {
+            return null
+        }
+
+        return url.toString()
     } catch {
         return null
     }

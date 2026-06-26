@@ -383,6 +383,10 @@ function ToyhouseClientImportScript({
         return contentTypeFromUrl(url);
     }
 
+    function proxiedToyhouseImageUrl(url) {
+        return '/migrate/toyhouse-image?url=' + encodeURIComponent(url);
+    }
+
     async function imageDimensions(blob) {
         const bitmap = await createImageBitmap(blob, { colorSpaceConversion: 'default' });
         const dimensions = {width: bitmap.width, height: bitmap.height};
@@ -392,7 +396,7 @@ function ToyhouseClientImportScript({
 
     async function fetchToyhouseImage(url) {
         const response = await withRetry('Downloading Toyhou.se image', async () => {
-            const result = await fetch(url, {credentials: 'omit'});
+            const result = await fetch(proxiedToyhouseImageUrl(url), {credentials: 'same-origin'});
             if (!result.ok) {
                 const error = new Error('Toyhou.se returned ' + result.status + ' for ' + url);
                 error.retryable = result.status === 429 || result.status >= 500;
@@ -810,8 +814,12 @@ function ToyhouseImportReviewScript() {
         });
     }
 
+    function proxiedToyhouseImageUrl(url) {
+        return '/migrate/toyhouse-image?url=' + encodeURIComponent(url);
+    }
+
     async function createProfileImageDataUrl(url) {
-        const response = await fetch(url, {credentials: 'omit'});
+        const response = await fetch(proxiedToyhouseImageUrl(url), {credentials: 'same-origin'});
         if (!response.ok) {
             throw new Error('Toyhou.se returned ' + response.status + ' for a profile image.');
         }
