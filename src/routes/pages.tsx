@@ -1,5 +1,5 @@
 import { Hono, type Context } from 'hono'
-import {getCurrentUser, isAdminUser} from '../lib/auth/session'
+import {getCurrentUser, isAdminUser, toSqlTimestamp} from '../lib/auth/session'
 import {getImageApprovalData} from '../lib/admin/imageApprovals'
 import {getAdminReportsData} from '../lib/admin/reports'
 import type {UserSocialLink} from '../lib/socialLinks'
@@ -29,6 +29,12 @@ import {
     type CharacterManagementFolder,
 } from '../views/pages/CharacterManagementPage'
 import {HomePage, type HomePageDiscoverCharacter, type HomePageStats} from '../views/pages/HomePage'
+import {
+    MigratePage,
+    type ToyhouseClientImportPlan,
+    type ToyhouseImportResult,
+    type ToyhouseMigrationResult,
+} from '../views/pages/MigratePage'
 import {NotFoundPage} from '../views/pages/NotFoundPage'
 import {ProfilePage, type ProfilePageUser} from '../views/pages/ProfilePage'
 import {SearchPage} from '../views/pages/SearchPage'
@@ -37,11 +43,20 @@ import {UserSettingsPage} from '../views/pages/UserSettingsPage'
 import {WhatsNewPage} from '../views/pages/WhatsNewPage'
 import {searchAll} from '../lib/search'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
-import {characterHeightChartImageUrl} from '../lib/media/url'
+import {
+    characterHeightChartImageUrl,
+    characterProfileImageObjectKey,
+} from '../lib/media/url'
+import {validateProfileImagePayload} from '../lib/media/profileImage'
 
 export const pageRoutes = new Hono<{ Bindings: Bindings }>()
 
 type PageRouteContext = Context<{ Bindings: Bindings }>
+
+const CHARACTER_NAME_MAX_LENGTH = 80
+const CHARACTER_NAME_ALLOWED_PATTERN = /^(?=.*[A-Za-z0-9])[A-Za-z0-9 _'".()-]+$/
+const CHARACTER_NAME_RULES = 'letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses'
+const GALLERY_IMAGE_CACHE_CONTROL = 'public, max-age=31536000, immutable'
 
 const HOME_PAGE_STATS_CACHE_KEY = 'home:stats:v1'
 const HOME_PAGE_DISCOVER_CACHE_KEY = 'home:discover:v1'
@@ -119,6 +134,199 @@ pageRoutes.get('/settings', async (c) => {
             currentUser={currentUser}
             mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
             socialLinks={socialLinks}
+        />,
+    )
+})
+
+pageRoutes.get('/migrate', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return c.redirect('/login')
+    }
+
+    if (await hasActiveToyhouseImportJob(c.env.DB, currentUser.id)) {
+        return c.redirect('/migrate/import/confirm')
+    }
+
+    const toyhouseUsername = getToyhouseUsernameQuery(c.req.query('toyhouseUsername') ?? c.req.query('toyhouseUrl') ?? '')
+
+    return c.html(
+        <MigratePage
+            currentUser={currentUser}
+            guestInitial={currentUser.username.charAt(0).toUpperCase()}
+            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+            siteUrl={new URL(c.req.url).origin}
+            toyhouseUsername={toyhouseUsername}
+        />,
+    )
+})
+
+pageRoutes.get('/migrate/toyhouse-image', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return c.json({error: 'Authentication required'}, 401)
+    }
+
+    const imageUrl = parseToyhouseImageProxyUrl(c.req.query('url'))
+
+    if (!imageUrl) {
+        return c.json({error: 'Toyhou.se image URL is invalid'}, 400)
+    }
+
+    const upstream = await fetch(imageUrl, {
+        redirect: 'follow',
+    })
+
+    if (!upstream.ok || !upstream.body) {
+        return c.json({error: `Toyhou.se returned ${upstream.status} for image URL`}, 502)
+    }
+
+    return new Response(upstream.body, {
+        headers: {
+            'cache-control': 'private, no-store',
+            'content-type': upstream.headers.get('content-type') ?? 'application/octet-stream',
+        },
+    })
+})
+
+pageRoutes.get('/migrate/import', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return c.redirect('/login')
+    }
+
+    if (await hasActiveToyhouseImportJob(c.env.DB, currentUser.id)) {
+        return c.redirect('/migrate/import/confirm')
+    }
+
+    return c.html(
+        <MigratePage
+            currentUser={currentUser}
+            guestInitial={currentUser.username.charAt(0).toUpperCase()}
+            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+            receiveToyhouseImport
+            showSetupForm={false}
+            siteUrl={new URL(c.req.url).origin}
+        />,
+    )
+})
+
+pageRoutes.get('/migrate/import/confirm', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return c.redirect('/login')
+    }
+
+    const clientImportPlan = await getActiveToyhouseClientImportPlan(c.env.DB, currentUser.id)
+
+    if (!clientImportPlan) {
+        return c.redirect('/migrate')
+    }
+
+    return c.html(
+        <MigratePage
+            clientImportPlan={clientImportPlan}
+            currentUser={currentUser}
+            guestInitial={currentUser.username.charAt(0).toUpperCase()}
+            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+            showSetupForm={false}
+            siteUrl={new URL(c.req.url).origin}
+        />,
+    )
+})
+
+pageRoutes.post('/migrate/import', async (c) => {
+    const currentUser = await getCurrentUser(c)
+    let migrationResult: ToyhouseMigrationResult | null = null
+    let migrationError = ''
+
+    if (!currentUser) {
+        migrationError = 'Sign in to MyOC, then run the Toyhou.se import bookmarklet again.'
+    } else {
+        try {
+            const formData = await c.req.formData()
+            const payload = formData.get('toyhousePayload')
+
+            if (typeof payload !== 'string') {
+                migrationError = 'Toyhou.se data was missing. Run the bookmarklet again from the Toyhou.se character page.'
+            } else {
+                migrationResult = parseToyhouseMigrationPayload(payload)
+
+                if (migrationResult.myocUserId && migrationResult.myocUserId !== currentUser.id) {
+                    migrationError = 'Toyhou.se import was verified for a different MyOC account. Sign in to that account or create a fresh bookmarklet.'
+                    migrationResult = null
+                } else {
+                    migrationResult = await buildToyhouseMigrationReview(
+                        c.env.DB,
+                        migrationResult,
+                        currentUser.id,
+                    )
+                }
+            }
+        } catch (error) {
+            migrationError = error instanceof Error ? error.message : 'Toyhou.se data could not be read.'
+        }
+    }
+
+
+    return c.html(
+        <MigratePage
+            currentUser={currentUser}
+            guestInitial={currentUser?.username.charAt(0).toUpperCase() ?? getRandomLetter()}
+            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+            migrationError={migrationError}
+            migrationResult={migrationResult}
+            showSetupForm={false}
+            siteUrl={new URL(c.req.url).origin}
+        />,
+    )
+})
+
+pageRoutes.post('/migrate/import/confirm', async (c) => {
+    const currentUser = await getCurrentUser(c)
+    let clientImportPlan: ToyhouseClientImportPlan | null = null
+    let importResult: ToyhouseImportResult | null = null
+    let migrationError = ''
+
+    if (!currentUser) {
+        migrationError = 'Sign in to MyOC, then submit the Toyhou.se import again.'
+    } else {
+        try {
+            const formData = await c.req.formData()
+            const payload = formData.get('toyhousePayload')
+
+            if (typeof payload !== 'string') {
+                migrationError = 'Toyhou.se data was missing. Run the bookmarklet again from the Toyhou.se character page.'
+            } else {
+                const migrationResult = parseToyhouseMigrationPayload(payload)
+
+                if (migrationResult.myocUserId && migrationResult.myocUserId !== currentUser.id) {
+                    migrationError = 'Toyhou.se import was verified for a different MyOC account. Sign in to that account or create a fresh bookmarklet.'
+                } else {
+                    const reviewed = await buildToyhouseMigrationReview(c.env.DB, migrationResult, currentUser.id)
+                    const selection = parseToyhouseImportSelection(formData, reviewed)
+                    clientImportPlan = await prepareToyhouseClientImportPlan(c.env.DB, c.env.MEDIA_BUCKET, currentUser.id, reviewed, selection)
+                }
+            }
+        } catch (error) {
+            migrationError = error instanceof Error ? error.message : 'Toyhou.se import could not be completed.'
+        }
+    }
+
+    return c.html(
+        <MigratePage
+            clientImportPlan={clientImportPlan}
+            currentUser={currentUser}
+            guestInitial={currentUser?.username.charAt(0).toUpperCase() ?? getRandomLetter()}
+            importResult={importResult}
+            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+            migrationError={migrationError}
+            showSetupForm={false}
+            siteUrl={new URL(c.req.url).origin}
         />,
     )
 })
@@ -362,6 +570,734 @@ function profileRedirectUrl(username: string, rawPath = ''): string {
     return suffix
         ? `${userProfileUrl(username)}/${suffix}`
         : userProfileUrl(username)
+}
+
+function getToyhouseUsernameQuery(value: string): string {
+    const trimmed = value.trim()
+
+    if (!trimmed) {
+        return ''
+    }
+
+    try {
+        const url = new URL(trimmed)
+
+        if (url.protocol === 'https:' && ['toyhou.se', 'www.toyhou.se'].includes(url.hostname.toLowerCase())) {
+            return decodeURIComponent(url.pathname.split('/').filter(Boolean)[0] ?? '')
+        }
+    } catch {
+        // Plain Toyhou.se usernames are expected.
+    }
+
+    return trimmed
+}
+
+function parseToyhouseMigrationPayload(payload: string): ToyhouseMigrationResult {
+    if (payload.length > 5_000_000) {
+        throw new Error('Toyhou.se returned too much data. Try importing a smaller profile or folder.')
+    }
+
+    const parsed = JSON.parse(payload) as unknown
+
+    if (!parsed || typeof parsed !== 'object') {
+        throw new Error('Toyhou.se data was not in the expected format.')
+    }
+
+    const data = parsed as Record<string, unknown>
+    const myocUserId = sanitizeMyocUserId(data.myocUserId)
+    const profileUrl = sanitizeToyhouseUrl(data.profileUrl)
+    const folderUrl = sanitizeToyhouseUrl(data.folderUrl)
+
+    if (!profileUrl || !folderUrl) {
+        throw new Error('Toyhou.se data did not include a valid profile URL.')
+    }
+
+    const pagesFetched = Math.max(1, Math.min(1000, Number(data.pagesFetched) || 1))
+    const rawCharacters = Array.isArray(data.characters) ? data.characters : []
+    const characters = rawCharacters
+        .slice(0, 5000)
+        .map(parseToyhouseCharacterPayload)
+        .filter((character): character is ToyhouseMigrationResult['characters'][number] => Boolean(character))
+
+    return {
+        profileUrl,
+        folderUrl,
+        pagesFetched,
+        myocUserId,
+        characters,
+    }
+}
+
+async function buildToyhouseMigrationReview(
+    db: D1Database,
+    migrationResult: ToyhouseMigrationResult,
+    myocUserId: string,
+): Promise<ToyhouseMigrationResult> {
+    const existingCharactersByName = myocUserId ? await getExistingCharactersByName(db, myocUserId) : new Map<string, ExistingCharacterName>()
+    const importNameCounts = new Map<string, number>()
+
+    for (const character of migrationResult.characters) {
+        const nameKey = normalizeCharacterNameKey(character.name)
+        importNameCounts.set(nameKey, (importNameCounts.get(nameKey) ?? 0) + 1)
+    }
+
+    return {
+        ...migrationResult,
+        myocUserId,
+        characters: migrationResult.characters.map((character) => {
+            const nameKey = normalizeCharacterNameKey(character.name)
+            const existingCharacter = existingCharactersByName.get(nameKey) ?? null
+            const importIssues = getToyhouseCharacterImportIssues(character.name, {
+                canVerifyExistingCharacters: Boolean(myocUserId),
+                existsInMyoc: Boolean(existingCharacter),
+                nameKey,
+                importNameCounts,
+            })
+
+            return {
+                ...character,
+                canImport: importIssues.length === 0,
+                importMode: existingCharacter ? 'existing' : 'create',
+                importIssues,
+                targetCharacterId: existingCharacter?.id ?? null,
+            }
+        }),
+    }
+}
+
+type ExistingCharacterName = {
+    id: string
+    name: string
+}
+
+async function getExistingCharactersByName(db: D1Database, userId: string): Promise<Map<string, ExistingCharacterName>> {
+    const result = await db.prepare(
+        `SELECT id, name
+         FROM characters
+         WHERE user_id = ?`,
+    )
+        .bind(userId)
+        .all<ExistingCharacterName>()
+
+    return new Map((result.results ?? [])
+        .filter((row) => typeof row.id === 'string' && typeof row.name === 'string')
+        .map((row) => [normalizeCharacterNameKey(row.name), row]))
+}
+
+function normalizeCharacterNameKey(name: string): string {
+    return name.trim().toLocaleLowerCase()
+}
+
+function getToyhouseCharacterImportIssues(
+    name: string,
+    review: {
+        canVerifyExistingCharacters: boolean
+        existsInMyoc: boolean
+        nameKey: string
+        importNameCounts: Map<string, number>
+    },
+): string[] {
+    const issues: string[] = []
+
+    if (!review.canVerifyExistingCharacters) {
+        issues.push('Could not verify your MyOC account. Create a fresh bookmarklet while signed in and run it again.')
+    }
+
+    if (name.length > CHARACTER_NAME_MAX_LENGTH) {
+        issues.push('Character name must be 80 characters or fewer.')
+    }
+
+    if (!CHARACTER_NAME_ALLOWED_PATTERN.test(name)) {
+        issues.push(`Character name may contain only ${CHARACTER_NAME_RULES}, and must include at least one letter or number.`)
+    }
+
+    if (!review.existsInMyoc && (review.importNameCounts.get(review.nameKey) ?? 0) > 1) {
+        issues.push('Another Toyhou.se character in this import has the same name.')
+    }
+
+    return issues
+}
+
+type ToyhouseImportSelection = {
+    characterIds: string[]
+    imagesByCharacterId: Map<string, Set<string>>
+    nsfwImagesByCharacterId: Map<string, Set<string>>
+    profileImagesByCharacterId: Map<string, string>
+}
+
+type StagedToyhouseImport = {
+    statements: D1PreparedStatement[]
+    uploadedKeys: string[]
+    createdCharacters: number
+    updatedCharacterIds: Set<string>
+    importedImages: number
+}
+
+type StagedToyhouseCharacter = {
+    id: string
+    isNew: boolean
+}
+
+type ToyhouseImportItemRecord = {
+    id: string
+    status: 'pending' | 'uploading' | 'imported' | 'failed'
+    media_id: string | null
+}
+
+type ToyhouseImportJobRecord = {
+    id: string
+    total_images: number
+}
+
+type ToyhouseActiveImportItemRecord = ToyhouseImportItemRecord & {
+    character_id: string
+    import_mode: 'create' | 'existing'
+    name: string
+    rating: 'sfw' | 'nsfw'
+    toyhouse_character_id: string
+    toyhouse_image_url: string
+}
+
+function parseToyhouseImportSelection(formData: FormData, migrationResult: ToyhouseMigrationResult): ToyhouseImportSelection {
+    const charactersById = new Map(migrationResult.characters.map((character) => [character.id, character]))
+    const characterIds = formData.getAll('characterIds')
+        .filter((value): value is string => typeof value === 'string')
+        .filter((characterId, index, values) => values.indexOf(characterId) === index)
+
+    if (characterIds.length === 0) {
+        throw new Error('Select at least one character to import.')
+    }
+
+    const imagesByCharacterId = new Map<string, Set<string>>()
+    const nsfwImagesByCharacterId = new Map<string, Set<string>>()
+    const profileImagesByCharacterId = new Map<string, string>()
+
+    for (const characterId of characterIds) {
+        const character = charactersById.get(characterId)
+
+        if (!character || character.canImport === false) {
+            throw new Error('Selected Toyhou.se character is no longer importable. Review the import again.')
+        }
+
+        const allowedImageUrls = new Set(character.images.map((image) => image.fullsizeUrl))
+        const selectedImages = new Set(formData.getAll(`imageUrls:${characterId}`)
+            .filter((value): value is string => typeof value === 'string' && allowedImageUrls.has(value)))
+        const selectedNsfwImages = new Set(formData.getAll(`nsfwImageUrls:${characterId}`)
+            .filter((value): value is string => typeof value === 'string' && selectedImages.has(value)))
+
+        imagesByCharacterId.set(characterId, selectedImages)
+        nsfwImagesByCharacterId.set(characterId, selectedNsfwImages)
+
+        if (character.importMode !== 'existing') {
+            const profileImageDataUrl = formData.get(`profileImageDataUrl:${characterId}`)
+            if (typeof profileImageDataUrl !== 'string' || !profileImageDataUrl) {
+                throw new Error(`Profile image for ${character.name} was not prepared. Review the import and try again.`)
+            }
+            profileImagesByCharacterId.set(characterId, profileImageDataUrl)
+        }
+    }
+
+    return {
+        characterIds,
+        imagesByCharacterId,
+        nsfwImagesByCharacterId,
+        profileImagesByCharacterId,
+    }
+}
+
+async function prepareToyhouseClientImportPlan(
+    db: D1Database,
+    bucket: R2Bucket,
+    userId: string,
+    migrationResult: ToyhouseMigrationResult,
+    selection: ToyhouseImportSelection,
+): Promise<ToyhouseClientImportPlan> {
+    const staged: StagedToyhouseImport = {
+        createdCharacters: 0,
+        importedImages: 0,
+        statements: [],
+        updatedCharacterIds: new Set(),
+        uploadedKeys: [],
+    }
+    const charactersById = new Map(migrationResult.characters.map((character) => [character.id, character]))
+    const planCharacters: (Omit<ToyhouseClientImportPlan['characters'][number], 'images'> & {
+        images: (ToyhouseClientImportPlan['characters'][number]['images'][number] & {
+            status: 'pending';
+            mediaId: null
+        })[]
+    })[] = []
+    const itemIds: string[] = []
+    const importJobId = crypto.randomUUID()
+    const now = toSqlTimestamp(new Date())
+    let clientImportPlan: ToyhouseClientImportPlan | null = null
+    let stagingError: Error | null = null
+    let unexpectedError: unknown = null
+
+    try {
+        staged.statements.push(db.prepare(
+            `INSERT INTO toyhouse_import_jobs (id, user_id, status, total_images, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+        ).bind(importJobId, userId, 'running', 0, now, now))
+
+        for (const characterId of selection.characterIds) {
+            const character = charactersById.get(characterId)
+            if (!character || character.canImport === false) {
+                continue
+            }
+
+            const selectedImages = [...(selection.imagesByCharacterId.get(characterId) ?? new Set<string>())]
+            if (selectedImages.length === 0) {
+                continue
+            }
+
+            const nsfwImages = selection.nsfwImagesByCharacterId.get(characterId) ?? new Set<string>()
+            const targetCharacter = character.importMode === 'existing'
+                ? {id: character.targetCharacterId ?? '', isNew: false}
+                : await stageToyhouseImportedCharacter(db, bucket, userId, character, selection.profileImagesByCharacterId.get(characterId) ?? '', staged)
+
+            if (!targetCharacter.id) {
+                stagingError = new Error(`Could not resolve import target for ${character.name}.`)
+                break
+            }
+
+            if (!targetCharacter.isNew) {
+                staged.updatedCharacterIds.add(targetCharacter.id)
+            }
+
+            planCharacters.push({
+                importMode: targetCharacter.isNew ? 'create' : 'existing',
+                images: await Promise.all(selectedImages.map(async (fullsizeUrl, imageIndex) => {
+                    const importItemId = await toyhouseImportItemId(userId, targetCharacter.id, fullsizeUrl)
+                    const rating = nsfwImages.has(fullsizeUrl) ? 'nsfw' : 'sfw'
+
+                    itemIds.push(importItemId)
+                    staged.statements.push(db.prepare(
+                        `INSERT OR IGNORE INTO toyhouse_import_items (
+                             id, job_id, user_id, character_id, toyhouse_character_id, toyhouse_image_url,
+                             import_mode, rating, status, media_id, error, sort_order, created_at, updated_at
+                         )
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    ).bind(
+                        importItemId,
+                        importJobId,
+                        userId,
+                        targetCharacter.id,
+                        character.id,
+                        fullsizeUrl,
+                        targetCharacter.isNew ? 'create' : 'existing',
+                        rating,
+                        'pending',
+                        null,
+                        '',
+                        imageIndex,
+                        now,
+                        now,
+                    ))
+
+                    return {
+                        fullsizeUrl,
+                        importItemId,
+                        mediaId: null,
+                        rating,
+                        status: 'pending',
+                    }
+                })),
+                myocCharacterId: targetCharacter.id,
+                name: character.name,
+                toyhouseId: character.id,
+            })
+        }
+
+        if (!stagingError) {
+            const totalImages = planCharacters.reduce((total, character) => total + character.images.length, 0)
+            if (totalImages === 0) {
+                stagingError = new Error('Select at least one image to import.')
+            } else {
+                staged.statements.push(db.prepare(
+                    `UPDATE toyhouse_import_jobs
+                     SET total_images = ?,
+                         updated_at   = ?
+                     WHERE id = ?
+                       AND user_id = ?`,
+                ).bind(totalImages, now, importJobId, userId))
+
+                if (staged.statements.length > 0) {
+                    await db.batch(staged.statements)
+                }
+
+                const itemStates = await getToyhouseImportItemsByIds(db, userId, itemIds)
+
+                clientImportPlan = {
+                    characters: planCharacters.map((character) => ({
+                        ...character,
+                        images: character.images.map((image) => {
+                            const itemState = itemStates.get(image.importItemId)
+
+                            return itemState
+                                ? {
+                                    ...image,
+                                    mediaId: itemState.media_id,
+                                    status: itemState.status,
+                                }
+                                : image
+                        }),
+                    })),
+                    createdCharacters: staged.createdCharacters,
+                    importJobId,
+                    totalImages,
+                    updatedCharacters: staged.updatedCharacterIds.size,
+                }
+            }
+        }
+    } catch (error) {
+        unexpectedError = error
+    }
+
+    if (unexpectedError || stagingError) {
+        await deleteR2Objects(bucket, staged.uploadedKeys)
+
+        if (unexpectedError) {
+            throw unexpectedError
+        }
+
+        throw stagingError
+    }
+
+    return clientImportPlan!
+}
+
+async function hasActiveToyhouseImportJob(db: D1Database, userId: string): Promise<boolean> {
+    const job = await getActiveToyhouseImportJob(db, userId)
+
+    return job !== null
+}
+
+async function getActiveToyhouseClientImportPlan(
+    db: D1Database,
+    userId: string,
+): Promise<ToyhouseClientImportPlan | null> {
+    const job = await getActiveToyhouseImportJob(db, userId)
+
+    if (!job) {
+        return null
+    }
+
+    const result = await db.prepare(
+        `SELECT item.id,
+                item.character_id,
+                item.toyhouse_character_id,
+                item.toyhouse_image_url,
+                item.import_mode,
+                item.rating,
+                item.status,
+                item.media_id,
+                character.name
+         FROM toyhouse_import_items item
+         INNER JOIN characters character
+            ON character.id = item.character_id
+           AND character.user_id = item.user_id
+         WHERE item.job_id = ?
+           AND item.user_id = ?
+         ORDER BY character.name COLLATE NOCASE, item.sort_order, item.created_at`,
+    )
+        .bind(job.id, userId)
+        .all<ToyhouseActiveImportItemRecord>()
+    const items = result.results ?? []
+
+    if (items.length === 0) {
+        return null
+    }
+
+    const characters = new Map<string, ToyhouseClientImportPlan['characters'][number]>()
+
+    for (const item of items) {
+        const importMode = item.import_mode === 'create' ? 'create' : 'existing'
+        const existing = characters.get(item.character_id)
+
+        if (existing) {
+            existing.images.push({
+                fullsizeUrl: item.toyhouse_image_url,
+                importItemId: item.id,
+                mediaId: item.media_id,
+                rating: item.rating,
+                status: item.status,
+            })
+            continue
+        }
+
+        characters.set(item.character_id, {
+            importMode,
+            images: [{
+                fullsizeUrl: item.toyhouse_image_url,
+                importItemId: item.id,
+                mediaId: item.media_id,
+                rating: item.rating,
+                status: item.status,
+            }],
+            myocCharacterId: item.character_id,
+            name: item.name,
+            toyhouseId: item.toyhouse_character_id,
+        })
+    }
+
+    const characterPlans = [...characters.values()]
+
+    return {
+        characters: characterPlans,
+        createdCharacters: characterPlans.filter((character) => character.importMode === 'create').length,
+        importJobId: job.id,
+        totalImages: items.length,
+        updatedCharacters: characterPlans.filter((character) => character.importMode === 'existing').length,
+    }
+}
+
+async function getActiveToyhouseImportJob(db: D1Database, userId: string): Promise<ToyhouseImportJobRecord | null> {
+    return await db.prepare(
+        `SELECT import_job.id, import_job.total_images
+         FROM toyhouse_import_jobs import_job
+         WHERE import_job.user_id = ?
+           AND import_job.status <> 'complete'
+           AND EXISTS (
+               SELECT 1
+               FROM toyhouse_import_items item
+               WHERE item.job_id = import_job.id
+                 AND item.user_id = import_job.user_id
+           )
+         ORDER BY import_job.updated_at DESC
+         LIMIT 1`,
+    )
+        .bind(userId)
+        .first<ToyhouseImportJobRecord>()
+}
+
+async function toyhouseImportItemId(userId: string, characterId: string, imageUrl: string): Promise<string> {
+    const bytes = new TextEncoder().encode(`${userId}\n${characterId}\n${imageUrl}`)
+    const digest = await crypto.subtle.digest('SHA-256', bytes)
+    const hex = [...new Uint8Array(digest)]
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('')
+
+    return `toyhouse-${hex.slice(0, 48)}`
+}
+
+async function getToyhouseImportItemsByIds(
+    db: D1Database,
+    userId: string,
+    itemIds: string[],
+): Promise<Map<string, ToyhouseImportItemRecord>> {
+    if (itemIds.length === 0) {
+        return new Map()
+    }
+
+    const placeholders = itemIds.map(() => '?').join(', ')
+    const result = await db.prepare(
+        `SELECT id, status, media_id
+         FROM toyhouse_import_items
+         WHERE user_id = ?
+           AND id IN (${placeholders})`,
+    )
+        .bind(userId, ...itemIds)
+        .all<ToyhouseImportItemRecord>()
+
+    return new Map((result.results ?? []).map((item) => [item.id, item]))
+}
+
+async function stageToyhouseImportedCharacter(
+    db: D1Database,
+    bucket: R2Bucket,
+    userId: string,
+    character: ToyhouseMigrationResult['characters'][number],
+    profileImageDataUrl: string,
+    staged: StagedToyhouseImport,
+): Promise<StagedToyhouseCharacter> {
+    const profileImage = readWebpDataUrl(profileImageDataUrl)
+    const validation = 'error' in profileImage
+        ? profileImage
+        : validateProfileImagePayload(profileImage, `${character.name} profile image`)
+
+    if ('error' in validation) {
+        throw new Error(validation.error)
+    }
+
+    if ('error' in profileImage) {
+        throw new Error(profileImage.error)
+    }
+
+    const now = toSqlTimestamp(new Date())
+    const characterId = crypto.randomUUID()
+    const profileImageKey = crypto.randomUUID()
+    const profileObjectKey = characterProfileImageObjectKey(userId, characterId, profileImageKey)
+
+    await bucket.put(profileObjectKey, profileImage.bytes, {
+        httpMetadata: {
+            cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
+            contentType: profileImage.contentType,
+        },
+    })
+    staged.uploadedKeys.push(profileObjectKey)
+
+    staged.statements.push(db.prepare(
+        `INSERT INTO characters (id, user_id, name, profile_image_key, folder_id, sort_order, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+        .bind(characterId, userId, character.name, profileImageKey, null, 0, now, now))
+    staged.createdCharacters += 1
+
+    return {id: characterId, isNew: true}
+}
+
+function readWebpDataUrl(value: string): { contentType: string; bytes: Uint8Array } | { error: string } {
+    const match = /^data:(image\/webp);base64,(.+)$/i.exec(value)
+
+    if (!match) {
+        return {error: 'Profile image must be a WebP data URL.'}
+    }
+
+    try {
+        const binary = atob(match[2])
+        const bytes = new Uint8Array(binary.length)
+
+        for (let index = 0; index < binary.length; index += 1) {
+            bytes[index] = binary.charCodeAt(index)
+        }
+
+        return {
+            bytes,
+            contentType: match[1].toLowerCase(),
+        }
+    } catch {
+        return {error: 'Profile image could not be read.'}
+    }
+}
+
+async function deleteR2Objects(bucket: R2Bucket, objectKeys: string[]): Promise<void> {
+    for (const objectKey of objectKeys) {
+        try {
+            await bucket.delete(objectKey)
+        } catch (error) {
+            console.warn('Unable to delete imported media object', error)
+        }
+    }
+}
+
+function parseToyhouseCharacterPayload(value: unknown): ToyhouseMigrationResult['characters'][number] | null {
+    if (!value || typeof value !== 'object') {
+        return null
+    }
+
+    const character = value as Record<string, unknown>
+    const id = typeof character.id === 'string' && /^\d+$/.test(character.id) ? character.id : ''
+    const name = typeof character.name === 'string' ? character.name.trim().slice(0, 120) : ''
+    const url = sanitizeToyhouseUrl(character.url)
+    const thumbnailUrl = sanitizeHttpsUrl(character.thumbnailUrl)
+    const images = Array.isArray(character.images)
+        ? character.images
+            .slice(0, 1000)
+            .map(parseToyhouseImagePayload)
+            .filter((image): image is ToyhouseMigrationResult['characters'][number]['images'][number] => Boolean(image))
+        : []
+    const imageCountValue = Number(character.imageCount)
+    const imageCount = Number.isFinite(imageCountValue) && imageCountValue >= 0
+        ? Math.floor(imageCountValue)
+        : null
+
+    if (!id || !name || !url) {
+        return null
+    }
+
+    return {
+        id,
+        images,
+        imageCount,
+        name,
+        thumbnailUrl,
+        url,
+    }
+}
+
+function parseToyhouseImagePayload(value: unknown): ToyhouseMigrationResult['characters'][number]['images'][number] | null {
+    if (!value || typeof value !== 'object') {
+        return null
+    }
+
+    const image = value as Record<string, unknown>
+    const fullsizeUrl = sanitizeHttpsUrl(image.fullsizeUrl)
+    const thumbnailUrl = sanitizeHttpsUrl(image.thumbnailUrl)
+
+    if (!fullsizeUrl || !thumbnailUrl) {
+        return null
+    }
+
+    return {
+        fullsizeUrl,
+        thumbnailUrl,
+    }
+}
+
+function sanitizeMyocUserId(value: unknown): string {
+    if (typeof value !== 'string') {
+        return ''
+    }
+
+    const userId = value.trim()
+
+    return userId.length > 0 && userId.length <= 128 && /^[A-Za-z0-9_-]+$/.test(userId)
+        ? userId
+        : ''
+}
+
+function sanitizeToyhouseUrl(value: unknown): string {
+    if (typeof value !== 'string') {
+        return ''
+    }
+
+    try {
+        const url = new URL(value)
+        const host = url.hostname.toLowerCase()
+
+        return url.protocol === 'https:' && (host === 'toyhou.se' || host === 'www.toyhou.se')
+            ? url.toString()
+            : ''
+    } catch {
+        return ''
+    }
+}
+
+function sanitizeHttpsUrl(value: unknown): string | null {
+    if (typeof value !== 'string' || !value) {
+        return null
+    }
+
+    try {
+        const url = new URL(value)
+
+        return url.protocol === 'https:' ? url.toString() : null
+    } catch {
+        return null
+    }
+}
+
+function parseToyhouseImageProxyUrl(value: unknown): string | null {
+    if (typeof value !== 'string' || value.length > 2048) {
+        return null
+    }
+
+    try {
+        const url = new URL(value)
+        const host = url.hostname.toLowerCase()
+
+        if (url.protocol !== 'https:') {
+            return null
+        }
+
+        if (host !== 'toyhou.se' && !host.endsWith('.toyhou.se')) {
+            return null
+        }
+
+        return url.toString()
+    } catch {
+        return null
+    }
 }
 
 async function getHomePageStats(db: D1Database): Promise<HomePageStats> {

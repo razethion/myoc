@@ -581,6 +581,26 @@ export function UserSettingsPage({currentUser, socialLinks = [], mediaBaseUrl}: 
 
                     <section class="space-y-5">
                         <div>
+                            <h2 class="text-2xl font-bold">Migration</h2>
+                            <p class="text-sm text-base-content/70">Bring characters and images over from other
+                                character gallery sites.</p>
+                        </div>
+
+                        <div class="rounded-box border border-base-300 bg-base-200 p-4">
+                            <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <h3 class="text-xl font-bold">Migrate from Toyhou.se</h3>
+                                    <p class="mt-1 text-sm text-base-content/70">
+                                        Start a Toyhou.se profile import from a public profile URL.
+                                    </p>
+                                </div>
+                                <a class="btn btn-secondary" href="/migrate">Open Migration</a>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="space-y-5">
+                        <div>
                             <h2 class="text-2xl font-bold">Social Links</h2>
                             <p class="text-sm text-base-content/70">Add the public links that should appear with your
                                 profile.</p>

@@ -44,24 +44,59 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
                 <div class="flex-none">
                     {currentUser ? (
                         <details class="dropdown dropdown-end">
-                            <summary class="btn btn-ghost btn-circle avatar">
+                            <summary aria-label="Open account menu" class="btn btn-ghost btn-circle avatar">
                                 <div class="w-10 rounded-full">
                                     <img alt={`${currentUser.username} profile`} data-profile-photo-image
                                          src={avatarUrl}/>
                                 </div>
                             </summary>
 
-                            <ul class="menu dropdown-content bg-base-100 rounded-box z-50 mt-3 w-56 p-2 shadow">
-                                <li><a href={`/u/${encodeURIComponent(currentUser.username)}`}>Profile</a></li>
+                            <ul class="menu dropdown-content bg-base-100 rounded-box z-50 mt-3 w-64 p-2 shadow">
+                                <li class="pointer-events-none px-3 py-2">
+                                    <div class="flex min-w-0 items-center gap-3 p-0">
+                                        <div class="avatar">
+                                            <div class="w-10 rounded-full">
+                                                <img alt="" data-profile-photo-image src={avatarUrl}/>
+                                            </div>
+                                        </div>
+                                        <div class="min-w-0">
+                                            <div class="truncate text-sm font-semibold">{currentUser.username}</div>
+                                            <div class="truncate text-xs text-base-content/60">Signed in</div>
+                                        </div>
+                                    </div>
+                                </li>
+                                <li class="my-1">
+                                    <hr class="border-base-300"/>
+                                </li>
+                                <li class="menu-title"><span>Account</span></li>
+                                <li><a href={`/u/${encodeURIComponent(currentUser.username)}`}>View Profile</a></li>
+                                <li><a href="/settings">Settings</a></li>
+                                <li class="my-1">
+                                    <hr class="border-base-300"/>
+                                </li>
+                                <li class="menu-title"><span>Library</span></li>
                                 <li><a href="/characters">Characters</a></li>
                                 <li><a href="/size-chart">Size Chart</a></li>
-                                <li><a href="/whats-new">What's new</a></li>
+                                <li class="my-1">
+                                    <hr class="border-base-300"/>
+                                </li>
+                                <li class="menu-title"><span>Updates</span></li>
+                                <li><a href="/whats-new">What's New</a></li>
                                 {currentUser.role === 'admin' && (
-                                    <li><a href="/admin">Admin</a></li>
+                                    <>
+                                        <li class="my-1">
+                                            <hr class="border-base-300"/>
+                                        </li>
+                                        <li class="menu-title"><span>Moderation</span></li>
+                                        <li><a href="/admin">Admin</a></li>
+                                    </>
                                 )}
-                                <li><a href="/settings">Settings</a></li>
-                                <div class="divider my-1"></div>
-                                <li><button class="text-error" form="logout-form" type="submit">Logout</button></li>
+                                <li class="my-1">
+                                    <hr class="border-base-300"/>
+                                </li>
+                                <li>
+                                    <button class="text-error" form="logout-form" type="submit">Logout</button>
+                                </li>
                             </ul>
                             <form action="/api/logout" id="logout-form" method="post">
                                 <input name="csrfToken" type="hidden" value={currentUser.csrfToken} />
@@ -78,11 +113,6 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
 
             <div class="mt-2 md:hidden">
                 {search}
-            </div>
-
-            <div class="mt-2 flex justify-end sm:hidden">
-                <a class="btn btn-ghost btn-xs" href="/size-chart">Size Chart</a>
-                <a class="btn btn-ghost btn-xs" href="/whats-new">What's new</a>
             </div>
 
             <VersionNotification

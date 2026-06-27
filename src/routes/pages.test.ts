@@ -1,11 +1,16 @@
-import {describe, expect, it, vi} from 'vitest'
+import {afterEach, describe, expect, it, vi} from 'vitest'
 import {pageRoutes} from './pages'
 import app from '../index'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import {createMockKVNamespace} from '../test/mockKV'
 import {createMockR2Bucket} from '../test/mockR2'
+import {createWebpDataUrl} from '../test/imageFixtures'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
+
+afterEach(() => {
+    vi.unstubAllGlobals()
+})
 
 type QueryResult = {
     results: unknown[]
@@ -29,6 +34,8 @@ function createProfilePageDb(options: {
     characterCount?: number
     mediaCount?: number
     discoverCharacters?: unknown[]
+    activeToyhouseImportJob?: unknown
+    activeToyhouseImportItems?: unknown[]
     imageApprovalItem?: unknown
     imageApprovalQueue?: unknown[]
     imageApprovalHistory?: unknown[]
@@ -49,6 +56,14 @@ function createProfilePageDb(options: {
 
         if (sql.includes('FROM sessions')) {
             return options.currentUser ?? null
+        }
+
+        if (sql.includes('FROM toyhouse_import_jobs')) {
+            if (sql.includes('EXISTS') && options.activeToyhouseImportItems?.length === 0) {
+                return null
+            }
+
+            return options.activeToyhouseImportJob ?? null
         }
 
         if (sql.includes('FROM character_media') && sql.includes('INNER JOIN users')) {
@@ -72,6 +87,10 @@ function createProfilePageDb(options: {
 
         if (sql.includes('FROM character_media_review_events')) {
             return {results: options.imageApprovalHistory ?? []}
+        }
+
+        if (sql.includes('FROM toyhouse_import_items')) {
+            return {results: options.activeToyhouseImportItems ?? []}
         }
 
         if (sql.includes('FROM character_media') && sql.includes('sfw_review_status')) {
@@ -327,15 +346,12 @@ describe('public page redirects', () => {
         expect(html).toContain(`data-app-version="${APP_VERSION}"`)
         for (const release of RELEASE_NOTES) {
             expect(html).toContain(`v${release.version}`)
+            expect(html).toContain(release.title.replace(/'/g, '&#39;'))
         }
-        expect(html).toContain('Original File Uploads')
-        expect(html).toContain('Gallery art uploads now preserve the original file format and bytes instead of converting to PNG.')
-        expect(html).toContain('Version notifications')
-        expect(html).toContain('Signed-in users now have their latest seen version saved across devices.')
-        expect(html).toContain('Bug fixes.')
-        expect(html).toContain('Some symbols weren&#39;t allowed in character names, but should have been. This has been fixed.')
-        expect(html).toContain('What&#39;s New page')
-        expect(html).toContain('Added this What&#39;s New page with a dedicated block for each app version.')
+        expect(html).toContain('Current version')
+        expect(html).toContain('Release Notes')
+        expect(html).toContain('badge badge-primary')
+        expect(html).toContain('badge badge-outline')
         expect(html).toContain('href="/whats-new"')
     })
 
@@ -434,6 +450,590 @@ describe('GET /search', () => {
         expect(html).toContain('&lt;/script&gt;&lt;script&gt;alert(1)&lt;/script&gt;')
         expect(html).toContain('const searchQuery = "\\u003c/script\\u003e\\u003cscript\\u003ealert(1)\\u003c/script\\u003e"')
         expect(html).not.toContain('const searchQuery = "</script>')
+    })
+})
+
+describe('GET /settings', () => {
+    it('links to the Toyhou.se migration page for signed-in users', async () => {
+        const response = await getAppPath('/settings', createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo'),
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('<title>User Settings | MyOC</title>')
+        expect(html).toContain('Migrate from Toyhou.se')
+        expect(html).toContain('href="/migrate"')
+    })
+})
+
+describe('GET /migrate', () => {
+    it('renders the Toyhou.se migration form for signed-in users', async () => {
+        const response = await getAppPath('/migrate?toyhouseUsername=demo', createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo'),
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('<title>Migrate from Toyhou.se | MyOC</title>')
+        expect(html).toContain('Please ensure you are logged into toyhouse before starting.')
+        expect(html).toContain('Toyhou.se username')
+        expect(html).toContain('href="/settings">Back to Settings</a>')
+        expect(html).toContain('id="logout-form"')
+        expect(html).toContain('href="/u/demo"')
+        expect(html).not.toContain('href="/login">Login</a>')
+        expect(html).not.toContain('href="/register">Create account</a>')
+        expect(html).toContain('name="toyhouseUsername"')
+        expect(html).toContain('value="demo"')
+        expect(html).toContain('type="submit">Submit</button>')
+        expect(html).toContain('href="https://toyhou.se/demo/characters/folder:all"')
+        expect(html).toContain('Verify Toyhou.se Ownership')
+        expect(html).toContain('value="current-user"')
+        expect(html).toContain('expectedMyocUserId = &quot;current-user&quot;')
+        expect(html).toContain('verifyProfileOwner')
+        expect(html).toContain('.profile-section.profile-content-section.user-content.fr-view')
+        expect(html).toContain('Verification failed')
+        expect(html).toContain('Start Import')
+        expect(html).toContain('data-toyhouse-import-dialog')
+        expect(html).toContain('Save the import bookmarklet')
+        expect(html).toContain('href="javascript:')
+        expect(html).toContain('toyhou\\.se')
+        expect(html).toContain('I Bookmarked It')
+        expect(html).toContain('Drag the Import to MyOC button to your bookmarks bar')
+        expect(html).toContain('/migrate/import')
+        expect(html).toContain('window.open(target')
+        expect(html).toContain('postMessage')
+        expect(html).toContain('myoc:toyhouse-import')
+        expect(html).toContain('myoc:toyhouse-progress')
+        expect(html).toContain('myoc:toyhouse-import-received')
+        expect(html).toContain('window.close()')
+        expect(html).toContain('collectImages')
+        expect(html).toContain('discoverGalleryUrls')
+        expect(html).toContain('imageLinks')
+        expect(html).toContain('.sidebar-tab a[href]')
+        expect(html).toContain("url.pathname = path + &#39;/gallery&#39;")
+        expect(html).toContain('myoc-migration-progress')
+        expect(html).toContain('closeSetupDialog')
+        expect(html).toContain('[data-toyhouse-import-dialog][open]')
+        expect(html).toContain('MyOC Toyhou.se import')
+        expect(html).toContain('Import failed')
+        expect(html).toContain('MyOC user ID was not found')
+        expect(html).toContain('} catch (error) { fail(error); }')
+        expect(html).not.toContain('.catch(fail)')
+        expect(html).toContain('Loading galleries')
+        expect(html).toContain('Sending to MyOC')
+        expect(html).toContain('/~account/warnings/accept')
+        expect(html).toContain('Accepting warning')
+        expect(html).toContain('content warning')
+        expect(html).not.toContain('window.name')
+        expect(html).not.toContain('Toyhou.se returned 403')
+    })
+
+    it('renders the logged-in Toyhou.se import receiver page', async () => {
+        const response = await getAppPath('/migrate/import', createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo'),
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Waiting for Toyhou.se')
+        expect(html).toContain('data-toyhouse-import-receiver-status')
+        expect(html).toContain('data-toyhouse-import-receiver-detail')
+        expect(html).toContain('data-toyhouse-import-receiver-bar')
+        expect(html).toContain("data.type === 'myoc:toyhouse-progress'")
+        expect(html).toContain("data.type !== 'myoc:toyhouse-import'")
+        expect(html).toContain("myoc:toyhouse-import-received")
+        expect(html).toContain("form.method = 'post'")
+        expect(html).toContain("input.name = 'toyhousePayload'")
+        expect(html).toContain('id="logout-form"')
+        expect(html).toContain('href="/settings">Back to Settings</a>')
+        expect(html).not.toContain('href="/login">Login</a>')
+    })
+
+    it('proxies Toyhou.se images for signed-in users', async () => {
+        const fetchMock = vi.fn(async () => new Response('image-bytes', {
+            headers: {
+                'content-type': 'image/png',
+            },
+        }))
+        vi.stubGlobal('fetch', fetchMock)
+
+        const response = await getAppPath(
+            '/migrate/toyhouse-image?url=' + encodeURIComponent('https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485'),
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+
+        expect(response.status).toBe(200)
+        expect(response.headers.get('content-type')).toBe('image/png')
+        expect(await response.text()).toBe('image-bytes')
+        expect(fetchMock).toHaveBeenCalledWith('https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485', {
+            redirect: 'follow',
+        })
+    })
+
+    it('rejects Toyhou.se image proxy requests for untrusted URLs', async () => {
+        const fetchMock = vi.fn()
+        vi.stubGlobal('fetch', fetchMock)
+
+        const response = await getAppPath(
+            '/migrate/toyhouse-image?url=' + encodeURIComponent('https://example.com/image.png'),
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+                accept: 'application/json',
+            },
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Toyhou.se image URL is invalid',
+        })
+        expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('redirects the migration start page to confirm when an import job is active', async () => {
+        const response = await getAppPath('/migrate', createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo'),
+            activeToyhouseImportJob: {
+                id: 'toyhouse-import-job',
+                total_images: 2,
+            },
+            activeToyhouseImportItems: [{id: 'toyhouse-import-item'}],
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+
+        expect(response.status).toBe(302)
+        expect(response.headers.get('location')).toBe('/migrate/import/confirm')
+    })
+
+    it('redirects the Toyhou.se receiver page to confirm when an import job is active', async () => {
+        const response = await getAppPath('/migrate/import', createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo'),
+            activeToyhouseImportJob: {
+                id: 'toyhouse-import-job',
+                total_images: 2,
+            },
+            activeToyhouseImportItems: [{id: 'toyhouse-import-item'}],
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+
+        expect(response.status).toBe(302)
+        expect(response.headers.get('location')).toBe('/migrate/import/confirm')
+    })
+
+    it('does not redirect the migration start page for an active import job with no remaining items', async () => {
+        const response = await getAppPath('/migrate', createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo'),
+            activeToyhouseImportJob: {
+                id: 'toyhouse-import-job',
+                total_images: 2,
+            },
+            activeToyhouseImportItems: [],
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Toyhou.se username')
+        expect(html).not.toContain('Uploading Toyhou.se Images')
+    })
+
+    it('resumes an active Toyhou.se import job on the confirm page', async () => {
+        const response = await getAppPath('/migrate/import/confirm', createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo'),
+            activeToyhouseImportJob: {
+                id: 'toyhouse-import-job',
+                total_images: 2,
+            },
+            activeToyhouseImportItems: [
+                {
+                    id: 'toyhouse-import-item-one',
+                    character_id: 'new-character',
+                    toyhouse_character_id: '9430171',
+                    toyhouse_image_url: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png',
+                    import_mode: 'create',
+                    rating: 'sfw',
+                    status: 'pending',
+                    media_id: null,
+                    name: 'Absinthe',
+                },
+                {
+                    id: 'toyhouse-import-item-two',
+                    character_id: 'existing-character',
+                    toyhouse_character_id: '2222222',
+                    toyhouse_image_url: 'https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_full.png',
+                    import_mode: 'existing',
+                    rating: 'nsfw',
+                    status: 'imported',
+                    media_id: 'existing-media',
+                    name: 'Brindle',
+                },
+            ],
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Uploading Toyhou.se Images')
+        expect(html).toContain('toyhouse-import-job')
+        expect(html).toContain('toyhouse-import-item-one')
+        expect(html).toContain('toyhouse-import-item-two')
+        expect(html).toContain('https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png')
+        expect(html).toContain('existing-media')
+        expect(html).toContain('"createdCharacters":1')
+        expect(html).toContain('"updatedCharacters":1')
+        expect(html).not.toContain('Waiting for Toyhou.se')
+        expect(html).not.toContain('Toyhou.se username')
+    })
+
+    it('redirects the confirm page back to migrate when there is no active import job', async () => {
+        const response = await getAppPath('/migrate/import/confirm', createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo'),
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+
+        expect(response.status).toBe(302)
+        expect(response.headers.get('location')).toBe('/migrate')
+    })
+
+    it('redirects logged-out users away from the Toyhou.se import receiver page', async () => {
+        const response = await getAppPath('/migrate/import')
+
+        expect(response.status).toBe(302)
+        expect(response.headers.get('location')).toBe('/login')
+    })
+
+    it('renders posted Toyhou.se bookmarklet results for the signed-in user', async () => {
+        const form = new FormData()
+        form.set('toyhousePayload', JSON.stringify({
+            myocUserId: 'current-user',
+            profileUrl: 'https://toyhou.se/demo',
+            folderUrl: 'https://toyhou.se/demo/characters/folder:all',
+            pagesFetched: 2,
+            characters: [
+                {
+                    id: '9430171',
+                    images: [
+                        {
+                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png',
+                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/9430171_thumb.png',
+                        },
+                    ],
+                    imageCount: 2,
+                    name: 'Absinthe',
+                    thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485',
+                    url: 'https://toyhou.se/9430171.absinthe',
+                },
+                {
+                    id: '2222222',
+                    images: [
+                        {
+                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_full.png',
+                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/2222222_thumb.png',
+                        },
+                        {
+                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_alt.png',
+                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/2222222_alt_thumb.png',
+                        },
+                    ],
+                    imageCount: 7,
+                    name: 'Brindle',
+                    thumbnailUrl: null,
+                    url: 'https://toyhou.se/2222222.brindle',
+                },
+                {
+                    id: '3333333',
+                    images: [],
+                    imageCount: 0,
+                    name: 'Bad/Name',
+                    thumbnailUrl: null,
+                    url: 'https://toyhou.se/3333333.bad-name',
+                },
+                {
+                    id: '4444444',
+                    images: [],
+                    imageCount: 0,
+                    name: '"Ivo"',
+                    thumbnailUrl: null,
+                    url: 'https://toyhou.se/4444444.ivo',
+                },
+            ],
+        }))
+
+        const response = await app.request('https://example.com/migrate/import', {
+            body: form,
+            headers: {
+                cookie: 'myoc_session=session-token',
+            },
+            method: 'POST',
+        }, {
+            CACHE: createMockKVNamespace(),
+            DB: createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+                characters: [
+                    {id: 'existing-brindle', name: 'brindle'},
+                ],
+            }),
+            MEDIA_BUCKET: createMockR2Bucket(),
+            MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+        })
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Found 4 characters across 2 pages.')
+        expect(html).toContain('id="logout-form"')
+        expect(html).toContain('href="/settings">Back to Settings</a>')
+        expect(html).not.toContain('href="/login">Login</a>')
+        expect(html).not.toContain('href="/register">Create account</a>')
+        expect(html).not.toContain('href="/login">Sign in</a>')
+        expect(html).not.toContain('name="toyhouseUsername"')
+        expect(html).not.toContain('Toyhou.se username')
+        expect(html).toContain('Review Characters for Import')
+        expect(html).toContain('3 ready to import, 1 blocked')
+        expect(html).toContain('data-toyhouse-final-import-progress')
+        expect(html).toContain('data-toyhouse-final-import-bar')
+        expect(html).toContain('MyOC is importing your images')
+        expect(html).toContain('The server is downloading Toyhou.se images, uploading them to MyOC storage, and saving the character data.')
+        expect(html).toContain('name="characterIds" type="checkbox" value="9430171"')
+        expect(html).toContain('checked="" class="checkbox checkbox-primary')
+        expect(html).toContain('data-toyhouse-import-review')
+        expect(html).toContain('name="imageUrls:9430171"')
+        expect(html).toContain('name="nsfwImageUrls:9430171"')
+        expect(html).toContain('name="importMode:2222222" type="hidden" value="existing"')
+        expect(html).toContain('name="targetCharacterId:2222222" type="hidden" value="existing-brindle"')
+        expect(html).toContain('NSFW')
+        expect(html).toContain('data-toyhouse-image-select')
+        expect(html).toContain('data-toyhouse-image-nsfw')
+        expect(html).toContain('syncImageNsfw')
+        expect(html).toContain('Absinthe')
+        expect(html).toContain('Brindle')
+        expect(html).toContain('Bad/Name')
+        expect(html).toContain('&quot;Ivo&quot;')
+        expect(html).toContain('Blocked')
+        expect(html).toContain('Create new character')
+        expect(html).toContain('A new character named Absinthe will be created with the selected images.')
+        expect(html).toContain('A new character named &quot;Ivo&quot; will be created with the selected images.')
+        expect(html).toContain('Add images to existing')
+        expect(html).toContain('A character named Brindle already exists. Selected images will be added to that character.')
+        expect(html).not.toContain('Character name already exists on this account.')
+        expect(html).toContain('Character name may contain only letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses, and must include at least one letter or number.')
+        expect(html).toContain('1 image found (2 listed)')
+        expect(html).toContain('2 images found (7 listed)')
+        expect(html).toContain('https://toyhou.se/demo/characters/folder:all')
+        expect(html).toContain('https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485')
+        expect(html).toContain('https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png')
+        expect(html).toContain('src="https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png"')
+        expect(html).not.toContain('src="https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/9430171_thumb.png"')
+        expect(html).not.toContain('Full size 1')
+        expect(html).toContain('https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_alt.png')
+    })
+
+    it('prepares selected Toyhou.se characters for client-side chunked image upload', async () => {
+        const fetchMock = vi.fn()
+        vi.stubGlobal('fetch', fetchMock)
+        const payload = {
+            myocUserId: 'current-user',
+            profileUrl: 'https://toyhou.se/demo',
+            folderUrl: 'https://toyhou.se/demo/characters/folder:all',
+            pagesFetched: 1,
+            characters: [
+                {
+                    id: '9430171',
+                    images: [
+                        {
+                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png',
+                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/9430171_thumb.png',
+                        },
+                        {
+                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_second.png',
+                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/9430171_second_thumb.png',
+                        },
+                        {
+                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_third.png',
+                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/9430171_third_thumb.png',
+                        },
+                        {
+                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_fourth.png',
+                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/9430171_fourth_thumb.png',
+                        },
+                    ],
+                    imageCount: 4,
+                    name: 'Absinthe',
+                    thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485',
+                    url: 'https://toyhou.se/9430171.absinthe',
+                },
+                {
+                    id: '2222222',
+                    images: [
+                        {
+                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_full.png',
+                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/2222222_thumb.png',
+                        },
+                        {
+                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_alt.png',
+                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/2222222_alt_thumb.png',
+                        },
+                    ],
+                    imageCount: 2,
+                    name: 'Brindle',
+                    thumbnailUrl: null,
+                    url: 'https://toyhou.se/2222222.brindle',
+                },
+            ],
+        }
+        const form = new FormData()
+        form.set('toyhousePayload', JSON.stringify(payload))
+        form.append('characterIds', '9430171')
+        form.append('characterIds', '2222222')
+        form.set('profileImageDataUrl:9430171', createWebpDataUrl())
+        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png')
+        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_second.png')
+        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_third.png')
+        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_fourth.png')
+        form.append('imageUrls:2222222', 'https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_full.png')
+        form.append('imageUrls:2222222', 'https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_alt.png')
+        form.append('nsfwImageUrls:2222222', 'https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_alt.png')
+
+        const db = createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo'),
+            characters: [
+                {id: 'existing-brindle', name: 'brindle'},
+            ],
+        })
+        const bucket = createMockR2Bucket()
+        const response = await app.request('https://example.com/migrate/import/confirm', {
+            body: form,
+            headers: {
+                cookie: 'myoc_session=session-token',
+            },
+            method: 'POST',
+        }, {
+            CACHE: createMockKVNamespace(),
+            DB: db,
+            MEDIA_BUCKET: bucket,
+            MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+        })
+        const html = await response.text()
+        const preparedSql = (db.prepare as unknown as { mock: { calls: [string][] } }).mock.calls
+            .map(([sql]) => sql)
+            .join('\n')
+        const putCalls = (bucket.put as unknown as {
+            mock: { calls: [string, unknown, { httpMetadata?: { contentType?: string } }?][] }
+        }).mock.calls
+        const putKeys = putCalls
+            .map(([key]) => key)
+        const putContentTypes = putCalls
+            .map(([, , options]) => options?.httpMetadata?.contentType)
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Uploading Toyhou.se Images')
+        expect(html).toContain('upload each image in chunks and retry temporary failures')
+        expect(html).toContain('/migrate/toyhouse-image?url=')
+        expect(html).toContain('/media/chunked/init')
+        expect(html).toContain('/api/characters/toyhouse-import-items/')
+        expect(html).toContain('/complete')
+        expect(html).toContain('/fail')
+        expect(html).toContain("method: 'DELETE'")
+        expect(html).toContain('importItemId')
+        expect(html).toContain('withRetry')
+        expect(html).toContain('https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_fourth.png')
+        expect(html).toContain('https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_alt.png')
+        expect(preparedSql).toContain(['INSERT INTO', 'characters'].join(' '))
+        expect(preparedSql).not.toContain(['INSERT INTO', 'character_media'].join(' '))
+        expect(preparedSql).not.toContain(['INSERT INTO', 'character_gallery_tabs'].join(' '))
+        expect(preparedSql).not.toContain(['INSERT INTO', 'character_gallery_rows'].join(' '))
+        expect(putKeys).toHaveLength(1)
+        expect(putKeys.some((key) => key.includes('/profile/') && key.endsWith('.webp'))).toBe(true)
+        expect(putKeys.some((key) => key.includes('/media/'))).toBe(false)
+        expect(putContentTypes).toContain('image/webp')
+        expect(putContentTypes).not.toContain('PNG32')
+        expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('leaves Toyhou.se gallery image failures to the client-side chunked uploader', async () => {
+        const fetchMock = vi.fn()
+        vi.stubGlobal('fetch', fetchMock)
+        const payload = {
+            myocUserId: 'current-user',
+            profileUrl: 'https://toyhou.se/demo',
+            folderUrl: 'https://toyhou.se/demo/characters/folder:all',
+            pagesFetched: 1,
+            characters: [
+                {
+                    id: '9430171',
+                    images: [
+                        {
+                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png',
+                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/9430171_thumb.png',
+                        },
+                        {
+                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/broken.png',
+                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/broken.png',
+                        },
+                    ],
+                    imageCount: 2,
+                    name: 'Absinthe',
+                    thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485',
+                    url: 'https://toyhou.se/9430171.absinthe',
+                },
+            ],
+        }
+        const form = new FormData()
+        form.set('toyhousePayload', JSON.stringify(payload))
+        form.append('characterIds', '9430171')
+        form.set('profileImageDataUrl:9430171', createWebpDataUrl())
+        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png')
+        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/broken.png')
+
+        const db = createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo'),
+        })
+        const bucket = createMockR2Bucket()
+        const response = await app.request('https://example.com/migrate/import/confirm', {
+            body: form,
+            headers: {
+                cookie: 'myoc_session=session-token',
+            },
+            method: 'POST',
+        }, {
+            CACHE: createMockKVNamespace(),
+            DB: db,
+            MEDIA_BUCKET: bucket,
+            MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+        })
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Uploading Toyhou.se Images')
+        expect(html).toContain('https://f2.toyhou.se/file/f2-toyhou-se/images/broken.png')
+        expect(html).toContain('Downloading Toyhou.se image')
+        expect(db.batch).toHaveBeenCalledTimes(1)
+        expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('redirects logged-out users to login', async () => {
+        const response = await getAppPath('/migrate')
+
+        expect(response.status).toBe(302)
+        expect(response.headers.get('location')).toBe('/login')
     })
 })
 
