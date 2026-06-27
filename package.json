@@ -20,7 +20,7 @@
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "cropperjs": "^1.6.2",
-    "hono": "^4.12.25"
+    "hono": "^4.12.27"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.3.1",
