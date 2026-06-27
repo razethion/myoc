@@ -380,21 +380,26 @@ describe('public page redirects', () => {
     })
 
     it('renders SEO metadata on the home page', async () => {
-        const response = await getAppPath('/')
+        const response = await getAppPath('/', createProfilePageDb({
+            mediaCount: 1234,
+        }))
         const html = await response.text()
 
         expect(response.status).toBe(200)
         expect(html).toContain('<title>MyOC | High-Resolution Character Gallery</title>')
-        expect(html).toContain('<meta content="Easily share character art without losing quality.')
+        expect(html).toContain('<meta content="Hosting over 1,234 images" name="description"/>')
         expect(html).toContain('<link href="https://example.com/" rel="canonical"/>')
         expect(html).toContain('<meta content="MyOC | High-Resolution Character Gallery" property="og:title"/>')
+        expect(html).toContain('<meta content="Hosting over 1,234 images" property="og:description"/>')
         expect(html).toContain('<meta content="https://example.com/assets/myocbanner.webp" property="og:image"/>')
         expect(html).toContain('<meta content="1200" property="og:image:width"/>')
         expect(html).toContain('<meta content="630" property="og:image:height"/>')
         expect(html).toContain('<meta content="image/webp" property="og:image:type"/>')
         expect(html).toContain('<meta content="summary_large_image" name="twitter:card"/>')
+        expect(html).toContain('<meta content="Hosting over 1,234 images" name="twitter:description"/>')
         expect(html).toContain('<script type="application/ld+json">')
         expect(html).toContain('"@type":"WebSite"')
+        expect(html).toContain('"description":"Hosting over 1,234 images"')
         expect(html).toContain('"target":"https://example.com/search?q={search_term_string}"')
     })
 })
