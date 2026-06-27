@@ -36,6 +36,7 @@ function createProfilePageDb(options: {
     discoverCharacters?: unknown[]
     activeToyhouseImportJob?: unknown
     activeToyhouseImportItems?: unknown[]
+    toyhouseImportItemsError?: Error
     imageApprovalItem?: unknown
     imageApprovalQueue?: unknown[]
     imageApprovalHistory?: unknown[]
@@ -90,6 +91,10 @@ function createProfilePageDb(options: {
         }
 
         if (sql.includes('FROM toyhouse_import_items')) {
+            if (options.toyhouseImportItemsError) {
+                throw options.toyhouseImportItemsError
+            }
+
             return {results: options.activeToyhouseImportItems ?? []}
         }
 
@@ -1020,6 +1025,60 @@ describe('GET /migrate', () => {
 
         expect(response.status).toBe(200)
         expect(Math.max(...bindSizes)).toBeLessThanOrEqual(90)
+    })
+
+    it('keeps staged Toyhou.se profile images when import item readback fails after DB commit', async () => {
+        const payload = {
+            myocUserId: 'current-user',
+            profileUrl: 'https://toyhou.se/demo',
+            folderUrl: 'https://toyhou.se/demo/characters/folder:all',
+            pagesFetched: 1,
+            characters: [
+                {
+                    id: '9430171',
+                    images: [
+                        {
+                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png',
+                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/9430171_thumb.png',
+                        },
+                    ],
+                    imageCount: 1,
+                    name: 'Absinthe',
+                    thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485',
+                    url: 'https://toyhou.se/9430171.absinthe',
+                },
+            ],
+        }
+        const form = new FormData()
+        form.set('toyhousePayload', JSON.stringify(payload))
+        form.append('characterIds', '9430171')
+        form.set('profileImageDataUrl:9430171', createWebpDataUrl())
+        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png')
+
+        const db = createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo'),
+            toyhouseImportItemsError: new Error('simulated import item lookup failure'),
+        })
+        const bucket = createMockR2Bucket()
+        const response = await app.request('https://example.com/migrate/import/confirm', {
+            body: form,
+            headers: {
+                cookie: 'myoc_session=session-token',
+            },
+            method: 'POST',
+        }, {
+            CACHE: createMockKVNamespace(),
+            DB: db,
+            MEDIA_BUCKET: bucket,
+            MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+        })
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('simulated import item lookup failure')
+        expect(db.batch).toHaveBeenCalledTimes(1)
+        expect(bucket.put).toHaveBeenCalledTimes(1)
+        expect(bucket.delete).not.toHaveBeenCalled()
     })
 
     it('leaves Toyhou.se gallery image failures to the client-side chunked uploader', async () => {

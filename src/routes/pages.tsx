@@ -831,6 +831,7 @@ async function prepareToyhouseClientImportPlan(
     const importJobId = crypto.randomUUID()
     const now = toSqlTimestamp(new Date())
     let clientImportPlan: ToyhouseClientImportPlan | null = null
+    let databaseBatchCommitted = false
     let stagingError: Error | null = null
     let unexpectedError: unknown = null
 
@@ -924,6 +925,7 @@ async function prepareToyhouseClientImportPlan(
 
                 if (staged.statements.length > 0) {
                     await db.batch(staged.statements)
+                    databaseBatchCommitted = true
                 }
 
                 const itemStates = await getToyhouseImportItemsByIds(db, userId, itemIds)
@@ -955,7 +957,9 @@ async function prepareToyhouseClientImportPlan(
     }
 
     if (unexpectedError || stagingError) {
-        await deleteR2Objects(bucket, staged.uploadedKeys)
+        if (!databaseBatchCommitted) {
+            await deleteR2Objects(bucket, staged.uploadedKeys)
+        }
 
         if (unexpectedError) {
             throw unexpectedError
