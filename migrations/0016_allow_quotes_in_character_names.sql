@@ -1,5 +1,31 @@
 PRAGMA foreign_keys= off;
 
+DROP TABLE IF EXISTS __migration_0016_character_media_backup;
+DROP TABLE IF EXISTS __migration_0016_character_gallery_tabs_backup;
+DROP TABLE IF EXISTS __migration_0016_character_gallery_rows_backup;
+DROP TABLE IF EXISTS __migration_0016_character_gallery_row_media_backup;
+DROP TABLE IF EXISTS __migration_0016_character_media_review_events_backup;
+
+CREATE TABLE __migration_0016_character_media_backup AS
+SELECT *
+FROM character_media;
+
+CREATE TABLE __migration_0016_character_gallery_tabs_backup AS
+SELECT *
+FROM character_gallery_tabs;
+
+CREATE TABLE __migration_0016_character_gallery_rows_backup AS
+SELECT *
+FROM character_gallery_rows;
+
+CREATE TABLE __migration_0016_character_gallery_row_media_backup AS
+SELECT *
+FROM character_gallery_row_media;
+
+CREATE TABLE __migration_0016_character_media_review_events_backup AS
+SELECT *
+FROM character_media_review_events;
+
 DROP INDEX IF EXISTS idx_characters_user_name_unique;
 DROP INDEX IF EXISTS idx_characters_user_id;
 DROP INDEX IF EXISTS idx_characters_user_folder_id;
@@ -58,6 +84,32 @@ DROP TABLE characters;
 
 ALTER TABLE characters_new
     RENAME TO characters;
+
+INSERT OR IGNORE INTO character_media
+SELECT *
+FROM __migration_0016_character_media_backup;
+
+INSERT OR IGNORE INTO character_gallery_tabs
+SELECT *
+FROM __migration_0016_character_gallery_tabs_backup;
+
+INSERT OR IGNORE INTO character_gallery_rows
+SELECT *
+FROM __migration_0016_character_gallery_rows_backup;
+
+INSERT OR IGNORE INTO character_gallery_row_media
+SELECT *
+FROM __migration_0016_character_gallery_row_media_backup;
+
+INSERT OR IGNORE INTO character_media_review_events
+SELECT *
+FROM __migration_0016_character_media_review_events_backup;
+
+DROP TABLE __migration_0016_character_media_backup;
+DROP TABLE __migration_0016_character_gallery_tabs_backup;
+DROP TABLE __migration_0016_character_gallery_rows_backup;
+DROP TABLE __migration_0016_character_gallery_row_media_backup;
+DROP TABLE __migration_0016_character_media_review_events_backup;
 
 CREATE INDEX idx_characters_user_id
     ON characters (user_id);
