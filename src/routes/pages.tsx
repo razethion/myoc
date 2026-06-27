@@ -1529,6 +1529,11 @@ async function renderProfilePage(c: PageRouteContext, username: string, rawPath 
         const character = await getCharacterPageCharacter(c.env.DB, profileUser.id, pathSegments[0])
 
         if (character) {
+            if (username !== profileUser.username || pathSegments[0] !== character.name) {
+                const requestUrl = new URL(c.req.url)
+                return c.redirect(`${userProfileUrl(profileUser.username)}/${encodeURIComponent(character.name)}${requestUrl.search}`, 301)
+            }
+
             const [media, galleryTabs, homeStats] = await Promise.all([
                 getCharacterSettingsMedia(c.env.DB, profileUser.id, character.id),
                 getCharacterGalleryTabs(c.env.DB, profileUser.id, character.id),
@@ -1548,6 +1553,16 @@ async function renderProfilePage(c: PageRouteContext, username: string, rawPath 
                 />,
             )
         }
+    }
+
+    if (username !== profileUser.username) {
+        const requestUrl = new URL(c.req.url)
+        const canonicalPath = [
+            userProfileUrl(profileUser.username),
+            ...pathSegments.map((segment) => encodeURIComponent(segment)),
+        ].join('/')
+
+        return c.redirect(`${canonicalPath}${requestUrl.search}`, 301)
     }
 
     const [socialLinks, folders, characters, homeStats] = await Promise.all([
@@ -1610,10 +1625,11 @@ async function getCharacterPageCharacter(
                 height_chart_json
          FROM characters
          WHERE user_id = ?
-           AND name = ?
+           AND name = ? COLLATE NOCASE
+         ORDER BY CASE WHEN name = ? THEN 0 ELSE 1 END, name
          LIMIT 1`,
     )
-        .bind(userId, characterName)
+        .bind(userId, characterName, characterName)
         .first<{
             id: string
             user_id: string
@@ -1701,10 +1717,11 @@ async function getProfileUser(db: D1Database, username: string): Promise<Profile
     const user = await db.prepare(
         `SELECT id, username, profile_photo_key, bio
          FROM users
-         WHERE username = ?
+         WHERE username = ? COLLATE NOCASE
+         ORDER BY CASE WHEN username = ? THEN 0 ELSE 1 END, username
          LIMIT 1`,
     )
-        .bind(username)
+        .bind(username, username)
         .first<{
             id: string
             username: string
