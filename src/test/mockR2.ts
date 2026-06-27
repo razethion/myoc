@@ -73,7 +73,24 @@ export function createMockR2Bucket(): R2Bucket {
             const bytes = objects.get(key)
             return bytes ? objectFor(key, bytes) : null
         }),
-        list: vi.fn(async () => ({objects: [], truncated: false, delimitedPrefixes: []})),
+        list: vi.fn(async (options?: R2ListOptions) => {
+            const prefix = options?.prefix ?? ''
+            const limit = options?.limit ?? 1000
+            const start = options?.cursor ? Number(options.cursor) : 0
+            const keys = [...objects.keys()]
+                .filter((key) => key.startsWith(prefix))
+                .sort()
+            const selectedKeys = keys.slice(start, start + limit)
+            const nextCursorIndex = start + selectedKeys.length
+            const truncated = nextCursorIndex < keys.length
+
+            return {
+                objects: selectedKeys.map((key) => objectFor(key, objects.get(key)!)),
+                truncated,
+                cursor: truncated ? String(nextCursorIndex) : undefined,
+                delimitedPrefixes: [],
+            }
+        }),
     }
 
     return bucket as unknown as R2Bucket
