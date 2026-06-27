@@ -3,6 +3,7 @@ import {characterMediaImageUrl, characterProfileImageUrl, profilePhotoUrl} from 
 import type {ProfilePageUser} from './ProfilePage'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
+import {absoluteUrl, compactDescription} from '../meta'
 
 export type CharacterPageCharacter = {
     id: string
@@ -44,6 +45,8 @@ type CharacterPageProps = {
     media: CharacterPageMedia[]
     galleryTabs: CharacterPageGalleryTab[]
     mediaBaseUrl: string
+    metaDescriptionFallback: string
+    siteUrl: string
 }
 
 function displayGalleryTabName(name: string): string {
@@ -110,6 +113,76 @@ function sizeChartUrlForCharacter(characterId: string): string {
     }
 
     return `/size-chart?layout=${encodeLayoutValue(layout)}`
+}
+
+function characterPageUrl(profileUser: ProfilePageUser, character: CharacterPageCharacter): string {
+    return `/u/${encodeURIComponent(profileUser.username)}/${encodeURIComponent(character.name)}`
+}
+
+function characterPageDescription(character: CharacterPageCharacter, fallback: string): string {
+    return compactDescription(character.description, fallback)
+}
+
+function CharacterPageHead({
+                               character,
+                               imageUrl,
+                               metaDescriptionFallback,
+                               pageTitle,
+                               profileUser,
+                               siteUrl,
+                           }: {
+    character: CharacterPageCharacter
+    imageUrl: string
+    metaDescriptionFallback: string
+    pageTitle: string
+    profileUser: ProfilePageUser
+    siteUrl: string
+}) {
+    const canonicalUrl = absoluteUrl(siteUrl, characterPageUrl(profileUser, character))
+    const description = characterPageDescription(character, metaDescriptionFallback)
+    const imageAlt = `${character.name} thumbnail`
+    const structuredData = {
+        '@context': 'https://schema.org',
+        '@type': 'CreativeWork',
+        name: character.name,
+        url: canonicalUrl,
+        description,
+        image: imageUrl,
+        creator: {
+            '@type': 'Person',
+            name: profileUser.username,
+            url: absoluteUrl(siteUrl, `/u/${encodeURIComponent(profileUser.username)}`),
+        },
+    }
+
+    return (
+        <>
+            <meta content={description} name="description"/>
+            <link href={canonicalUrl} rel="canonical"/>
+
+            <meta content={pageTitle} property="og:title"/>
+            <meta content={description} property="og:description"/>
+            <meta content="article" property="og:type"/>
+            <meta content={canonicalUrl} property="og:url"/>
+            <meta content="MyOC" property="og:site_name"/>
+            <meta content={imageUrl} property="og:image"/>
+            <meta content="512" property="og:image:width"/>
+            <meta content="512" property="og:image:height"/>
+            <meta content="image/webp" property="og:image:type"/>
+            <meta content={imageAlt} property="og:image:alt"/>
+
+            <meta content="summary" name="twitter:card"/>
+            <meta content={pageTitle} name="twitter:title"/>
+            <meta content={description} name="twitter:description"/>
+            <meta content={imageUrl} name="twitter:image"/>
+            <meta content={imageAlt} name="twitter:image:alt"/>
+
+            <script
+                dangerouslySetInnerHTML={{__html: JSON.stringify(structuredData)}}
+                type="application/ld+json"
+            ></script>
+        </>
+    )
 }
 
 function displayMediaFor(
@@ -529,6 +602,8 @@ export function CharacterPage({
     media,
     galleryTabs,
     mediaBaseUrl,
+                                  metaDescriptionFallback,
+                                  siteUrl,
 }: CharacterPageProps) {
     const displayNsfwMedia = Boolean(currentUser?.displayNsfwMedia)
     const allowGuestNsfwReveal = !currentUser && media.some((item) => Boolean(item.nsfwImageKey))
@@ -546,10 +621,27 @@ export function CharacterPage({
     }]
     const defaultTabName = tabs[0]?.name ?? 'default'
     const ownerProfileImageUrl = profileImageFor(profileUser, mediaBaseUrl)
+    const characterThumbnailUrl = characterProfileImageUrl(mediaBaseUrl, profileUser.id, character.id, character.profileImageKey)
+    const pageTitle = `${character.name} | MyOC`
     const canEdit = currentUser?.id === profileUser.id
 
     return (
-        <BaseLayout head={<CharacterPageStyles/>} title={`${character.name} | MyOC`}>
+        <BaseLayout
+            head={(
+                <>
+                    <CharacterPageHead
+                        character={character}
+                        imageUrl={characterThumbnailUrl}
+                        metaDescriptionFallback={metaDescriptionFallback}
+                        pageTitle={pageTitle}
+                        profileUser={profileUser}
+                        siteUrl={siteUrl}
+                    />
+                    <CharacterPageStyles/>
+                </>
+            )}
+            title={pageTitle}
+        >
             <Navbar
                 currentUser={currentUser}
                 guestInitial={profileUser.username.trim().charAt(0).toUpperCase() || 'R'}
@@ -579,7 +671,7 @@ export function CharacterPage({
                          decoding="async"
                          height="128"
                          loading="lazy"
-                         src={characterProfileImageUrl(mediaBaseUrl, profileUser.id, character.id, character.profileImageKey)}
+                         src={characterThumbnailUrl}
                          width="128"/>
                 </div>
 

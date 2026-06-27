@@ -2,6 +2,7 @@ import { Navbar } from '../components/Navbar'
 import { BaseLayout } from '../layouts/BaseLayout'
 import type {CurrentUser} from '../../lib/auth/session'
 import {characterMediaImageUrl, characterProfileImageUrl} from '../../lib/media/url'
+import {absoluteUrl} from '../meta'
 
 export type HomePageStats = {
     users: number
@@ -99,17 +100,13 @@ type HomePageProps = {
 
 const HOME_PAGE_TITLE = 'MyOC | High-Resolution Character Gallery'
 
-function homePageDescription(stats: HomePageStats): string {
+export function homePageDescription(stats: HomePageStats): string {
     return `Hosting over ${formatCount(stats.mediaItems)} images`
 }
 
 const HOME_PAGE_KEYWORDS = 'character art gallery, original character gallery, OC gallery, character reference, character media, art portfolio, furry character gallery'
 const HOME_PAGE_IMAGE_PATH = '/assets/myocbanner.webp'
 const HOME_PAGE_IMAGE_ALT = 'Easily share character art without losing quality. No fuss.'
-
-function absoluteUrl(siteUrl: string, path: string): string {
-    return new URL(path, siteUrl).toString()
-}
 
 function formatCount(value: number): string {
     return Math.max(0, value).toLocaleString('en-US')

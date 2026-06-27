@@ -28,7 +28,12 @@ import {
     type CharacterManagementCharacter,
     type CharacterManagementFolder,
 } from '../views/pages/CharacterManagementPage'
-import {HomePage, type HomePageDiscoverCharacter, type HomePageStats} from '../views/pages/HomePage'
+import {
+    HomePage,
+    homePageDescription,
+    type HomePageDiscoverCharacter,
+    type HomePageStats
+} from '../views/pages/HomePage'
 import {
     MigratePage,
     type ToyhouseClientImportPlan,
@@ -1524,9 +1529,10 @@ async function renderProfilePage(c: PageRouteContext, username: string, rawPath 
         const character = await getCharacterPageCharacter(c.env.DB, profileUser.id, pathSegments[0])
 
         if (character) {
-            const [media, galleryTabs] = await Promise.all([
+            const [media, galleryTabs, homeStats] = await Promise.all([
                 getCharacterSettingsMedia(c.env.DB, profileUser.id, character.id),
                 getCharacterGalleryTabs(c.env.DB, profileUser.id, character.id),
+                getCachedHomePageStats(c.env.CACHE, c.env.DB),
             ])
 
             return c.html(
@@ -1536,16 +1542,19 @@ async function renderProfilePage(c: PageRouteContext, username: string, rawPath 
                     galleryTabs={galleryTabs.length > 0 ? galleryTabs : createDefaultGalleryTabs(media)}
                     media={media}
                     mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+                    metaDescriptionFallback={homePageDescription(homeStats)}
                     profileUser={profileUser}
+                    siteUrl={new URL(c.req.url).origin}
                 />,
             )
         }
     }
 
-    const [socialLinks, folders, characters] = await Promise.all([
+    const [socialLinks, folders, characters, homeStats] = await Promise.all([
         getUserSocialLinks(c.env.DB, profileUser.id),
         getCharacterFolders(c.env.DB, profileUser.id),
         getCharacters(c.env.DB, profileUser.id),
+        getCachedHomePageStats(c.env.CACHE, c.env.DB),
     ])
     const folderPath = pathSegments.length > 0 ? findFolderPath(folders, pathSegments) : []
 
@@ -1563,7 +1572,9 @@ async function renderProfilePage(c: PageRouteContext, username: string, rawPath 
             folderPath={folderPath}
             folders={folders}
             mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+            metaDescriptionFallback={homePageDescription(homeStats)}
             profileUser={profileUser}
+            siteUrl={new URL(c.req.url).origin}
             socialLinks={socialLinks}
         />,
     )
