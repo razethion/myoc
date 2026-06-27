@@ -54,6 +54,7 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
                             <ul class="menu dropdown-content bg-base-100 rounded-box z-50 mt-3 w-56 p-2 shadow">
                                 <li><a href={`/u/${encodeURIComponent(currentUser.username)}`}>Profile</a></li>
                                 <li><a href="/characters">Characters</a></li>
+                                <li><a href="/size-chart">Size Chart</a></li>
                                 <li><a href="/whats-new">What's new</a></li>
                                 {currentUser.role === 'admin' && (
                                     <li><a href="/admin">Admin</a></li>
@@ -80,6 +81,7 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
             </div>
 
             <div class="mt-2 flex justify-end sm:hidden">
+                <a class="btn btn-ghost btn-xs" href="/size-chart">Size Chart</a>
                 <a class="btn btn-ghost btn-xs" href="/whats-new">What's new</a>
             </div>
 
