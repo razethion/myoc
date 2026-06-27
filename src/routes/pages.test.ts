@@ -1597,6 +1597,42 @@ describe('GET /u/:username', () => {
         expect(html).toContain('references')
     })
 
+    it('redirects profile URLs to the stored username casing', async () => {
+        const response = await getProfilePath('/u/DEMO?tab=characters', createProfilePageDb({
+            profileUser: {
+                id: 'profile-user',
+                username: 'demo',
+                profile_photo_key: null,
+                bio: '',
+            },
+        }))
+
+        expect(response.status).toBe(301)
+        expect(response.headers.get('location')).toBe('/u/demo?tab=characters')
+    })
+
+    it('redirects character URLs to the stored username and character name casing', async () => {
+        const response = await getProfilePath('/u/DEMO/razeth?view=gallery', createProfilePageDb({
+            profileUser: {
+                id: 'profile-user',
+                username: 'demo',
+                profile_photo_key: null,
+                bio: '',
+            },
+            characterSettings: {
+                id: 'character-1',
+                user_id: 'profile-user',
+                name: 'RAZETH',
+                profile_image_key: 'character-profile-key',
+                description: '',
+                gallery_fullsize_last_row: 0,
+            },
+        }))
+
+        expect(response.status).toBe(301)
+        expect(response.headers.get('location')).toBe('/u/demo/RAZETH?view=gallery')
+    })
+
     it('renders NSFW gallery variants when the current user enabled NSFW media', async () => {
         const response = await getAppPath('/u/demo/RAZETH', createProfilePageDb({
             currentUser: {
