@@ -61,6 +61,7 @@ const GALLERY_IMAGE_CACHE_CONTROL = 'public, max-age=31536000, immutable'
 const HOME_PAGE_STATS_CACHE_KEY = 'home:stats:v1'
 const HOME_PAGE_DISCOVER_CACHE_KEY = 'home:discover:v1'
 const HOME_PAGE_CACHE_TTL_SECONDS = 600
+const D1_SAFE_VARIABLES_PER_QUERY = 90
 
 function getRandomLetter(): string {
     const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -830,6 +831,7 @@ async function prepareToyhouseClientImportPlan(
     const importJobId = crypto.randomUUID()
     const now = toSqlTimestamp(new Date())
     let clientImportPlan: ToyhouseClientImportPlan | null = null
+    let databaseBatchCommitted = false
     let stagingError: Error | null = null
     let unexpectedError: unknown = null
 
@@ -923,6 +925,7 @@ async function prepareToyhouseClientImportPlan(
 
                 if (staged.statements.length > 0) {
                     await db.batch(staged.statements)
+                    databaseBatchCommitted = true
                 }
 
                 const itemStates = await getToyhouseImportItemsByIds(db, userId, itemIds)
@@ -954,7 +957,9 @@ async function prepareToyhouseClientImportPlan(
     }
 
     if (unexpectedError || stagingError) {
-        await deleteR2Objects(bucket, staged.uploadedKeys)
+        if (!databaseBatchCommitted) {
+            await deleteR2Objects(bucket, staged.uploadedKeys)
+        }
 
         if (unexpectedError) {
             throw unexpectedError
@@ -1089,17 +1094,27 @@ async function getToyhouseImportItemsByIds(
         return new Map()
     }
 
-    const placeholders = itemIds.map(() => '?').join(', ')
-    const result = await db.prepare(
-        `SELECT id, status, media_id
-         FROM toyhouse_import_items
-         WHERE user_id = ?
-           AND id IN (${placeholders})`,
-    )
-        .bind(userId, ...itemIds)
-        .all<ToyhouseImportItemRecord>()
+    const itemsById = new Map<string, ToyhouseImportItemRecord>()
+    const itemIdsPerQuery = D1_SAFE_VARIABLES_PER_QUERY - 1
 
-    return new Map((result.results ?? []).map((item) => [item.id, item]))
+    for (let index = 0; index < itemIds.length; index += itemIdsPerQuery) {
+        const itemIdChunk = itemIds.slice(index, index + itemIdsPerQuery)
+        const placeholders = itemIdChunk.map(() => '?').join(', ')
+        const result = await db.prepare(
+            `SELECT id, status, media_id
+             FROM toyhouse_import_items
+             WHERE user_id = ?
+               AND id IN (${placeholders})`,
+        )
+            .bind(userId, ...itemIdChunk)
+            .all<ToyhouseImportItemRecord>()
+
+        for (const item of result.results ?? []) {
+            itemsById.set(item.id, item)
+        }
+    }
+
+    return itemsById
 }
 
 async function stageToyhouseImportedCharacter(
