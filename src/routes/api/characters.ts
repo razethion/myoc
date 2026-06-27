@@ -1,6 +1,7 @@
 import {Hono} from 'hono'
 import type {Context} from 'hono'
 import {getCurrentUser, toSqlTimestamp, type CurrentUser} from '../../lib/auth/session'
+import {GALLERY_MAX_IMAGES_PER_ROW} from '../../lib/gallery'
 import {
     characterHeightChartImageObjectKey,
     characterHeightChartImageUrl,
@@ -2380,6 +2381,10 @@ function parseGalleryLayout(body: GalleryLayoutRequest): ParsedGalleryLayout | {
 
             if (!Array.isArray(rowItem.mediaIds)) {
                 return {error: 'Gallery row media ids are required'}
+            }
+
+            if (rowItem.mediaIds.length > GALLERY_MAX_IMAGES_PER_ROW) {
+                return {error: `Gallery rows can contain ${GALLERY_MAX_IMAGES_PER_ROW} images or fewer`}
             }
 
             rowIds.add(rowId)

@@ -1,4 +1,5 @@
 import type {CurrentUser} from '../../lib/auth/session'
+import {GALLERY_MAX_IMAGES_PER_ROW} from '../../lib/gallery'
 import {characterMediaImageUrl, characterProfileImageUrl} from '../../lib/media/url'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
@@ -83,6 +84,7 @@ function CharacterSettingsScript({
             __html: `
 const character = ${safeJson(character)};
 const csrfToken = ${safeJson(csrfToken)};
+const maxGalleryImagesPerRow = ${safeJson(GALLERY_MAX_IMAGES_PER_ROW)};
 const mediaLibrary = new Map(${safeJson(media)}.map((item) => [item.id, item]));
 const tagLayouts = new Map(${safeJson(galleryTabs)}.map((tab) => [tab.id, tab]));
 let activeTagId = ${safeJson(galleryTabs[0]?.id ?? 'default')};
@@ -290,6 +292,16 @@ function getUnusedMediaCount() {
     return count;
 }
 
+function getOverflowRowCount() {
+    let count = 0;
+    tagLayouts.forEach((layout) => {
+        layout.rows.forEach((row) => {
+            if (row.mediaIds.length > maxGalleryImagesPerRow) count += 1;
+        });
+    });
+    return count;
+}
+
 function mediaDisplayUrl(media) {
     return media.nsfwImageUrl || media.sfwImageUrl || '';
 }
@@ -426,11 +438,17 @@ function renderRows() {
         const title = document.createElement('h5');
         title.className = 'font-semibold';
         title.textContent = 'Row ' + (rowIndex + 1);
+        const rowActions = document.createElement('div');
+        rowActions.className = 'flex items-center gap-2';
+        const rowCount = document.createElement('span');
+        rowCount.className = 'badge ' + (rowData.mediaIds.length > maxGalleryImagesPerRow ? 'badge-error' : 'badge-neutral');
+        rowCount.textContent = rowData.mediaIds.length + '/' + maxGalleryImagesPerRow;
         const removeButton = document.createElement('button');
         removeButton.className = 'btn btn-sm btn-error btn-outline';
         removeButton.dataset.removeRow = '';
         removeButton.type = 'button';
         removeButton.textContent = 'Remove Row';
+        rowActions.append(rowCount, removeButton);
         const dropzone = document.createElement('div');
         dropzone.className = 'gallery-dropzone flex min-h-28 flex-wrap gap-3 rounded border border-dashed border-base-300 bg-base-200 p-3';
         dropzone.dataset.dropzone = '';
@@ -445,7 +463,7 @@ function renderRows() {
             const media = mediaLibrary.get(mediaId);
             if (media) dropzone.append(createMediaThumb(media, 'row'));
         });
-        header.append(title, removeButton);
+        header.append(title, rowActions);
         row.append(header, dropzone);
         galleryRows.append(row);
     });
@@ -458,11 +476,16 @@ function renderGallery() {
     renderRows();
     renderMediaPool();
     const unusedMediaCount = getUnusedMediaCount();
-    saveCharacterSettingsButton.disabled = getActiveLayout().rows.length === 0 || unusedMediaCount > 0;
-    saveCharacterSettingsWarning.hidden = unusedMediaCount === 0;
-    saveCharacterSettingsWarning.textContent = unusedMediaCount === 1
-        ? 'Delete 1 unused media item before saving changes.'
-        : 'Delete ' + unusedMediaCount + ' unused media items before saving changes.';
+    const overflowRowCount = getOverflowRowCount();
+    saveCharacterSettingsButton.disabled = getActiveLayout().rows.length === 0 || unusedMediaCount > 0 || overflowRowCount > 0;
+    saveCharacterSettingsWarning.hidden = unusedMediaCount === 0 && overflowRowCount === 0;
+    if (overflowRowCount > 0) {
+        saveCharacterSettingsWarning.textContent = 'Move images so every row has ' + maxGalleryImagesPerRow + ' or fewer images before saving changes.';
+    } else {
+        saveCharacterSettingsWarning.textContent = unusedMediaCount === 1
+            ? 'Delete 1 unused media item before saving changes.'
+            : 'Delete ' + unusedMediaCount + ' unused media items before saving changes.';
+    }
 }
 
 function removeFromActiveRow(rowIndex, mediaId) {
@@ -485,6 +508,12 @@ function moveMediaToRow(item, rowIndex, insertIndex) {
     const targetRow = layout.rows[rowIndex];
     const mediaId = item.mediaId;
     if (!targetRow || !mediaLibrary.has(mediaId)) return;
+    const isSameRowMove = item.type === 'row' && item.rowIndex === rowIndex;
+
+    if (!isSameRowMove && targetRow.mediaIds.length >= maxGalleryImagesPerRow) {
+        showAlert('Rows can contain at most ' + maxGalleryImagesPerRow + ' images.', false);
+        return false;
+    }
 
     let targetIndex = Math.max(0, Math.min(insertIndex, targetRow.mediaIds.length));
     if (item.type === 'row') {
@@ -738,8 +767,12 @@ async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}) {
     });
     mediaLibrary.set(result.media.id, result.media);
     const layout = getActiveLayout();
-    if (layout.rows.length === 0) layout.rows.push({ id: createId(), mediaIds: [] });
-    layout.rows[layout.rows.length - 1].mediaIds.push(result.media.id);
+    let targetRow = layout.rows[layout.rows.length - 1];
+    if (!targetRow || targetRow.mediaIds.length >= maxGalleryImagesPerRow) {
+        targetRow = { id: createId(), mediaIds: [] };
+        layout.rows.push(targetRow);
+    }
+    targetRow.mediaIds.push(result.media.id);
     renderGallery();
     return result.media;
 }

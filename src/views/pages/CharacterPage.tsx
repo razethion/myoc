@@ -1,4 +1,5 @@
 import type {CurrentUser} from '../../lib/auth/session'
+import {chunkGalleryItems} from '../../lib/gallery'
 import {characterMediaImageUrl, characterProfileImageUrl, profilePhotoUrl} from '../../lib/media/url'
 import type {ProfilePageUser} from './ProfilePage'
 import {Navbar} from '../components/Navbar'
@@ -708,27 +709,32 @@ export function CharacterPage({
                     </fieldset>
                 ) : null}
 
-                {tabs.map((tab, tabIndex) => (
-                    <section class="gallery-tab-panel justified-gallery" data-gallery-tab-panel={tab.name} hidden={tabIndex > 0}>
-                        {tab.rows.map((row, rowIndex) => {
-                            const rowMedia = row.mediaIds
-                                .map((mediaId) => mediaById.get(mediaId))
-                                .filter((item): item is DisplayMedia => Boolean(item))
+                {tabs.map((tab, tabIndex) => {
+                    const visualRows = tab.rows.flatMap((row) => {
+                        const rowMedia = row.mediaIds
+                            .map((mediaId) => mediaById.get(mediaId))
+                            .filter((item): item is DisplayMedia => Boolean(item))
 
-                            if (rowMedia.length === 0) {
-                                return null
-                            }
+                        return chunkGalleryItems(rowMedia)
+                    })
 
-                            const isLastRow = rowIndex === tab.rows.length - 1
+                    return (
+                        <section class="gallery-tab-panel justified-gallery" data-gallery-tab-panel={tab.name}
+                                 hidden={tabIndex > 0}>
+                            {visualRows.map((rowMedia, rowIndex) => {
+                                const isLastRow = rowIndex === visualRows.length - 1
 
-                            return (
-                                <div class={`justified-row ${isLastRow ? 'last-row' : ''} ${isLastRow && character.galleryFullsizeLastRow ? 'last-row-full' : ''}`}>
-                                    {rowMedia.map((item) => <GalleryImage allowGuestNsfwReveal={allowGuestNsfwReveal} media={item}/>)}
-                                </div>
-                            )
-                        })}
-                    </section>
-                ))}
+                                return (
+                                    <div
+                                        class={`justified-row ${isLastRow ? 'last-row' : ''} ${isLastRow && character.galleryFullsizeLastRow ? 'last-row-full' : ''}`}>
+                                        {rowMedia.map((item) => <GalleryImage
+                                            allowGuestNsfwReveal={allowGuestNsfwReveal} media={item}/>)}
+                                    </div>
+                                )
+                            })}
+                        </section>
+                    )
+                })}
 
                 {media.length === 0 ? (
                     <section class="rounded-box border border-base-300 bg-base-200 p-8 text-center text-base-content/70">

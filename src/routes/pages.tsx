@@ -2,6 +2,7 @@ import { Hono, type Context } from 'hono'
 import {getCurrentUser, isAdminUser, toSqlTimestamp} from '../lib/auth/session'
 import {getImageApprovalData} from '../lib/admin/imageApprovals'
 import {getAdminReportsData} from '../lib/admin/reports'
+import {chunkGalleryItems} from '../lib/gallery'
 import type {UserSocialLink} from '../lib/socialLinks'
 import type { Bindings } from '../types/bindings'
 import { AuthPage } from '../views/pages/AuthPage'
@@ -2074,17 +2075,36 @@ async function getCharacterGalleryTabs(
     return (tabResult.results ?? []).map((tab) => ({
         id: tab.id,
         name: tab.name,
-        rows: rowsByTab.get(tab.id) ?? [],
+        rows: splitOversizedGalleryRows(rowsByTab.get(tab.id) ?? []),
     }))
 }
 
 function createDefaultGalleryTabs(media: CharacterSettingsMedia[]): CharacterSettingsGalleryTab[] {
+    const mediaIdChunks = chunkGalleryItems(media.map((item) => item.id))
+
     return [{
         id: crypto.randomUUID(),
         name: 'default',
-        rows: [{
+        rows: mediaIdChunks.map((mediaIds) => ({
             id: crypto.randomUUID(),
-            mediaIds: media.map((item) => item.id),
-        }],
+            mediaIds,
+        })),
     }]
+}
+
+function splitOversizedGalleryRows(
+    rows: CharacterSettingsGalleryTab['rows'],
+): CharacterSettingsGalleryTab['rows'] {
+    return rows.flatMap((row) => {
+        const mediaIdChunks = chunkGalleryItems(row.mediaIds)
+
+        if (mediaIdChunks.length === 0) {
+            return [row]
+        }
+
+        return mediaIdChunks.map((mediaIds, index) => ({
+            id: index === 0 ? row.id : crypto.randomUUID(),
+            mediaIds,
+        }))
+    })
 }

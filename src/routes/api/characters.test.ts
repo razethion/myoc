@@ -1747,6 +1747,35 @@ describe('POST /characters/:id/media', () => {
 })
 
 describe('PUT /characters/:id/gallery', () => {
+    it('rejects gallery rows containing more than five images', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+
+        const response = await putGallery(character.id, {
+            fullsizeLastRow: true,
+            tabs: [{
+                id: 'tab-one',
+                name: 'default',
+                rows: [{
+                    id: 'row-one',
+                    mediaIds: ['media-one', 'media-two', 'media-three', 'media-four', 'media-five', 'media-six'],
+                }],
+            }],
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Gallery rows can contain 5 images or fewer',
+        })
+        expect(db.batch).not.toHaveBeenCalled()
+    })
+
     it('rejects gallery layouts containing media outside the character', async () => {
         const sessionToken = 'session-token'
         const character = createCharacterRecord()
