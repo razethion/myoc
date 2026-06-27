@@ -380,21 +380,26 @@ describe('public page redirects', () => {
     })
 
     it('renders SEO metadata on the home page', async () => {
-        const response = await getAppPath('/')
+        const response = await getAppPath('/', createProfilePageDb({
+            mediaCount: 1234,
+        }))
         const html = await response.text()
 
         expect(response.status).toBe(200)
         expect(html).toContain('<title>MyOC | High-Resolution Character Gallery</title>')
-        expect(html).toContain('<meta content="Easily share character art without losing quality.')
+        expect(html).toContain('<meta content="Hosting over 1,234 images" name="description"/>')
         expect(html).toContain('<link href="https://example.com/" rel="canonical"/>')
         expect(html).toContain('<meta content="MyOC | High-Resolution Character Gallery" property="og:title"/>')
+        expect(html).toContain('<meta content="Hosting over 1,234 images" property="og:description"/>')
         expect(html).toContain('<meta content="https://example.com/assets/myocbanner.webp" property="og:image"/>')
         expect(html).toContain('<meta content="1200" property="og:image:width"/>')
         expect(html).toContain('<meta content="630" property="og:image:height"/>')
         expect(html).toContain('<meta content="image/webp" property="og:image:type"/>')
         expect(html).toContain('<meta content="summary_large_image" name="twitter:card"/>')
+        expect(html).toContain('<meta content="Hosting over 1,234 images" name="twitter:description"/>')
         expect(html).toContain('<script type="application/ld+json">')
         expect(html).toContain('"@type":"WebSite"')
+        expect(html).toContain('"description":"Hosting over 1,234 images"')
         expect(html).toContain('"target":"https://example.com/search?q={search_term_string}"')
     })
 })
@@ -1558,6 +1563,16 @@ describe('GET /u/:username', () => {
 
         expect(response.status).toBe(200)
         expect(html).toContain('RAZETH | MyOC')
+        expect(html).toContain('<meta content="Character page description." name="description"/>')
+        expect(html).toContain('<link href="https://example.com/u/demo/RAZETH" rel="canonical"/>')
+        expect(html).toContain('<meta content="RAZETH | MyOC" property="og:title"/>')
+        expect(html).toContain('<meta content="Character page description." property="og:description"/>')
+        expect(html).toContain('<meta content="https://m.myoc.art/characters/profile-user/character-1/profile/character-profile-key.webp" property="og:image"/>')
+        expect(html).toContain('<meta content="image/webp" property="og:image:type"/>')
+        expect(html).toContain('<meta content="RAZETH thumbnail" property="og:image:alt"/>')
+        expect(html).toContain('<meta content="summary" name="twitter:card"/>')
+        expect(html).toContain('<meta content="https://m.myoc.art/characters/profile-user/character-1/profile/character-profile-key.webp" name="twitter:image"/>')
+        expect(html).toContain('"@type":"CreativeWork"')
         expect(html).toContain('Character page description.')
         expect(html).toContain('https://m.myoc.art/users/profile-user/profile/profile-photo-key.webp')
         expect(html).toContain('https://m.myoc.art/characters/profile-user/character-1/profile/character-profile-key.webp')
@@ -1588,6 +1603,7 @@ describe('GET /u/:username', () => {
                 ...createCurrentUserRecord('viewer'),
                 display_nsfw_media: 1,
             },
+            mediaCount: 987,
             profileUser: {
                 id: 'profile-user',
                 username: 'demo',
@@ -1653,6 +1669,8 @@ describe('GET /u/:username', () => {
         const html = await response.text()
 
         expect(response.status).toBe(200)
+        expect(html).toContain('<meta content="Hosting over 987 images" name="description"/>')
+        expect(html).toContain('<meta content="Hosting over 987 images" property="og:description"/>')
         expect(html).toContain('https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/both-nsfw-key.png')
         expect(html).toContain('data-title="Both NSFW Artist"')
         expect(html).toContain('data-title="NSFW Artist"')
@@ -1667,6 +1685,7 @@ describe('GET /u/:username', () => {
 
     it('renders a profile from live user, social link, folder, and character data', async () => {
         const db = createProfilePageDb({
+            mediaCount: 987,
             profileUser: {
                 id: 'profile-user',
                 username: 'demo',
@@ -1715,6 +1734,17 @@ describe('GET /u/:username', () => {
 
         expect(response.status).toBe(200)
         expect(html).toContain('DEMO')
+        expect(html).toContain('<meta content="Live profile bio." name="description"/>')
+        expect(html).toContain('<link href="https://example.com/u/demo" rel="canonical"/>')
+        expect(html).toContain('<meta content="demo | MyOC" property="og:title"/>')
+        expect(html).toContain('<meta content="Live profile bio." property="og:description"/>')
+        expect(html).toContain('<meta content="profile" property="og:type"/>')
+        expect(html).toContain('<meta content="https://m.myoc.art/users/profile-user/profile/profile-photo-key.webp" property="og:image"/>')
+        expect(html).toContain('<meta content="image/webp" property="og:image:type"/>')
+        expect(html).toContain('<meta content="demo profile photo" property="og:image:alt"/>')
+        expect(html).toContain('<meta content="summary" name="twitter:card"/>')
+        expect(html).toContain('<meta content="https://m.myoc.art/users/profile-user/profile/profile-photo-key.webp" name="twitter:image"/>')
+        expect(html).toContain('"@type":"ProfilePage"')
         expect(html).toContain('Live profile bio.')
         expect(html).toContain('https://m.myoc.art/users/profile-user/profile/profile-photo-key.webp')
         expect(html).toContain('https://bsky.app/profile/demo.test')
@@ -1730,6 +1760,7 @@ describe('GET /u/:username', () => {
 
     it('renders a folder page from folder name path segments', async () => {
         const db = createProfilePageDb({
+            mediaCount: 987,
             profileUser: {
                 id: 'profile-user',
                 username: 'demo',
@@ -1773,6 +1804,8 @@ describe('GET /u/:username', () => {
 
         expect(response.status).toBe(200)
         expect(html).toContain('Folder')
+        expect(html).toContain('<meta content="Hosting over 987 images" name="description"/>')
+        expect(html).toContain('<meta content="Hosting over 987 images" property="og:description"/>')
         expect(html).toContain('Main Characters')
         expect(html).toContain('Nested Folder')
         expect(html).toContain('/u/demo/Main%20Characters/Nested%20Folder')

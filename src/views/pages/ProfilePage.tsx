@@ -7,6 +7,7 @@ import type {
 } from './CharacterManagementPage'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
+import {absoluteUrl, compactDescription} from '../meta'
 
 export type ProfilePageUser = {
     id: string
@@ -24,6 +25,8 @@ type ProfilePageProps = {
     currentFolder?: CharacterManagementFolder | null
     folderPath?: CharacterManagementFolder[]
     mediaBaseUrl: string
+    metaDescriptionFallback: string
+    siteUrl: string
 }
 
 const socialLabelByPlatform = Object.fromEntries(
@@ -146,6 +149,76 @@ function characterUrl(username: string, character: CharacterManagementCharacter)
     return `${profileUrl(username)}/${encodeURIComponent(character.name)}`
 }
 
+function profilePageDescription(profileUser: ProfilePageUser, fallback: string): string {
+    return compactDescription(profileUser.bio, fallback)
+}
+
+function ProfilePageHead({
+                             currentFolder,
+                             folderPath,
+                             imageUrl,
+                             metaDescriptionFallback,
+                             pageTitle,
+                             profileUser,
+                             siteUrl,
+                         }: {
+    currentFolder: CharacterManagementFolder | null
+    folderPath: CharacterManagementFolder[]
+    imageUrl: string
+    metaDescriptionFallback: string
+    pageTitle: string
+    profileUser: ProfilePageUser
+    siteUrl: string
+}) {
+    const canonicalPath = currentFolder ? folderUrl(profileUser.username, folderPath) : profileUrl(profileUser.username)
+    const canonicalUrl = absoluteUrl(siteUrl, canonicalPath)
+    const description = profilePageDescription(profileUser, metaDescriptionFallback)
+    const imageAlt = `${profileUser.username} profile photo`
+    const structuredData = {
+        '@context': 'https://schema.org',
+        '@type': 'ProfilePage',
+        name: pageTitle,
+        url: canonicalUrl,
+        description,
+        image: imageUrl,
+        mainEntity: {
+            '@type': 'Person',
+            name: profileUser.username,
+            image: imageUrl,
+            url: canonicalUrl,
+        },
+    }
+
+    return (
+        <>
+            <meta content={description} name="description"/>
+            <link href={canonicalUrl} rel="canonical"/>
+
+            <meta content={pageTitle} property="og:title"/>
+            <meta content={description} property="og:description"/>
+            <meta content="profile" property="og:type"/>
+            <meta content={canonicalUrl} property="og:url"/>
+            <meta content="MyOC" property="og:site_name"/>
+            <meta content={imageUrl} property="og:image"/>
+            <meta content="512" property="og:image:width"/>
+            <meta content="512" property="og:image:height"/>
+            <meta content={profileUser.profilePhotoKey ? 'image/webp' : 'image/png'} property="og:image:type"/>
+            <meta content={imageAlt} property="og:image:alt"/>
+
+            <meta content="summary" name="twitter:card"/>
+            <meta content={pageTitle} name="twitter:title"/>
+            <meta content={description} name="twitter:description"/>
+            <meta content={imageUrl} name="twitter:image"/>
+            <meta content={imageAlt} name="twitter:image:alt"/>
+
+            <script
+                dangerouslySetInnerHTML={{__html: JSON.stringify(structuredData)}}
+                type="application/ld+json"
+            ></script>
+        </>
+    )
+}
+
 function ProfileSettingsLink() {
     return (
         <a aria-label="Content settings" class="btn btn-square btn-ghost absolute right-3 top-4 sm:right-0"
@@ -170,6 +243,8 @@ export function ProfilePage({
     currentFolder = null,
     folderPath = [],
     mediaBaseUrl,
+                                metaDescriptionFallback,
+                                siteUrl,
 }: ProfilePageProps) {
     const profileImageUrl = profileImageFor(profileUser, mediaBaseUrl)
     const childFolders = folders.filter((folder) => folder.parentFolderId === (currentFolder?.id ?? null))
@@ -182,7 +257,20 @@ export function ProfilePage({
     const pageTitle = isFolderPage ? `${currentFolder.name} | ${profileUser.username} | MyOC` : `${profileUser.username} | MyOC`
 
     return (
-        <BaseLayout title={pageTitle}>
+        <BaseLayout
+            head={(
+                <ProfilePageHead
+                    currentFolder={currentFolder}
+                    folderPath={folderPath}
+                    imageUrl={profileImageUrl}
+                    metaDescriptionFallback={metaDescriptionFallback}
+                    pageTitle={pageTitle}
+                    profileUser={profileUser}
+                    siteUrl={siteUrl}
+                />
+            )}
+            title={pageTitle}
+        >
             <Navbar
                 currentUser={currentUser}
                 guestInitial={profileUser.username.trim().charAt(0).toUpperCase() || 'R'}
