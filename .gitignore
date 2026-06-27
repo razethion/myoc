@@ -38,3 +38,4 @@ lerna-debug.log*
 *.sqlite-wal
 /public/app.css
 /public/vendor/
+worker-configuration.d.ts
