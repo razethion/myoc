@@ -127,6 +127,11 @@ const bulkUploadModal = document.getElementById('bulk-upload-modal');
 const bulkUploadForm = document.getElementById('bulk-upload-form');
 const bulkUploadFileInput = document.getElementById('bulk-gallery-image-files');
 const bulkUploadList = document.getElementById('bulk-upload-list');
+const bulkUploadProgressModal = document.getElementById('bulk-upload-progress-modal');
+const bulkUploadProgressSummary = document.getElementById('bulk-upload-progress-summary');
+const bulkUploadProgressBar = document.getElementById('bulk-upload-progress-bar');
+const bulkUploadProgressDetail = document.getElementById('bulk-upload-progress-detail');
+const bulkUploadProgressCloseButton = document.getElementById('bulk-upload-progress-close');
 const galleryTagModal = document.getElementById('gallery-tag-modal');
 const galleryTagForm = document.getElementById('gallery-tag-form');
 const galleryTagNameInput = document.getElementById('gallery-tag-name');
@@ -215,6 +220,32 @@ function setLoading(button, isLoading, text) {
         if (!button.dataset.idleText) button.dataset.idleText = button.textContent;
         button.textContent = isLoading ? text : button.dataset.idleText;
     }
+}
+
+function formatFileSize(bytes) {
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = bytes;
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex += 1;
+    }
+    return (unitIndex === 0 ? value : value.toFixed(1)) + ' ' + units[unitIndex];
+}
+
+function setBulkUploadProgress(summary, percent, detail, isError, canClose) {
+    const safePercent = Math.max(0, Math.min(100, Math.round(percent || 0)));
+    bulkUploadProgressSummary.textContent = summary;
+    bulkUploadProgressBar.value = safePercent;
+    bulkUploadProgressBar.className = 'progress w-full ' + (isError ? 'progress-error' : safePercent >= 100 ? 'progress-success' : 'progress-primary');
+    bulkUploadProgressDetail.textContent = detail || safePercent + '%';
+    bulkUploadProgressCloseButton.hidden = !canClose;
+}
+
+function openBulkUploadProgress(files) {
+    setBulkUploadProgress('Uploading 0 of ' + files.length + ' images', 0, 'Preparing bulk upload', false, false);
+    if (!bulkUploadProgressModal.open) bulkUploadProgressModal.showModal();
 }
 
 async function loadCharacterProfileForCropping(file) {
@@ -797,7 +828,8 @@ async function prepareOriginalImageFile(file) {
     return image;
 }
 
-async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}) {
+async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}, progress) {
+    if (progress) progress({ status: 'Preparing', percent: 5, detail: 'Checking image file' });
     const [sfwImage, nsfwImage] = await Promise.all([
         sfwFile ? prepareOriginalImageFile(sfwFile) : null,
         nsfwFile ? prepareOriginalImageFile(nsfwFile) : null
@@ -807,6 +839,7 @@ async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}) {
     if (nsfwImage) uploads.push({ rating: 'nsfw', contentType: nsfwImage.contentType });
     if (uploads.length === 0) throw new Error('At least one image is required.');
 
+    if (progress) progress({ status: 'Starting', percent: 10, detail: 'Starting upload' });
     const initResult = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/chunked/init', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -817,9 +850,10 @@ async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}) {
         sfwArtist: sfwArtist || '',
         nsfwArtist: nsfwArtist || ''
     };
-    if (sfwImage) completeBody.sfwUpload = await uploadChunkedImage(initResult.mediaId, 'sfw', sfwImage, initResult.uploads.sfw);
-    if (nsfwImage) completeBody.nsfwUpload = await uploadChunkedImage(initResult.mediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw);
+    if (sfwImage) completeBody.sfwUpload = await uploadChunkedImage(initResult.mediaId, 'sfw', sfwImage, initResult.uploads.sfw, progress);
+    if (nsfwImage) completeBody.nsfwUpload = await uploadChunkedImage(initResult.mediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw, progress);
 
+    if (progress) progress({ status: 'Finalizing', percent: 95, detail: 'Finishing upload' });
     const result = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/chunked/complete', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -834,15 +868,17 @@ async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}) {
     }
     targetRow.mediaIds.push(result.media.id);
     renderGallery();
+    if (progress) progress({ status: 'Done', percent: 100, detail: 'Upload complete' });
     return result.media;
 }
 
-async function uploadChunkedImage(mediaId, rating, image, upload) {
+async function uploadChunkedImage(mediaId, rating, image, upload, progress) {
     if (!upload) throw new Error('Upload could not be initialized.');
     const file = image.file;
     const chunkSize = upload.chunkSize || (8 * 1024 * 1024);
     const parts = [];
     let partNumber = 1;
+    const totalBytes = Math.max(file.size, 1);
 
     for (let offset = 0; offset < file.size; offset += chunkSize) {
         const chunk = file.slice(offset, Math.min(offset + chunkSize, file.size), image.contentType);
@@ -860,6 +896,14 @@ async function uploadChunkedImage(mediaId, rating, image, upload) {
             }
         );
         parts.push(part);
+        const uploadedBytes = Math.min(offset + chunk.size, file.size);
+        if (progress) {
+            progress({
+                status: 'Uploading',
+                percent: 10 + ((uploadedBytes / totalBytes) * 80),
+                detail: 'Uploaded ' + formatFileSize(uploadedBytes) + ' of ' + formatFileSize(file.size)
+            });
+        }
         partNumber += 1;
     }
 
@@ -1136,22 +1180,53 @@ bulkUploadFileInput.addEventListener('change', () => {
 bulkUploadForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const submitButton = bulkUploadForm.querySelector('button[type="submit"]');
+    let activeIndex = -1;
     try {
+        if (bulkUploadFiles.length === 0) throw new Error('Choose at least one image file.');
         setLoading(submitButton, true, 'Uploading...');
+        openBulkUploadProgress(bulkUploadFiles);
         for (let index = 0; index < bulkUploadFiles.length; index += 1) {
+            activeIndex = index;
             const artistInput = bulkUploadList.querySelector('[data-bulk-artist-input="' + index + '"]');
             const nsfwInput = bulkUploadList.querySelector('[data-bulk-nsfw-input="' + index + '"]');
             const isNsfw = Boolean(nsfwInput && nsfwInput.checked);
+            setBulkUploadProgress(
+                'Uploading ' + (index + 1) + ' of ' + bulkUploadFiles.length + ' images',
+                (index / bulkUploadFiles.length) * 100,
+                bulkUploadFiles[index].name,
+                false,
+                false
+            );
             await uploadMedia({
                 sfwFile: isNsfw ? null : bulkUploadFiles[index],
                 nsfwFile: isNsfw ? bulkUploadFiles[index] : null,
                 sfwArtist: isNsfw ? '' : (artistInput ? artistInput.value : ''),
                 nsfwArtist: isNsfw ? (artistInput ? artistInput.value : '') : ''
+            }, (state) => {
+                const imageProgress = Math.max(0, Math.min(100, state.percent || 0));
+                const totalProgress = ((index + (imageProgress / 100)) / bulkUploadFiles.length) * 100;
+                setBulkUploadProgress(
+                    state.status + ' image ' + (index + 1) + ' of ' + bulkUploadFiles.length,
+                    totalProgress,
+                    bulkUploadFiles[index].name + ' - ' + (state.detail || Math.round(imageProgress) + '%'),
+                    false,
+                    false
+                );
             });
         }
+        setBulkUploadProgress('Uploaded ' + bulkUploadFiles.length + ' images', 100, 'Bulk upload complete', false, true);
         bulkUploadModal.close();
         showAlert('Bulk upload complete. Save changes to persist gallery placement.', true);
     } catch (error) {
+        if (activeIndex >= 0) {
+            setBulkUploadProgress(
+                'Bulk upload stopped at image ' + (activeIndex + 1) + ' of ' + bulkUploadFiles.length,
+                ((activeIndex + 1) / Math.max(bulkUploadFiles.length, 1)) * 100,
+                error.message || 'Upload failed',
+                true,
+                true
+            );
+        }
         showAlert(error.message, false);
     } finally {
         setLoading(submitButton, false, 'Uploading...');
@@ -1160,6 +1235,10 @@ bulkUploadForm.addEventListener('submit', async (event) => {
 
 editImageSfwFileInput.addEventListener('change', () => renderFilePreview(editImageSfwFileInput, editSfwPreview, 'No SFW image uploaded'));
 editImageNsfwFileInput.addEventListener('change', () => renderFilePreview(editImageNsfwFileInput, editNsfwPreview, 'No NSFW image uploaded'));
+
+bulkUploadProgressCloseButton.addEventListener('click', () => {
+    bulkUploadProgressModal.close();
+});
 
 editImageArtistForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -1518,6 +1597,7 @@ export function CharacterSettingsPage({
 
                 <UploadDialog/>
                 <BulkUploadDialog/>
+                <BulkUploadProgressDialog/>
                 <GalleryTagDialogs/>
                 <MediaDialogs characterName={character.name}/>
                 <DeleteCharacterDialog characterName={character.name}/>
@@ -1592,6 +1672,26 @@ function BulkUploadDialog() {
             </div>
             <form class="modal-backdrop">
                 <button aria-label="Bulk upload backdrop" type="button">close</button>
+            </form>
+        </dialog>
+    )
+}
+
+function BulkUploadProgressDialog() {
+    return (
+        <dialog class="modal" id="bulk-upload-progress-modal">
+            <div class="modal-box max-w-2xl">
+                <h2 class="text-xl font-bold">Uploading Images</h2>
+                <p class="mt-1 text-sm text-base-content/70" id="bulk-upload-progress-summary">Preparing upload</p>
+                <progress class="progress mt-5 w-full" id="bulk-upload-progress-bar" max="100" value="0"></progress>
+                <p class="mt-2 truncate text-sm text-base-content/70" id="bulk-upload-progress-detail">Waiting to
+                    upload</p>
+                <div class="modal-action">
+                    <button class="btn btn-primary" hidden id="bulk-upload-progress-close" type="button">Close</button>
+                </div>
+            </div>
+            <form class="modal-backdrop">
+                <button aria-label="Bulk upload progress backdrop" disabled type="button">Uploading</button>
             </form>
         </dialog>
     )

@@ -20,6 +20,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
             'Gallery rows can now be moved up or down, with new rows insertable above or below existing rows.',
             'Gallery tabs now keep at least one row so layouts cannot be emptied by accident.',
             'Gallery layouts now keep at least one tab so the tab list cannot be emptied by accident.',
+            'Bulk gallery uploads now show a modal with upload progress.',
         ],
     },
     {
