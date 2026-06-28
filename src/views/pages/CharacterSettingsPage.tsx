@@ -88,7 +88,6 @@ const maxGalleryImagesPerRow = ${safeJson(GALLERY_MAX_IMAGES_PER_ROW)};
 const mediaLibrary = new Map(${safeJson(media)}.map((item) => [item.id, item]));
 const tagLayouts = new Map(${safeJson(galleryTabs)}.map((tab) => [tab.id, tab]));
 let activeTagId = ${safeJson(galleryTabs[0]?.id ?? 'default')};
-let defaultTagId = Array.from(tagLayouts.values()).find((tab) => tab.name === 'default')?.id || null;
 let dragCandidate = null;
 let dragState = null;
 let pendingDeleteMediaId = null;
@@ -432,14 +431,30 @@ function renderTabs() {
     galleryTagTabs.append(addTab);
 }
 
-function updateActiveTabControls(layout) {
+function updateActiveTabControls() {
     const tabIds = Array.from(tagLayouts.keys());
     const activeIndex = tabIds.indexOf(activeTagId);
-    const isDefaultTab = layout.id === defaultTagId;
+    const hasMultipleTabs = tabIds.length > 1;
     moveActiveTabLeftButton.disabled = activeIndex <= 0;
     moveActiveTabRightButton.disabled = activeIndex < 0 || activeIndex >= tabIds.length - 1;
     renameActiveGalleryTabButton.hidden = false;
-    deleteActiveGalleryTabButton.hidden = isDefaultTab;
+    deleteActiveGalleryTabButton.hidden = false;
+    deleteActiveGalleryTabButton.disabled = !hasMultipleTabs;
+    deleteActiveGalleryTabButton.title = hasMultipleTabs ? 'Delete tab' : 'Each character needs at least one gallery tab';
+}
+
+function moveActiveGalleryRow(rowIndex, direction) {
+    const rows = getActiveLayout().rows;
+    const targetIndex = rowIndex + direction;
+    if (rowIndex < 0 || targetIndex < 0 || rowIndex >= rows.length || targetIndex >= rows.length) return false;
+    const [row] = rows.splice(rowIndex, 1);
+    rows.splice(targetIndex, 0, row);
+    return true;
+}
+
+function insertActiveGalleryRow(rowIndex) {
+    const rows = getActiveLayout().rows;
+    rows.splice(Math.max(0, Math.min(rowIndex, rows.length)), 0, { id: createId(), mediaIds: [] });
 }
 
 function renderRows() {
@@ -455,16 +470,44 @@ function renderRows() {
         title.className = 'font-semibold';
         title.textContent = 'Row ' + (rowIndex + 1);
         const rowActions = document.createElement('div');
-        rowActions.className = 'flex items-center gap-2';
+        rowActions.className = 'flex flex-wrap items-center justify-end gap-2';
         const rowCount = document.createElement('span');
         rowCount.className = 'badge ' + (rowData.mediaIds.length > maxGalleryImagesPerRow ? 'badge-error' : 'badge-neutral');
         rowCount.textContent = rowData.mediaIds.length + '/' + maxGalleryImagesPerRow;
+        const moveUpButton = document.createElement('button');
+        moveUpButton.ariaLabel = 'Move row up';
+        moveUpButton.className = 'btn btn-sm btn-square';
+        moveUpButton.dataset.moveRow = '-1';
+        moveUpButton.disabled = rowIndex === 0;
+        moveUpButton.title = 'Move row up';
+        moveUpButton.type = 'button';
+        moveUpButton.textContent = '↑';
+        const moveDownButton = document.createElement('button');
+        moveDownButton.ariaLabel = 'Move row down';
+        moveDownButton.className = 'btn btn-sm btn-square';
+        moveDownButton.dataset.moveRow = '1';
+        moveDownButton.disabled = rowIndex === layout.rows.length - 1;
+        moveDownButton.title = 'Move row down';
+        moveDownButton.type = 'button';
+        moveDownButton.textContent = '↓';
+        const insertAboveButton = document.createElement('button');
+        insertAboveButton.className = 'btn btn-sm btn-primary';
+        insertAboveButton.dataset.insertRow = String(rowIndex);
+        insertAboveButton.type = 'button';
+        insertAboveButton.textContent = 'Insert Above';
+        const insertBelowButton = document.createElement('button');
+        insertBelowButton.className = 'btn btn-sm btn-primary';
+        insertBelowButton.dataset.insertRow = String(rowIndex + 1);
+        insertBelowButton.type = 'button';
+        insertBelowButton.textContent = 'Insert Below';
         const removeButton = document.createElement('button');
         removeButton.className = 'btn btn-sm btn-error btn-outline';
         removeButton.dataset.removeRow = '';
+        removeButton.disabled = layout.rows.length === 1;
+        removeButton.title = layout.rows.length === 1 ? 'Each tab needs at least one row' : 'Remove row';
         removeButton.type = 'button';
         removeButton.textContent = 'Remove Row';
-        rowActions.append(rowCount, removeButton);
+        rowActions.append(rowCount, moveUpButton, moveDownButton, insertAboveButton, insertBelowButton, removeButton);
         const dropzone = document.createElement('div');
         dropzone.className = 'gallery-dropzone flex min-h-28 flex-wrap gap-3 rounded border border-dashed border-base-300 bg-base-200 p-3';
         dropzone.dataset.dropzone = '';
@@ -485,7 +528,7 @@ function renderRows() {
     });
     activeGalleryTagTitle.textContent = displayGalleryTabName(layout.name);
     activeGalleryTagMeta.textContent = layout.rows.length + (layout.rows.length === 1 ? ' row' : ' rows') + ' / ' + getUsedMediaIds(activeTagId).size + ' images';
-    updateActiveTabControls(layout);
+    updateActiveTabControls();
 }
 
 function renderGallery() {
@@ -854,6 +897,8 @@ function removeMediaFromLayouts(mediaId) {
 galleryRows.addEventListener('click', (event) => {
     const removeImageButton = event.target.closest('[data-remove-image]');
     const editButton = event.target.closest('[data-edit-image-artist]');
+    const moveRowButton = event.target.closest('[data-move-row]');
+    const insertRowButton = event.target.closest('[data-insert-row]');
     const removeRowButton = event.target.closest('[data-remove-row]');
     const row = event.target.closest('[data-gallery-row]');
     if (removeImageButton && row) {
@@ -864,14 +909,25 @@ galleryRows.addEventListener('click', (event) => {
         openEditMediaModal(editButton.closest('[data-media-id]').dataset.mediaId);
         return;
     }
+    if (moveRowButton && row) {
+        if (moveActiveGalleryRow(Number(row.dataset.galleryRow), Number(moveRowButton.dataset.moveRow))) renderGallery();
+        return;
+    }
+    if (insertRowButton) {
+        insertActiveGalleryRow(Number(insertRowButton.dataset.insertRow));
+        renderGallery();
+        return;
+    }
     if (removeRowButton && row) {
         const rowIndex = Number(row.dataset.galleryRow);
-        if (getActiveLayout().rows[rowIndex].mediaIds.length > 0) {
+        const rows = getActiveLayout().rows;
+        if (rows.length <= 1) return;
+        if (rows[rowIndex].mediaIds.length > 0) {
             removeTargetRowIndex = rowIndex;
             removeRowModal.showModal();
             return;
         }
-        getActiveLayout().rows.splice(rowIndex, 1);
+        rows.splice(rowIndex, 1);
         renderGallery();
     }
 });
@@ -940,6 +996,7 @@ renameActiveGalleryTabButton.addEventListener('click', () => {
 });
 
 deleteActiveGalleryTabButton.addEventListener('click', () => {
+    if (tagLayouts.size <= 1) return;
     pendingDeleteTagId = activeTagId;
     deleteGalleryTagModal.showModal();
 });
@@ -975,6 +1032,10 @@ deleteGalleryTagModal.addEventListener('click', (event) => {
         return;
     }
     if (event.target.matches('[data-confirm-delete-gallery-tag]') && pendingDeleteTagId) {
+        if (tagLayouts.size <= 1) {
+            deleteGalleryTagModal.close();
+            return;
+        }
         tagLayouts.delete(pendingDeleteTagId);
         activeTagId = Array.from(tagLayouts.keys())[0];
         deleteGalleryTagModal.close();
@@ -988,7 +1049,8 @@ removeRowModal.addEventListener('click', (event) => {
         return;
     }
     if (event.target.matches('[data-confirm-remove-row]') && removeTargetRowIndex !== null) {
-        getActiveLayout().rows.splice(removeTargetRowIndex, 1);
+        const rows = getActiveLayout().rows;
+        if (rows.length > 1) rows.splice(removeTargetRowIndex, 1);
         removeRowModal.close();
         renderGallery();
     }
@@ -1272,7 +1334,6 @@ if (tagLayouts.size === 0) {
     const defaultTabId = createId();
     tagLayouts.set(defaultTabId, { id: defaultTabId, name: 'default', rows: [{ id: createId(), mediaIds: [] }] });
     activeTagId = defaultTabId;
-    defaultTagId = defaultTabId;
 }
 
 renderGallery();

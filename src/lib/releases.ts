@@ -17,6 +17,9 @@ export const RELEASE_NOTES: ReleaseNote[] = [
         changes: [
             'Character gallery tabs can now be moved left and right from the character editor with clearer tabs and layout panel controls.',
             'The default gallery tab can now be renamed.',
+            'Gallery rows can now be moved up or down, with new rows insertable above or below existing rows.',
+            'Gallery tabs now keep at least one row so layouts cannot be emptied by accident.',
+            'Gallery layouts now keep at least one tab so the tab list cannot be emptied by accident.',
         ],
     },
     {

@@ -1747,6 +1747,54 @@ describe('POST /characters/:id/media', () => {
 })
 
 describe('PUT /characters/:id/gallery', () => {
+    it('rejects gallery layouts with no tabs', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+
+        const response = await putGallery(character.id, {
+            fullsizeLastRow: true,
+            tabs: [],
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Gallery must contain between 1 and 20 tabs',
+        })
+        expect(db.batch).not.toHaveBeenCalled()
+    })
+
+    it('rejects gallery tabs with no rows', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+
+        const response = await putGallery(character.id, {
+            fullsizeLastRow: true,
+            tabs: [{
+                id: 'tab-one',
+                name: 'default',
+                rows: [],
+            }],
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Gallery tabs must contain at least one row',
+        })
+        expect(db.batch).not.toHaveBeenCalled()
+    })
+
     it('rejects gallery rows containing more than five images', async () => {
         const sessionToken = 'session-token'
         const character = createCharacterRecord()
@@ -1881,6 +1929,45 @@ describe('PUT /characters/:id/gallery', () => {
             ['tab-zeta', 0],
             ['tab-alpha', 1],
             ['tab-default', 2],
+        ])
+    })
+
+    it('persists gallery rows in request order', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character],
+            allResults: [[]],
+        })
+
+        const response = await putGallery(character.id, {
+            fullsizeLastRow: false,
+            tabs: [{
+                id: 'tab-default',
+                name: 'default',
+                rows: [
+                    {id: 'row-third', mediaIds: []},
+                    {id: 'row-first', mediaIds: []},
+                    {id: 'row-second', mediaIds: []},
+                ],
+            }],
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as { gallery: { tabs: { rows: { id: string }[] }[] } }
+        expect(body.gallery.tabs[0]?.rows.map((row) => row.id)).toEqual([
+            'row-third',
+            'row-first',
+            'row-second',
+        ])
+        const rowInsertStatements = boundStatements.filter((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_rows'].join(' ')))
+        expect(rowInsertStatements.map((statement) => [statement.binds[0], statement.binds[4]])).toEqual([
+            ['row-third', 0],
+            ['row-first', 1],
+            ['row-second', 2],
         ])
     })
 

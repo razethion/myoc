@@ -2350,6 +2350,10 @@ function parseGalleryLayout(body: GalleryLayoutRequest): ParsedGalleryLayout | {
             return {error: 'Gallery tab rows are required'}
         }
 
+        if (tabItem.rows.length < 1) {
+            return {error: 'Gallery tabs must contain at least one row'}
+        }
+
         const tab = {
             id: tabId,
             name: name.name,
