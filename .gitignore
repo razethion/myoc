@@ -14,6 +14,7 @@ dist/
 
 # deps
 node_modules/
+package-lock.json
 .wrangler/
 
 # env
@@ -32,6 +33,7 @@ lerna-debug.log*
 
 # misc
 .DS_Store
+.tmp/
 
 # local databases
 *.sqlite

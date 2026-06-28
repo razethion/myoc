@@ -246,6 +246,7 @@ describe('public page redirects', () => {
                     image_count: 7,
                     preview_media_id: 'media-1',
                     preview_image_key: 'preview-key',
+                    preview_thumbnail_image_key: 'preview-thumb-key',
                     preview_artist: 'Demo Artist',
                 },
             ],
@@ -266,8 +267,9 @@ describe('public page redirects', () => {
         expect(html).toContain('home-loading-media image-loading h-14 w-14 shrink-0')
         expect(html).toContain('loading loading-spinner loading-lg text-base-content')
         expect(html).toContain('loading loading-spinner loading-sm text-base-content')
-        expect(html).toContain('https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview-key.png')
+        expect(html).toContain('https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview/preview-thumb-key.webp')
         expect(html).toContain('https://m.myoc.art/characters/owner-1/character-1/profile/profile-key.webp')
+        expect(preparedSql).toContain('sfw_preview_image_key')
         expect(preparedSql).toContain("sfw_review_status = 'approved'")
         expect(preparedSql).toContain('character_image_counts.image_count')
         expect(preparedSql).toContain('CASE WHEN nsfw_image_key IS NOT NULL THEN 1 ELSE 0 END')
@@ -286,7 +288,7 @@ describe('public page redirects', () => {
                     characters: 34,
                     mediaItems: 56,
                 },
-                'home:discover:v1': [
+                'home:discover:v2': [
                     {
                         id: 'cached-character',
                         userId: 'cached-owner',
@@ -295,6 +297,7 @@ describe('public page redirects', () => {
                         profileImageKey: 'cached-profile-key',
                         previewMediaId: 'cached-media',
                         previewImageKey: 'cached-preview-key',
+                        previewThumbnailImageKey: 'cached-preview-thumb-key',
                         previewArtist: 'Cached Artist',
                         imageCount: 42,
                     },
@@ -310,7 +313,7 @@ describe('public page redirects', () => {
         expect(html).toContain('56')
         expect(html).toContain('Cached Quartz')
         expect(html).toContain('42 images')
-        expect(html).toContain('https://m.myoc.art/characters/cached-owner/cached-character/media/cached-media/sfw/cached-preview-key.png')
+        expect(html).toContain('https://m.myoc.art/characters/cached-owner/cached-character/media/cached-media/sfw/preview/cached-preview-thumb-key.webp')
         expect(db.prepare).not.toHaveBeenCalled()
     })
 
@@ -1388,6 +1391,8 @@ describe('GET /admin', () => {
                 character_name: 'Quartz',
                 sfw_image_key: 'sfw-key',
                 nsfw_image_key: null,
+                sfw_preview_image_key: 'sfw-preview-key',
+                nsfw_preview_image_key: null,
                 sfw_artist: 'Artist',
                 nsfw_artist: '',
                 sfw_width: 1200,
@@ -1414,6 +1419,8 @@ describe('GET /admin', () => {
         expect(response.status).toBe(200)
         expect(html).toContain('<title>Image Approvals | Admin | MyOC</title>')
         expect(html).toContain('data-image-approvals')
+        expect(html).toContain('"imageUrl":"https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp"')
+        expect(html).toContain('"fullImageUrl":"https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/sfw-key.png"')
         expect(html).toContain('"objectKey":"characters/owner-1/character-1/media/media-1/sfw/sfw-key.png"')
         expect(html).toContain('"username":"uploader"')
         expect(html).toContain('"profileUrl":"/u/uploader"')
@@ -1439,6 +1446,8 @@ describe('GET /admin', () => {
                 character_name: 'Quartz',
                 sfw_image_key: 'sfw-key',
                 nsfw_image_key: null,
+                sfw_preview_image_key: 'sfw-preview-key',
+                nsfw_preview_image_key: null,
                 sfw_review_status: 'reported',
                 nsfw_review_status: 'pending',
                 sfw_reviewed_at: '2026-06-10 12:00:00',
@@ -1460,6 +1469,7 @@ describe('GET /admin', () => {
         expect(html).toContain('Resubmit for Approval')
         expect(html).toContain('Delete Image')
         expect(html).toContain('Ban User')
+        expect(html).toContain('src="https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp"')
         expect(html).toContain('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png')
     })
 
@@ -1501,34 +1511,52 @@ describe('GET /u/:username', () => {
                     id: 'sfw-media',
                     sfw_image_key: 'sfw-only-key',
                     nsfw_image_key: null,
+                    sfw_preview_image_key: 'sfw-only-preview-key',
+                    nsfw_preview_image_key: null,
                     sfw_artist: 'SFW Artist',
                     nsfw_artist: '',
                     sfw_width: 640,
                     sfw_height: 480,
+                    sfw_preview_width: 640,
+                    sfw_preview_height: 480,
                     nsfw_width: null,
                     nsfw_height: null,
+                    nsfw_preview_width: null,
+                    nsfw_preview_height: null,
                 },
                 {
                     id: 'both-media',
                     sfw_image_key: 'both-sfw-key',
                     nsfw_image_key: 'both-nsfw-key',
+                    sfw_preview_image_key: 'both-sfw-preview-key',
+                    nsfw_preview_image_key: 'both-nsfw-preview-key',
                     sfw_artist: 'Both SFW Artist',
                     nsfw_artist: 'Both NSFW Artist',
                     sfw_width: 800,
                     sfw_height: 600,
+                    sfw_preview_width: 800,
+                    sfw_preview_height: 600,
                     nsfw_width: 900,
                     nsfw_height: 600,
+                    nsfw_preview_width: 900,
+                    nsfw_preview_height: 600,
                 },
                 {
                     id: 'nsfw-media',
                     sfw_image_key: null,
                     nsfw_image_key: 'nsfw-only-key',
+                    sfw_preview_image_key: null,
+                    nsfw_preview_image_key: 'nsfw-only-preview-key',
                     sfw_artist: '',
                     nsfw_artist: 'NSFW Artist',
                     sfw_width: null,
                     sfw_height: null,
+                    sfw_preview_width: null,
+                    sfw_preview_height: null,
                     nsfw_width: 1200,
                     nsfw_height: 800,
+                    nsfw_preview_width: 1200,
+                    nsfw_preview_height: 800,
                 },
             ],
             galleryTabs: [
@@ -1584,17 +1612,27 @@ describe('GET /u/:username', () => {
         expect(html).toContain('Character page description.')
         expect(html).toContain('https://m.myoc.art/users/profile-user/profile/profile-photo-key.webp')
         expect(html).toContain('https://m.myoc.art/characters/profile-user/character-1/profile/character-profile-key.webp')
-        expect(html).toContain('https://m.myoc.art/characters/profile-user/character-1/media/sfw-media/sfw/sfw-only-key.png')
-        expect(html).toContain('https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png')
+        expect(html).toContain('src="https://m.myoc.art/characters/profile-user/character-1/media/sfw-media/sfw/preview/sfw-only-preview-key.webp"')
+        expect(html).toContain('data-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/sfw-media/sfw/sfw-only-key.png"')
+        expect(html).toContain('src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/preview/both-sfw-preview-key.webp"')
+        expect(html).toContain('data-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"')
         expect(html).toContain('loading="lazy"')
         expect(html).toContain('decoding="async"')
         expect(html).toContain('data-gallery-image-loader')
+        expect(html).toContain('data-gallery-image-loader-text')
+        expect(html).toContain('left: 0.5rem;')
+        expect(html).toContain('top: 0.5rem;')
+        expect(html).toContain('gallery-loader-spin')
+        expect(html).toContain('Loading fullres...')
+        expect(html).toContain('fullres-loading')
         expect(html).toContain('Display 18+ media')
         expect(html).toContain('data-nsfw-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/both-nsfw-key.png"')
+        expect(html).toContain('data-nsfw-preview-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/preview/both-nsfw-preview-key.webp"')
         expect(html).toContain('data-nsfw-title="Both NSFW Artist"')
         expect(html).toContain('data-title="SFW Artist"')
         expect(html).toContain('data-title="Both SFW Artist"')
-        expect(html).toContain('https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png')
+        expect(html).toContain('src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/preview/nsfw-only-preview-key.webp"')
+        expect(html).toContain('data-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"')
         expect(html).toContain('Use the 18+ media button to display this media.')
         expect(html).toContain('data-nsfw-hidden="true"')
         expect(html).toContain('width="640"')

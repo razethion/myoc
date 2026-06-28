@@ -1,6 +1,6 @@
 import type {CurrentUser} from '../../lib/auth/session'
 import {GALLERY_MAX_IMAGES_PER_ROW} from '../../lib/gallery'
-import {characterMediaImageUrl, characterProfileImageUrl} from '../../lib/media/url'
+import {characterMediaImageUrl, characterMediaPreviewImageUrl, characterProfileImageUrl} from '../../lib/media/url'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 
@@ -17,14 +17,20 @@ export type CharacterSettingsMedia = {
     id: string
     sfwImageKey: string | null
     nsfwImageKey: string | null
+    sfwPreviewImageKey: string | null
+    nsfwPreviewImageKey: string | null
     sfwContentType: string | null
     nsfwContentType: string | null
     sfwArtist: string
     nsfwArtist: string
     sfwWidth: number | null
     sfwHeight: number | null
+    sfwPreviewWidth: number | null
+    sfwPreviewHeight: number | null
     nsfwWidth: number | null
     nsfwHeight: number | null
+    nsfwPreviewWidth: number | null
+    nsfwPreviewHeight: number | null
 }
 
 export type CharacterSettingsGalleryTab = {
@@ -62,8 +68,14 @@ function mediaWithUrls(mediaBaseUrl: string, character: CharacterSettingsCharact
         sfwImageUrl: media.sfwImageKey
             ? characterMediaImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.sfwImageKey, 'sfw', media.sfwContentType)
             : null,
+        sfwPreviewImageUrl: media.sfwPreviewImageKey
+            ? characterMediaPreviewImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.sfwPreviewImageKey, 'sfw')
+            : null,
         nsfwImageUrl: media.nsfwImageKey
             ? characterMediaImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwImageKey, 'nsfw', media.nsfwContentType)
+            : null,
+        nsfwPreviewImageUrl: media.nsfwPreviewImageKey
+            ? characterMediaPreviewImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwPreviewImageKey, 'nsfw')
             : null,
     }
 }
@@ -338,7 +350,15 @@ function getOverflowRowCount() {
 }
 
 function mediaDisplayUrl(media) {
-    return media.nsfwImageUrl || media.sfwImageUrl || '';
+    return media.nsfwPreviewImageUrl || media.nsfwImageUrl || media.sfwPreviewImageUrl || media.sfwImageUrl || '';
+}
+
+function mediaSfwDisplayUrl(media) {
+    return media.sfwPreviewImageUrl || media.sfwImageUrl || '';
+}
+
+function mediaNsfwDisplayUrl(media) {
+    return media.nsfwPreviewImageUrl || media.nsfwImageUrl || '';
 }
 
 function mediaAlt(media) {
@@ -803,6 +823,8 @@ function renderFilePreview(input, preview, emptyText) {
 }
 
 const allowedGalleryImageTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'];
+const galleryPreviewMaxLongEdge = 1600;
+const galleryPreviewQuality = 0.9;
 
 async function prepareOriginalImageFile(file) {
     if (!file) return null;
@@ -818,14 +840,64 @@ async function prepareOriginalImageFile(file) {
     } catch {
         throw new Error('Could not read this image. Try PNG, JPG, WebP, GIF, or AVIF.');
     }
-    const image = {
-        file,
-        contentType: file.type,
-        width: bitmap.width,
-        height: bitmap.height
+    try {
+        const image = {
+            file,
+            contentType: file.type,
+            width: bitmap.width,
+            height: bitmap.height,
+            preview: await createGalleryPreviewImage(bitmap)
+        };
+        bitmap.close();
+        return image;
+    } catch (error) {
+        bitmap.close();
+        throw error;
+    }
+}
+
+async function createGalleryPreviewImage(bitmap) {
+    const longEdge = Math.max(bitmap.width, bitmap.height);
+    const scale = Math.min(1, galleryPreviewMaxLongEdge / longEdge);
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Could not prepare image preview.');
+    context.drawImage(bitmap, 0, 0, width, height);
+    const blob = await canvasToWebpBlob(canvas);
+    return {
+        data: await blobToBase64(blob),
+        contentType: 'image/webp',
+        width,
+        height
     };
-    bitmap.close();
-    return image;
+}
+
+function canvasToWebpBlob(canvas) {
+    return new Promise((resolve, reject) => {
+        canvas.toBlob((blob) => {
+            if (blob) {
+                resolve(blob);
+                return;
+            }
+            reject(new Error('Could not prepare image preview.'));
+        }, 'image/webp', galleryPreviewQuality);
+    });
+}
+
+function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            const result = String(reader.result || '');
+            resolve(result.includes(',') ? result.split(',')[1] : result);
+        };
+        reader.onerror = () => reject(new Error('Could not prepare image preview.'));
+        reader.readAsDataURL(blob);
+    });
 }
 
 async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}, progress) {
@@ -850,8 +922,14 @@ async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}, progress)
         sfwArtist: sfwArtist || '',
         nsfwArtist: nsfwArtist || ''
     };
-    if (sfwImage) completeBody.sfwUpload = await uploadChunkedImage(initResult.mediaId, 'sfw', sfwImage, initResult.uploads.sfw, progress);
-    if (nsfwImage) completeBody.nsfwUpload = await uploadChunkedImage(initResult.mediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw, progress);
+    if (sfwImage) {
+        completeBody.sfwPreview = sfwImage.preview;
+        completeBody.sfwUpload = await uploadChunkedImage(initResult.mediaId, 'sfw', sfwImage, initResult.uploads.sfw, progress);
+    }
+    if (nsfwImage) {
+        completeBody.nsfwPreview = nsfwImage.preview;
+        completeBody.nsfwUpload = await uploadChunkedImage(initResult.mediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw, progress);
+    }
 
     if (progress) progress({ status: 'Finalizing', percent: 95, detail: 'Finishing upload' });
     const result = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/chunked/complete', {
@@ -925,8 +1003,8 @@ function openEditMediaModal(mediaId) {
     editImageNsfwArtistInput.value = media.nsfwArtist || '';
     editRemoveSfw = false;
     editRemoveNsfw = false;
-    renderImagePreview(editSfwPreview, media.sfwImageUrl, 'No SFW image uploaded');
-    renderImagePreview(editNsfwPreview, media.nsfwImageUrl, 'No NSFW image uploaded');
+    renderImagePreview(editSfwPreview, mediaSfwDisplayUrl(media), 'No SFW image uploaded');
+    renderImagePreview(editNsfwPreview, mediaNsfwDisplayUrl(media), 'No NSFW image uploaded');
     editImageArtistModal.showModal();
 }
 
@@ -1266,8 +1344,14 @@ editImageArtistForm.addEventListener('submit', async (event) => {
             removeSfw: editRemoveSfw,
             removeNsfw: editRemoveNsfw
         };
-        if (initResult && sfwImage) completeBody.sfwUpload = await uploadChunkedImage(editTargetMediaId, 'sfw', sfwImage, initResult.uploads.sfw);
-        if (initResult && nsfwImage) completeBody.nsfwUpload = await uploadChunkedImage(editTargetMediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw);
+        if (initResult && sfwImage) {
+            completeBody.sfwPreview = sfwImage.preview;
+            completeBody.sfwUpload = await uploadChunkedImage(editTargetMediaId, 'sfw', sfwImage, initResult.uploads.sfw);
+        }
+        if (initResult && nsfwImage) {
+            completeBody.nsfwPreview = nsfwImage.preview;
+            completeBody.nsfwUpload = await uploadChunkedImage(editTargetMediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw);
+        }
         const result = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/' + encodeURIComponent(editTargetMediaId) + '/chunked/complete', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
@@ -1288,11 +1372,11 @@ editImageArtistModal.addEventListener('click', (event) => {
     if (!media) return;
     if (event.target.matches('[data-remove-edit-sfw]')) {
         editRemoveSfw = !editRemoveSfw;
-        renderImagePreview(editSfwPreview, editRemoveSfw ? '' : media.sfwImageUrl, 'SFW image will be removed');
+        renderImagePreview(editSfwPreview, editRemoveSfw ? '' : mediaSfwDisplayUrl(media), 'SFW image will be removed');
     }
     if (event.target.matches('[data-remove-edit-nsfw]')) {
         editRemoveNsfw = !editRemoveNsfw;
-        renderImagePreview(editNsfwPreview, editRemoveNsfw ? '' : media.nsfwImageUrl, 'NSFW image will be removed');
+        renderImagePreview(editNsfwPreview, editRemoveNsfw ? '' : mediaNsfwDisplayUrl(media), 'NSFW image will be removed');
     }
 });
 
