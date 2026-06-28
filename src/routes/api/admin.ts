@@ -8,6 +8,7 @@ import {
 import {toSqlTimestamp} from '../../lib/auth/session'
 import {
     characterMediaImageObjectKey,
+    characterMediaPreviewImageObjectKey,
     characterProfileImageObjectKey,
     profilePhotoObjectKey,
 } from '../../lib/media/url'
@@ -39,6 +40,14 @@ type ModerationMediaRow = {
     nsfw_width: number | null
     nsfw_height: number | null
     nsfw_byte_size: number | null
+    sfw_preview_image_key?: string | null
+    sfw_preview_width?: number | null
+    sfw_preview_height?: number | null
+    sfw_preview_byte_size?: number | null
+    nsfw_preview_image_key?: string | null
+    nsfw_preview_width?: number | null
+    nsfw_preview_height?: number | null
+    nsfw_preview_byte_size?: number | null
 }
 
 type ReportAction = 'ignore' | 'delete-image' | 'delete-character' | 'ban-user'
@@ -66,6 +75,8 @@ type MediaCleanupRow = {
     nsfw_image_key: string | null
     sfw_content_type: string | null
     nsfw_content_type: string | null
+    sfw_preview_image_key?: string | null
+    nsfw_preview_image_key?: string | null
 }
 
 type MediaVariantMove = {
@@ -257,7 +268,15 @@ async function getModerationMedia(db: D1Database, mediaId: string): Promise<Mode
                 sfw_byte_size,
                 nsfw_width,
                 nsfw_height,
-                nsfw_byte_size
+                nsfw_byte_size,
+                sfw_preview_image_key,
+                sfw_preview_width,
+                sfw_preview_height,
+                sfw_preview_byte_size,
+                nsfw_preview_image_key,
+                nsfw_preview_width,
+                nsfw_preview_height,
+                nsfw_preview_byte_size
          FROM character_media
          WHERE id = ?
          LIMIT 1`,
@@ -283,6 +302,14 @@ async function getReportMedia(db: D1Database, mediaId: string): Promise<ReportMe
                 character_media.nsfw_width,
                 character_media.nsfw_height,
                 character_media.nsfw_byte_size,
+                character_media.sfw_preview_image_key,
+                character_media.sfw_preview_width,
+                character_media.sfw_preview_height,
+                character_media.sfw_preview_byte_size,
+                character_media.nsfw_preview_image_key,
+                character_media.nsfw_preview_width,
+                character_media.nsfw_preview_height,
+                character_media.nsfw_preview_byte_size,
                 character_media.sfw_review_status,
                 character_media.nsfw_review_status,
                 users.username,
@@ -339,6 +366,7 @@ async function deleteReportedImage(
     rating: 'sfw' | 'nsfw',
 ): Promise<void> {
     const objectKey = reportedImageObjectKey(media, rating)
+    const previewObjectKey = reportedPreviewObjectKey(media, rating)
     const otherImageKey = rating === 'sfw' ? media.nsfw_image_key : media.sfw_image_key
 
     if (otherImageKey) {
@@ -351,6 +379,10 @@ async function deleteReportedImage(
                      sfw_width = NULL,
                      sfw_height = NULL,
                      sfw_byte_size = NULL,
+                     sfw_preview_image_key = NULL,
+                     sfw_preview_width = NULL,
+                     sfw_preview_height = NULL,
+                     sfw_preview_byte_size = NULL,
                      sfw_review_status = 'pending',
                      sfw_reviewed_at = NULL,
                      sfw_approved_at = NULL,
@@ -365,6 +397,10 @@ async function deleteReportedImage(
                      nsfw_width = NULL,
                      nsfw_height = NULL,
                      nsfw_byte_size = NULL,
+                     nsfw_preview_image_key = NULL,
+                     nsfw_preview_width = NULL,
+                     nsfw_preview_height = NULL,
+                     nsfw_preview_byte_size = NULL,
                      nsfw_review_status = 'pending',
                      nsfw_reviewed_at = NULL,
                      nsfw_approved_at = NULL
@@ -380,9 +416,7 @@ async function deleteReportedImage(
         ])
     }
 
-    if (objectKey) {
-        await deleteR2Objects(bucket, [objectKey])
-    }
+    await deleteR2Objects(bucket, [objectKey, previewObjectKey].filter((key): key is string => Boolean(key)))
 }
 
 async function deleteReportedCharacter(db: D1Database, bucket: R2Bucket, media: ReportMediaRow): Promise<void> {
@@ -490,9 +524,17 @@ function buildMediaReviewUpdate(
     let sfwWidth = media.sfw_width
     let sfwHeight = media.sfw_height
     let sfwByteSize = media.sfw_byte_size
+    let sfwPreviewImageKey = media.sfw_preview_image_key ?? null
+    let sfwPreviewWidth = media.sfw_preview_width ?? null
+    let sfwPreviewHeight = media.sfw_preview_height ?? null
+    let sfwPreviewByteSize = media.sfw_preview_byte_size ?? null
     let nsfwWidth = media.nsfw_width
     let nsfwHeight = media.nsfw_height
     let nsfwByteSize = media.nsfw_byte_size
+    let nsfwPreviewImageKey = media.nsfw_preview_image_key ?? null
+    let nsfwPreviewWidth = media.nsfw_preview_width ?? null
+    let nsfwPreviewHeight = media.nsfw_preview_height ?? null
+    let nsfwPreviewByteSize = media.nsfw_preview_byte_size ?? null
     let sfwReviewStatus = 'pending'
     let sfwReviewedAt: string | null = null
     let sfwApprovedAt: string | null = null
@@ -518,12 +560,20 @@ function buildMediaReviewUpdate(
 
         const move = createMove(media, media.sfw_image_key, 'sfw', 'nsfw')
         moves.push(move)
+        const previewMove = createPreviewMove(media, 'sfw', 'nsfw')
+        if (previewMove) {
+            moves.push(previewMove)
+        }
         nsfwImageKey = media.sfw_image_key
         nsfwContentType = media.sfw_content_type
         nsfwArtist = media.sfw_artist
         nsfwWidth = media.sfw_width
         nsfwHeight = media.sfw_height
         nsfwByteSize = media.sfw_byte_size
+        nsfwPreviewImageKey = media.sfw_preview_image_key ?? null
+        nsfwPreviewWidth = media.sfw_preview_width ?? null
+        nsfwPreviewHeight = media.sfw_preview_height ?? null
+        nsfwPreviewByteSize = media.sfw_preview_byte_size ?? null
         nsfwReviewStatus = 'approved'
         nsfwReviewedAt = now
         nsfwApprovedAt = now
@@ -533,6 +583,10 @@ function buildMediaReviewUpdate(
         sfwWidth = null
         sfwHeight = null
         sfwByteSize = null
+        sfwPreviewImageKey = null
+        sfwPreviewWidth = null
+        sfwPreviewHeight = null
+        sfwPreviewByteSize = null
         events.push({rating: 'sfw', action: sfwAction, homepageAllowed: false})
     }
 
@@ -553,12 +607,20 @@ function buildMediaReviewUpdate(
         const move = createMove(media, media.nsfw_image_key, 'nsfw', 'sfw')
         const homepageAllowed = nsfwAction === 'mark_sfw_homepage'
         moves.push(move)
+        const previewMove = createPreviewMove(media, 'nsfw', 'sfw')
+        if (previewMove) {
+            moves.push(previewMove)
+        }
         sfwImageKey = media.nsfw_image_key
         sfwContentType = media.nsfw_content_type
         sfwArtist = media.nsfw_artist
         sfwWidth = media.nsfw_width
         sfwHeight = media.nsfw_height
         sfwByteSize = media.nsfw_byte_size
+        sfwPreviewImageKey = media.nsfw_preview_image_key ?? null
+        sfwPreviewWidth = media.nsfw_preview_width ?? null
+        sfwPreviewHeight = media.nsfw_preview_height ?? null
+        sfwPreviewByteSize = media.nsfw_preview_byte_size ?? null
         sfwReviewStatus = 'approved'
         sfwReviewedAt = now
         sfwApprovedAt = now
@@ -569,6 +631,10 @@ function buildMediaReviewUpdate(
         nsfwWidth = null
         nsfwHeight = null
         nsfwByteSize = null
+        nsfwPreviewImageKey = null
+        nsfwPreviewWidth = null
+        nsfwPreviewHeight = null
+        nsfwPreviewByteSize = null
         events.push({rating: 'nsfw', action: nsfwAction, homepageAllowed})
     }
 
@@ -582,9 +648,17 @@ function buildMediaReviewUpdate(
                      sfw_width            = ?,
                      sfw_height           = ?,
                      sfw_byte_size        = ?,
+                     sfw_preview_image_key = ?,
+                     sfw_preview_width     = ?,
+                     sfw_preview_height    = ?,
+                     sfw_preview_byte_size = ?,
                      nsfw_width           = ?,
                      nsfw_height          = ?,
                      nsfw_byte_size       = ?,
+                     nsfw_preview_image_key = ?,
+                     nsfw_preview_width     = ?,
+                     nsfw_preview_height    = ?,
+                     nsfw_preview_byte_size = ?,
                      sfw_review_status    = CASE WHEN ? THEN ? ELSE sfw_review_status END,
                      sfw_reviewed_at      = CASE WHEN ? THEN ? ELSE sfw_reviewed_at END,
                      sfw_approved_at      = CASE WHEN ? THEN ? ELSE sfw_approved_at END,
@@ -605,9 +679,17 @@ function buildMediaReviewUpdate(
         sfwWidth,
         sfwHeight,
         sfwByteSize,
+        sfwPreviewImageKey,
+        sfwPreviewWidth,
+        sfwPreviewHeight,
+        sfwPreviewByteSize,
         nsfwWidth,
         nsfwHeight,
         nsfwByteSize,
+        nsfwPreviewImageKey,
+        nsfwPreviewWidth,
+        nsfwPreviewHeight,
+        nsfwPreviewByteSize,
         updateSfw ? 1 : 0,
         sfwReviewStatus,
         updateSfw ? 1 : 0,
@@ -657,6 +739,24 @@ function createMove(
     }
 }
 
+function createPreviewMove(
+    media: ModerationMediaRow,
+    sourceRating: 'sfw' | 'nsfw',
+    targetRating: 'sfw' | 'nsfw',
+): MediaVariantMove | null {
+    const imageKey = mediaVariantPreviewKey(media, sourceRating)
+
+    if (!imageKey) {
+        return null
+    }
+
+    return {
+        sourceObjectKey: characterMediaPreviewImageObjectKey(media.user_id, media.character_id, media.id, imageKey, sourceRating),
+        targetObjectKey: characterMediaPreviewImageObjectKey(media.user_id, media.character_id, media.id, imageKey, targetRating),
+        contentType: 'image/webp',
+    }
+}
+
 function normalizeReportRating(value: string): 'sfw' | 'nsfw' | null {
     return value === 'sfw' || value === 'nsfw' ? value : null
 }
@@ -678,6 +778,10 @@ function mediaVariantContentType(media: ModerationMediaRow, rating: 'sfw' | 'nsf
     return rating === 'sfw' ? media.sfw_content_type : media.nsfw_content_type
 }
 
+function mediaVariantPreviewKey(media: ModerationMediaRow, rating: 'sfw' | 'nsfw'): string | null {
+    return rating === 'sfw' ? (media.sfw_preview_image_key ?? null) : (media.nsfw_preview_image_key ?? null)
+}
+
 function reportedStatus(media: ReportMediaRow, rating: 'sfw' | 'nsfw'): string {
     return rating === 'sfw' ? media.sfw_review_status : media.nsfw_review_status
 }
@@ -687,6 +791,14 @@ function reportedImageObjectKey(media: ReportMediaRow, rating: 'sfw' | 'nsfw'): 
 
     return imageKey
         ? characterMediaImageObjectKey(media.user_id, media.character_id, media.id, imageKey, rating, mediaVariantContentType(media, rating))
+        : null
+}
+
+function reportedPreviewObjectKey(media: ReportMediaRow, rating: 'sfw' | 'nsfw'): string | null {
+    const imageKey = mediaVariantPreviewKey(media, rating)
+
+    return imageKey
+        ? characterMediaPreviewImageObjectKey(media.user_id, media.character_id, media.id, imageKey, rating)
         : null
 }
 
@@ -708,7 +820,15 @@ function createReportEventStatement(
 
 async function getCharacterMediaForCleanup(db: D1Database, characterId: string): Promise<MediaCleanupRow[]> {
     const result = await db.prepare(
-        `SELECT id, user_id, character_id, sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type
+        `SELECT id,
+                user_id,
+                character_id,
+                sfw_image_key,
+                nsfw_image_key,
+                sfw_content_type,
+                nsfw_content_type,
+                sfw_preview_image_key,
+                nsfw_preview_image_key
          FROM character_media
          WHERE character_id = ?`,
     )
@@ -746,7 +866,8 @@ async function getUserCharactersForCleanup(db: D1Database, userId: string): Prom
 
 async function getUserMediaForCleanup(db: D1Database, userId: string): Promise<MediaCleanupRow[]> {
     const result = await db.prepare(
-        `SELECT id, user_id, character_id, sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type
+        `SELECT id, user_id, character_id, sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type,
+                sfw_preview_image_key, nsfw_preview_image_key
          FROM character_media
          WHERE user_id = ?`,
     )
@@ -770,8 +891,16 @@ function characterObjectKeys(characters: CharacterCleanupRow[], mediaRows: Media
             objectKeys.push(characterMediaImageObjectKey(media.user_id, media.character_id, media.id, media.sfw_image_key, 'sfw', media.sfw_content_type))
         }
 
+        if (media.sfw_preview_image_key) {
+            objectKeys.push(characterMediaPreviewImageObjectKey(media.user_id, media.character_id, media.id, media.sfw_preview_image_key, 'sfw'))
+        }
+
         if (media.nsfw_image_key) {
             objectKeys.push(characterMediaImageObjectKey(media.user_id, media.character_id, media.id, media.nsfw_image_key, 'nsfw', media.nsfw_content_type))
+        }
+
+        if (media.nsfw_preview_image_key) {
+            objectKeys.push(characterMediaPreviewImageObjectKey(media.user_id, media.character_id, media.id, media.nsfw_preview_image_key, 'nsfw'))
         }
     }
 

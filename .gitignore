@@ -5,6 +5,7 @@ dist/
 .yarn/
 !.yarn/releases
 .vscode/*
+.ai/
 !.vscode/launch.json
 !.vscode/*.code-snippets
 .idea/workspace.xml
@@ -31,6 +32,7 @@ lerna-debug.log*
 
 # misc
 .DS_Store
+.tmp/
 
 # local databases
 *.sqlite

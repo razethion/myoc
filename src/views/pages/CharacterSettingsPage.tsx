@@ -1,6 +1,6 @@
 import type {CurrentUser} from '../../lib/auth/session'
 import {GALLERY_MAX_IMAGES_PER_ROW} from '../../lib/gallery'
-import {characterMediaImageUrl, characterProfileImageUrl} from '../../lib/media/url'
+import {characterMediaImageUrl, characterMediaPreviewImageUrl, characterProfileImageUrl} from '../../lib/media/url'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 
@@ -17,14 +17,20 @@ export type CharacterSettingsMedia = {
     id: string
     sfwImageKey: string | null
     nsfwImageKey: string | null
+    sfwPreviewImageKey: string | null
+    nsfwPreviewImageKey: string | null
     sfwContentType: string | null
     nsfwContentType: string | null
     sfwArtist: string
     nsfwArtist: string
     sfwWidth: number | null
     sfwHeight: number | null
+    sfwPreviewWidth: number | null
+    sfwPreviewHeight: number | null
     nsfwWidth: number | null
     nsfwHeight: number | null
+    nsfwPreviewWidth: number | null
+    nsfwPreviewHeight: number | null
 }
 
 export type CharacterSettingsGalleryTab = {
@@ -62,8 +68,14 @@ function mediaWithUrls(mediaBaseUrl: string, character: CharacterSettingsCharact
         sfwImageUrl: media.sfwImageKey
             ? characterMediaImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.sfwImageKey, 'sfw', media.sfwContentType)
             : null,
+        sfwPreviewImageUrl: media.sfwPreviewImageKey
+            ? characterMediaPreviewImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.sfwPreviewImageKey, 'sfw')
+            : null,
         nsfwImageUrl: media.nsfwImageKey
             ? characterMediaImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwImageKey, 'nsfw', media.nsfwContentType)
+            : null,
+        nsfwPreviewImageUrl: media.nsfwPreviewImageKey
+            ? characterMediaPreviewImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwPreviewImageKey, 'nsfw')
             : null,
     }
 }
@@ -98,6 +110,10 @@ const galleryTagTabs = document.getElementById('gallery-tag-tabs');
 const galleryRows = document.getElementById('gallery-rows');
 const activeGalleryTagTitle = document.getElementById('active-gallery-tag-title');
 const activeGalleryTagMeta = document.getElementById('active-gallery-tag-meta');
+const moveActiveTabLeftButton = document.getElementById('move-active-gallery-tab-left');
+const moveActiveTabRightButton = document.getElementById('move-active-gallery-tab-right');
+const renameActiveGalleryTabButton = document.getElementById('rename-active-gallery-tab');
+const deleteActiveGalleryTabButton = document.getElementById('delete-active-gallery-tab');
 const addGalleryRowButton = document.getElementById('add-gallery-row');
 const saveCharacterSettingsButton = document.getElementById('save-character-settings');
 const saveCharacterSettingsWarning = document.getElementById('save-character-settings-warning');
@@ -123,6 +139,11 @@ const bulkUploadModal = document.getElementById('bulk-upload-modal');
 const bulkUploadForm = document.getElementById('bulk-upload-form');
 const bulkUploadFileInput = document.getElementById('bulk-gallery-image-files');
 const bulkUploadList = document.getElementById('bulk-upload-list');
+const bulkUploadProgressModal = document.getElementById('bulk-upload-progress-modal');
+const bulkUploadProgressSummary = document.getElementById('bulk-upload-progress-summary');
+const bulkUploadProgressBar = document.getElementById('bulk-upload-progress-bar');
+const bulkUploadProgressDetail = document.getElementById('bulk-upload-progress-detail');
+const bulkUploadProgressCloseButton = document.getElementById('bulk-upload-progress-close');
 const galleryTagModal = document.getElementById('gallery-tag-modal');
 const galleryTagForm = document.getElementById('gallery-tag-form');
 const galleryTagNameInput = document.getElementById('gallery-tag-name');
@@ -211,6 +232,32 @@ function setLoading(button, isLoading, text) {
         if (!button.dataset.idleText) button.dataset.idleText = button.textContent;
         button.textContent = isLoading ? text : button.dataset.idleText;
     }
+}
+
+function formatFileSize(bytes) {
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = bytes;
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex += 1;
+    }
+    return (unitIndex === 0 ? value : value.toFixed(1)) + ' ' + units[unitIndex];
+}
+
+function setBulkUploadProgress(summary, percent, detail, isError, canClose) {
+    const safePercent = Math.max(0, Math.min(100, Math.round(percent || 0)));
+    bulkUploadProgressSummary.textContent = summary;
+    bulkUploadProgressBar.value = safePercent;
+    bulkUploadProgressBar.className = 'progress w-full ' + (isError ? 'progress-error' : safePercent >= 100 ? 'progress-success' : 'progress-primary');
+    bulkUploadProgressDetail.textContent = detail || safePercent + '%';
+    bulkUploadProgressCloseButton.hidden = !canClose;
+}
+
+function openBulkUploadProgress(files) {
+    setBulkUploadProgress('Uploading 0 of ' + files.length + ' images', 0, 'Preparing bulk upload', false, false);
+    if (!bulkUploadProgressModal.open) bulkUploadProgressModal.showModal();
 }
 
 async function loadCharacterProfileForCropping(file) {
@@ -303,7 +350,15 @@ function getOverflowRowCount() {
 }
 
 function mediaDisplayUrl(media) {
-    return media.nsfwImageUrl || media.sfwImageUrl || '';
+    return media.nsfwPreviewImageUrl || media.nsfwImageUrl || media.sfwPreviewImageUrl || media.sfwImageUrl || '';
+}
+
+function mediaSfwDisplayUrl(media) {
+    return media.sfwPreviewImageUrl || media.sfwImageUrl || '';
+}
+
+function mediaNsfwDisplayUrl(media) {
+    return media.nsfwPreviewImageUrl || media.nsfwImageUrl || '';
 }
 
 function mediaAlt(media) {
@@ -389,41 +444,68 @@ function renderMediaPool() {
     mediaCount.textContent = mediaLibrary.size + ' media';
 }
 
+function replaceTagLayouts(entries) {
+    tagLayouts.clear();
+    entries.forEach(([id, layout]) => tagLayouts.set(id, layout));
+}
+
+function moveGalleryTag(tagId, direction) {
+    const entries = Array.from(tagLayouts.entries());
+    const fromIndex = entries.findIndex(([id]) => id === tagId);
+    if (fromIndex < 0) return false;
+    const toIndex = fromIndex + direction;
+    if (toIndex < 0 || toIndex >= entries.length) return false;
+    const [entry] = entries.splice(fromIndex, 1);
+    entries.splice(toIndex, 0, entry);
+    replaceTagLayouts(entries);
+    return true;
+}
+
 function renderTabs() {
     galleryTagTabs.replaceChildren();
     tagLayouts.forEach((layout, tagId) => {
-        const tab = document.createElement('div');
-        tab.className = 'gallery-layout-tab' + (tagId === activeTagId ? ' tab-active' : '');
-        const labelButton = document.createElement('button');
-        labelButton.className = 'gallery-layout-tab-button';
-        labelButton.dataset.tagId = tagId;
-        labelButton.role = 'tab';
-        labelButton.type = 'button';
-        labelButton.textContent = displayGalleryTabName(layout.name);
-        tab.append(labelButton);
-        if (layout.name !== 'default') {
-            const editButton = document.createElement('button');
-            editButton.className = 'gallery-layout-tab-edit btn btn-xs btn-circle btn-ghost';
-            editButton.dataset.renameGalleryTag = tagId;
-            editButton.type = 'button';
-            editButton.textContent = '✎';
-            const removeButton = document.createElement('button');
-            removeButton.className = 'gallery-layout-tab-remove btn btn-xs btn-circle btn-error btn-outline';
-            removeButton.dataset.removeGalleryTag = tagId;
-            removeButton.type = 'button';
-            removeButton.textContent = '-';
-            tab.append(editButton, removeButton);
-        }
+        const tab = document.createElement('button');
+        tab.className = 'gallery-layout-tab tab' + (tagId === activeTagId ? ' tab-active' : '');
+        tab.dataset.tagId = tagId;
+        tab.role = 'tab';
+        tab.type = 'button';
+        tab.textContent = displayGalleryTabName(layout.name);
         galleryTagTabs.append(tab);
     });
     const addTab = document.createElement('button');
     addTab.ariaLabel = 'Add gallery tab';
-    addTab.className = 'gallery-layout-tab gallery-layout-tab-add';
+    addTab.className = 'gallery-layout-tab gallery-layout-tab-add tab';
     addTab.dataset.addGalleryTag = '';
     addTab.role = 'tab';
     addTab.type = 'button';
     addTab.textContent = '+';
     galleryTagTabs.append(addTab);
+}
+
+function updateActiveTabControls() {
+    const tabIds = Array.from(tagLayouts.keys());
+    const activeIndex = tabIds.indexOf(activeTagId);
+    const hasMultipleTabs = tabIds.length > 1;
+    moveActiveTabLeftButton.disabled = activeIndex <= 0;
+    moveActiveTabRightButton.disabled = activeIndex < 0 || activeIndex >= tabIds.length - 1;
+    renameActiveGalleryTabButton.hidden = false;
+    deleteActiveGalleryTabButton.hidden = false;
+    deleteActiveGalleryTabButton.disabled = !hasMultipleTabs;
+    deleteActiveGalleryTabButton.title = hasMultipleTabs ? 'Delete tab' : 'Each character needs at least one gallery tab';
+}
+
+function moveActiveGalleryRow(rowIndex, direction) {
+    const rows = getActiveLayout().rows;
+    const targetIndex = rowIndex + direction;
+    if (rowIndex < 0 || targetIndex < 0 || rowIndex >= rows.length || targetIndex >= rows.length) return false;
+    const [row] = rows.splice(rowIndex, 1);
+    rows.splice(targetIndex, 0, row);
+    return true;
+}
+
+function insertActiveGalleryRow(rowIndex) {
+    const rows = getActiveLayout().rows;
+    rows.splice(Math.max(0, Math.min(rowIndex, rows.length)), 0, { id: createId(), mediaIds: [] });
 }
 
 function renderRows() {
@@ -439,16 +521,44 @@ function renderRows() {
         title.className = 'font-semibold';
         title.textContent = 'Row ' + (rowIndex + 1);
         const rowActions = document.createElement('div');
-        rowActions.className = 'flex items-center gap-2';
+        rowActions.className = 'flex flex-wrap items-center justify-end gap-2';
         const rowCount = document.createElement('span');
         rowCount.className = 'badge ' + (rowData.mediaIds.length > maxGalleryImagesPerRow ? 'badge-error' : 'badge-neutral');
         rowCount.textContent = rowData.mediaIds.length + '/' + maxGalleryImagesPerRow;
+        const moveUpButton = document.createElement('button');
+        moveUpButton.ariaLabel = 'Move row up';
+        moveUpButton.className = 'btn btn-sm btn-square';
+        moveUpButton.dataset.moveRow = '-1';
+        moveUpButton.disabled = rowIndex === 0;
+        moveUpButton.title = 'Move row up';
+        moveUpButton.type = 'button';
+        moveUpButton.textContent = '↑';
+        const moveDownButton = document.createElement('button');
+        moveDownButton.ariaLabel = 'Move row down';
+        moveDownButton.className = 'btn btn-sm btn-square';
+        moveDownButton.dataset.moveRow = '1';
+        moveDownButton.disabled = rowIndex === layout.rows.length - 1;
+        moveDownButton.title = 'Move row down';
+        moveDownButton.type = 'button';
+        moveDownButton.textContent = '↓';
+        const insertAboveButton = document.createElement('button');
+        insertAboveButton.className = 'btn btn-sm btn-primary';
+        insertAboveButton.dataset.insertRow = String(rowIndex);
+        insertAboveButton.type = 'button';
+        insertAboveButton.textContent = 'Insert Above';
+        const insertBelowButton = document.createElement('button');
+        insertBelowButton.className = 'btn btn-sm btn-primary';
+        insertBelowButton.dataset.insertRow = String(rowIndex + 1);
+        insertBelowButton.type = 'button';
+        insertBelowButton.textContent = 'Insert Below';
         const removeButton = document.createElement('button');
         removeButton.className = 'btn btn-sm btn-error btn-outline';
         removeButton.dataset.removeRow = '';
+        removeButton.disabled = layout.rows.length === 1;
+        removeButton.title = layout.rows.length === 1 ? 'Each tab needs at least one row' : 'Remove row';
         removeButton.type = 'button';
         removeButton.textContent = 'Remove Row';
-        rowActions.append(rowCount, removeButton);
+        rowActions.append(rowCount, moveUpButton, moveDownButton, insertAboveButton, insertBelowButton, removeButton);
         const dropzone = document.createElement('div');
         dropzone.className = 'gallery-dropzone flex min-h-28 flex-wrap gap-3 rounded border border-dashed border-base-300 bg-base-200 p-3';
         dropzone.dataset.dropzone = '';
@@ -469,6 +579,7 @@ function renderRows() {
     });
     activeGalleryTagTitle.textContent = displayGalleryTabName(layout.name);
     activeGalleryTagMeta.textContent = layout.rows.length + (layout.rows.length === 1 ? ' row' : ' rows') + ' / ' + getUsedMediaIds(activeTagId).size + ' images';
+    updateActiveTabControls();
 }
 
 function renderGallery() {
@@ -712,6 +823,8 @@ function renderFilePreview(input, preview, emptyText) {
 }
 
 const allowedGalleryImageTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'];
+const galleryPreviewMaxLongEdge = 1600;
+const galleryPreviewQuality = 0.9;
 
 async function prepareOriginalImageFile(file) {
     if (!file) return null;
@@ -727,17 +840,68 @@ async function prepareOriginalImageFile(file) {
     } catch {
         throw new Error('Could not read this image. Try PNG, JPG, WebP, GIF, or AVIF.');
     }
-    const image = {
-        file,
-        contentType: file.type,
-        width: bitmap.width,
-        height: bitmap.height
-    };
-    bitmap.close();
-    return image;
+    try {
+        const image = {
+            file,
+            contentType: file.type,
+            width: bitmap.width,
+            height: bitmap.height,
+            preview: await createGalleryPreviewImage(bitmap)
+        };
+        bitmap.close();
+        return image;
+    } catch (error) {
+        bitmap.close();
+        throw error;
+    }
 }
 
-async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}) {
+async function createGalleryPreviewImage(bitmap) {
+    const longEdge = Math.max(bitmap.width, bitmap.height);
+    const scale = Math.min(1, galleryPreviewMaxLongEdge / longEdge);
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Could not prepare image preview.');
+    context.drawImage(bitmap, 0, 0, width, height);
+    const blob = await canvasToWebpBlob(canvas);
+    return {
+        data: await blobToBase64(blob),
+        contentType: 'image/webp',
+        width,
+        height
+    };
+}
+
+function canvasToWebpBlob(canvas) {
+    return new Promise((resolve, reject) => {
+        canvas.toBlob((blob) => {
+            if (blob) {
+                resolve(blob);
+                return;
+            }
+            reject(new Error('Could not prepare image preview.'));
+        }, 'image/webp', galleryPreviewQuality);
+    });
+}
+
+function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            const result = String(reader.result || '');
+            resolve(result.includes(',') ? result.split(',')[1] : result);
+        };
+        reader.onerror = () => reject(new Error('Could not prepare image preview.'));
+        reader.readAsDataURL(blob);
+    });
+}
+
+async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}, progress) {
+    if (progress) progress({ status: 'Preparing', percent: 5, detail: 'Checking image file' });
     const [sfwImage, nsfwImage] = await Promise.all([
         sfwFile ? prepareOriginalImageFile(sfwFile) : null,
         nsfwFile ? prepareOriginalImageFile(nsfwFile) : null
@@ -747,6 +911,7 @@ async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}) {
     if (nsfwImage) uploads.push({ rating: 'nsfw', contentType: nsfwImage.contentType });
     if (uploads.length === 0) throw new Error('At least one image is required.');
 
+    if (progress) progress({ status: 'Starting', percent: 10, detail: 'Starting upload' });
     const initResult = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/chunked/init', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -757,9 +922,16 @@ async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}) {
         sfwArtist: sfwArtist || '',
         nsfwArtist: nsfwArtist || ''
     };
-    if (sfwImage) completeBody.sfwUpload = await uploadChunkedImage(initResult.mediaId, 'sfw', sfwImage, initResult.uploads.sfw);
-    if (nsfwImage) completeBody.nsfwUpload = await uploadChunkedImage(initResult.mediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw);
+    if (sfwImage) {
+        completeBody.sfwPreview = sfwImage.preview;
+        completeBody.sfwUpload = await uploadChunkedImage(initResult.mediaId, 'sfw', sfwImage, initResult.uploads.sfw, progress);
+    }
+    if (nsfwImage) {
+        completeBody.nsfwPreview = nsfwImage.preview;
+        completeBody.nsfwUpload = await uploadChunkedImage(initResult.mediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw, progress);
+    }
 
+    if (progress) progress({ status: 'Finalizing', percent: 95, detail: 'Finishing upload' });
     const result = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/chunked/complete', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -774,15 +946,17 @@ async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}) {
     }
     targetRow.mediaIds.push(result.media.id);
     renderGallery();
+    if (progress) progress({ status: 'Done', percent: 100, detail: 'Upload complete' });
     return result.media;
 }
 
-async function uploadChunkedImage(mediaId, rating, image, upload) {
+async function uploadChunkedImage(mediaId, rating, image, upload, progress) {
     if (!upload) throw new Error('Upload could not be initialized.');
     const file = image.file;
     const chunkSize = upload.chunkSize || (8 * 1024 * 1024);
     const parts = [];
     let partNumber = 1;
+    const totalBytes = Math.max(file.size, 1);
 
     for (let offset = 0; offset < file.size; offset += chunkSize) {
         const chunk = file.slice(offset, Math.min(offset + chunkSize, file.size), image.contentType);
@@ -800,6 +974,14 @@ async function uploadChunkedImage(mediaId, rating, image, upload) {
             }
         );
         parts.push(part);
+        const uploadedBytes = Math.min(offset + chunk.size, file.size);
+        if (progress) {
+            progress({
+                status: 'Uploading',
+                percent: 10 + ((uploadedBytes / totalBytes) * 80),
+                detail: 'Uploaded ' + formatFileSize(uploadedBytes) + ' of ' + formatFileSize(file.size)
+            });
+        }
         partNumber += 1;
     }
 
@@ -821,8 +1003,8 @@ function openEditMediaModal(mediaId) {
     editImageNsfwArtistInput.value = media.nsfwArtist || '';
     editRemoveSfw = false;
     editRemoveNsfw = false;
-    renderImagePreview(editSfwPreview, media.sfwImageUrl, 'No SFW image uploaded');
-    renderImagePreview(editNsfwPreview, media.nsfwImageUrl, 'No NSFW image uploaded');
+    renderImagePreview(editSfwPreview, mediaSfwDisplayUrl(media), 'No SFW image uploaded');
+    renderImagePreview(editNsfwPreview, mediaNsfwDisplayUrl(media), 'No NSFW image uploaded');
     editImageArtistModal.showModal();
 }
 
@@ -837,6 +1019,8 @@ function removeMediaFromLayouts(mediaId) {
 galleryRows.addEventListener('click', (event) => {
     const removeImageButton = event.target.closest('[data-remove-image]');
     const editButton = event.target.closest('[data-edit-image-artist]');
+    const moveRowButton = event.target.closest('[data-move-row]');
+    const insertRowButton = event.target.closest('[data-insert-row]');
     const removeRowButton = event.target.closest('[data-remove-row]');
     const row = event.target.closest('[data-gallery-row]');
     if (removeImageButton && row) {
@@ -847,14 +1031,25 @@ galleryRows.addEventListener('click', (event) => {
         openEditMediaModal(editButton.closest('[data-media-id]').dataset.mediaId);
         return;
     }
+    if (moveRowButton && row) {
+        if (moveActiveGalleryRow(Number(row.dataset.galleryRow), Number(moveRowButton.dataset.moveRow))) renderGallery();
+        return;
+    }
+    if (insertRowButton) {
+        insertActiveGalleryRow(Number(insertRowButton.dataset.insertRow));
+        renderGallery();
+        return;
+    }
     if (removeRowButton && row) {
         const rowIndex = Number(row.dataset.galleryRow);
-        if (getActiveLayout().rows[rowIndex].mediaIds.length > 0) {
+        const rows = getActiveLayout().rows;
+        if (rows.length <= 1) return;
+        if (rows[rowIndex].mediaIds.length > 0) {
             removeTargetRowIndex = rowIndex;
             removeRowModal.showModal();
             return;
         }
-        getActiveLayout().rows.splice(rowIndex, 1);
+        rows.splice(rowIndex, 1);
         renderGallery();
     }
 });
@@ -895,30 +1090,37 @@ window.addEventListener('pointercancel', handleGalleryPointerEnd);
 
 galleryTagTabs.addEventListener('click', (event) => {
     const addTab = event.target.closest('[data-add-gallery-tag]');
-    const removeTab = event.target.closest('[data-remove-gallery-tag]');
-    const renameTab = event.target.closest('[data-rename-gallery-tag]');
     const tab = event.target.closest('[data-tag-id]');
     if (addTab) {
         galleryTagModal.showModal();
         galleryTagNameInput.focus();
         return;
     }
-    if (removeTab) {
-        pendingDeleteTagId = removeTab.dataset.removeGalleryTag;
-        deleteGalleryTagModal.showModal();
-        return;
-    }
-    if (renameTab) {
-        pendingRenameTagId = renameTab.dataset.renameGalleryTag;
-        renameGalleryTagNameInput.value = tagLayouts.get(pendingRenameTagId).name;
-        renameGalleryTagModal.showModal();
-        renameGalleryTagNameInput.focus();
-        return;
-    }
     if (tab) {
         activeTagId = tab.dataset.tagId;
         renderGallery();
     }
+});
+
+moveActiveTabLeftButton.addEventListener('click', () => {
+    if (moveGalleryTag(activeTagId, -1)) renderGallery();
+});
+
+moveActiveTabRightButton.addEventListener('click', () => {
+    if (moveGalleryTag(activeTagId, 1)) renderGallery();
+});
+
+renameActiveGalleryTabButton.addEventListener('click', () => {
+    pendingRenameTagId = activeTagId;
+    renameGalleryTagNameInput.value = getActiveLayout().name;
+    renameGalleryTagModal.showModal();
+    renameGalleryTagNameInput.focus();
+});
+
+deleteActiveGalleryTabButton.addEventListener('click', () => {
+    if (tagLayouts.size <= 1) return;
+    pendingDeleteTagId = activeTagId;
+    deleteGalleryTagModal.showModal();
 });
 
 addGalleryRowButton.addEventListener('click', () => {
@@ -952,6 +1154,10 @@ deleteGalleryTagModal.addEventListener('click', (event) => {
         return;
     }
     if (event.target.matches('[data-confirm-delete-gallery-tag]') && pendingDeleteTagId) {
+        if (tagLayouts.size <= 1) {
+            deleteGalleryTagModal.close();
+            return;
+        }
         tagLayouts.delete(pendingDeleteTagId);
         activeTagId = Array.from(tagLayouts.keys())[0];
         deleteGalleryTagModal.close();
@@ -965,7 +1171,8 @@ removeRowModal.addEventListener('click', (event) => {
         return;
     }
     if (event.target.matches('[data-confirm-remove-row]') && removeTargetRowIndex !== null) {
-        getActiveLayout().rows.splice(removeTargetRowIndex, 1);
+        const rows = getActiveLayout().rows;
+        if (rows.length > 1) rows.splice(removeTargetRowIndex, 1);
         removeRowModal.close();
         renderGallery();
     }
@@ -1051,22 +1258,53 @@ bulkUploadFileInput.addEventListener('change', () => {
 bulkUploadForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const submitButton = bulkUploadForm.querySelector('button[type="submit"]');
+    let activeIndex = -1;
     try {
+        if (bulkUploadFiles.length === 0) throw new Error('Choose at least one image file.');
         setLoading(submitButton, true, 'Uploading...');
+        openBulkUploadProgress(bulkUploadFiles);
         for (let index = 0; index < bulkUploadFiles.length; index += 1) {
+            activeIndex = index;
             const artistInput = bulkUploadList.querySelector('[data-bulk-artist-input="' + index + '"]');
             const nsfwInput = bulkUploadList.querySelector('[data-bulk-nsfw-input="' + index + '"]');
             const isNsfw = Boolean(nsfwInput && nsfwInput.checked);
+            setBulkUploadProgress(
+                'Uploading ' + (index + 1) + ' of ' + bulkUploadFiles.length + ' images',
+                (index / bulkUploadFiles.length) * 100,
+                bulkUploadFiles[index].name,
+                false,
+                false
+            );
             await uploadMedia({
                 sfwFile: isNsfw ? null : bulkUploadFiles[index],
                 nsfwFile: isNsfw ? bulkUploadFiles[index] : null,
                 sfwArtist: isNsfw ? '' : (artistInput ? artistInput.value : ''),
                 nsfwArtist: isNsfw ? (artistInput ? artistInput.value : '') : ''
+            }, (state) => {
+                const imageProgress = Math.max(0, Math.min(100, state.percent || 0));
+                const totalProgress = ((index + (imageProgress / 100)) / bulkUploadFiles.length) * 100;
+                setBulkUploadProgress(
+                    state.status + ' image ' + (index + 1) + ' of ' + bulkUploadFiles.length,
+                    totalProgress,
+                    bulkUploadFiles[index].name + ' - ' + (state.detail || Math.round(imageProgress) + '%'),
+                    false,
+                    false
+                );
             });
         }
+        setBulkUploadProgress('Uploaded ' + bulkUploadFiles.length + ' images', 100, 'Bulk upload complete', false, true);
         bulkUploadModal.close();
         showAlert('Bulk upload complete. Save changes to persist gallery placement.', true);
     } catch (error) {
+        if (activeIndex >= 0) {
+            setBulkUploadProgress(
+                'Bulk upload stopped at image ' + (activeIndex + 1) + ' of ' + bulkUploadFiles.length,
+                ((activeIndex + 1) / Math.max(bulkUploadFiles.length, 1)) * 100,
+                error.message || 'Upload failed',
+                true,
+                true
+            );
+        }
         showAlert(error.message, false);
     } finally {
         setLoading(submitButton, false, 'Uploading...');
@@ -1075,6 +1313,10 @@ bulkUploadForm.addEventListener('submit', async (event) => {
 
 editImageSfwFileInput.addEventListener('change', () => renderFilePreview(editImageSfwFileInput, editSfwPreview, 'No SFW image uploaded'));
 editImageNsfwFileInput.addEventListener('change', () => renderFilePreview(editImageNsfwFileInput, editNsfwPreview, 'No NSFW image uploaded'));
+
+bulkUploadProgressCloseButton.addEventListener('click', () => {
+    bulkUploadProgressModal.close();
+});
 
 editImageArtistForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -1102,8 +1344,14 @@ editImageArtistForm.addEventListener('submit', async (event) => {
             removeSfw: editRemoveSfw,
             removeNsfw: editRemoveNsfw
         };
-        if (initResult && sfwImage) completeBody.sfwUpload = await uploadChunkedImage(editTargetMediaId, 'sfw', sfwImage, initResult.uploads.sfw);
-        if (initResult && nsfwImage) completeBody.nsfwUpload = await uploadChunkedImage(editTargetMediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw);
+        if (initResult && sfwImage) {
+            completeBody.sfwPreview = sfwImage.preview;
+            completeBody.sfwUpload = await uploadChunkedImage(editTargetMediaId, 'sfw', sfwImage, initResult.uploads.sfw);
+        }
+        if (initResult && nsfwImage) {
+            completeBody.nsfwPreview = nsfwImage.preview;
+            completeBody.nsfwUpload = await uploadChunkedImage(editTargetMediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw);
+        }
         const result = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/' + encodeURIComponent(editTargetMediaId) + '/chunked/complete', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
@@ -1124,11 +1372,11 @@ editImageArtistModal.addEventListener('click', (event) => {
     if (!media) return;
     if (event.target.matches('[data-remove-edit-sfw]')) {
         editRemoveSfw = !editRemoveSfw;
-        renderImagePreview(editSfwPreview, editRemoveSfw ? '' : media.sfwImageUrl, 'SFW image will be removed');
+        renderImagePreview(editSfwPreview, editRemoveSfw ? '' : mediaSfwDisplayUrl(media), 'SFW image will be removed');
     }
     if (event.target.matches('[data-remove-edit-nsfw]')) {
         editRemoveNsfw = !editRemoveNsfw;
-        renderImagePreview(editNsfwPreview, editRemoveNsfw ? '' : media.nsfwImageUrl, 'NSFW image will be removed');
+        renderImagePreview(editNsfwPreview, editRemoveNsfw ? '' : mediaNsfwDisplayUrl(media), 'NSFW image will be removed');
     }
 });
 
@@ -1286,13 +1534,13 @@ export function CharacterSettingsPage({
                     @media (min-width: 40rem) { .gallery-drop-marker { width: 6rem; } }
                     .gallery-drag-ghost { align-items: center; background: color-mix(in oklab, var(--color-primary) 18%, var(--color-base-300)); border: 2px solid var(--color-primary); border-radius: var(--radius-field, 0.25rem); box-shadow: 0 1rem 2.5rem rgb(0 0 0 / 0.28); color: var(--color-base-content); display: flex; font-size: 0.7rem; font-weight: 800; justify-content: center; left: 0; letter-spacing: 0; opacity: 0.95; pointer-events: none; position: fixed; text-transform: uppercase; top: 0; z-index: 9999; }
                     .gallery-is-dragging, .gallery-is-dragging * { cursor: grabbing !important; }
-                    .gallery-layout-tabs { gap: 0.25rem; scrollbar-width: thin; }
-                    .gallery-layout-tab { align-items: center; border: 1px solid var(--color-base-300); border-bottom-color: transparent; border-radius: var(--radius-box, 0.5rem) var(--radius-box, 0.5rem) 0 0; display: inline-flex; gap: 0.5rem; min-height: 2.75rem; padding: 0 0.75rem; position: relative; top: 1px; white-space: nowrap; }
-                    .gallery-layout-tab:not(.tab-active) { background: var(--color-base-300); border-bottom-color: var(--color-base-300); color: color-mix(in oklab, var(--color-base-content) 72%, transparent); }
-                    .gallery-layout-tab.tab-active { background: var(--color-base-200); color: var(--color-base-content); z-index: 1; }
-                    .gallery-layout-tab-add { cursor: pointer; justify-content: center; min-width: 2.75rem; padding: 0; }
-                    .gallery-layout-tab-button { align-items: center; align-self: stretch; background: transparent; border: 0; color: inherit; cursor: pointer; display: flex; font: inherit; padding: 0; }
-                    .gallery-layout-tab-remove, .gallery-layout-tab-edit { background: transparent; border-color: transparent; color: color-mix(in oklab, var(--color-base-content) 58%, transparent); min-height: 1.5rem; height: 1.5rem; width: 1.5rem; }
+                    .gallery-layout-tabs { border-bottom: 1px solid var(--color-base-300); gap: 0.25rem; scrollbar-width: thin; }
+                    .gallery-layout-tab { background: var(--color-base-300); border: 1px solid color-mix(in oklab, var(--color-base-content) 26%, transparent); border-bottom: 0; border-radius: var(--radius-field, 0.25rem) var(--radius-field, 0.25rem) 0 0; color: color-mix(in oklab, var(--color-base-content) 78%, transparent); font-weight: 800; min-height: 2.5rem; padding-inline: 0.9rem; white-space: nowrap; }
+                    .gallery-layout-tab.tab-active { background: var(--color-base-200); border-color: var(--color-primary); color: var(--color-base-content); box-shadow: inset 0 3px 0 var(--color-primary); }
+                    .gallery-layout-tab-add { min-width: 2.75rem; }
+                    .gallery-layout-tab-action { min-height: 2rem; height: 2rem; width: 2rem; }
+                    .gallery-layout-tab-action:not(:disabled) { border: 1px solid color-mix(in oklab, var(--color-base-content) 34%, transparent); box-shadow: 0 1px 0 color-mix(in oklab, var(--color-base-content) 18%, transparent); }
+                    .gallery-layout-tab-action:disabled { background: var(--color-base-300); border: 1px dashed color-mix(in oklab, var(--color-base-content) 42%, transparent); color: color-mix(in oklab, var(--color-base-content) 62%, transparent); opacity: 1; }
                     .gallery-layout-panel { border-top-left-radius: 0; }
                     .character-settings-toast-message { animation: character-settings-toast-fade 3400ms ease forwards; pointer-events: auto; }
                     @keyframes character-settings-toast-fade {
@@ -1383,7 +1631,8 @@ export function CharacterSettingsPage({
                                 <h3 class="text-lg font-semibold">Tag Gallery Layouts</h3>
                                 <p class="text-sm text-base-content/70">Each tab has its own row order and can reuse media from other tabs.</p>
                             </div>
-                            <div aria-label="Gallery layout tabs" class="gallery-layout-tabs flex overflow-x-auto"
+                            <div aria-label="Gallery layout tabs"
+                                 class="gallery-layout-tabs tabs tabs-border flex-nowrap overflow-x-auto"
                                  id="gallery-tag-tabs" role="tablist"></div>
                             <div class="gallery-layout-panel rounded-box border border-base-300 bg-base-200 p-4">
                                 <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1391,7 +1640,33 @@ export function CharacterSettingsPage({
                                         <h4 class="font-semibold" id="active-gallery-tag-title">Default</h4>
                                         <p class="text-sm text-base-content/70" id="active-gallery-tag-meta">0 rows</p>
                                     </div>
-                                    <button class="btn btn-sm btn-primary" id="add-gallery-row" type="button">Add Row</button>
+                                    <div class="flex flex-wrap items-center gap-2 sm:justify-end">
+                                        <button aria-label="Move active tab left"
+                                                class="gallery-layout-tab-action btn btn-dark btn-sm btn-square"
+                                                id="move-active-gallery-tab-left" title="Move tab left" type="button">←
+                                        </button>
+                                        <button aria-label="Move active tab right"
+                                                class="gallery-layout-tab-action btn btn-dark btn-sm btn-square"
+                                                id="move-active-gallery-tab-right" title="Move tab right"
+                                                type="button">→
+                                        </button>
+                                        <button aria-label="Rename active tab"
+                                                class="gallery-layout-tab-action btn btn-dash btn-warning btn-sm btn-square"
+                                                id="rename-active-gallery-tab" title="Rename tab" type="button">✎
+                                        </button>
+                                        <button aria-label="Delete active tab"
+                                                class="gallery-layout-tab-action btn btn-error btn-sm btn-square"
+                                                id="delete-active-gallery-tab" title="Delete tab" type="button">
+                                            <svg aria-hidden="true" class="h-4 w-4" fill="none" stroke="currentColor"
+                                                 viewBox="0 0 24 24">
+                                                <path d="M4 7h16M10 11v6M14 11v6M6 7l1 14h10l1-14M9 7V4h6v3"
+                                                      stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+                                            </svg>
+                                        </button>
+                                        <button class="btn btn-sm btn-primary" id="add-gallery-row" type="button">Add
+                                            Row
+                                        </button>
+                                    </div>
                                 </div>
                                 <div class="space-y-4" id="gallery-rows"></div>
                             </div>
@@ -1406,6 +1681,7 @@ export function CharacterSettingsPage({
 
                 <UploadDialog/>
                 <BulkUploadDialog/>
+                <BulkUploadProgressDialog/>
                 <GalleryTagDialogs/>
                 <MediaDialogs characterName={character.name}/>
                 <DeleteCharacterDialog characterName={character.name}/>
@@ -1480,6 +1756,26 @@ function BulkUploadDialog() {
             </div>
             <form class="modal-backdrop">
                 <button aria-label="Bulk upload backdrop" type="button">close</button>
+            </form>
+        </dialog>
+    )
+}
+
+function BulkUploadProgressDialog() {
+    return (
+        <dialog class="modal" id="bulk-upload-progress-modal">
+            <div class="modal-box max-w-2xl">
+                <h2 class="text-xl font-bold">Uploading Images</h2>
+                <p class="mt-1 text-sm text-base-content/70" id="bulk-upload-progress-summary">Preparing upload</p>
+                <progress class="progress mt-5 w-full" id="bulk-upload-progress-bar" max="100" value="0"></progress>
+                <p class="mt-2 truncate text-sm text-base-content/70" id="bulk-upload-progress-detail">Waiting to
+                    upload</p>
+                <div class="modal-action">
+                    <button class="btn btn-primary" hidden id="bulk-upload-progress-close" type="button">Close</button>
+                </div>
+            </div>
+            <form class="modal-backdrop">
+                <button aria-label="Bulk upload progress backdrop" disabled type="button">Uploading</button>
             </form>
         </dialog>
     )
