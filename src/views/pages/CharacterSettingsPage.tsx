@@ -98,6 +98,10 @@ const galleryTagTabs = document.getElementById('gallery-tag-tabs');
 const galleryRows = document.getElementById('gallery-rows');
 const activeGalleryTagTitle = document.getElementById('active-gallery-tag-title');
 const activeGalleryTagMeta = document.getElementById('active-gallery-tag-meta');
+const moveActiveTabLeftButton = document.getElementById('move-active-gallery-tab-left');
+const moveActiveTabRightButton = document.getElementById('move-active-gallery-tab-right');
+const renameActiveGalleryTabButton = document.getElementById('rename-active-gallery-tab');
+const deleteActiveGalleryTabButton = document.getElementById('delete-active-gallery-tab');
 const addGalleryRowButton = document.getElementById('add-gallery-row');
 const saveCharacterSettingsButton = document.getElementById('save-character-settings');
 const saveCharacterSettingsWarning = document.getElementById('save-character-settings-warning');
@@ -389,41 +393,52 @@ function renderMediaPool() {
     mediaCount.textContent = mediaLibrary.size + ' media';
 }
 
+function replaceTagLayouts(entries) {
+    tagLayouts.clear();
+    entries.forEach(([id, layout]) => tagLayouts.set(id, layout));
+}
+
+function moveGalleryTag(tagId, direction) {
+    const entries = Array.from(tagLayouts.entries());
+    const fromIndex = entries.findIndex(([id]) => id === tagId);
+    if (fromIndex < 0) return false;
+    const toIndex = fromIndex + direction;
+    if (toIndex < 0 || toIndex >= entries.length) return false;
+    const [entry] = entries.splice(fromIndex, 1);
+    entries.splice(toIndex, 0, entry);
+    replaceTagLayouts(entries);
+    return true;
+}
+
 function renderTabs() {
     galleryTagTabs.replaceChildren();
     tagLayouts.forEach((layout, tagId) => {
-        const tab = document.createElement('div');
-        tab.className = 'gallery-layout-tab' + (tagId === activeTagId ? ' tab-active' : '');
-        const labelButton = document.createElement('button');
-        labelButton.className = 'gallery-layout-tab-button';
-        labelButton.dataset.tagId = tagId;
-        labelButton.role = 'tab';
-        labelButton.type = 'button';
-        labelButton.textContent = displayGalleryTabName(layout.name);
-        tab.append(labelButton);
-        if (layout.name !== 'default') {
-            const editButton = document.createElement('button');
-            editButton.className = 'gallery-layout-tab-edit btn btn-xs btn-circle btn-ghost';
-            editButton.dataset.renameGalleryTag = tagId;
-            editButton.type = 'button';
-            editButton.textContent = '✎';
-            const removeButton = document.createElement('button');
-            removeButton.className = 'gallery-layout-tab-remove btn btn-xs btn-circle btn-error btn-outline';
-            removeButton.dataset.removeGalleryTag = tagId;
-            removeButton.type = 'button';
-            removeButton.textContent = '-';
-            tab.append(editButton, removeButton);
-        }
+        const tab = document.createElement('button');
+        tab.className = 'gallery-layout-tab tab' + (tagId === activeTagId ? ' tab-active' : '');
+        tab.dataset.tagId = tagId;
+        tab.role = 'tab';
+        tab.type = 'button';
+        tab.textContent = displayGalleryTabName(layout.name);
         galleryTagTabs.append(tab);
     });
     const addTab = document.createElement('button');
     addTab.ariaLabel = 'Add gallery tab';
-    addTab.className = 'gallery-layout-tab gallery-layout-tab-add';
+    addTab.className = 'gallery-layout-tab gallery-layout-tab-add tab';
     addTab.dataset.addGalleryTag = '';
     addTab.role = 'tab';
     addTab.type = 'button';
     addTab.textContent = '+';
     galleryTagTabs.append(addTab);
+}
+
+function updateActiveTabControls(layout) {
+    const tabIds = Array.from(tagLayouts.keys());
+    const activeIndex = tabIds.indexOf(activeTagId);
+    const isDefaultTab = layout.name === 'default';
+    moveActiveTabLeftButton.disabled = activeIndex <= 0;
+    moveActiveTabRightButton.disabled = activeIndex < 0 || activeIndex >= tabIds.length - 1;
+    renameActiveGalleryTabButton.hidden = isDefaultTab;
+    deleteActiveGalleryTabButton.hidden = isDefaultTab;
 }
 
 function renderRows() {
@@ -469,6 +484,7 @@ function renderRows() {
     });
     activeGalleryTagTitle.textContent = displayGalleryTabName(layout.name);
     activeGalleryTagMeta.textContent = layout.rows.length + (layout.rows.length === 1 ? ' row' : ' rows') + ' / ' + getUsedMediaIds(activeTagId).size + ' images';
+    updateActiveTabControls(layout);
 }
 
 function renderGallery() {
@@ -895,30 +911,36 @@ window.addEventListener('pointercancel', handleGalleryPointerEnd);
 
 galleryTagTabs.addEventListener('click', (event) => {
     const addTab = event.target.closest('[data-add-gallery-tag]');
-    const removeTab = event.target.closest('[data-remove-gallery-tag]');
-    const renameTab = event.target.closest('[data-rename-gallery-tag]');
     const tab = event.target.closest('[data-tag-id]');
     if (addTab) {
         galleryTagModal.showModal();
         galleryTagNameInput.focus();
         return;
     }
-    if (removeTab) {
-        pendingDeleteTagId = removeTab.dataset.removeGalleryTag;
-        deleteGalleryTagModal.showModal();
-        return;
-    }
-    if (renameTab) {
-        pendingRenameTagId = renameTab.dataset.renameGalleryTag;
-        renameGalleryTagNameInput.value = tagLayouts.get(pendingRenameTagId).name;
-        renameGalleryTagModal.showModal();
-        renameGalleryTagNameInput.focus();
-        return;
-    }
     if (tab) {
         activeTagId = tab.dataset.tagId;
         renderGallery();
     }
+});
+
+moveActiveTabLeftButton.addEventListener('click', () => {
+    if (moveGalleryTag(activeTagId, -1)) renderGallery();
+});
+
+moveActiveTabRightButton.addEventListener('click', () => {
+    if (moveGalleryTag(activeTagId, 1)) renderGallery();
+});
+
+renameActiveGalleryTabButton.addEventListener('click', () => {
+    pendingRenameTagId = activeTagId;
+    renameGalleryTagNameInput.value = getActiveLayout().name;
+    renameGalleryTagModal.showModal();
+    renameGalleryTagNameInput.focus();
+});
+
+deleteActiveGalleryTabButton.addEventListener('click', () => {
+    pendingDeleteTagId = activeTagId;
+    deleteGalleryTagModal.showModal();
 });
 
 addGalleryRowButton.addEventListener('click', () => {
@@ -1286,13 +1308,13 @@ export function CharacterSettingsPage({
                     @media (min-width: 40rem) { .gallery-drop-marker { width: 6rem; } }
                     .gallery-drag-ghost { align-items: center; background: color-mix(in oklab, var(--color-primary) 18%, var(--color-base-300)); border: 2px solid var(--color-primary); border-radius: var(--radius-field, 0.25rem); box-shadow: 0 1rem 2.5rem rgb(0 0 0 / 0.28); color: var(--color-base-content); display: flex; font-size: 0.7rem; font-weight: 800; justify-content: center; left: 0; letter-spacing: 0; opacity: 0.95; pointer-events: none; position: fixed; text-transform: uppercase; top: 0; z-index: 9999; }
                     .gallery-is-dragging, .gallery-is-dragging * { cursor: grabbing !important; }
-                    .gallery-layout-tabs { gap: 0.25rem; scrollbar-width: thin; }
-                    .gallery-layout-tab { align-items: center; border: 1px solid var(--color-base-300); border-bottom-color: transparent; border-radius: var(--radius-box, 0.5rem) var(--radius-box, 0.5rem) 0 0; display: inline-flex; gap: 0.5rem; min-height: 2.75rem; padding: 0 0.75rem; position: relative; top: 1px; white-space: nowrap; }
-                    .gallery-layout-tab:not(.tab-active) { background: var(--color-base-300); border-bottom-color: var(--color-base-300); color: color-mix(in oklab, var(--color-base-content) 72%, transparent); }
-                    .gallery-layout-tab.tab-active { background: var(--color-base-200); color: var(--color-base-content); z-index: 1; }
-                    .gallery-layout-tab-add { cursor: pointer; justify-content: center; min-width: 2.75rem; padding: 0; }
-                    .gallery-layout-tab-button { align-items: center; align-self: stretch; background: transparent; border: 0; color: inherit; cursor: pointer; display: flex; font: inherit; padding: 0; }
-                    .gallery-layout-tab-remove, .gallery-layout-tab-edit { background: transparent; border-color: transparent; color: color-mix(in oklab, var(--color-base-content) 58%, transparent); min-height: 1.5rem; height: 1.5rem; width: 1.5rem; }
+                    .gallery-layout-tabs { border-bottom: 1px solid var(--color-base-300); gap: 0.25rem; scrollbar-width: thin; }
+                    .gallery-layout-tab { background: var(--color-base-300); border: 1px solid color-mix(in oklab, var(--color-base-content) 26%, transparent); border-bottom: 0; border-radius: var(--radius-field, 0.25rem) var(--radius-field, 0.25rem) 0 0; color: color-mix(in oklab, var(--color-base-content) 78%, transparent); font-weight: 800; min-height: 2.5rem; padding-inline: 0.9rem; white-space: nowrap; }
+                    .gallery-layout-tab.tab-active { background: var(--color-base-200); border-color: var(--color-primary); color: var(--color-base-content); box-shadow: inset 0 3px 0 var(--color-primary); }
+                    .gallery-layout-tab-add { min-width: 2.75rem; }
+                    .gallery-layout-tab-action { min-height: 2rem; height: 2rem; width: 2rem; }
+                    .gallery-layout-tab-action:not(:disabled) { border: 1px solid color-mix(in oklab, var(--color-base-content) 34%, transparent); box-shadow: 0 1px 0 color-mix(in oklab, var(--color-base-content) 18%, transparent); }
+                    .gallery-layout-tab-action:disabled { background: var(--color-base-300); border: 1px dashed color-mix(in oklab, var(--color-base-content) 42%, transparent); color: color-mix(in oklab, var(--color-base-content) 62%, transparent); opacity: 1; }
                     .gallery-layout-panel { border-top-left-radius: 0; }
                     .character-settings-toast-message { animation: character-settings-toast-fade 3400ms ease forwards; pointer-events: auto; }
                     @keyframes character-settings-toast-fade {
@@ -1383,7 +1405,8 @@ export function CharacterSettingsPage({
                                 <h3 class="text-lg font-semibold">Tag Gallery Layouts</h3>
                                 <p class="text-sm text-base-content/70">Each tab has its own row order and can reuse media from other tabs.</p>
                             </div>
-                            <div aria-label="Gallery layout tabs" class="gallery-layout-tabs flex overflow-x-auto"
+                            <div aria-label="Gallery layout tabs"
+                                 class="gallery-layout-tabs tabs tabs-border flex-nowrap overflow-x-auto"
                                  id="gallery-tag-tabs" role="tablist"></div>
                             <div class="gallery-layout-panel rounded-box border border-base-300 bg-base-200 p-4">
                                 <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1391,7 +1414,33 @@ export function CharacterSettingsPage({
                                         <h4 class="font-semibold" id="active-gallery-tag-title">Default</h4>
                                         <p class="text-sm text-base-content/70" id="active-gallery-tag-meta">0 rows</p>
                                     </div>
-                                    <button class="btn btn-sm btn-primary" id="add-gallery-row" type="button">Add Row</button>
+                                    <div class="flex flex-wrap items-center gap-2 sm:justify-end">
+                                        <button aria-label="Move active tab left"
+                                                class="gallery-layout-tab-action btn btn-dark btn-sm btn-square"
+                                                id="move-active-gallery-tab-left" title="Move tab left" type="button">←
+                                        </button>
+                                        <button aria-label="Move active tab right"
+                                                class="gallery-layout-tab-action btn btn-dark btn-sm btn-square"
+                                                id="move-active-gallery-tab-right" title="Move tab right"
+                                                type="button">→
+                                        </button>
+                                        <button aria-label="Rename active tab"
+                                                class="gallery-layout-tab-action btn btn-dash btn-warning btn-sm btn-square"
+                                                id="rename-active-gallery-tab" title="Rename tab" type="button">✎
+                                        </button>
+                                        <button aria-label="Delete active tab"
+                                                class="gallery-layout-tab-action btn btn-error btn-sm btn-square"
+                                                id="delete-active-gallery-tab" title="Delete tab" type="button">
+                                            <svg aria-hidden="true" class="h-4 w-4" fill="none" stroke="currentColor"
+                                                 viewBox="0 0 24 24">
+                                                <path d="M4 7h16M10 11v6M14 11v6M6 7l1 14h10l1-14M9 7V4h6v3"
+                                                      stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+                                            </svg>
+                                        </button>
+                                        <button class="btn btn-sm btn-primary" id="add-gallery-row" type="button">Add
+                                            Row
+                                        </button>
+                                    </div>
                                 </div>
                                 <div class="space-y-4" id="gallery-rows"></div>
                             </div>

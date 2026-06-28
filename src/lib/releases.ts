@@ -15,7 +15,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
         title: 'Huge QOL update',
         summary: 'Major changes to site usability for better UX!.',
         changes: [
-            'Change 1.',
+            'Character gallery tabs can now be moved left and right from the character editor with clearer tabs and layout panel controls.',
         ],
     },
     {

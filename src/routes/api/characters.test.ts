@@ -1848,6 +1848,41 @@ describe('PUT /characters/:id/gallery', () => {
         expect(boundStatements.some((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_rows'].join(' ')))).toBe(true)
         expect(boundStatements.some((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_row_media'].join(' ')))).toBe(true)
     })
+
+    it('persists gallery tabs in request order', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character],
+            allResults: [[]],
+        })
+
+        const response = await putGallery(character.id, {
+            fullsizeLastRow: false,
+            tabs: [
+                {id: 'tab-zeta', name: 'Zeta', rows: [{id: 'row-zeta', mediaIds: []}]},
+                {id: 'tab-alpha', name: 'Alpha', rows: [{id: 'row-alpha', mediaIds: []}]},
+                {id: 'tab-default', name: 'default', rows: [{id: 'row-default', mediaIds: []}]},
+            ],
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as { gallery: { tabs: { id: string }[] } }
+        expect(body.gallery.tabs.map((tab) => tab.id)).toEqual([
+            'tab-zeta',
+            'tab-alpha',
+            'tab-default',
+        ])
+        const tabInsertStatements = boundStatements.filter((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_tabs'].join(' ')))
+        expect(tabInsertStatements.map((statement) => [statement.binds[0], statement.binds[4]])).toEqual([
+            ['tab-zeta', 0],
+            ['tab-alpha', 1],
+            ['tab-default', 2],
+        ])
+    })
 })
 
 describe('DELETE /characters/folders/:id', () => {
