@@ -88,6 +88,7 @@ const maxGalleryImagesPerRow = ${safeJson(GALLERY_MAX_IMAGES_PER_ROW)};
 const mediaLibrary = new Map(${safeJson(media)}.map((item) => [item.id, item]));
 const tagLayouts = new Map(${safeJson(galleryTabs)}.map((tab) => [tab.id, tab]));
 let activeTagId = ${safeJson(galleryTabs[0]?.id ?? 'default')};
+let defaultTagId = Array.from(tagLayouts.values()).find((tab) => tab.name === 'default')?.id || null;
 let dragCandidate = null;
 let dragState = null;
 let pendingDeleteMediaId = null;
@@ -434,10 +435,10 @@ function renderTabs() {
 function updateActiveTabControls(layout) {
     const tabIds = Array.from(tagLayouts.keys());
     const activeIndex = tabIds.indexOf(activeTagId);
-    const isDefaultTab = layout.name === 'default';
+    const isDefaultTab = layout.id === defaultTagId;
     moveActiveTabLeftButton.disabled = activeIndex <= 0;
     moveActiveTabRightButton.disabled = activeIndex < 0 || activeIndex >= tabIds.length - 1;
-    renameActiveGalleryTabButton.hidden = isDefaultTab;
+    renameActiveGalleryTabButton.hidden = false;
     deleteActiveGalleryTabButton.hidden = isDefaultTab;
 }
 
@@ -1271,6 +1272,7 @@ if (tagLayouts.size === 0) {
     const defaultTabId = createId();
     tagLayouts.set(defaultTabId, { id: defaultTabId, name: 'default', rows: [{ id: createId(), mediaIds: [] }] });
     activeTagId = defaultTabId;
+    defaultTagId = defaultTabId;
 }
 
 renderGallery();

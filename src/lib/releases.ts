@@ -16,6 +16,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
         summary: 'Major changes to site usability for better UX!.',
         changes: [
             'Character gallery tabs can now be moved left and right from the character editor with clearer tabs and layout panel controls.',
+            'The default gallery tab can now be renamed.',
         ],
     },
     {

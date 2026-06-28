@@ -1883,6 +1883,37 @@ describe('PUT /characters/:id/gallery', () => {
             ['tab-default', 2],
         ])
     })
+
+    it('saves a custom name for the default gallery tab', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character],
+            allResults: [[]],
+        })
+
+        const response = await putGallery(character.id, {
+            fullsizeLastRow: false,
+            tabs: [{
+                id: 'tab-default',
+                name: 'References',
+                rows: [{id: 'row-default', mediaIds: []}],
+            }],
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as { gallery: { tabs: { id: string; name: string }[] } }
+        expect(body.gallery.tabs).toEqual([{
+            id: 'tab-default',
+            name: 'References',
+            rows: [{id: 'row-default', mediaIds: []}],
+        }])
+        const tabInsertStatement = boundStatements.find((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_tabs'].join(' ')))
+        expect(tabInsertStatement?.binds[3]).toBe('References')
+    })
 })
 
 describe('DELETE /characters/folders/:id', () => {
