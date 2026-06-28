@@ -32,6 +32,7 @@ lerna-debug.log*
 
 # misc
 .DS_Store
+.tmp/
 
 # local databases
 *.sqlite

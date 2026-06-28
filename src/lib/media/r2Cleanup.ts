@@ -39,6 +39,15 @@ type ManagedR2MediaKey =
     contentType: string
 }
     | {
+    kind: 'characterMediaPreview'
+    key: string
+    userId: string
+    characterId: string
+    mediaId: string
+    rating: 'sfw' | 'nsfw'
+    imageKey: string
+}
+    | {
     kind: 'characterHeightChart'
     key: string
     userId: string
@@ -195,6 +204,29 @@ export function parseManagedR2MediaKey(key: string): ManagedR2MediaKey | null {
         }
     }
 
+    if (parts.length === 8 && parts[0] === 'characters' && parts[3] === 'media' && parts[6] === 'preview') {
+        const [imageKey, extension] = splitFileName(parts[7])
+
+        if (
+            isSafeSegment(parts[1])
+            && isSafeSegment(parts[2])
+            && isSafeSegment(parts[4])
+            && (parts[5] === 'sfw' || parts[5] === 'nsfw')
+            && isSafeSegment(imageKey)
+            && extension === 'webp'
+        ) {
+            return {
+                kind: 'characterMediaPreview',
+                key,
+                userId: parts[1],
+                characterId: parts[2],
+                mediaId: parts[4],
+                rating: parts[5],
+                imageKey,
+            }
+        }
+    }
+
     if (parts.length === 5 && parts[0] === 'characters' && parts[3] === 'height-chart') {
         const [imageKey, extension] = splitFileName(parts[4])
         const contentType = contentTypeForExtension(extension)
@@ -262,6 +294,22 @@ async function isManagedR2MediaKeyReferenced(db: D1Database, parsed: ManagedR2Me
                  LIMIT 1`,
             )
                 .bind(parsed.userId, parsed.characterId, parsed.mediaId, parsed.imageKey, parsed.contentType)
+                .first()
+            return Boolean(row)
+        }
+
+        case 'characterMediaPreview': {
+            const imageKeyColumn = parsed.rating === 'sfw' ? 'sfw_preview_image_key' : 'nsfw_preview_image_key'
+            const row = await db.prepare(
+                `SELECT 1
+                 FROM character_media
+                 WHERE user_id = ?
+                   AND character_id = ?
+                   AND id = ?
+                   AND ${imageKeyColumn} = ?
+                 LIMIT 1`,
+            )
+                .bind(parsed.userId, parsed.characterId, parsed.mediaId, parsed.imageKey)
                 .first()
             return Boolean(row)
         }

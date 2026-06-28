@@ -28,6 +28,15 @@ describe('parseManagedR2MediaKey', () => {
             contentType: 'image/gif',
         })
 
+        expect(parseManagedR2MediaKey('characters/user-1/character-1/media/media-1/nsfw/preview/preview-1.webp')).toMatchObject({
+            kind: 'characterMediaPreview',
+            userId: 'user-1',
+            characterId: 'character-1',
+            mediaId: 'media-1',
+            rating: 'nsfw',
+            imageKey: 'preview-1',
+        })
+
         expect(parseManagedR2MediaKey('characters/user-1/character-1/height-chart/chart-1.png')).toMatchObject({
             kind: 'characterHeightChart',
             userId: 'user-1',
@@ -57,6 +66,8 @@ describe('cleanupStaleR2Media', () => {
                 null,
                 {height_chart_json: heightChartJson},
                 {found: 1},
+                {found: 1},
+                null,
                 null,
                 {found: 1},
                 null,
@@ -68,6 +79,8 @@ describe('cleanupStaleR2Media', () => {
         await bucket.put('users/alice/profile/old.webp', 'stale')
         await bucket.put('characters/alice/blair/height-chart/chart.png', 'referenced')
         await bucket.put('characters/alice/blair/media/media-1/sfw/img.png', 'referenced')
+        await bucket.put('characters/alice/blair/media/media-1/sfw/preview/preview.webp', 'referenced')
+        await bucket.put('characters/alice/blair/media/media-2/nsfw/preview/orphan.webp', 'stale')
         await bucket.put('characters/alice/blair/media/media-2/nsfw/orphan.gif', 'stale')
         await bucket.put('characters/alice/blair/profile/profile.webp', 'referenced')
         await bucket.put('characters/alice/blair/profile/stale.webp', 'stale')
@@ -76,21 +89,24 @@ describe('cleanupStaleR2Media', () => {
         const summary = await cleanupStaleR2Media({DB: db, MEDIA_BUCKET: bucket}, new Date('2026-06-26T12:00:00Z'))
 
         expect(summary).toMatchObject({
-            scanned: 9,
-            recognized: 7,
+            scanned: 11,
+            recognized: 9,
             skippedUnknown: 2,
             skippedRecent: 0,
-            keptReferenced: 4,
-            deleted: 3,
+            keptReferenced: 5,
+            deleted: 4,
             errors: 0,
             stoppedAtDeleteLimit: false,
         })
         expect(bucket.delete).toHaveBeenCalledWith('users/alice/profile/old.webp')
+        expect(bucket.delete).toHaveBeenCalledWith('characters/alice/blair/media/media-2/nsfw/preview/orphan.webp')
         expect(bucket.delete).toHaveBeenCalledWith('characters/alice/blair/media/media-2/nsfw/orphan.gif')
         expect(bucket.delete).toHaveBeenCalledWith('characters/alice/blair/profile/stale.webp')
         expect(await bucket.head('users/alice/profile/current.webp')).not.toBeNull()
         expect(await bucket.head('users/alice/profile/old.png')).not.toBeNull()
         expect(await bucket.head('users/alice/profile/old.webp')).toBeNull()
+        expect(await bucket.head('characters/alice/blair/media/media-1/sfw/preview/preview.webp')).not.toBeNull()
+        expect(await bucket.head('characters/alice/blair/media/media-2/nsfw/preview/orphan.webp')).toBeNull()
         expect(await bucket.head('characters/alice/blair/media/media-2/nsfw/orphan.gif')).toBeNull()
         expect(await bucket.head('characters/alice/blair/scratch/stale.webp')).not.toBeNull()
     })

@@ -44,11 +44,12 @@ function ImageReportCard({csrfToken, report}: { csrfToken: string; report: Admin
     const reportedBy = report.reportedByUsername
         ? `Reported by @${report.reportedByUsername} in Image Approvals.`
         : 'Reported by an admin in Image Approvals.'
+    const displayImageUrl = report.previewImageUrl ?? report.imageUrl
 
     return (
         <article class="admin-report-card">
             <div class="admin-report-preview">
-                <img alt={title} src={report.imageUrl}/>
+                <img alt={title} src={displayImageUrl}/>
             </div>
 
             <div class="min-w-0 flex-1">

@@ -387,13 +387,6 @@ function ToyhouseClientImportScript({
         return '/migrate/toyhouse-image?url=' + encodeURIComponent(url);
     }
 
-    async function imageDimensions(blob) {
-        const bitmap = await createImageBitmap(blob, { colorSpaceConversion: 'default' });
-        const dimensions = {width: bitmap.width, height: bitmap.height};
-        if (typeof bitmap.close === 'function') bitmap.close();
-        return dimensions;
-    }
-
     async function fetchToyhouseImage(url) {
         const response = await withRetry('Downloading Toyhou.se image', async () => {
             const result = await fetch(proxiedToyhouseImageUrl(url), {credentials: 'same-origin'});
@@ -407,13 +400,64 @@ function ToyhouseClientImportScript({
         const contentType = normalizeImageContentType(response.headers.get('content-type'), url);
         const blob = await response.blob();
         if (blob.size <= 0) throw new Error('Toyhou.se image was empty: ' + url);
-        const dimensions = await imageDimensions(blob);
+        let bitmap;
+        try {
+            bitmap = await createImageBitmap(blob, { colorSpaceConversion: 'default' });
+            return {
+                blob,
+                contentType,
+                height: bitmap.height,
+                width: bitmap.width,
+                preview: await createGalleryPreviewImage(bitmap)
+            };
+        } finally {
+            if (bitmap && typeof bitmap.close === 'function') bitmap.close();
+        }
+    }
+
+    async function createGalleryPreviewImage(bitmap) {
+        const maxLongEdge = 1600;
+        const longEdge = Math.max(bitmap.width, bitmap.height);
+        const scale = Math.min(1, maxLongEdge / longEdge);
+        const width = Math.max(1, Math.round(bitmap.width * scale));
+        const height = Math.max(1, Math.round(bitmap.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('Could not prepare image preview.');
+        context.drawImage(bitmap, 0, 0, width, height);
+        const blob = await canvasToWebpBlob(canvas);
         return {
-            blob,
-            contentType,
-            height: dimensions.height,
-            width: dimensions.width
+            data: await blobToBase64(blob),
+            contentType: 'image/webp',
+            width,
+            height
         };
+    }
+
+    function canvasToWebpBlob(canvas) {
+        return new Promise((resolve, reject) => {
+            canvas.toBlob((blob) => {
+                if (blob) {
+                    resolve(blob);
+                    return;
+                }
+                reject(new Error('Could not prepare image preview.'));
+            }, 'image/webp', 0.9);
+        });
+    }
+
+    function blobToBase64(blob) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+                const result = String(reader.result || '');
+                resolve(result.includes(',') ? result.split(',')[1] : result);
+            };
+            reader.onerror = () => reject(new Error('Could not prepare image preview.'));
+            reader.readAsDataURL(blob);
+        });
     }
 
     async function uploadChunk(characterId, mediaId, rating, upload, image, partNumber, chunk) {
@@ -473,6 +517,7 @@ function ToyhouseClientImportScript({
                 height: image.height,
                 parts
             };
+            completeBody[rating + 'Preview'] = image.preview;
 
             const completed = await withRetry('Completing media upload', async () => await apiFetch('/api/characters/toyhouse-import-items/' + encodeURIComponent(imagePlan.importItemId) + '/complete', {
                 method: 'POST',

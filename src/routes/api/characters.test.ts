@@ -74,6 +74,15 @@ function expectStoredCharacterProfileImage(mediaBucket: R2Bucket, character: Cha
     )
 }
 
+function createPreviewPayload(width: number, height: number) {
+    return {
+        data: createWebpDataUrl(width, height),
+        contentType: 'image/webp',
+        width,
+        height,
+    }
+}
+
 async function postCharacter(
     body: unknown,
     db: D1Database,
@@ -1305,6 +1314,7 @@ describe('POST /characters/:id/media', () => {
                 height: 10000,
                 parts: [uploadedPart],
             },
+            sfwPreview: createPreviewPayload(1600, 1600),
         }, db, {
             mediaBucket,
             sessionToken,
@@ -1321,6 +1331,11 @@ describe('POST /characters/:id/media', () => {
                 sfwWidth: number
                 sfwHeight: number
                 sfwByteSize: number
+                sfwPreviewImageKey: string
+                sfwPreviewImageUrl: string
+                sfwPreviewWidth: number
+                sfwPreviewHeight: number
+                sfwPreviewByteSize: number
                 sfwArtist: string
             }
         }
@@ -1332,14 +1347,32 @@ describe('POST /characters/:id/media', () => {
         expect(body.media.sfwWidth).toBe(10000)
         expect(body.media.sfwHeight).toBe(10000)
         expect(body.media.sfwByteSize).toBe(pngFile.size)
+        expect(body.media.sfwPreviewImageKey).toMatch(new RegExp(`^${uuidPattern}$`))
+        expect(body.media.sfwPreviewImageUrl).toBe(`${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/sfw/preview/${body.media.sfwPreviewImageKey}.webp`)
+        expect(body.media.sfwPreviewWidth).toBe(1600)
+        expect(body.media.sfwPreviewHeight).toBe(1600)
+        expect(body.media.sfwPreviewByteSize).toBeGreaterThan(0)
         expect(body.media.sfwArtist).toBe('Chunk Artist')
         expect(mediaBucket.createMultipartUpload).toHaveBeenCalledTimes(1)
         expect(mediaBucket.resumeMultipartUpload).toHaveBeenCalledTimes(2)
+        expect(mediaBucket.put).toHaveBeenCalledWith(
+            `characters/current-user/character-id/media/${initBody.mediaId}/sfw/preview/${body.media.sfwPreviewImageKey}.webp`,
+            expect.any(Uint8Array),
+            {
+                httpMetadata: {
+                    cacheControl: 'public, max-age=31536000, immutable',
+                    contentType: 'image/webp',
+                },
+            },
+        )
         expect(mediaBucket.get).not.toHaveBeenCalled()
         expect(boundStatements.at(-1)?.sql).toContain(['INSERT INTO', 'character_media'].join(' '))
         expect(boundStatements.at(-1)?.binds[5]).toBe('image/png')
         expect(boundStatements.at(-1)?.binds[9]).toBe(10000)
         expect(boundStatements.at(-1)?.binds[10]).toBe(10000)
+        expect(boundStatements.at(-1)?.binds[12]).toBe(body.media.sfwPreviewImageKey)
+        expect(boundStatements.at(-1)?.binds[13]).toBe(1600)
+        expect(boundStatements.at(-1)?.binds[14]).toBe(1600)
     })
 
     it('keeps chunked GIF gallery media as GIF', async () => {
@@ -1411,6 +1444,7 @@ describe('POST /characters/:id/media', () => {
                 height: 240,
                 parts: [uploadedPart],
             },
+            sfwPreview: createPreviewPayload(320, 240),
         }, db, {
             mediaBucket,
             sessionToken,
@@ -1425,6 +1459,8 @@ describe('POST /characters/:id/media', () => {
                 sfwWidth: number
                 sfwHeight: number
                 sfwByteSize: number
+                sfwPreviewWidth: number
+                sfwPreviewHeight: number
             }
         }
         expect(body.media.sfwContentType).toBe('image/gif')
@@ -1432,6 +1468,8 @@ describe('POST /characters/:id/media', () => {
         expect(body.media.sfwWidth).toBe(320)
         expect(body.media.sfwHeight).toBe(240)
         expect(body.media.sfwByteSize).toBe(gifFile.size)
+        expect(body.media.sfwPreviewWidth).toBe(320)
+        expect(body.media.sfwPreviewHeight).toBe(240)
         expect(boundStatements.at(-1)?.binds[5]).toBe('image/gif')
     })
 
@@ -1526,6 +1564,7 @@ describe('POST /characters/:id/media', () => {
                 height: 600,
                 parts: [uploadedPart],
             },
+            sfwPreview: createPreviewPayload(800, 600),
         }, db, {
             mediaBucket,
             sessionToken,
@@ -1541,6 +1580,9 @@ describe('POST /characters/:id/media', () => {
                 sfwWidth: number
                 sfwHeight: number
                 sfwByteSize: number
+                sfwPreviewImageKey: string
+                sfwPreviewWidth: number
+                sfwPreviewHeight: number
             }
             skipped: boolean
         }
@@ -1551,6 +1593,9 @@ describe('POST /characters/:id/media', () => {
         expect(body.media.sfwWidth).toBe(800)
         expect(body.media.sfwHeight).toBe(600)
         expect(body.media.sfwByteSize).toBe(pngFile.size)
+        expect(body.media.sfwPreviewImageKey).toMatch(new RegExp(`^${uuidPattern}$`))
+        expect(body.media.sfwPreviewWidth).toBe(800)
+        expect(body.media.sfwPreviewHeight).toBe(600)
         expect(boundStatements.some((statement) => statement.sql.includes(['INSERT INTO', 'character_media'].join(' ')))).toBe(true)
         expect(boundStatements.some((statement) => statement.sql.includes('UPDATE toyhouse_import_items'))).toBe(true)
         expect(boundStatements.some((statement) => statement.sql.includes('UPDATE toyhouse_import_jobs'))).toBe(true)
