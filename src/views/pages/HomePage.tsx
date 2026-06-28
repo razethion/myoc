@@ -1,7 +1,7 @@
 import { Navbar } from '../components/Navbar'
 import { BaseLayout } from '../layouts/BaseLayout'
 import type {CurrentUser} from '../../lib/auth/session'
-import {characterMediaImageUrl, characterProfileImageUrl} from '../../lib/media/url'
+import {characterMediaImageUrl, characterMediaPreviewImageUrl, characterProfileImageUrl} from '../../lib/media/url'
 import {absoluteUrl} from '../meta'
 
 export type HomePageStats = {
@@ -18,6 +18,7 @@ export type HomePageDiscoverCharacter = {
     profileImageKey: string
     previewMediaId: string
     previewImageKey: string
+    previewThumbnailImageKey: string | null
     previewContentType: string | null
     previewArtist: string
     imageCount: number
@@ -449,15 +450,24 @@ export function HomePage({currentUser, discoverCharacters, guestInitial, mediaBa
 
                                 <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
                                     {discoverCharacters.map((character) => {
-                                        const previewUrl = characterMediaImageUrl(
-                                            mediaBaseUrl,
-                                            character.userId,
-                                            character.id,
-                                            character.previewMediaId,
-                                            character.previewImageKey,
-                                            'sfw',
-                                            character.previewContentType,
-                                        )
+                                        const previewUrl = character.previewThumbnailImageKey
+                                            ? characterMediaPreviewImageUrl(
+                                                mediaBaseUrl,
+                                                character.userId,
+                                                character.id,
+                                                character.previewMediaId,
+                                                character.previewThumbnailImageKey,
+                                                'sfw',
+                                            )
+                                            : characterMediaImageUrl(
+                                                mediaBaseUrl,
+                                                character.userId,
+                                                character.id,
+                                                character.previewMediaId,
+                                                character.previewImageKey,
+                                                'sfw',
+                                                character.previewContentType,
+                                            )
                                         const profileImageUrl = characterProfileImageUrl(
                                             mediaBaseUrl,
                                             character.userId,

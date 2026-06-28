@@ -65,7 +65,7 @@ const CHARACTER_NAME_RULES = 'letters, numbers, spaces, apostrophes, quotation m
 const GALLERY_IMAGE_CACHE_CONTROL = 'public, max-age=31536000, immutable'
 
 const HOME_PAGE_STATS_CACHE_KEY = 'home:stats:v1'
-const HOME_PAGE_DISCOVER_CACHE_KEY = 'home:discover:v1'
+const HOME_PAGE_DISCOVER_CACHE_KEY = 'home:discover:v2'
 const HOME_PAGE_CACHE_TTL_SECONDS = 600
 const D1_SAFE_VARIABLES_PER_QUERY = 90
 
@@ -1369,6 +1369,7 @@ async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCh
         `WITH approved_sfw_media AS (SELECT id,
               character_id,
               sfw_image_key,
+              sfw_preview_image_key,
               sfw_content_type,
               sfw_artist,
               sfw_homepage_allowed
@@ -1418,6 +1419,7 @@ async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCh
                 eligible_characters.image_count,
                 preview_media.id AS preview_media_id,
                 preview_media.sfw_image_key AS preview_image_key,
+                preview_media.sfw_preview_image_key AS preview_thumbnail_image_key,
                 preview_media.sfw_content_type AS preview_content_type,
                 preview_media.sfw_artist AS preview_artist
          FROM eligible_characters
@@ -1440,6 +1442,7 @@ async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCh
             image_count: number | string
             preview_media_id: string
             preview_image_key: string
+            preview_thumbnail_image_key: string | null
             preview_content_type: string | null
             preview_artist: string | null
         }>()
@@ -1452,6 +1455,7 @@ async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCh
         profileImageKey: character.profile_image_key,
         previewMediaId: character.preview_media_id,
         previewImageKey: character.preview_image_key,
+        previewThumbnailImageKey: character.preview_thumbnail_image_key ?? null,
         previewContentType: character.preview_content_type ?? 'image/png',
         previewArtist: character.preview_artist ?? '',
         imageCount: Number(character.image_count) || 0,
@@ -1508,6 +1512,7 @@ function isHomePageDiscoverCharacter(value: unknown): value is HomePageDiscoverC
         && typeof character.profileImageKey === 'string'
         && typeof character.previewMediaId === 'string'
         && typeof character.previewImageKey === 'string'
+        && (typeof character.previewThumbnailImageKey === 'string' || character.previewThumbnailImageKey === null)
         && typeof character.previewArtist === 'string'
         && Number.isFinite(character.imageCount)
 }
@@ -1968,14 +1973,20 @@ async function getCharacterSettingsMedia(
         `SELECT id,
                 sfw_image_key,
                 nsfw_image_key,
+                sfw_preview_image_key,
+                nsfw_preview_image_key,
                 sfw_content_type,
                 nsfw_content_type,
                 sfw_artist,
                 nsfw_artist,
                 sfw_width,
                 sfw_height,
+                sfw_preview_width,
+                sfw_preview_height,
                 nsfw_width,
-                nsfw_height
+                nsfw_height,
+                nsfw_preview_width,
+                nsfw_preview_height
          FROM character_media
          WHERE character_id = ?
            AND user_id = ?
@@ -1986,28 +1997,40 @@ async function getCharacterSettingsMedia(
             id: string
             sfw_image_key: string | null
             nsfw_image_key: string | null
+            sfw_preview_image_key: string | null
+            nsfw_preview_image_key: string | null
             sfw_content_type: string | null
             nsfw_content_type: string | null
             sfw_artist: string
             nsfw_artist: string
             sfw_width: number | null
             sfw_height: number | null
+            sfw_preview_width: number | null
+            sfw_preview_height: number | null
             nsfw_width: number | null
             nsfw_height: number | null
+            nsfw_preview_width: number | null
+            nsfw_preview_height: number | null
         }>()
 
     return (result.results ?? []).map((media) => ({
         id: media.id,
         sfwImageKey: media.sfw_image_key,
         nsfwImageKey: media.nsfw_image_key,
+        sfwPreviewImageKey: media.sfw_preview_image_key ?? null,
+        nsfwPreviewImageKey: media.nsfw_preview_image_key ?? null,
         sfwContentType: media.sfw_content_type ?? (media.sfw_image_key ? 'image/png' : null),
         nsfwContentType: media.nsfw_content_type ?? (media.nsfw_image_key ? 'image/png' : null),
         sfwArtist: media.sfw_artist,
         nsfwArtist: media.nsfw_artist,
         sfwWidth: media.sfw_width,
         sfwHeight: media.sfw_height,
+        sfwPreviewWidth: media.sfw_preview_width ?? null,
+        sfwPreviewHeight: media.sfw_preview_height ?? null,
         nsfwWidth: media.nsfw_width,
         nsfwHeight: media.nsfw_height,
+        nsfwPreviewWidth: media.nsfw_preview_width ?? null,
+        nsfwPreviewHeight: media.nsfw_preview_height ?? null,
     }))
 }
 

@@ -1,6 +1,7 @@
 import {
     characterMediaImageObjectKey,
     characterMediaImageUrl,
+    characterMediaPreviewImageUrl,
 } from '../media/url'
 
 export type AdminImageReport = {
@@ -9,6 +10,7 @@ export type AdminImageReport = {
     mediaId: string
     rating: 'sfw' | 'nsfw'
     imageUrl: string
+    previewImageUrl: string | null
     objectKey: string
     reviewStatus: string
     reportedAt: string
@@ -37,6 +39,8 @@ type ReportedMediaRow = {
     character_name: string
     sfw_image_key: string | null
     nsfw_image_key: string | null
+    sfw_preview_image_key: string | null
+    nsfw_preview_image_key: string | null
     sfw_content_type: string | null
     nsfw_content_type: string | null
     sfw_review_status: string
@@ -58,6 +62,8 @@ export async function getAdminReportsData(db: D1Database, mediaBaseUrl: string):
                 characters.name AS character_name,
                 character_media.sfw_image_key,
                 character_media.nsfw_image_key,
+                character_media.sfw_preview_image_key,
+                character_media.nsfw_preview_image_key,
                 character_media.sfw_content_type,
                 character_media.nsfw_content_type,
                 character_media.sfw_review_status,
@@ -114,11 +120,11 @@ function toImageReports(row: ReportedMediaRow, mediaBaseUrl: string): AdminImage
     const reports: AdminImageReport[] = []
 
     if (row.sfw_image_key && row.sfw_review_status === 'reported') {
-        reports.push(toImageReport(row, mediaBaseUrl, 'sfw', row.sfw_image_key, row.sfw_content_type, row.sfw_reviewed_at, row.sfw_reported_by_username))
+        reports.push(toImageReport(row, mediaBaseUrl, 'sfw', row.sfw_image_key, row.sfw_preview_image_key, row.sfw_content_type, row.sfw_reviewed_at, row.sfw_reported_by_username))
     }
 
     if (row.nsfw_image_key && row.nsfw_review_status === 'reported') {
-        reports.push(toImageReport(row, mediaBaseUrl, 'nsfw', row.nsfw_image_key, row.nsfw_content_type, row.nsfw_reviewed_at, row.nsfw_reported_by_username))
+        reports.push(toImageReport(row, mediaBaseUrl, 'nsfw', row.nsfw_image_key, row.nsfw_preview_image_key, row.nsfw_content_type, row.nsfw_reviewed_at, row.nsfw_reported_by_username))
     }
 
     return reports
@@ -129,6 +135,7 @@ function toImageReport(
     mediaBaseUrl: string,
     rating: 'sfw' | 'nsfw',
     imageKey: string,
+    previewImageKey: string | null,
     contentType: string | null,
     reportedAt: string | null,
     reportedByUsername: string | null,
@@ -139,6 +146,9 @@ function toImageReport(
         mediaId: row.id,
         rating,
         imageUrl: characterMediaImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, imageKey, rating, contentType),
+        previewImageUrl: previewImageKey
+            ? characterMediaPreviewImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, previewImageKey, rating)
+            : null,
         objectKey: characterMediaImageObjectKey(row.user_id, row.character_id, row.id, imageKey, rating, contentType),
         reviewStatus: 'reported',
         reportedAt: reportedAt ?? '',

@@ -41,6 +41,16 @@ export function characterMediaImageObjectKey(
     return `characters/${userId}/${characterId}/media/${mediaId}/${rating}/${imageKey}.${extensionForImageContentType(contentType)}`
 }
 
+export function characterMediaPreviewImageObjectKey(
+    userId: string,
+    characterId: string,
+    mediaId: string,
+    imageKey: string,
+    rating: 'sfw' | 'nsfw',
+): string {
+    return `characters/${userId}/${characterId}/media/${mediaId}/${rating}/preview/${imageKey}.webp`
+}
+
 export function characterHeightChartImageObjectKey(
     userId: string,
     characterId: string,
@@ -70,6 +80,17 @@ export function characterMediaImageUrl(
     contentType: string | null | undefined = 'image/png',
 ): string {
     return mediaUrlForKey(baseUrl, characterMediaImageObjectKey(userId, characterId, mediaId, imageKey, rating, contentType))
+}
+
+export function characterMediaPreviewImageUrl(
+    baseUrl: string,
+    userId: string,
+    characterId: string,
+    mediaId: string,
+    imageKey: string,
+    rating: 'sfw' | 'nsfw',
+): string {
+    return mediaUrlForKey(baseUrl, characterMediaPreviewImageObjectKey(userId, characterId, mediaId, imageKey, rating))
 }
 
 export function extensionForImageContentType(contentType: string | null | undefined): string {

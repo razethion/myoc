@@ -1,6 +1,11 @@
 import type {CurrentUser} from '../../lib/auth/session'
 import {chunkGalleryItems} from '../../lib/gallery'
-import {characterMediaImageUrl, characterProfileImageUrl, profilePhotoUrl} from '../../lib/media/url'
+import {
+    characterMediaImageUrl,
+    characterMediaPreviewImageUrl,
+    characterProfileImageUrl,
+    profilePhotoUrl,
+} from '../../lib/media/url'
 import type {ProfilePageUser} from './ProfilePage'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
@@ -20,6 +25,8 @@ export type CharacterPageMedia = {
     id: string
     sfwImageKey: string | null
     nsfwImageKey: string | null
+    sfwPreviewImageKey: string | null
+    nsfwPreviewImageKey: string | null
     sfwContentType: string | null
     nsfwContentType: string | null
     sfwArtist: string
@@ -58,12 +65,14 @@ type DisplayMedia = CharacterPageMedia & {
     artist: string
     imageAlt: string
     displayHeight: number
+    displayPreviewUrl: string | null
     displayUrl: string
     displayWidth: number
     isNsfw: boolean
     isNsfwHidden: boolean
     nsfwArtist: string
     nsfwDisplayHeight: number | null
+    nsfwDisplayPreviewUrl: string | null
     nsfwDisplayUrl: string | null
     nsfwDisplayWidth: number | null
     nsfwImageAlt: string | null
@@ -203,21 +212,26 @@ function displayMediaFor(
 
     const width = useNsfw ? media.nsfwWidth : media.sfwWidth
     const height = useNsfw ? media.nsfwHeight : media.sfwHeight
+    const previewImageKey = useNsfw ? media.nsfwPreviewImageKey : media.sfwPreviewImageKey
     const artist = (useNsfw ? media.nsfwArtist : media.sfwArtist) || media.sfwArtist || media.nsfwArtist || 'Unknown artist'
     const nsfwArtist = media.nsfwArtist || media.sfwArtist || 'Unknown artist'
+    const rating = useNsfw ? 'nsfw' : 'sfw'
 
     return {
         ...media,
         artist,
         imageAlt: artist === 'Unknown artist' ? 'Character media by an unknown artist' : `Character media by ${artist}`,
         displayHeight: height && height > 0 ? height : 1,
+        displayPreviewUrl: previewImageKey
+            ? characterMediaPreviewImageUrl(mediaBaseUrl, character.userId, character.id, media.id, previewImageKey, rating)
+            : null,
         displayUrl: characterMediaImageUrl(
             mediaBaseUrl,
             character.userId,
             character.id,
             media.id,
             imageKey,
-            useNsfw ? 'nsfw' : 'sfw',
+            rating,
             useNsfw ? media.nsfwContentType : media.sfwContentType,
         ),
         displayWidth: width && width > 0 ? width : 1,
@@ -225,6 +239,9 @@ function displayMediaFor(
         isNsfwHidden: useNsfw && !displayNsfwMedia,
         nsfwArtist,
         nsfwDisplayHeight: media.nsfwHeight && media.nsfwHeight > 0 ? media.nsfwHeight : null,
+        nsfwDisplayPreviewUrl: media.nsfwPreviewImageKey
+            ? characterMediaPreviewImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwPreviewImageKey, 'nsfw')
+            : null,
         nsfwDisplayUrl: media.nsfwImageKey
             ? characterMediaImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwImageKey, 'nsfw', media.nsfwContentType)
             : null,
@@ -270,7 +287,7 @@ function CharacterPageStyles() {
             }
 
             .gallery-image {
-                cursor: zoom-in;
+                cursor: default;
                 display: block;
                 height: 100%;
                 object-fit: contain;
@@ -279,23 +296,58 @@ function CharacterPageStyles() {
                 width: 100%;
             }
 
-            .gallery-media.image-loading .gallery-image {
+            .gallery-image.gallery-image-openable {
+                cursor: zoom-in;
+            }
+
+            .gallery-media.image-loading:not(.fullres-loading) .gallery-image {
                 opacity: 0.35;
             }
 
             .gallery-image-loader {
                 align-items: center;
-                background: color-mix(in oklab, var(--color-base-300) 65%, transparent);
+                background: color-mix(in oklab, var(--color-base-100) 76%, transparent);
+                border: 1px solid color-mix(in oklab, var(--color-base-content) 28%, transparent);
+                border-radius: 999px;
+                box-shadow: 0 0.35rem 1rem rgba(0, 0, 0, 0.28);
+                color: var(--color-base-content);
+                column-gap: 0.4rem;
                 display: none;
-                inset: 0;
                 justify-content: center;
+                min-height: 1.875rem;
+                padding: 0.3rem 0.55rem;
                 pointer-events: none;
                 position: absolute;
+                left: 0.5rem;
+                top: 0.5rem;
                 z-index: 4;
             }
 
-            .gallery-media.image-loading .gallery-image-loader {
+            .gallery-media.fullres-loading .gallery-image-loader {
                 display: flex;
+            }
+
+            .gallery-image-loader-spinner {
+                animation: gallery-loader-spin 760ms linear infinite;
+                border: 2px solid color-mix(in oklab, currentColor 22%, transparent);
+                border-top-color: currentColor;
+                border-radius: 999px;
+                flex: 0 0 auto;
+                height: 0.9rem;
+                width: 0.9rem;
+            }
+
+            .gallery-image-loader-text {
+                font-size: 0.72rem;
+                font-weight: 600;
+                line-height: 1;
+                white-space: nowrap;
+            }
+
+            @keyframes gallery-loader-spin {
+                to {
+                    transform: rotate(360deg);
+                }
             }
 
             .gallery-image:focus-visible {
@@ -358,12 +410,15 @@ function GalleryImage({allowGuestNsfwReveal, media}: { allowGuestNsfwReveal: boo
     const style = `--media-width:${media.displayWidth};--media-height:${media.displayHeight};--media-aspect:${aspect};`
     const revealWidth = media.nsfwDisplayWidth ?? media.displayWidth
     const revealHeight = media.nsfwDisplayHeight ?? media.displayHeight
+    const initialSrc = media.displayPreviewUrl ?? media.displayUrl
+    const hasFullresPending = Boolean(media.displayPreviewUrl && media.displayPreviewUrl !== media.displayUrl)
 
     return (
         <div
-            class={`gallery-media image-loading rounded ${media.isNsfwHidden ? 'nsfw-media' : ''}`}
+            class={`gallery-media image-loading ${hasFullresPending ? 'fullres-loading' : ''} rounded ${media.isNsfwHidden ? 'nsfw-media' : ''}`}
             data-nsfw-alt={allowGuestNsfwReveal ? media.nsfwImageAlt : undefined}
             data-nsfw-height={allowGuestNsfwReveal && media.nsfwDisplayUrl ? String(revealHeight) : undefined}
+            data-nsfw-preview-url={allowGuestNsfwReveal && media.nsfwDisplayPreviewUrl ? media.nsfwDisplayPreviewUrl : undefined}
             data-nsfw-reveal-target={allowGuestNsfwReveal && media.nsfwDisplayUrl ? 'true' : undefined}
             data-nsfw-title={allowGuestNsfwReveal && media.nsfwDisplayUrl ? media.nsfwArtist : undefined}
             data-nsfw-url={allowGuestNsfwReveal && media.nsfwDisplayUrl ? media.nsfwDisplayUrl : undefined}
@@ -373,17 +428,19 @@ function GalleryImage({allowGuestNsfwReveal, media}: { allowGuestNsfwReveal: boo
             <img
                 alt={media.imageAlt}
                 class="gallery-image"
+                data-fullres-src={hasFullresPending ? media.displayUrl : undefined}
                 data-nsfw-hidden={media.isNsfwHidden ? 'true' : 'false'}
+                data-preview-src={media.displayPreviewUrl ?? undefined}
                 data-title={media.artist}
                 decoding="async"
                 height={media.displayHeight}
-                loading="lazy"
-                src={media.displayUrl}
-                tabIndex={media.isNsfwHidden ? undefined : 0}
+                loading={hasFullresPending ? 'eager' : 'lazy'}
+                src={initialSrc}
                 width={media.displayWidth}
             />
             <div aria-hidden="true" class="gallery-image-loader" data-gallery-image-loader>
-                <span class="loading loading-spinner loading-lg text-base-content"></span>
+                <span class="gallery-image-loader-spinner"></span>
+                <span class="gallery-image-loader-text" data-gallery-image-loader-text>Loading fullres...</span>
             </div>
             {media.isNsfwHidden ? (
                 <div aria-hidden="true" class="nsfw-media-warning">
@@ -406,9 +463,14 @@ function CharacterPageScript({allowGuestNsfwReveal, defaultTabName}: { allowGues
 const defaultTabName = ${safeJson(defaultTabName)};
 const allowGuestNsfwReveal = ${safeJson(allowGuestNsfwReveal)};
 const guestNsfwStorageKey = 'myoc:guest-display-nsfw-media';
+const galleryFullresQueue = [];
+let galleryFullresActive = 0;
+let galleryPreviewGateReady = false;
+const galleryFullresConcurrency = 4;
+const galleryFullresWaitingForPreviews = new Set();
 
 function openLightbox(image) {
-    if (image.dataset.nsfwHidden === 'true') return;
+    if (!isGalleryImageOpenable(image)) return;
     const lightbox = document.getElementById('gallery-lightbox');
     const lightboxImage = document.getElementById('lightbox-image');
     const lightboxTitle = document.getElementById('lightbox-title');
@@ -446,11 +508,9 @@ function initGallerySortOptions() {
 
 function initLightbox() {
     document.querySelectorAll('.gallery-image').forEach((image) => {
-        if (image.dataset.nsfwHidden === 'true') return;
         if (image.dataset.lightboxBound === 'true') return;
         image.dataset.lightboxBound = 'true';
-        image.setAttribute('role', 'button');
-        image.setAttribute('aria-label', 'Open ' + (image.dataset.title || image.alt));
+        updateGalleryImageOpenState(image);
         image.addEventListener('click', () => openLightbox(image));
         image.addEventListener('keydown', (event) => {
             if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -460,12 +520,52 @@ function initLightbox() {
     });
 }
 
+function isGalleryImageOpenable(image) {
+    if (image.dataset.nsfwHidden === 'true') return false;
+    const fullresSrc = image.dataset.fullresSrc;
+    if (!fullresSrc) return image.complete && image.naturalWidth > 0;
+    return image.dataset.fullresLoadedFor === fullresSrc && image.src === fullresSrc;
+}
+
+function updateGalleryImageOpenState(image) {
+    const isOpenable = isGalleryImageOpenable(image);
+    image.classList.toggle('gallery-image-openable', isOpenable);
+
+    if (isOpenable) {
+        image.setAttribute('role', 'button');
+        image.setAttribute('aria-label', 'Open ' + (image.dataset.title || image.alt));
+        image.tabIndex = 0;
+        image.removeAttribute('aria-disabled');
+        return;
+    }
+
+    image.removeAttribute('role');
+    image.removeAttribute('aria-label');
+    image.setAttribute('aria-disabled', 'true');
+    image.tabIndex = -1;
+}
+
 function setGalleryImageLoading(image, isLoading) {
     const media = image.closest('.gallery-media');
     if (!media) return;
     media.classList.toggle('image-loading', Boolean(isLoading));
+    updateGalleryImageLoader(media);
+    updateGalleryImageOpenState(image);
+}
+
+function setGalleryFullresLoading(image, isLoading) {
+    const media = image.closest('.gallery-media');
+    if (!media) return;
+    media.classList.toggle('fullres-loading', Boolean(isLoading));
+    updateGalleryImageLoader(media);
+    updateGalleryImageOpenState(image);
+}
+
+function updateGalleryImageLoader(media) {
     const loader = media.querySelector('[data-gallery-image-loader]');
-    if (loader) loader.hidden = !isLoading;
+    if (loader) {
+        loader.hidden = !media.classList.contains('fullres-loading');
+    }
 }
 
 function refreshGalleryImageLoading(image) {
@@ -488,11 +588,175 @@ function initGalleryImageLoading() {
 function setGalleryImageSource(image, src) {
     if (image.src === src) {
         refreshGalleryImageLoading(image);
+        updateGalleryImageOpenState(image);
         return;
     }
     setGalleryImageLoading(image, true);
     image.src = src;
     refreshGalleryImageLoading(image);
+    updateGalleryImageOpenState(image);
+}
+
+function setProgressiveGalleryImageSource(image, previewSrc, fullresSrc) {
+    const nextSrc = previewSrc || fullresSrc;
+    if (!nextSrc) return;
+
+    if (previewSrc) {
+        image.dataset.previewSrc = previewSrc;
+    } else {
+        delete image.dataset.previewSrc;
+    }
+
+    if (fullresSrc && fullresSrc !== nextSrc) {
+        image.dataset.fullresSrc = fullresSrc;
+        setGalleryFullresLoading(image, true);
+    } else {
+        delete image.dataset.fullresSrc;
+        setGalleryFullresLoading(image, false);
+    }
+
+    delete image.dataset.fullresLoadedFor;
+    delete image.dataset.fullresQueuedFor;
+    delete image.dataset.fullresLoadingFor;
+    setGalleryImageSource(image, nextSrc);
+    queueGalleryFullresLoadAfterPreview(image);
+}
+
+function queueGalleryFullresLoadAfterPreview(image) {
+    const fullresSrc = image.dataset.fullresSrc;
+    if (!fullresSrc) {
+        setGalleryFullresLoading(image, false);
+        return;
+    }
+
+    const previewSrc = image.dataset.previewSrc;
+    if (!previewSrc || image.src === fullresSrc || image.dataset.fullresLoadedFor === fullresSrc) {
+        queueGalleryFullresLoad(image);
+        return;
+    }
+
+    if (image.complete) {
+        queueGalleryFullresLoad(image);
+        return;
+    }
+
+    const expectedPreviewSrc = image.currentSrc || image.src;
+    const queueAfterPreview = () => {
+        if ((image.currentSrc || image.src) === expectedPreviewSrc && image.dataset.fullresSrc === fullresSrc) {
+            queueGalleryFullresLoad(image);
+        }
+    };
+
+    image.addEventListener('load', queueAfterPreview, {once: true});
+    image.addEventListener('error', queueAfterPreview, {once: true});
+}
+
+function queueGalleryFullresLoad(image) {
+    const fullresSrc = image.dataset.fullresSrc;
+    if (!fullresSrc) {
+        setGalleryFullresLoading(image, false);
+        return;
+    }
+
+    if (image.dataset.fullresLoadedFor === fullresSrc || image.dataset.fullresQueuedFor === fullresSrc || image.dataset.fullresLoadingFor === fullresSrc) {
+        return;
+    }
+
+    if (!galleryPreviewGateReady) {
+        image.dataset.fullresQueuedFor = fullresSrc;
+        galleryFullresWaitingForPreviews.add(image);
+        return;
+    }
+
+    image.dataset.fullresQueuedFor = fullresSrc;
+    setGalleryFullresLoading(image, true);
+    galleryFullresQueue.push(image);
+    runGalleryFullresQueue();
+}
+
+function runGalleryFullresQueue() {
+    while (galleryFullresActive < galleryFullresConcurrency && galleryFullresQueue.length > 0) {
+        const image = galleryFullresQueue.shift();
+        if (!image) continue;
+        galleryFullresActive += 1;
+        loadGalleryFullresImage(image).finally(() => {
+            galleryFullresActive -= 1;
+            runGalleryFullresQueue();
+        });
+    }
+}
+
+function loadGalleryFullresImage(image) {
+    return new Promise((resolve) => {
+        const fullresSrc = image.dataset.fullresSrc;
+
+        if (!fullresSrc) {
+            setGalleryFullresLoading(image, false);
+            resolve();
+            return;
+        }
+
+        if (image.dataset.fullresLoadedFor === fullresSrc) {
+            setGalleryFullresLoading(image, false);
+            resolve();
+            return;
+        }
+
+        delete image.dataset.fullresQueuedFor;
+        image.dataset.fullresLoadingFor = fullresSrc;
+        setGalleryFullresLoading(image, true);
+
+        const preloader = new Image();
+        preloader.decoding = 'async';
+        preloader.onload = () => {
+            if (image.dataset.fullresSrc === fullresSrc) {
+                image.src = fullresSrc;
+                image.dataset.fullresLoadedFor = fullresSrc;
+                delete image.dataset.fullresLoadingFor;
+                setGalleryFullresLoading(image, false);
+                refreshGalleryImageLoading(image);
+                updateGalleryImageOpenState(image);
+            }
+            resolve();
+        };
+        preloader.onerror = () => {
+            if (image.dataset.fullresSrc === fullresSrc) {
+                delete image.dataset.fullresLoadingFor;
+                setGalleryFullresLoading(image, false);
+                updateGalleryImageOpenState(image);
+            }
+            resolve();
+        };
+        preloader.src = fullresSrc;
+    });
+}
+
+function initGalleryFullresLoading() {
+    waitForGalleryPreviewImages().then(() => {
+        galleryPreviewGateReady = true;
+        document.querySelectorAll('.gallery-image[data-fullres-src]').forEach((image) => {
+            galleryFullresWaitingForPreviews.add(image);
+        });
+        const waitingImages = Array.from(galleryFullresWaitingForPreviews);
+        galleryFullresWaitingForPreviews.clear();
+        waitingImages.forEach((image) => queueGalleryFullresLoadAfterPreview(image));
+    });
+}
+
+function waitForGalleryPreviewImages() {
+    const previewImages = Array.from(document.querySelectorAll('.gallery-image[data-preview-src]'));
+
+    return Promise.all(previewImages.map((image) => {
+        if (image.complete) {
+            return Promise.resolve();
+        }
+
+        return new Promise((resolve) => {
+            const finish = () => resolve();
+            image.addEventListener('load', finish, {once: true});
+            image.addEventListener('error', finish, {once: true});
+        });
+    }));
 }
 
 function displayGuestNsfwMedia() {
@@ -501,6 +765,8 @@ function displayGuestNsfwMedia() {
         const nsfwUrl = media.dataset.nsfwUrl;
         if (!image || !nsfwUrl) return;
         if (!media.dataset.sfwUrl) media.dataset.sfwUrl = image.src;
+        if (!media.dataset.sfwPreviewUrl) media.dataset.sfwPreviewUrl = image.dataset.previewSrc || image.src;
+        if (!media.dataset.sfwFullresUrl) media.dataset.sfwFullresUrl = image.dataset.fullresSrc || image.src;
         if (!media.dataset.sfwAlt) media.dataset.sfwAlt = image.alt;
         if (!media.dataset.sfwTitle) media.dataset.sfwTitle = image.dataset.title || image.alt;
         if (!media.dataset.sfwWidth) media.dataset.sfwWidth = String(image.width || 1);
@@ -511,7 +777,7 @@ function displayGuestNsfwMedia() {
 
         const width = Number(media.dataset.nsfwWidth || image.width || 1);
         const height = Number(media.dataset.nsfwHeight || image.height || 1);
-        setGalleryImageSource(image, nsfwUrl);
+        setProgressiveGalleryImageSource(image, media.dataset.nsfwPreviewUrl || nsfwUrl, nsfwUrl);
         image.alt = media.dataset.nsfwAlt || image.alt;
         image.dataset.title = media.dataset.nsfwTitle || image.dataset.title || image.alt;
         image.setAttribute('aria-label', 'Open ' + (image.dataset.title || image.alt));
@@ -539,7 +805,7 @@ function hideGuestNsfwMedia() {
 
         const width = Number(media.dataset.sfwWidth || image.width || 1);
         const height = Number(media.dataset.sfwHeight || image.height || 1);
-        setGalleryImageSource(image, media.dataset.sfwUrl);
+        setProgressiveGalleryImageSource(image, media.dataset.sfwPreviewUrl || media.dataset.sfwUrl, media.dataset.sfwFullresUrl || media.dataset.sfwUrl);
         image.alt = media.dataset.sfwAlt || image.alt;
         image.dataset.title = media.dataset.sfwTitle || image.dataset.title || image.alt;
         image.setAttribute('aria-label', 'Open ' + (image.dataset.title || image.alt));
@@ -589,6 +855,7 @@ function initGuestNsfwReveal() {
 
 initGallerySortOptions();
 initGalleryImageLoading();
+initGalleryFullresLoading();
 initLightbox();
 initGuestNsfwReveal();
 `

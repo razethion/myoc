@@ -1,6 +1,7 @@
 import {
     characterMediaImageObjectKey,
     characterMediaImageUrl,
+    characterMediaPreviewImageUrl,
 } from '../media/url'
 
 export type ImageApprovalAction =
@@ -18,6 +19,8 @@ export type ImageApprovalVariant = {
     imageKey: string
     contentType: string
     imageUrl: string
+    fullImageUrl: string
+    previewImageUrl: string | null
     objectKey: string
     artist: string
     width: number | null
@@ -85,6 +88,8 @@ type ImageApprovalRow = {
     character_name: string
     sfw_image_key: string | null
     nsfw_image_key: string | null
+    sfw_preview_image_key: string | null
+    nsfw_preview_image_key: string | null
     sfw_content_type: string | null
     nsfw_content_type: string | null
     sfw_artist: string
@@ -173,6 +178,8 @@ export async function getImageApprovalItem(
                 characters.name AS character_name,
                 character_media.sfw_image_key,
                 character_media.nsfw_image_key,
+                character_media.sfw_preview_image_key,
+                character_media.nsfw_preview_image_key,
                 character_media.sfw_content_type,
                 character_media.nsfw_content_type,
                 character_media.sfw_artist,
@@ -302,6 +309,19 @@ async function getImageApprovalHistory(db: D1Database): Promise<ImageApprovalHis
 }
 
 function toImageApprovalItem(row: ImageApprovalRow, mediaBaseUrl: string): ImageApprovalItem {
+    const sfwFullImageUrl = row.sfw_image_key
+        ? characterMediaImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, row.sfw_image_key, 'sfw', row.sfw_content_type)
+        : null
+    const sfwPreviewImageUrl = row.sfw_preview_image_key
+        ? characterMediaPreviewImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, row.sfw_preview_image_key, 'sfw')
+        : null
+    const nsfwFullImageUrl = row.nsfw_image_key
+        ? characterMediaImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, row.nsfw_image_key, 'nsfw', row.nsfw_content_type)
+        : null
+    const nsfwPreviewImageUrl = row.nsfw_preview_image_key
+        ? characterMediaPreviewImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, row.nsfw_preview_image_key, 'nsfw')
+        : null
+
     return {
         id: row.id,
         createdAt: row.created_at,
@@ -321,7 +341,9 @@ function toImageApprovalItem(row: ImageApprovalRow, mediaBaseUrl: string): Image
             rating: 'sfw',
             imageKey: row.sfw_image_key,
             contentType: row.sfw_content_type ?? 'image/png',
-            imageUrl: characterMediaImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, row.sfw_image_key, 'sfw', row.sfw_content_type),
+            imageUrl: sfwPreviewImageUrl ?? sfwFullImageUrl ?? '',
+            fullImageUrl: sfwFullImageUrl ?? '',
+            previewImageUrl: sfwPreviewImageUrl,
             objectKey: characterMediaImageObjectKey(row.user_id, row.character_id, row.id, row.sfw_image_key, 'sfw', row.sfw_content_type),
             artist: row.sfw_artist,
             width: row.sfw_width,
@@ -337,7 +359,9 @@ function toImageApprovalItem(row: ImageApprovalRow, mediaBaseUrl: string): Image
             rating: 'nsfw',
             imageKey: row.nsfw_image_key,
             contentType: row.nsfw_content_type ?? 'image/png',
-            imageUrl: characterMediaImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, row.nsfw_image_key, 'nsfw', row.nsfw_content_type),
+            imageUrl: nsfwPreviewImageUrl ?? nsfwFullImageUrl ?? '',
+            fullImageUrl: nsfwFullImageUrl ?? '',
+            previewImageUrl: nsfwPreviewImageUrl,
             objectKey: characterMediaImageObjectKey(row.user_id, row.character_id, row.id, row.nsfw_image_key, 'nsfw', row.nsfw_content_type),
             artist: row.nsfw_artist,
             width: row.nsfw_width,
