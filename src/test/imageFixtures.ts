@@ -35,6 +35,18 @@ export function createGifFile(width = 100, height = 80, name = 'gallery.gif'): F
 
 export function createWebpDataUrl(width = 512, height = 512): string {
     const bytes = createVp8xWebpBytes(width, height)
+    return webpBytesToDataUrl(bytes)
+}
+
+export function createPaddedWebpDataUrl(width: number, height: number, byteLength: number): string {
+    const baseBytes = createVp8xWebpBytes(width, height)
+    const bytes = new Uint8Array(Math.max(byteLength, baseBytes.byteLength))
+    bytes.set(baseBytes)
+
+    return webpBytesToDataUrl(bytes)
+}
+
+function webpBytesToDataUrl(bytes: Uint8Array): string {
     let binary = ''
 
     for (const byte of bytes) {

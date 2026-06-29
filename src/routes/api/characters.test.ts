@@ -7,6 +7,7 @@ import {
     createGifFile,
     createMalformedWebpFile,
     createOversizedWebpFile,
+    createPaddedWebpDataUrl,
     createPngFile,
     createWebpDataUrl,
     createWebpFile,
@@ -49,6 +50,17 @@ type CharacterRequestOptions = TestRequestOptions & {
     mediaBucket?: R2Bucket
 }
 
+type ChunkedSfwInitBody = {
+    mediaId: string
+    uploads: {
+        sfw: {
+            uploadId: string
+            imageKey: string
+            contentType: string
+        }
+    }
+}
+
 function requestEnv(db: D1Database, mediaBucket?: R2Bucket) {
     return {
         DB: db,
@@ -80,6 +92,34 @@ function createPreviewPayload(width: number, height: number) {
         contentType: 'image/webp',
         width,
         height,
+    }
+}
+
+async function createChunkedSfwUploadTestContext() {
+    const sessionToken = 'session-token'
+    const mediaBucket = createMockR2Bucket()
+    const character = createCharacterRecord()
+    const {db} = createMockDb({
+        firstResults: [currentUserRecord, character, currentUserRecord, character, currentUserRecord, character],
+    })
+    const csrfToken = await createCsrfToken(sessionToken)
+
+    const initResponse = await initChunkedMedia(character.id, {
+        ratings: ['sfw'],
+    }, db, {
+        mediaBucket,
+        sessionToken,
+        csrfToken,
+    })
+    const initBody = await initResponse.json() as ChunkedSfwInitBody
+
+    return {
+        sessionToken,
+        mediaBucket,
+        character,
+        db,
+        csrfToken,
+        initBody,
     }
 }
 
@@ -115,19 +155,6 @@ async function postTree(
     return apiRoutes.request('https://example.com/characters/tree', {
         method: 'POST',
         body: typeof body === 'string' ? body : JSON.stringify(body),
-        headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket))
-}
-
-async function postMedia(
-    characterId: string,
-    body: FormData,
-    db: D1Database,
-    options: CharacterRequestOptions = {},
-): Promise<Response> {
-    return apiRoutes.request(`https://example.com/characters/${characterId}/media`, {
-        method: 'POST',
-        body,
         headers: createRequestHeaders(body, options),
     }, requestEnv(db, options.mediaBucket))
 }
@@ -1253,7 +1280,7 @@ describe('POST /characters/:id/profile-image', () => {
     })
 })
 
-describe('POST /characters/:id/media', () => {
+describe('character media uploads', () => {
     it('uploads gallery media through R2 multipart chunks', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
@@ -1365,7 +1392,15 @@ describe('POST /characters/:id/media', () => {
                 },
             },
         )
-        expect(mediaBucket.get).not.toHaveBeenCalled()
+        expect(mediaBucket.get).toHaveBeenCalledWith(
+            `characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.png`,
+            {
+                range: {
+                    offset: 0,
+                    length: 1024 * 1024,
+                },
+            },
+        )
         expect(boundStatements.at(-1)?.sql).toContain(['INSERT INTO', 'character_media'].join(' '))
         expect(boundStatements.at(-1)?.binds[5]).toBe('image/png')
         expect(boundStatements.at(-1)?.binds[9]).toBe(10000)
@@ -1373,6 +1408,157 @@ describe('POST /characters/:id/media', () => {
         expect(boundStatements.at(-1)?.binds[12]).toBe(body.media.sfwPreviewImageKey)
         expect(boundStatements.at(-1)?.binds[13]).toBe(1600)
         expect(boundStatements.at(-1)?.binds[14]).toBe(1600)
+    })
+
+    it('rejects chunked gallery media when declared original dimensions do not match the stored image', async () => {
+        const {
+            sessionToken,
+            mediaBucket,
+            character,
+            db,
+            csrfToken,
+            initBody
+        } = await createChunkedSfwUploadTestContext()
+
+        const pngFile = createPngFile(800, 600)
+        const partResponse = await putChunkedMediaPart(
+            character.id,
+            initBody.mediaId,
+            'sfw',
+            initBody.uploads.sfw.uploadId,
+            1,
+            initBody.uploads.sfw.imageKey,
+            pngFile,
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+        const uploadedPart = await partResponse.json() as R2UploadedPart
+
+        const completeResponse = await completeChunkedMedia(character.id, {
+            mediaId: initBody.mediaId,
+            sfwUpload: {
+                uploadId: initBody.uploads.sfw.uploadId,
+                imageKey: initBody.uploads.sfw.imageKey,
+                contentType: 'image/png',
+                width: 1600,
+                height: 1600,
+                parts: [uploadedPart],
+            },
+            sfwPreview: createPreviewPayload(1600, 1600),
+        }, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+
+        expect(completeResponse.status).toBe(400)
+        expect(await completeResponse.json()).toEqual({
+            error: 'SFW image dimensions do not match the uploaded image',
+        })
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            `characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.png`,
+        )
+    })
+
+    it('rejects chunked gallery previews whose dimensions do not match the downscaled original', async () => {
+        const {
+            sessionToken,
+            mediaBucket,
+            character,
+            db,
+            csrfToken,
+            initBody
+        } = await createChunkedSfwUploadTestContext()
+
+        const pngFile = createPngFile(10000, 5000)
+        const partResponse = await putChunkedMediaPart(
+            character.id,
+            initBody.mediaId,
+            'sfw',
+            initBody.uploads.sfw.uploadId,
+            1,
+            initBody.uploads.sfw.imageKey,
+            pngFile,
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+        const uploadedPart = await partResponse.json() as R2UploadedPart
+
+        const completeResponse = await completeChunkedMedia(character.id, {
+            mediaId: initBody.mediaId,
+            sfwUpload: {
+                uploadId: initBody.uploads.sfw.uploadId,
+                imageKey: initBody.uploads.sfw.imageKey,
+                contentType: 'image/png',
+                width: 10000,
+                height: 5000,
+                parts: [uploadedPart],
+            },
+            sfwPreview: createPreviewPayload(1600, 1000),
+        }, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+
+        expect(completeResponse.status).toBe(400)
+        expect(await completeResponse.json()).toEqual({
+            error: 'SFW preview dimensions must match the uploaded image scaled to 1600px',
+        })
+    })
+
+    it('rejects gallery previews that are too large for their dimensions', async () => {
+        const {
+            sessionToken,
+            mediaBucket,
+            character,
+            db,
+            csrfToken,
+            initBody
+        } = await createChunkedSfwUploadTestContext()
+
+        const pngFile = createPngFile(1, 1)
+        const partResponse = await putChunkedMediaPart(
+            character.id,
+            initBody.mediaId,
+            'sfw',
+            initBody.uploads.sfw.uploadId,
+            1,
+            initBody.uploads.sfw.imageKey,
+            pngFile,
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+        const uploadedPart = await partResponse.json() as R2UploadedPart
+
+        const completeResponse = await completeChunkedMedia(character.id, {
+            mediaId: initBody.mediaId,
+            sfwUpload: {
+                uploadId: initBody.uploads.sfw.uploadId,
+                imageKey: initBody.uploads.sfw.imageKey,
+                contentType: 'image/png',
+                width: 1,
+                height: 1,
+                parts: [uploadedPart],
+            },
+            sfwPreview: {
+                data: createPaddedWebpDataUrl(1, 1, 5000),
+                contentType: 'image/webp',
+                width: 1,
+                height: 1,
+            },
+        }, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+
+        expect(completeResponse.status).toBe(400)
+        expect(await completeResponse.json()).toEqual({
+            error: 'SFW preview is too large for its dimensions',
+        })
+        expect(mediaBucket.createMultipartUpload).toHaveBeenCalledTimes(1)
+        expect(mediaBucket.put).not.toHaveBeenCalled()
     })
 
     it('keeps chunked GIF gallery media as GIF', async () => {
@@ -1637,158 +1823,6 @@ describe('POST /characters/:id/media', () => {
         expect(db.batch).not.toHaveBeenCalled()
     })
 
-    it('uploads original gallery media for the current user', async () => {
-        const sessionToken = 'session-token'
-        const mediaBucket = createMockR2Bucket()
-        const character = createCharacterRecord()
-        const {db, boundStatements} = createMockDb({
-            firstResults: [currentUserRecord, character],
-        })
-        const form = new FormData()
-        form.set('sfwImage', createPngFile(640, 480))
-        form.set('sfwArtist', 'Artist Name')
-
-        const response = await postMedia(character.id, form, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
-
-        expect(response.status).toBe(201)
-
-        const body = await response.json() as {
-            media: {
-                id: string
-                sfwImageKey: string
-                sfwImageUrl: string
-                sfwContentType: string
-                sfwWidth: number
-                sfwHeight: number
-                sfwArtist: string
-            }
-        }
-
-        expect(body.media.id).toMatch(new RegExp(`^${uuidPattern}$`))
-        expect(body.media.sfwImageKey).toMatch(new RegExp(`^${uuidPattern}$`))
-        expect(body.media.sfwContentType).toBe('image/png')
-        expect(body.media.sfwImageUrl).toBe(`${mediaPublicBaseUrl}/characters/current-user/character-id/media/${body.media.id}/sfw/${body.media.sfwImageKey}.png`)
-        expect(body.media.sfwWidth).toBe(640)
-        expect(body.media.sfwHeight).toBe(480)
-        expect(body.media.sfwArtist).toBe('Artist Name')
-        expect(mediaBucket.put).toHaveBeenCalledWith(
-            `characters/current-user/character-id/media/${body.media.id}/sfw/${body.media.sfwImageKey}.png`,
-            expect.any(Uint8Array),
-            {
-                httpMetadata: {
-                    cacheControl: 'public, max-age=31536000, immutable',
-                    contentType: 'image/png',
-                },
-            },
-        )
-        expect(boundStatements[2]?.sql).toContain(['INSERT INTO', 'character_media'].join(' '))
-        expect(boundStatements[2]?.binds[5]).toBe('image/png')
-        expect(boundStatements[2]?.binds[9]).toBe(640)
-        expect(boundStatements[2]?.binds[10]).toBe(480)
-    })
-
-    it('uploads GIF gallery media without converting it to PNG', async () => {
-        const sessionToken = 'session-token'
-        const mediaBucket = createMockR2Bucket()
-        const character = createCharacterRecord()
-        const {db, boundStatements} = createMockDb({
-            firstResults: [currentUserRecord, character],
-        })
-        const form = new FormData()
-        form.set('sfwImage', createGifFile(320, 240))
-
-        const response = await postMedia(character.id, form, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
-
-        expect(response.status).toBe(201)
-
-        const body = await response.json() as {
-            media: {
-                id: string
-                sfwImageKey: string
-                sfwImageUrl: string
-                sfwContentType: string
-                sfwWidth: number
-                sfwHeight: number
-            }
-        }
-
-        expect(body.media.sfwContentType).toBe('image/gif')
-        expect(body.media.sfwImageUrl).toBe(`${mediaPublicBaseUrl}/characters/current-user/character-id/media/${body.media.id}/sfw/${body.media.sfwImageKey}.gif`)
-        expect(body.media.sfwWidth).toBe(320)
-        expect(body.media.sfwHeight).toBe(240)
-        expect(mediaBucket.put).toHaveBeenCalledWith(
-            `characters/current-user/character-id/media/${body.media.id}/sfw/${body.media.sfwImageKey}.gif`,
-            expect.any(Uint8Array),
-            {
-                httpMetadata: {
-                    cacheControl: 'public, max-age=31536000, immutable',
-                    contentType: 'image/gif',
-                },
-            },
-        )
-        expect(boundStatements[2]?.binds[5]).toBe('image/gif')
-    })
-
-    it('accepts huge-dimension PNG gallery media without an app pixel cap', async () => {
-        const sessionToken = 'session-token'
-        const mediaBucket = createMockR2Bucket()
-        const character = createCharacterRecord()
-        const {db, boundStatements} = createMockDb({
-            firstResults: [currentUserRecord, character],
-        })
-        const form = new FormData()
-        form.set('sfwImage', createPngFile(10000, 10000))
-
-        const response = await postMedia(character.id, form, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
-
-        expect(response.status).toBe(201)
-        const body = await response.json() as {
-            media: {
-                sfwWidth: number
-                sfwHeight: number
-            }
-        }
-
-        expect(body.media.sfwWidth).toBe(10000)
-        expect(body.media.sfwHeight).toBe(10000)
-        expect(boundStatements[2]?.binds[9]).toBe(10000)
-        expect(boundStatements[2]?.binds[10]).toBe(10000)
-    })
-
-    it('rejects unsupported gallery media types', async () => {
-        const sessionToken = 'session-token'
-        const mediaBucket = createMockR2Bucket()
-        const character = createCharacterRecord()
-        const {db} = createMockDb({
-            firstResults: [currentUserRecord, character],
-        })
-        const form = new FormData()
-        form.set('sfwImage', new File([new Uint8Array([1, 2, 3])], 'gallery.bmp', {type: 'image/bmp'}))
-
-        const response = await postMedia(character.id, form, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
-
-        expect(response.status).toBe(400)
-        expect(await response.json()).toEqual({
-            error: 'Image must be PNG, JPG, GIF, WebP, or AVIF',
-        })
-        expect(mediaBucket.put).not.toHaveBeenCalled()
-    })
 })
 
 describe('PUT /characters/:id/gallery', () => {
