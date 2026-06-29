@@ -37,6 +37,14 @@ describe('parseManagedR2MediaKey', () => {
             imageKey: 'preview-1',
         })
 
+        expect(parseManagedR2MediaKey('characters/user-1/character-1/media/media-1/nsfw/blur/blur-1.webp')).toMatchObject({
+            kind: 'characterMediaNsfwBlur',
+            userId: 'user-1',
+            characterId: 'character-1',
+            mediaId: 'media-1',
+            imageKey: 'blur-1',
+        })
+
         expect(parseManagedR2MediaKey('characters/user-1/character-1/height-chart/chart-1.png')).toMatchObject({
             kind: 'characterHeightChart',
             userId: 'user-1',
@@ -67,6 +75,8 @@ describe('cleanupStaleR2Media', () => {
                 {height_chart_json: heightChartJson},
                 {found: 1},
                 {found: 1},
+                {found: 1},
+                null,
                 null,
                 null,
                 {found: 1},
@@ -78,8 +88,10 @@ describe('cleanupStaleR2Media', () => {
         await bucket.put('users/alice/profile/old.png', 'unknown')
         await bucket.put('users/alice/profile/old.webp', 'stale')
         await bucket.put('characters/alice/blair/height-chart/chart.png', 'referenced')
+        await bucket.put('characters/alice/blair/media/media-1/nsfw/blur/blur.webp', 'referenced')
         await bucket.put('characters/alice/blair/media/media-1/sfw/img.png', 'referenced')
         await bucket.put('characters/alice/blair/media/media-1/sfw/preview/preview.webp', 'referenced')
+        await bucket.put('characters/alice/blair/media/media-2/nsfw/blur/orphan.webp', 'stale')
         await bucket.put('characters/alice/blair/media/media-2/nsfw/preview/orphan.webp', 'stale')
         await bucket.put('characters/alice/blair/media/media-2/nsfw/orphan.gif', 'stale')
         await bucket.put('characters/alice/blair/profile/profile.webp', 'referenced')
@@ -89,23 +101,26 @@ describe('cleanupStaleR2Media', () => {
         const summary = await cleanupStaleR2Media({DB: db, MEDIA_BUCKET: bucket}, new Date('2026-06-26T12:00:00Z'))
 
         expect(summary).toMatchObject({
-            scanned: 11,
-            recognized: 9,
+            scanned: 13,
+            recognized: 11,
             skippedUnknown: 2,
             skippedRecent: 0,
-            keptReferenced: 5,
-            deleted: 4,
+            keptReferenced: 6,
+            deleted: 5,
             errors: 0,
             stoppedAtDeleteLimit: false,
         })
         expect(bucket.delete).toHaveBeenCalledWith('users/alice/profile/old.webp')
+        expect(bucket.delete).toHaveBeenCalledWith('characters/alice/blair/media/media-2/nsfw/blur/orphan.webp')
         expect(bucket.delete).toHaveBeenCalledWith('characters/alice/blair/media/media-2/nsfw/preview/orphan.webp')
         expect(bucket.delete).toHaveBeenCalledWith('characters/alice/blair/media/media-2/nsfw/orphan.gif')
         expect(bucket.delete).toHaveBeenCalledWith('characters/alice/blair/profile/stale.webp')
         expect(await bucket.head('users/alice/profile/current.webp')).not.toBeNull()
         expect(await bucket.head('users/alice/profile/old.png')).not.toBeNull()
         expect(await bucket.head('users/alice/profile/old.webp')).toBeNull()
+        expect(await bucket.head('characters/alice/blair/media/media-1/nsfw/blur/blur.webp')).not.toBeNull()
         expect(await bucket.head('characters/alice/blair/media/media-1/sfw/preview/preview.webp')).not.toBeNull()
+        expect(await bucket.head('characters/alice/blair/media/media-2/nsfw/blur/orphan.webp')).toBeNull()
         expect(await bucket.head('characters/alice/blair/media/media-2/nsfw/preview/orphan.webp')).toBeNull()
         expect(await bucket.head('characters/alice/blair/media/media-2/nsfw/orphan.gif')).toBeNull()
         expect(await bucket.head('characters/alice/blair/scratch/stale.webp')).not.toBeNull()

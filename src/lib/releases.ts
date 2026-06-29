@@ -1,4 +1,4 @@
-export const APP_VERSION = '2026.06.27.01'
+export const APP_VERSION = '2026.06.29.01'
 
 export type ReleaseNote = {
     version: string
@@ -10,16 +10,26 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
     {
+        version: '2026.06.29.01',
+        releasedOn: 'June 29, 2026',
+        title: 'Image gallery improvements',
+        summary: 'Fixed some bugs!',
+        changes: [
+            'Blurs are images now, instead of client rendered for better performance.',
+            'Improve the fullres media loader and fixed some bugs with it.',
+        ],
+    },
+    {
         version: '2026.06.27.01',
         releasedOn: 'June 27, 2026',
         title: 'Huge QOL update',
-        summary: 'Major changes to site usability for better UX!.',
+        summary: 'Major changes to site usability for better UX!',
         changes: [
             'Character gallery tabs can now be moved left and right from the character editor with clearer tabs and layout panel controls.',
             'The default gallery tab can now be renamed.',
             'Gallery rows can now be moved up or down, with new rows insertable above or below existing rows.',
             'Bulk gallery uploads now show a modal with upload progress.',
-            'Images now have thumbnails so pages load quicker, before the full-res can be loaded by the client.'
+            'Images now have thumbnails so pages load quicker, before the full-res can be loaded by the client.',
         ],
     },
     {
@@ -80,7 +90,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
         version: '2026.06.15.01',
         releasedOn: 'June 15, 2026',
         title: 'What\'s New, Bugfixes, and more!',
-        summary: 'Now you can see what\'s happening on the site as it\'s happening!.',
+        summary: 'Now you can see what\'s happening on the site as it\'s happening!',
         changes: [
             'Added this What\'s New page with a dedicated block for each app version.',
             'Introduced application versioning starting with version 2026.06.15.01.',

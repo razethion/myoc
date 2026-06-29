@@ -19,6 +19,7 @@ export type CharacterSettingsMedia = {
     nsfwImageKey: string | null
     sfwPreviewImageKey: string | null
     nsfwPreviewImageKey: string | null
+    nsfwBlurImageKey: string | null
     sfwContentType: string | null
     nsfwContentType: string | null
     sfwArtist: string

@@ -1530,6 +1530,7 @@ describe('GET /u/:username', () => {
                     nsfw_image_key: 'both-nsfw-key',
                     sfw_preview_image_key: 'both-sfw-preview-key',
                     nsfw_preview_image_key: 'both-nsfw-preview-key',
+                    nsfw_blur_image_key: 'both-nsfw-blur-key',
                     sfw_artist: 'Both SFW Artist',
                     nsfw_artist: 'Both NSFW Artist',
                     sfw_width: 800,
@@ -1547,6 +1548,7 @@ describe('GET /u/:username', () => {
                     nsfw_image_key: 'nsfw-only-key',
                     sfw_preview_image_key: null,
                     nsfw_preview_image_key: 'nsfw-only-preview-key',
+                    nsfw_blur_image_key: 'nsfw-only-blur-key',
                     sfw_artist: '',
                     nsfw_artist: 'NSFW Artist',
                     sfw_width: null,
@@ -1624,16 +1626,20 @@ describe('GET /u/:username', () => {
         expect(html).toContain('top: 0.5rem;')
         expect(html).toContain('gallery-loader-spin')
         expect(html).toContain('Loading fullres...')
-        expect(html).toContain('fullres-loading')
-        expect(html).toContain('Display 18+ media')
+        expect(html).toContain('Load 18+ media')
+        expect(html).toContain('data-display-nsfw-media="false"')
         expect(html).toContain('data-nsfw-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/both-nsfw-key.png"')
         expect(html).toContain('data-nsfw-preview-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/preview/both-nsfw-preview-key.webp"')
         expect(html).toContain('data-nsfw-title="Both NSFW Artist"')
+        expect(html).toContain('data-safe-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"')
         expect(html).toContain('data-title="SFW Artist"')
         expect(html).toContain('data-title="Both SFW Artist"')
-        expect(html).toContain('src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/preview/nsfw-only-preview-key.webp"')
-        expect(html).toContain('data-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"')
-        expect(html).toContain('Use the 18+ media button to display this media.')
+        expect(html).toContain('loading="lazy" src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/blur/nsfw-only-blur-key.webp"')
+        expect(html).not.toContain('data-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"')
+        expect(html).toContain('data-nsfw-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"')
+        expect(html).toContain('data-nsfw-preview-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/preview/nsfw-only-preview-key.webp"')
+        expect(html).toContain('class="nsfw-media-badge"')
+        expect(html).toContain('<span>18+</span>')
         expect(html).toContain('data-nsfw-hidden="true"')
         expect(html).toContain('width="640"')
         expect(html).toContain('height="480"')
@@ -1655,6 +1661,147 @@ describe('GET /u/:username', () => {
 
         expect(response.status).toBe(301)
         expect(response.headers.get('location')).toBe('/u/demo?tab=characters')
+    })
+
+    it('renders stored blur variants as the active source when the current user disabled NSFW media', async () => {
+        const response = await getAppPath('/u/demo/RAZETH', createProfilePageDb({
+            currentUser: {
+                ...createCurrentUserRecord('viewer'),
+                display_nsfw_media: 0,
+            },
+            profileUser: {
+                id: 'profile-user',
+                username: 'demo',
+                profile_photo_key: null,
+                bio: '',
+            },
+            characterSettings: {
+                id: 'character-1',
+                user_id: 'profile-user',
+                name: 'RAZETH',
+                profile_image_key: 'character-profile-key',
+                description: '',
+                gallery_fullsize_last_row: 0,
+            },
+            characterMedia: [
+                {
+                    id: 'nsfw-media',
+                    sfw_image_key: null,
+                    nsfw_image_key: 'nsfw-only-key',
+                    sfw_preview_image_key: null,
+                    nsfw_preview_image_key: 'nsfw-only-preview-key',
+                    nsfw_blur_image_key: 'nsfw-only-blur-key',
+                    sfw_artist: '',
+                    nsfw_artist: 'NSFW Artist',
+                    sfw_width: null,
+                    sfw_height: null,
+                    sfw_preview_width: null,
+                    sfw_preview_height: null,
+                    nsfw_width: 1200,
+                    nsfw_height: 800,
+                    nsfw_preview_width: 1200,
+                    nsfw_preview_height: 800,
+                },
+            ],
+            galleryTabs: [{
+                id: 'tab-default',
+                name: 'default',
+                sort_order: 0,
+            }],
+            galleryRows: [
+                {
+                    row_id: 'row-1',
+                    tab_id: 'tab-default',
+                    row_sort_order: 0,
+                    media_id: 'nsfw-media',
+                    media_sort_order: 0,
+                },
+            ],
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/blur/nsfw-only-blur-key.webp"')
+        expect(html).toContain('data-nsfw-hidden="true"')
+        expect(html).toContain('Load 18+ media')
+        expect(html).toContain('data-display-nsfw-media="false"')
+        expect(html).toContain('class="nsfw-media-badge"')
+        expect(html).toContain('<span>18+</span>')
+        expect(html).toContain('data-nsfw-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"')
+        expect(html).toContain('data-nsfw-preview-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/preview/nsfw-only-preview-key.webp"')
+        expect(html).not.toContain('data-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"')
+    })
+
+    it('keeps NSFW-only gallery media visible with a local placeholder when no blur variant exists', async () => {
+        const response = await getAppPath('/u/demo/RAZETH', createProfilePageDb({
+            currentUser: {
+                ...createCurrentUserRecord('viewer'),
+                display_nsfw_media: 0,
+            },
+            profileUser: {
+                id: 'profile-user',
+                username: 'demo',
+                profile_photo_key: null,
+                bio: '',
+            },
+            characterSettings: {
+                id: 'character-1',
+                user_id: 'profile-user',
+                name: 'RAZETH',
+                profile_image_key: 'character-profile-key',
+                description: '',
+                gallery_fullsize_last_row: 0,
+            },
+            characterMedia: [
+                {
+                    id: 'nsfw-media',
+                    sfw_image_key: null,
+                    nsfw_image_key: 'nsfw-only-key',
+                    sfw_preview_image_key: null,
+                    nsfw_preview_image_key: 'nsfw-only-preview-key',
+                    nsfw_blur_image_key: null,
+                    sfw_artist: '',
+                    nsfw_artist: 'NSFW Artist',
+                    sfw_width: null,
+                    sfw_height: null,
+                    sfw_preview_width: null,
+                    sfw_preview_height: null,
+                    nsfw_width: 1200,
+                    nsfw_height: 800,
+                    nsfw_preview_width: 600,
+                    nsfw_preview_height: 400,
+                },
+            ],
+            galleryTabs: [{
+                id: 'tab-default',
+                name: 'default',
+                sort_order: 0,
+            }],
+            galleryRows: [
+                {
+                    row_id: 'row-1',
+                    tab_id: 'tab-default',
+                    row_sort_order: 0,
+                    media_id: 'nsfw-media',
+                    media_sort_order: 0,
+                },
+            ],
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('class="gallery-media image-loading  rounded nsfw-media"')
+        expect(html).toContain('src="data:image/svg+xml,')
+        expect(html).toContain('class="nsfw-media-badge"')
+        expect(html).toContain('<span>18+</span>')
+        expect(html).toContain('data-nsfw-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"')
+        expect(html).not.toContain('src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"')
+        expect(html).not.toContain('src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/preview/nsfw-only-preview-key.webp"')
+        expect(html).not.toContain('No gallery media has been added')
     })
 
     it('redirects character URLs to the stored username and character name casing', async () => {
@@ -1716,6 +1863,7 @@ describe('GET /u/:username', () => {
                     id: 'nsfw-media',
                     sfw_image_key: null,
                     nsfw_image_key: 'nsfw-only-key',
+                    nsfw_blur_image_key: 'nsfw-only-blur-key',
                     sfw_artist: '',
                     nsfw_artist: 'NSFW Artist',
                     sfw_width: null,
@@ -1756,13 +1904,114 @@ describe('GET /u/:username', () => {
         expect(html).toContain('https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/both-nsfw-key.png')
         expect(html).toContain('data-title="Both NSFW Artist"')
         expect(html).toContain('data-title="NSFW Artist"')
-        expect(html).not.toContain('both-media/sfw/both-sfw-key.png')
+        expect(html).toContain('Hide 18+ media')
+        expect(html).toContain('data-display-nsfw-media="true"')
+        expect(html).toContain('data-safe-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"')
+        expect(html).not.toContain('src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"')
         expect(html).toContain('https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png')
-        expect(html).not.toContain('>Display 18+ media<')
-        expect(html).not.toContain('Change your account settings to display this media.')
+        expect(html).not.toContain('>Load 18+ media<')
         expect(html).not.toContain('data-nsfw-hidden="true"')
         expect(html).toContain('width="900"')
         expect(html).toContain('height="600"')
+    })
+
+    it('renders deferred alternate tab media from the NSFW variant when the current user enabled NSFW media', async () => {
+        const response = await getAppPath('/u/demo/RAZETH', createProfilePageDb({
+            currentUser: {
+                ...createCurrentUserRecord('viewer'),
+                display_nsfw_media: 1,
+            },
+            profileUser: {
+                id: 'profile-user',
+                username: 'demo',
+                profile_photo_key: null,
+                bio: '',
+            },
+            characterSettings: {
+                id: 'character-1',
+                user_id: 'profile-user',
+                name: 'RAZETH',
+                profile_image_key: 'character-profile-key',
+                description: '',
+                gallery_fullsize_last_row: 0,
+            },
+            characterMedia: [
+                {
+                    id: 'sfw-media',
+                    sfw_image_key: 'sfw-only-key',
+                    nsfw_image_key: null,
+                    sfw_preview_image_key: 'sfw-only-preview-key',
+                    nsfw_preview_image_key: null,
+                    sfw_artist: 'SFW Artist',
+                    nsfw_artist: '',
+                    sfw_width: 640,
+                    sfw_height: 480,
+                    sfw_preview_width: 640,
+                    sfw_preview_height: 480,
+                    nsfw_width: null,
+                    nsfw_height: null,
+                    nsfw_preview_width: null,
+                    nsfw_preview_height: null,
+                },
+                {
+                    id: 'both-media',
+                    sfw_image_key: 'both-sfw-key',
+                    nsfw_image_key: 'both-nsfw-key',
+                    sfw_preview_image_key: 'both-sfw-preview-key',
+                    nsfw_preview_image_key: 'both-nsfw-preview-key',
+                    nsfw_blur_image_key: 'both-nsfw-blur-key',
+                    sfw_artist: 'Both SFW Artist',
+                    nsfw_artist: 'Both NSFW Artist',
+                    sfw_width: 800,
+                    sfw_height: 600,
+                    sfw_preview_width: 800,
+                    sfw_preview_height: 600,
+                    nsfw_width: 900,
+                    nsfw_height: 600,
+                    nsfw_preview_width: 900,
+                    nsfw_preview_height: 600,
+                },
+            ],
+            galleryTabs: [
+                {
+                    id: 'tab-default',
+                    name: 'default',
+                    sort_order: 0,
+                },
+                {
+                    id: 'tab-reference',
+                    name: 'references',
+                    sort_order: 1,
+                },
+            ],
+            galleryRows: [
+                {
+                    row_id: 'row-1',
+                    tab_id: 'tab-default',
+                    row_sort_order: 0,
+                    media_id: 'sfw-media',
+                    media_sort_order: 0,
+                },
+                {
+                    row_id: 'row-2',
+                    tab_id: 'tab-reference',
+                    row_sort_order: 0,
+                    media_id: 'both-media',
+                    media_sort_order: 0,
+                },
+            ],
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('data-display-nsfw-media="true"')
+        expect(html).toContain('data-deferred-src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/preview/both-nsfw-preview-key.webp"')
+        expect(html).toContain('data-deferred-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/both-nsfw-key.png"')
+        expect(html).toContain('data-safe-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"')
+        expect(html).not.toContain('data-deferred-src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/preview/both-sfw-preview-key.webp"')
+        expect(html).not.toContain('data-deferred-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"')
     })
 
     it('renders a profile from live user, social link, folder, and character data', async () => {
