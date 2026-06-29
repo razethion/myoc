@@ -1975,6 +1975,7 @@ async function getCharacterSettingsMedia(
                 nsfw_image_key,
                 sfw_preview_image_key,
                 nsfw_preview_image_key,
+                nsfw_blur_image_key,
                 sfw_content_type,
                 nsfw_content_type,
                 sfw_artist,
@@ -1999,6 +2000,7 @@ async function getCharacterSettingsMedia(
             nsfw_image_key: string | null
             sfw_preview_image_key: string | null
             nsfw_preview_image_key: string | null
+            nsfw_blur_image_key: string | null
             sfw_content_type: string | null
             nsfw_content_type: string | null
             sfw_artist: string
@@ -2019,6 +2021,7 @@ async function getCharacterSettingsMedia(
         nsfwImageKey: media.nsfw_image_key,
         sfwPreviewImageKey: media.sfw_preview_image_key ?? null,
         nsfwPreviewImageKey: media.nsfw_preview_image_key ?? null,
+        nsfwBlurImageKey: media.nsfw_blur_image_key ?? null,
         sfwContentType: media.sfw_content_type ?? (media.sfw_image_key ? 'image/png' : null),
         nsfwContentType: media.nsfw_content_type ?? (media.nsfw_image_key ? 'image/png' : null),
         sfwArtist: media.sfw_artist,

@@ -6,7 +6,11 @@
       <synchronize>true</synchronize>
       <jdbc-driver>org.sqlite.JDBC</jdbc-driver>
       <jdbc-url>jdbc:sqlite:.wrangler/state/v3/d1/miniflare-D1DatabaseObject/3fc672244445fed61cfd67252cd660d608b724c785c78925c5419a278e3a94fc.sqlite</jdbc-url>
+      <jdbc-additional-properties>
+        <property name="auto-refresh-interval" value="1" />
+      </jdbc-additional-properties>
       <working-dir>$ProjectFileDir$</working-dir>
+      <keep-alive enable="true" />
     </data-source>
   </component>
 </project>

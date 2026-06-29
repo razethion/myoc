@@ -2,6 +2,7 @@ import {describe, expect, it, vi} from 'vitest'
 import {apiRoutes} from '../api'
 import {createCsrfToken} from '../../lib/auth/session'
 import {createMockDb} from '../../test/mockD1'
+import {createMockImagesBinding} from '../../test/mockImages'
 import {createMockR2Bucket} from '../../test/mockR2'
 import {
     createGifFile,
@@ -48,6 +49,7 @@ type FolderResponse = {
 
 type CharacterRequestOptions = TestRequestOptions & {
     mediaBucket?: R2Bucket
+    imagesBinding?: ImagesBinding
 }
 
 type ChunkedSfwInitBody = {
@@ -61,10 +63,11 @@ type ChunkedSfwInitBody = {
     }
 }
 
-function requestEnv(db: D1Database, mediaBucket?: R2Bucket) {
+function requestEnv(db: D1Database, mediaBucket?: R2Bucket, imagesBinding = createMockImagesBinding()) {
     return {
         DB: db,
         MEDIA_BUCKET: mediaBucket ?? createMockR2Bucket(),
+        IMAGES: imagesBinding,
         MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
     }
 }
@@ -132,7 +135,7 @@ async function postCharacter(
         method: 'POST',
         body: body instanceof FormData || typeof body === 'string' ? body : JSON.stringify(body),
         headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket))
+    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
 }
 
 async function postFolder(
@@ -144,7 +147,7 @@ async function postFolder(
         method: 'POST',
         body: typeof body === 'string' ? body : JSON.stringify(body),
         headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket))
+    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
 }
 
 async function postTree(
@@ -156,7 +159,7 @@ async function postTree(
         method: 'POST',
         body: typeof body === 'string' ? body : JSON.stringify(body),
         headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket))
+    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
 }
 
 async function initChunkedMedia(
@@ -169,7 +172,7 @@ async function initChunkedMedia(
         method: 'POST',
         body: JSON.stringify(body),
         headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket))
+    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
 }
 
 async function putChunkedMediaPart(
@@ -191,7 +194,7 @@ async function putChunkedMediaPart(
             body,
             headers: createRequestHeaders(body, options, false),
         },
-        requestEnv(db, options.mediaBucket),
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
     )
 }
 
@@ -205,7 +208,7 @@ async function completeChunkedMedia(
         method: 'POST',
         body: JSON.stringify(body),
         headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket))
+    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
 }
 
 async function completeToyhouseImportItem(
@@ -218,7 +221,7 @@ async function completeToyhouseImportItem(
         method: 'POST',
         body: JSON.stringify(body),
         headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket))
+    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
 }
 
 async function failToyhouseImportItem(
@@ -231,7 +234,7 @@ async function failToyhouseImportItem(
         method: 'POST',
         body: JSON.stringify(body),
         headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket))
+    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
 }
 
 async function postProfileImage(
@@ -244,7 +247,7 @@ async function postProfileImage(
         method: 'POST',
         body,
         headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket))
+    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
 }
 
 async function patchCharacter(
@@ -257,7 +260,7 @@ async function patchCharacter(
         method: 'PATCH',
         body: JSON.stringify(body),
         headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket))
+    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
 }
 
 async function putGallery(
@@ -270,7 +273,7 @@ async function putGallery(
         method: 'PUT',
         body: JSON.stringify(body),
         headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket))
+    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
 }
 
 async function deleteCharacter(
@@ -283,7 +286,7 @@ async function deleteCharacter(
         method: 'DELETE',
         body: typeof body === 'string' ? body : JSON.stringify(body),
         headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket))
+    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
 }
 
 async function deleteFolder(
@@ -294,7 +297,7 @@ async function deleteFolder(
     return apiRoutes.request(`https://example.com/characters/folders/${folderId}`, {
         method: 'DELETE',
         headers: createRequestHeaders(undefined, options, false),
-    }, requestEnv(db, options.mediaBucket))
+    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
 }
 
 describe('POST /characters/tree', () => {
@@ -1408,6 +1411,97 @@ describe('character media uploads', () => {
         expect(boundStatements.at(-1)?.binds[12]).toBe(body.media.sfwPreviewImageKey)
         expect(boundStatements.at(-1)?.binds[13]).toBe(1600)
         expect(boundStatements.at(-1)?.binds[14]).toBe(1600)
+    })
+
+    it('generates and stores blurred variants for NSFW gallery previews', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const imagesBinding = createMockImagesBinding()
+        const character = createCharacterRecord()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character, currentUserRecord, character, currentUserRecord, character],
+        })
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await initChunkedMedia(character.id, {
+            ratings: ['nsfw'],
+        }, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+        const initBody = await initResponse.json() as {
+            mediaId: string
+            uploads: {
+                nsfw: {
+                    uploadId: string
+                    imageKey: string
+                    contentType: string
+                }
+            }
+        }
+
+        const pngFile = createPngFile(800, 600)
+        const partResponse = await putChunkedMediaPart(
+            character.id,
+            initBody.mediaId,
+            'nsfw',
+            initBody.uploads.nsfw.uploadId,
+            1,
+            initBody.uploads.nsfw.imageKey,
+            pngFile,
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
+        const uploadedPart = await partResponse.json() as R2UploadedPart
+
+        const completeResponse = await completeChunkedMedia(character.id, {
+            mediaId: initBody.mediaId,
+            nsfwUpload: {
+                uploadId: initBody.uploads.nsfw.uploadId,
+                imageKey: initBody.uploads.nsfw.imageKey,
+                contentType: 'image/png',
+                width: 800,
+                height: 600,
+                parts: [uploadedPart],
+            },
+            nsfwPreview: createPreviewPayload(800, 600),
+        }, db, {
+            imagesBinding,
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+
+        expect(completeResponse.status).toBe(201)
+        const body = await completeResponse.json() as {
+            media: {
+                nsfwBlurImageKey: string
+                nsfwBlurImageUrl: string
+            }
+        }
+        expect(body.media.nsfwBlurImageKey).toMatch(new RegExp(`^${uuidPattern}$`))
+        expect(body.media.nsfwBlurImageUrl).toBe(`${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/nsfw/blur/${body.media.nsfwBlurImageKey}.webp`)
+        expect(imagesBinding.input).toHaveBeenCalledTimes(1)
+        const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
+        expect(imageTransformer.transform).toHaveBeenNthCalledWith(1, {width: 960, fit: 'scale-down'})
+        expect(imageTransformer.transform).toHaveBeenNthCalledWith(2, {blur: 250})
+        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 85})
+        expect(mediaBucket.put).toHaveBeenCalledWith(
+            `characters/current-user/character-id/media/${initBody.mediaId}/nsfw/blur/${body.media.nsfwBlurImageKey}.webp`,
+            expect.any(Uint8Array),
+            {
+                httpMetadata: {
+                    cacheControl: 'public, max-age=31536000, immutable',
+                    contentType: 'image/webp',
+                },
+            },
+        )
+        expect(boundStatements.at(-1)?.binds[23]).toBe(body.media.nsfwBlurImageKey)
     })
 
     it('rejects chunked gallery media when declared original dimensions do not match the stored image', async () => {

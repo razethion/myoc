@@ -1,4 +1,4 @@
-export const APP_VERSION = '2026.06.28.01'
+export const APP_VERSION = '2026.06.29.01'
 
 export type ReleaseNote = {
     version: string
@@ -10,12 +10,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
     {
-        version: '2026.06.28.01',
-        releasedOn: 'June 28, 2026',
-        title: 'More QOL updates',
-        summary: 'Even more changes to site usability for better UX!',
+        version: '2026.06.29.01',
+        releasedOn: 'June 29, 2026',
+        title: 'Image gallery improvements',
+        summary: 'Fixed some bugs!',
         changes: [
-            'Added more usability improvements across the site.',
+            'Blurs are images now, instead of client rendered for better performance.',
+            'Improve the fullres media loader and fixed some bugs with it.',
         ],
     },
     {

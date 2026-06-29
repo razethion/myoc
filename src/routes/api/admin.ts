@@ -8,6 +8,7 @@ import {
 import {toSqlTimestamp} from '../../lib/auth/session'
 import {
     characterMediaImageObjectKey,
+    characterMediaNsfwBlurImageObjectKey,
     characterMediaPreviewImageObjectKey,
     characterProfileImageObjectKey,
     profilePhotoObjectKey,
@@ -16,6 +17,12 @@ import {getAdminReportsData} from '../../lib/admin/reports'
 import type {Bindings} from '../../types/bindings'
 
 export const adminRoutes = new Hono<{ Bindings: Bindings }>()
+
+const GALLERY_IMAGE_CACHE_CONTROL = 'public, max-age=31536000, immutable'
+const GALLERY_PREVIEW_CONTENT_TYPE = 'image/webp'
+const GALLERY_NSFW_BLUR_MAX_WIDTH = 960
+const GALLERY_NSFW_BLUR_AMOUNT = 250
+const GALLERY_NSFW_BLUR_QUALITY = 85
 
 type AdminRouteContext = Context<{ Bindings: Bindings }>
 
@@ -45,6 +52,7 @@ type ModerationMediaRow = {
     sfw_preview_height?: number | null
     sfw_preview_byte_size?: number | null
     nsfw_preview_image_key?: string | null
+    nsfw_blur_image_key?: string | null
     nsfw_preview_width?: number | null
     nsfw_preview_height?: number | null
     nsfw_preview_byte_size?: number | null
@@ -77,6 +85,7 @@ type MediaCleanupRow = {
     nsfw_content_type: string | null
     sfw_preview_image_key?: string | null
     nsfw_preview_image_key?: string | null
+    nsfw_blur_image_key?: string | null
 }
 
 type MediaVariantMove = {
@@ -85,18 +94,23 @@ type MediaVariantMove = {
     contentType: string | null
 }
 
+type MediaBlurGeneration = {
+    sourceObjectKey: string
+    targetObjectKey: string
+}
+
 type MediaReviewUpdate = {
     sql: string
     binds: unknown[]
     moves: MediaVariantMove[]
+    blurGeneration: MediaBlurGeneration | null
+    deletedObjectKeys: string[]
     events: Array<{
         rating: 'sfw' | 'nsfw'
         action: ImageApprovalAction
         homepageAllowed: boolean
     }>
 }
-
-const GALLERY_IMAGE_CACHE_CONTROL = 'public, max-age=31536000, immutable'
 
 adminRoutes.get('/', async (c) => {
     const authorization = await requireAdminApiUser(c)
@@ -177,6 +191,11 @@ adminRoutes.post('/image-approvals/:mediaId', async (c) => {
             copiedObjectKeys.push(move.targetObjectKey)
         }
 
+        if (update.blurGeneration) {
+            await putNsfwBlurImage(c.env.IMAGES, c.env.MEDIA_BUCKET, update.blurGeneration.sourceObjectKey, update.blurGeneration.targetObjectKey)
+            copiedObjectKeys.push(update.blurGeneration.targetObjectKey)
+        }
+
         await c.env.DB.batch([
             c.env.DB.prepare(update.sql).bind(...update.binds),
             ...update.events.map((event) => c.env.DB.prepare(
@@ -205,6 +224,8 @@ adminRoutes.post('/image-approvals/:mediaId', async (c) => {
             console.warn('Unable to delete moved moderation object', error)
         }
     }
+
+    await deleteR2Objects(c.env.MEDIA_BUCKET, update.deletedObjectKeys)
 
     return c.json(await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL))
 })
@@ -274,6 +295,7 @@ async function getModerationMedia(db: D1Database, mediaId: string): Promise<Mode
                 sfw_preview_height,
                 sfw_preview_byte_size,
                 nsfw_preview_image_key,
+                nsfw_blur_image_key,
                 nsfw_preview_width,
                 nsfw_preview_height,
                 nsfw_preview_byte_size
@@ -307,6 +329,7 @@ async function getReportMedia(db: D1Database, mediaId: string): Promise<ReportMe
                 character_media.sfw_preview_height,
                 character_media.sfw_preview_byte_size,
                 character_media.nsfw_preview_image_key,
+                character_media.nsfw_blur_image_key,
                 character_media.nsfw_preview_width,
                 character_media.nsfw_preview_height,
                 character_media.nsfw_preview_byte_size,
@@ -367,6 +390,7 @@ async function deleteReportedImage(
 ): Promise<void> {
     const objectKey = reportedImageObjectKey(media, rating)
     const previewObjectKey = reportedPreviewObjectKey(media, rating)
+    const blurObjectKey = reportedBlurObjectKey(media, rating)
     const otherImageKey = rating === 'sfw' ? media.nsfw_image_key : media.sfw_image_key
 
     if (otherImageKey) {
@@ -398,7 +422,8 @@ async function deleteReportedImage(
                      nsfw_height = NULL,
                      nsfw_byte_size = NULL,
                      nsfw_preview_image_key = NULL,
-                     nsfw_preview_width = NULL,
+                     nsfw_blur_image_key    = NULL,
+                     nsfw_preview_width     = NULL,
                      nsfw_preview_height = NULL,
                      nsfw_preview_byte_size = NULL,
                      nsfw_review_status = 'pending',
@@ -416,7 +441,7 @@ async function deleteReportedImage(
         ])
     }
 
-    await deleteR2Objects(bucket, [objectKey, previewObjectKey].filter((key): key is string => Boolean(key)))
+    await deleteR2Objects(bucket, [objectKey, previewObjectKey, blurObjectKey].filter((key): key is string => Boolean(key)))
 }
 
 async function deleteReportedCharacter(db: D1Database, bucket: R2Bucket, media: ReportMediaRow): Promise<void> {
@@ -514,6 +539,8 @@ function buildMediaReviewUpdate(
 
     const events: MediaReviewUpdate['events'] = []
     const moves: MediaVariantMove[] = []
+    let blurGeneration: MediaBlurGeneration | null = null
+    const deletedObjectKeys: string[] = []
 
     let sfwImageKey = media.sfw_image_key
     let nsfwImageKey = media.nsfw_image_key
@@ -532,6 +559,7 @@ function buildMediaReviewUpdate(
     let nsfwHeight = media.nsfw_height
     let nsfwByteSize = media.nsfw_byte_size
     let nsfwPreviewImageKey = media.nsfw_preview_image_key ?? null
+    let nsfwBlurImageKey = media.nsfw_blur_image_key ?? null
     let nsfwPreviewWidth = media.nsfw_preview_width ?? null
     let nsfwPreviewHeight = media.nsfw_preview_height ?? null
     let nsfwPreviewByteSize = media.nsfw_preview_byte_size ?? null
@@ -563,6 +591,11 @@ function buildMediaReviewUpdate(
         const previewMove = createPreviewMove(media, 'sfw', 'nsfw')
         if (previewMove) {
             moves.push(previewMove)
+            nsfwBlurImageKey = crypto.randomUUID()
+            blurGeneration = {
+                sourceObjectKey: previewMove.targetObjectKey,
+                targetObjectKey: characterMediaNsfwBlurImageObjectKey(media.user_id, media.character_id, media.id, nsfwBlurImageKey),
+            }
         }
         nsfwImageKey = media.sfw_image_key
         nsfwContentType = media.sfw_content_type
@@ -621,6 +654,9 @@ function buildMediaReviewUpdate(
         sfwPreviewWidth = media.nsfw_preview_width ?? null
         sfwPreviewHeight = media.nsfw_preview_height ?? null
         sfwPreviewByteSize = media.nsfw_preview_byte_size ?? null
+        if (media.nsfw_blur_image_key) {
+            deletedObjectKeys.push(characterMediaNsfwBlurImageObjectKey(media.user_id, media.character_id, media.id, media.nsfw_blur_image_key))
+        }
         sfwReviewStatus = 'approved'
         sfwReviewedAt = now
         sfwApprovedAt = now
@@ -632,6 +668,7 @@ function buildMediaReviewUpdate(
         nsfwHeight = null
         nsfwByteSize = null
         nsfwPreviewImageKey = null
+        nsfwBlurImageKey = null
         nsfwPreviewWidth = null
         nsfwPreviewHeight = null
         nsfwPreviewByteSize = null
@@ -659,13 +696,14 @@ function buildMediaReviewUpdate(
                      nsfw_preview_width     = ?,
                      nsfw_preview_height    = ?,
                      nsfw_preview_byte_size = ?,
-                     sfw_review_status    = CASE WHEN ? THEN ? ELSE sfw_review_status END,
+                     sfw_review_status      = CASE WHEN ? THEN ? ELSE sfw_review_status END,
                      sfw_reviewed_at      = CASE WHEN ? THEN ? ELSE sfw_reviewed_at END,
                      sfw_approved_at      = CASE WHEN ? THEN ? ELSE sfw_approved_at END,
                      sfw_homepage_allowed = CASE WHEN ? THEN ? ELSE sfw_homepage_allowed END,
-                     nsfw_review_status   = CASE WHEN ? THEN ? ELSE nsfw_review_status END,
-                     nsfw_reviewed_at     = CASE WHEN ? THEN ? ELSE nsfw_reviewed_at END,
-                     nsfw_approved_at     = CASE WHEN ? THEN ? ELSE nsfw_approved_at END
+                     nsfw_review_status     = CASE WHEN ? THEN ? ELSE nsfw_review_status END,
+                     nsfw_reviewed_at       = CASE WHEN ? THEN ? ELSE nsfw_reviewed_at END,
+                     nsfw_approved_at       = CASE WHEN ? THEN ? ELSE nsfw_approved_at END,
+                     nsfw_blur_image_key    = ?
                  WHERE id = ?`
     const updateSfw = Boolean(sfwAction) || nsfwAction === 'mark_sfw_homepage' || nsfwAction === 'mark_sfw_no_homepage'
     const updateNsfw = Boolean(nsfwAction) || sfwAction === 'mark_nsfw'
@@ -704,10 +742,11 @@ function buildMediaReviewUpdate(
         nsfwReviewedAt,
         updateNsfw ? 1 : 0,
         nsfwApprovedAt,
+        nsfwBlurImageKey,
         media.id,
     ]
 
-    return {sql, binds, moves, events}
+    return {sql, binds, moves, blurGeneration, deletedObjectKeys, events}
 }
 
 function isSfwAction(action: ImageApprovalAction): boolean {
@@ -757,6 +796,35 @@ function createPreviewMove(
     }
 }
 
+async function putNsfwBlurImage(
+    images: ImagesBinding,
+    bucket: R2Bucket,
+    sourceObjectKey: string,
+    targetObjectKey: string,
+): Promise<void> {
+    const source = await bucket.get(sourceObjectKey)
+
+    if (!source?.body) {
+        throw new Error(`Unable to generate NSFW blur image because preview object is missing: ${sourceObjectKey}`)
+    }
+
+    const result = await images
+        .input(source.body)
+        .transform({width: GALLERY_NSFW_BLUR_MAX_WIDTH, fit: 'scale-down'})
+        .transform({blur: GALLERY_NSFW_BLUR_AMOUNT})
+        .output({format: GALLERY_PREVIEW_CONTENT_TYPE, quality: GALLERY_NSFW_BLUR_QUALITY})
+    const response = result.response()
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    const contentType = response.headers.get('content-type') ?? GALLERY_PREVIEW_CONTENT_TYPE
+
+    await bucket.put(targetObjectKey, bytes, {
+        httpMetadata: {
+            cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
+            contentType,
+        },
+    })
+}
+
 function normalizeReportRating(value: string): 'sfw' | 'nsfw' | null {
     return value === 'sfw' || value === 'nsfw' ? value : null
 }
@@ -802,6 +870,12 @@ function reportedPreviewObjectKey(media: ReportMediaRow, rating: 'sfw' | 'nsfw')
         : null
 }
 
+function reportedBlurObjectKey(media: ReportMediaRow, rating: 'sfw' | 'nsfw'): string | null {
+    return rating === 'nsfw' && media.nsfw_blur_image_key
+        ? characterMediaNsfwBlurImageObjectKey(media.user_id, media.character_id, media.id, media.nsfw_blur_image_key)
+        : null
+}
+
 function createReportEventStatement(
     db: D1Database,
     mediaId: string,
@@ -828,6 +902,7 @@ async function getCharacterMediaForCleanup(db: D1Database, characterId: string):
                 sfw_content_type,
                 nsfw_content_type,
                 sfw_preview_image_key,
+                nsfw_blur_image_key,
                 nsfw_preview_image_key
          FROM character_media
          WHERE character_id = ?`,
@@ -867,7 +942,9 @@ async function getUserCharactersForCleanup(db: D1Database, userId: string): Prom
 async function getUserMediaForCleanup(db: D1Database, userId: string): Promise<MediaCleanupRow[]> {
     const result = await db.prepare(
         `SELECT id, user_id, character_id, sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type,
-                sfw_preview_image_key, nsfw_preview_image_key
+                sfw_preview_image_key,
+                nsfw_preview_image_key,
+                nsfw_blur_image_key
          FROM character_media
          WHERE user_id = ?`,
     )
@@ -901,6 +978,10 @@ function characterObjectKeys(characters: CharacterCleanupRow[], mediaRows: Media
 
         if (media.nsfw_preview_image_key) {
             objectKeys.push(characterMediaPreviewImageObjectKey(media.user_id, media.character_id, media.id, media.nsfw_preview_image_key, 'nsfw'))
+        }
+
+        if (media.nsfw_blur_image_key) {
+            objectKeys.push(characterMediaNsfwBlurImageObjectKey(media.user_id, media.character_id, media.id, media.nsfw_blur_image_key))
         }
     }
 

@@ -7,6 +7,8 @@ import {
     characterHeightChartImageUrl,
     characterMediaImageObjectKey,
     characterMediaImageUrl,
+    characterMediaNsfwBlurImageObjectKey,
+    characterMediaNsfwBlurImageUrl,
     characterMediaPreviewImageObjectKey,
     characterMediaPreviewImageUrl,
     characterProfileImageObjectKey,
@@ -172,6 +174,7 @@ type CharacterMediaRecord = {
     sfw_preview_height: number | null
     sfw_preview_byte_size: number | null
     nsfw_preview_image_key: string | null
+    nsfw_blur_image_key: string | null
     nsfw_preview_width: number | null
     nsfw_preview_height: number | null
     nsfw_preview_byte_size: number | null
@@ -232,6 +235,9 @@ const GALLERY_PREVIEW_MAX_CONTAINER_OVERHEAD_BYTES = 4096
 const GALLERY_PREVIEW_MAX_BYTES = (GALLERY_PREVIEW_MAX_PIXELS * GALLERY_PREVIEW_MAX_BYTES_PER_PIXEL) + GALLERY_PREVIEW_MAX_CONTAINER_OVERHEAD_BYTES
 const GALLERY_PREVIEW_DIMENSION_TOLERANCE = 1
 const GALLERY_IMAGE_DIMENSION_PROBE_BYTES = 1024 * 1024
+const GALLERY_NSFW_BLUR_MAX_WIDTH = 960
+const GALLERY_NSFW_BLUR_AMOUNT = 250
+const GALLERY_NSFW_BLUR_QUALITY = 85
 const HEIGHT_CHART_JSON_MAX_LENGTH = 2048
 const HEIGHT_CHART_MIN_METERS = 0.01
 const HEIGHT_CHART_MAX_METERS = 100
@@ -492,7 +498,8 @@ characterRoutes.post('/', async (c) => {
 
     try {
         await c.env.DB.prepare(
-            `INSERT INTO characters (id, user_id, name, profile_image_key, folder_id, sort_order, created_at, updated_at)
+            `INSERT INTO characters (id, user_id, name, profile_image_key, folder_id, sort_order, created_at,
+                                     updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
             .bind(
@@ -948,7 +955,7 @@ characterRoutes.post('/toyhouse-import-items/:itemId/complete', async (c) => {
         await c.env.DB.prepare(
             `UPDATE toyhouse_import_items
              SET status = ?,
-                 error = '',
+                 error  = '',
                  updated_at = ?
              WHERE id = ?
                AND user_id = ?`,
@@ -960,6 +967,9 @@ characterRoutes.post('/toyhouse-import-items/:itemId/complete', async (c) => {
         completedKeys.push(characterMediaImageObjectKey(currentUser.id, item.character_id, mediaId.value, completedImage.imageKey, item.rating, completedImage.contentType))
         assertPreviewMatchesOriginal(preview, completedImage, `${item.rating.toUpperCase()} preview`)
         const completedPreview = await putMediaPreviewImage(c.env.MEDIA_BUCKET, currentUser.id, item.character_id, mediaId.value, preview, item.rating, completedKeys)
+        const nsfwBlurImageKey = item.rating === 'nsfw'
+            ? await putNsfwBlurImage(c.env.IMAGES, c.env.MEDIA_BUCKET, currentUser.id, item.character_id, mediaId.value, preview, completedKeys)
+            : null
 
         const media: CharacterMediaRecord = {
             id: mediaId.value,
@@ -982,6 +992,7 @@ characterRoutes.post('/toyhouse-import-items/:itemId/complete', async (c) => {
             sfw_preview_height: item.rating === 'sfw' ? completedPreview.height : null,
             sfw_preview_byte_size: item.rating === 'sfw' ? completedPreview.byteSize : null,
             nsfw_preview_image_key: item.rating === 'nsfw' ? completedPreview.imageKey : null,
+            nsfw_blur_image_key: nsfwBlurImageKey,
             nsfw_preview_width: item.rating === 'nsfw' ? completedPreview.width : null,
             nsfw_preview_height: item.rating === 'nsfw' ? completedPreview.height : null,
             nsfw_preview_byte_size: item.rating === 'nsfw' ? completedPreview.byteSize : null,
@@ -991,14 +1002,16 @@ characterRoutes.post('/toyhouse-import-items/:itemId/complete', async (c) => {
 
         await c.env.DB.batch([
             c.env.DB.prepare(
-                `INSERT INTO character_media (
-                     id, user_id, character_id,
-                     sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type, sfw_artist, nsfw_artist,
-                     sfw_width, sfw_height, sfw_byte_size, sfw_preview_image_key, sfw_preview_width, sfw_preview_height, sfw_preview_byte_size,
-                     nsfw_width, nsfw_height, nsfw_byte_size, nsfw_preview_image_key, nsfw_preview_width, nsfw_preview_height, nsfw_preview_byte_size,
-                     created_at, updated_at
-                 )
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                `INSERT INTO character_media (id, user_id, character_id,
+                                              sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type,
+                                              sfw_artist, nsfw_artist,
+                                              sfw_width, sfw_height, sfw_byte_size, sfw_preview_image_key,
+                                              sfw_preview_width, sfw_preview_height, sfw_preview_byte_size,
+                                              nsfw_width, nsfw_height, nsfw_byte_size, nsfw_preview_image_key,
+                                              nsfw_preview_width, nsfw_preview_height, nsfw_preview_byte_size,
+                                              nsfw_blur_image_key,
+                                              created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             )
                 .bind(
                     media.id,
@@ -1024,14 +1037,15 @@ characterRoutes.post('/toyhouse-import-items/:itemId/complete', async (c) => {
                     media.nsfw_preview_width,
                     media.nsfw_preview_height,
                     media.nsfw_preview_byte_size,
+                    media.nsfw_blur_image_key,
                     media.created_at,
                     media.updated_at,
                 ),
             c.env.DB.prepare(
                 `UPDATE toyhouse_import_items
-                 SET status = ?,
+                 SET status   = ?,
                      media_id = ?,
-                     error = '',
+                     error    = '',
                      updated_at = ?
                  WHERE id = ?
                    AND user_id = ?`,
@@ -1104,6 +1118,7 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
         let nsfwImage: CompletedGalleryUpload | null = null
         let sfwPreviewImage: CompletedGalleryPreview | null = null
         let nsfwPreviewImage: CompletedGalleryPreview | null = null
+        let nsfwBlurImageKey: string | null = null
 
         if (sfwUpload && !('error' in sfwUpload)) {
             sfwImage = await completeChunkedGalleryUpload(c.env.MEDIA_BUCKET, currentUser.id, character.id, mediaId.value, sfwUpload, 'sfw', 'SFW image')
@@ -1117,6 +1132,7 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
             completedKeys.push(characterMediaImageObjectKey(currentUser.id, character.id, mediaId.value, nsfwImage.imageKey, 'nsfw', nsfwImage.contentType))
             assertPreviewMatchesOriginal(nsfwPreview as ParsedPreviewImage, nsfwImage, 'NSFW preview')
             nsfwPreviewImage = await putMediaPreviewImage(c.env.MEDIA_BUCKET, currentUser.id, character.id, mediaId.value, nsfwPreview as ParsedPreviewImage, 'nsfw', completedKeys)
+            nsfwBlurImageKey = await putNsfwBlurImage(c.env.IMAGES, c.env.MEDIA_BUCKET, currentUser.id, character.id, mediaId.value, nsfwPreview as ParsedPreviewImage, completedKeys)
         }
 
         const now = toSqlTimestamp(new Date())
@@ -1141,6 +1157,7 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
             sfw_preview_height: sfwPreviewImage?.height ?? null,
             sfw_preview_byte_size: sfwPreviewImage?.byteSize ?? null,
             nsfw_preview_image_key: nsfwPreviewImage?.imageKey ?? null,
+            nsfw_blur_image_key: nsfwBlurImageKey,
             nsfw_preview_width: nsfwPreviewImage?.width ?? null,
             nsfw_preview_height: nsfwPreviewImage?.height ?? null,
             nsfw_preview_byte_size: nsfwPreviewImage?.byteSize ?? null,
@@ -1149,14 +1166,16 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
         }
 
         await c.env.DB.prepare(
-            `INSERT INTO character_media (
-                 id, user_id, character_id,
-                 sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type, sfw_artist, nsfw_artist,
-                 sfw_width, sfw_height, sfw_byte_size, sfw_preview_image_key, sfw_preview_width, sfw_preview_height, sfw_preview_byte_size,
-                 nsfw_width, nsfw_height, nsfw_byte_size, nsfw_preview_image_key, nsfw_preview_width, nsfw_preview_height, nsfw_preview_byte_size,
-                 created_at, updated_at
-             )
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO character_media (id, user_id, character_id,
+                                          sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type,
+                                          sfw_artist, nsfw_artist,
+                                          sfw_width, sfw_height, sfw_byte_size, sfw_preview_image_key,
+                                          sfw_preview_width, sfw_preview_height, sfw_preview_byte_size,
+                                          nsfw_width, nsfw_height, nsfw_byte_size, nsfw_preview_image_key,
+                                          nsfw_preview_width, nsfw_preview_height, nsfw_preview_byte_size,
+                                          nsfw_blur_image_key,
+                                          created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
             .bind(
                 media.id,
@@ -1182,6 +1201,7 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
                 media.nsfw_preview_width,
                 media.nsfw_preview_height,
                 media.nsfw_preview_byte_size,
+                media.nsfw_blur_image_key,
                 media.created_at,
                 media.updated_at,
             )
@@ -1274,11 +1294,11 @@ characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
         applyMediaVariantRemovals(currentUser.id, character.id, media, nextMedia, removeSfw, removeNsfw, deletedKeys)
 
         if (sfwUpload) {
-            await replaceMediaVariantWithChunkedUpload(c.env.MEDIA_BUCKET, currentUser.id, character.id, media, nextMedia, sfwUpload, sfwPreview as ParsedPreviewImage, 'sfw', uploadedKeys, deletedKeys)
+            await replaceMediaVariantWithChunkedUpload(c.env.IMAGES, c.env.MEDIA_BUCKET, currentUser.id, character.id, media, nextMedia, sfwUpload, sfwPreview as ParsedPreviewImage, 'sfw', uploadedKeys, deletedKeys)
         }
 
         if (nsfwUpload) {
-            await replaceMediaVariantWithChunkedUpload(c.env.MEDIA_BUCKET, currentUser.id, character.id, media, nextMedia, nsfwUpload, nsfwPreview as ParsedPreviewImage, 'nsfw', uploadedKeys, deletedKeys)
+            await replaceMediaVariantWithChunkedUpload(c.env.IMAGES, c.env.MEDIA_BUCKET, currentUser.id, character.id, media, nextMedia, nsfwUpload, nsfwPreview as ParsedPreviewImage, 'nsfw', uploadedKeys, deletedKeys)
         }
 
         await updateCharacterMediaRecord(c.env.DB, nextMedia, {
@@ -1309,7 +1329,8 @@ characterRoutes.delete('/:id/media/:mediaId', async (c) => {
     const {currentUser, character, media} = owned
 
     await c.env.DB.prepare(
-        `DELETE FROM character_media
+        `DELETE
+         FROM character_media
          WHERE id = ?
            AND character_id = ?
            AND user_id = ?`,
@@ -1367,7 +1388,8 @@ characterRoutes.put('/:id/gallery', async (c) => {
                AND user_id = ?`,
         ).bind(parsed.fullsizeLastRow ? 1 : 0, now, character.id, currentUser.id),
         c.env.DB.prepare(
-            `DELETE FROM character_gallery_tabs
+            `DELETE
+             FROM character_gallery_tabs
              WHERE character_id = ?
                AND user_id = ?`,
         ).bind(character.id, currentUser.id),
@@ -1548,11 +1570,15 @@ function toPublicMedia(baseUrl: string, media: CharacterMediaRecord) {
             : null,
         sfwPreviewImageKey: media.sfw_preview_image_key,
         nsfwPreviewImageKey: media.nsfw_preview_image_key,
+        nsfwBlurImageKey: media.nsfw_blur_image_key,
         sfwPreviewImageUrl: media.sfw_preview_image_key
             ? characterMediaPreviewImageUrl(baseUrl, media.user_id, media.character_id, media.id, media.sfw_preview_image_key, 'sfw')
             : null,
         nsfwPreviewImageUrl: media.nsfw_preview_image_key
             ? characterMediaPreviewImageUrl(baseUrl, media.user_id, media.character_id, media.id, media.nsfw_preview_image_key, 'nsfw')
+            : null,
+        nsfwBlurImageUrl: media.nsfw_blur_image_key
+            ? characterMediaNsfwBlurImageUrl(baseUrl, media.user_id, media.character_id, media.id, media.nsfw_blur_image_key)
             : null,
         sfwArtist: media.sfw_artist,
         nsfwArtist: media.nsfw_artist,
@@ -1583,34 +1609,35 @@ async function updateCharacterMediaRecord(
 ): Promise<void> {
     await db.prepare(
         `UPDATE character_media
-         SET sfw_image_key        = ?,
-             nsfw_image_key       = ?,
-             sfw_content_type     = ?,
-             nsfw_content_type    = ?,
-             sfw_artist           = ?,
-             nsfw_artist          = ?,
-             sfw_width            = ?,
-             sfw_height           = ?,
-             sfw_byte_size        = ?,
+         SET sfw_image_key         = ?,
+             nsfw_image_key        = ?,
+             sfw_content_type      = ?,
+             nsfw_content_type     = ?,
+             sfw_artist            = ?,
+             nsfw_artist           = ?,
+             sfw_width             = ?,
+             sfw_height            = ?,
+             sfw_byte_size         = ?,
              sfw_preview_image_key = ?,
              sfw_preview_width     = ?,
              sfw_preview_height    = ?,
              sfw_preview_byte_size = ?,
-             nsfw_width           = ?,
-             nsfw_height          = ?,
-             nsfw_byte_size       = ?,
+             nsfw_width            = ?,
+             nsfw_height           = ?,
+             nsfw_byte_size        = ?,
              nsfw_preview_image_key = ?,
              nsfw_preview_width     = ?,
              nsfw_preview_height    = ?,
              nsfw_preview_byte_size = ?,
-             sfw_review_status    = CASE WHEN ? THEN 'pending' ELSE sfw_review_status END,
-             sfw_reviewed_at      = CASE WHEN ? THEN NULL ELSE sfw_reviewed_at END,
-             sfw_approved_at      = CASE WHEN ? THEN NULL ELSE sfw_approved_at END,
-             sfw_homepage_allowed = CASE WHEN ? THEN 0 ELSE sfw_homepage_allowed END,
-             nsfw_review_status   = CASE WHEN ? THEN 'pending' ELSE nsfw_review_status END,
-             nsfw_reviewed_at     = CASE WHEN ? THEN NULL ELSE nsfw_reviewed_at END,
-             nsfw_approved_at     = CASE WHEN ? THEN NULL ELSE nsfw_approved_at END,
-             updated_at           = ?
+             nsfw_blur_image_key   = ?,
+             sfw_review_status     = CASE WHEN ? THEN 'pending' ELSE sfw_review_status END,
+             sfw_reviewed_at       = CASE WHEN ? THEN NULL ELSE sfw_reviewed_at END,
+             sfw_approved_at       = CASE WHEN ? THEN NULL ELSE sfw_approved_at END,
+             sfw_homepage_allowed  = CASE WHEN ? THEN 0 ELSE sfw_homepage_allowed END,
+             nsfw_review_status    = CASE WHEN ? THEN 'pending' ELSE nsfw_review_status END,
+             nsfw_reviewed_at      = CASE WHEN ? THEN NULL ELSE nsfw_reviewed_at END,
+             nsfw_approved_at      = CASE WHEN ? THEN NULL ELSE nsfw_approved_at END,
+             updated_at            = ?
          WHERE id = ?
            AND character_id = ?
            AND user_id = ?`,
@@ -1636,6 +1663,7 @@ async function updateCharacterMediaRecord(
             media.nsfw_preview_width,
             media.nsfw_preview_height,
             media.nsfw_preview_byte_size,
+            media.nsfw_blur_image_key,
             options.sfwWasModified ? 1 : 0,
             options.sfwWasModified ? 1 : 0,
             options.sfwWasModified ? 1 : 0,
@@ -2047,6 +2075,10 @@ function queueExistingMediaVariantDelete(
     if (previewImageKey) {
         deletedKeys.push(characterMediaPreviewImageObjectKey(userId, characterId, media.id, previewImageKey, rating))
     }
+
+    if (rating === 'nsfw' && media.nsfw_blur_image_key) {
+        deletedKeys.push(characterMediaNsfwBlurImageObjectKey(userId, characterId, media.id, media.nsfw_blur_image_key))
+    }
 }
 
 function clearMediaVariant(nextMedia: CharacterMediaRecord, rating: MediaRating): void {
@@ -2072,6 +2104,7 @@ function clearMediaVariant(nextMedia: CharacterMediaRecord, rating: MediaRating)
     nextMedia.nsfw_preview_width = null
     nextMedia.nsfw_preview_height = null
     nextMedia.nsfw_preview_byte_size = null
+    nextMedia.nsfw_blur_image_key = null
 }
 
 function assignMediaVariant(
@@ -2102,9 +2135,11 @@ function assignMediaVariant(
     nextMedia.nsfw_preview_width = preview?.width ?? null
     nextMedia.nsfw_preview_height = preview?.height ?? null
     nextMedia.nsfw_preview_byte_size = preview?.byteSize ?? null
+    nextMedia.nsfw_blur_image_key = null
 }
 
 async function replaceMediaVariantWithChunkedUpload(
+    images: ImagesBinding,
     bucket: R2Bucket,
     userId: string,
     characterId: string,
@@ -2123,6 +2158,10 @@ async function replaceMediaVariantWithChunkedUpload(
     assertPreviewMatchesOriginal(preview, image, rating === 'sfw' ? 'SFW preview' : 'NSFW preview')
     const previewImage = await putMediaPreviewImage(bucket, userId, characterId, media.id, preview, rating, uploadedKeys)
     assignMediaVariant(nextMedia, rating, image, previewImage)
+
+    if (rating === 'nsfw') {
+        nextMedia.nsfw_blur_image_key = await putNsfwBlurImage(images, bucket, userId, characterId, media.id, preview, uploadedKeys)
+    }
 }
 
 async function putMediaPreviewImage(
@@ -2152,6 +2191,48 @@ async function putMediaPreviewImage(
         height: preview.height,
         byteSize: preview.bytes.byteLength,
     }
+}
+
+async function putNsfwBlurImage(
+    images: ImagesBinding,
+    bucket: R2Bucket,
+    userId: string,
+    characterId: string,
+    mediaId: string,
+    preview: ParsedPreviewImage,
+    uploadedKeys: string[],
+): Promise<string> {
+    const imageKey = crypto.randomUUID()
+    const objectKey = characterMediaNsfwBlurImageObjectKey(userId, characterId, mediaId, imageKey)
+    const result = await images
+        .input(streamFromBytes(preview.bytes))
+        .transform({width: GALLERY_NSFW_BLUR_MAX_WIDTH, fit: 'scale-down'})
+        .transform({blur: GALLERY_NSFW_BLUR_AMOUNT})
+        .output({format: 'image/webp', quality: GALLERY_NSFW_BLUR_QUALITY})
+
+    const response = result.response()
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    const contentType = response.headers.get('content-type') ?? GALLERY_PREVIEW_CONTENT_TYPE
+
+    await bucket.put(objectKey, bytes, {
+        httpMetadata: {
+            cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
+            contentType,
+        },
+    })
+
+    uploadedKeys.push(objectKey)
+
+    return imageKey
+}
+
+function streamFromBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
+    return new ReadableStream<Uint8Array>({
+        start(controller) {
+            controller.enqueue(bytes)
+            controller.close()
+        },
+    })
 }
 
 async function parseCreateCharacterRequest(c: CharacterRouteContext): Promise<{
@@ -2857,6 +2938,7 @@ async function getOwnedCharacterMedia(
                 sfw_preview_height,
                 sfw_preview_byte_size,
                 nsfw_preview_image_key,
+                nsfw_blur_image_key,
                 nsfw_preview_width,
                 nsfw_preview_height,
                 nsfw_preview_byte_size,
@@ -2906,7 +2988,7 @@ async function markToyhouseImportItemFailed(
         db.prepare(
             `UPDATE toyhouse_import_items
              SET status = ?,
-                 error = ?,
+                 error  = ?,
                  updated_at = ?
              WHERE id = ?
                AND user_id = ?`,
@@ -2917,13 +2999,11 @@ async function markToyhouseImportItemFailed(
              SET status = ?,
                  updated_at = ?
              WHERE user_id = ?
-               AND id = (
-                   SELECT job_id
-                   FROM toyhouse_import_items
-                   WHERE id = ?
-                     AND user_id = ?
-                   LIMIT 1
-               )`,
+               AND id = (SELECT job_id
+                         FROM toyhouse_import_items
+                         WHERE id = ?
+                           AND user_id = ?
+                         LIMIT 1)`,
         )
             .bind('failed', now, userId, itemId, userId),
     ])
@@ -2983,6 +3063,7 @@ async function getCharacterMedia(
                 sfw_preview_height,
                 sfw_preview_byte_size,
                 nsfw_preview_image_key,
+                nsfw_blur_image_key,
                 nsfw_preview_width,
                 nsfw_preview_height,
                 nsfw_preview_byte_size,
@@ -3054,6 +3135,10 @@ async function deleteCharacterMediaObjects(bucket: R2Bucket, media: CharacterMed
 
     if (media.nsfw_preview_image_key) {
         objectKeys.push(characterMediaPreviewImageObjectKey(media.user_id, media.character_id, media.id, media.nsfw_preview_image_key, 'nsfw'))
+    }
+
+    if (media.nsfw_blur_image_key) {
+        objectKeys.push(characterMediaNsfwBlurImageObjectKey(media.user_id, media.character_id, media.id, media.nsfw_blur_image_key))
     }
 
     await deleteR2Objects(bucket, objectKeys)

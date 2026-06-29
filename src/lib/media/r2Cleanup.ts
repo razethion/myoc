@@ -48,6 +48,14 @@ type ManagedR2MediaKey =
     imageKey: string
 }
     | {
+    kind: 'characterMediaNsfwBlur'
+    key: string
+    userId: string
+    characterId: string
+    mediaId: string
+    imageKey: string
+}
+    | {
     kind: 'characterHeightChart'
     key: string
     userId: string
@@ -227,6 +235,27 @@ export function parseManagedR2MediaKey(key: string): ManagedR2MediaKey | null {
         }
     }
 
+    if (parts.length === 8 && parts[0] === 'characters' && parts[3] === 'media' && parts[5] === 'nsfw' && parts[6] === 'blur') {
+        const [imageKey, extension] = splitFileName(parts[7])
+
+        if (
+            isSafeSegment(parts[1])
+            && isSafeSegment(parts[2])
+            && isSafeSegment(parts[4])
+            && isSafeSegment(imageKey)
+            && extension === 'webp'
+        ) {
+            return {
+                kind: 'characterMediaNsfwBlur',
+                key,
+                userId: parts[1],
+                characterId: parts[2],
+                mediaId: parts[4],
+                imageKey,
+            }
+        }
+    }
+
     if (parts.length === 5 && parts[0] === 'characters' && parts[3] === 'height-chart') {
         const [imageKey, extension] = splitFileName(parts[4])
         const contentType = contentTypeForExtension(extension)
@@ -307,6 +336,21 @@ async function isManagedR2MediaKeyReferenced(db: D1Database, parsed: ManagedR2Me
                    AND character_id = ?
                    AND id = ?
                    AND ${imageKeyColumn} = ?
+                 LIMIT 1`,
+            )
+                .bind(parsed.userId, parsed.characterId, parsed.mediaId, parsed.imageKey)
+                .first()
+            return Boolean(row)
+        }
+
+        case 'characterMediaNsfwBlur': {
+            const row = await db.prepare(
+                `SELECT 1
+                 FROM character_media
+                 WHERE user_id = ?
+                   AND character_id = ?
+                   AND id = ?
+                   AND nsfw_blur_image_key = ?
                  LIMIT 1`,
             )
                 .bind(parsed.userId, parsed.characterId, parsed.mediaId, parsed.imageKey)

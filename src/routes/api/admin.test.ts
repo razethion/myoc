@@ -1,7 +1,8 @@
-import {describe, expect, it} from 'vitest'
+import {describe, expect, it, vi} from 'vitest'
 import {apiRoutes} from '../api'
 import {createCsrfToken} from '../../lib/auth/session'
 import {createMockDb} from '../../test/mockD1'
+import {createMockImagesBinding} from '../../test/mockImages'
 import {createMockR2Bucket} from '../../test/mockR2'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
@@ -18,12 +19,25 @@ function createCurrentUserRecord(role: 'user' | 'admin') {
     }
 }
 
-function requestEnv(db: D1Database, mediaBucket = createMockR2Bucket()) {
+function requestEnv(db: D1Database, mediaBucket = createMockR2Bucket(), imagesBinding = createMockImagesBinding()) {
     return {
         DB: db,
         MEDIA_BUCKET: mediaBucket,
+        IMAGES: imagesBinding,
         MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
     }
+}
+
+function expectNsfwBlurTransform(imagesBinding: ImagesBinding): void {
+    expect(imagesBinding.input).toHaveBeenCalledTimes(1)
+    const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
+    ;[
+        {width: 960, fit: 'scale-down'},
+        {blur: 250},
+    ].forEach((transform, index) => {
+        expect(imageTransformer.transform).toHaveBeenNthCalledWith(index + 1, transform)
+    })
+    expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 85})
 }
 
 async function getAdminApi(db: D1Database, cookie?: string, path = '/admin'): Promise<Response> {
@@ -37,6 +51,7 @@ async function postImageApproval(
     body: unknown,
     db: D1Database,
     mediaBucket: R2Bucket,
+    imagesBinding = createMockImagesBinding(),
     sessionToken = 'session-token',
 ): Promise<Response> {
     return apiRoutes.request(`https://example.com/admin/image-approvals/${mediaId}`, {
@@ -47,7 +62,7 @@ async function postImageApproval(
             cookie: `myoc_session=${sessionToken}`,
             'x-csrf-token': await createCsrfToken(sessionToken),
         },
-    }, requestEnv(db, mediaBucket))
+    }, requestEnv(db, mediaBucket, imagesBinding))
 }
 
 async function postReportAction(
@@ -206,11 +221,13 @@ describe('POST /admin/image-approvals/:mediaId', () => {
             allResults: [[], []],
         })
         const mediaBucket = createMockR2Bucket()
+        const imagesBinding = createMockImagesBinding()
         await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png', new Uint8Array([1, 2, 3]))
+        await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp', new Uint8Array([4, 5, 6]))
 
         const response = await postImageApproval('media-1', {
             sfwAction: 'mark_nsfw',
-        }, db, mediaBucket)
+        }, db, mediaBucket, imagesBinding)
 
         expect(response.status).toBe(200)
         expect(mediaBucket.get).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png')
@@ -219,9 +236,29 @@ describe('POST /admin/image-approvals/:mediaId', () => {
             expect.any(ArrayBuffer),
             expect.any(Object),
         )
+        expect(mediaBucket.put).toHaveBeenCalledWith(
+            'characters/owner-1/character-1/media/media-1/nsfw/preview/sfw-preview-key.webp',
+            expect.any(ArrayBuffer),
+            expect.any(Object),
+        )
+        expectNsfwBlurTransform(imagesBinding)
+        expect(mediaBucket.put).toHaveBeenCalledWith(
+            expect.stringMatching(/^characters\/owner-1\/character-1\/media\/media-1\/nsfw\/blur\/[0-9a-f-]+\.webp$/),
+            expect.any(Uint8Array),
+            {
+                httpMetadata: {
+                    cacheControl: 'public, max-age=31536000, immutable',
+                    contentType: 'image/webp',
+                },
+            },
+        )
         expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png')
+        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp')
         expect(boundStatements[2]?.binds[0]).toBeNull()
         expect(boundStatements[2]?.binds[1]).toBe('sfw-key')
+        expect(boundStatements[2]?.binds[9]).toBeNull()
+        expect(boundStatements[2]?.binds[16]).toBe('sfw-preview-key')
+        expect(boundStatements[2]?.binds[34]).toMatch(/^[0-9a-f-]+$/)
         expect(boundStatements[2]?.binds[28]).toBe(1)
         expect(boundStatements[2]?.binds[29]).toBe('approved')
         expect(boundStatements[3]?.binds[3]).toBe('mark_nsfw')
@@ -343,6 +380,10 @@ function createImageApprovalItemRow() {
         sfw_width: 1200,
         sfw_height: 900,
         sfw_byte_size: 1024,
+        sfw_preview_image_key: 'sfw-preview-key',
+        sfw_preview_width: 800,
+        sfw_preview_height: 600,
+        sfw_preview_byte_size: 512,
         nsfw_width: null,
         nsfw_height: null,
         nsfw_byte_size: null,
@@ -372,6 +413,10 @@ function createModerationMediaRow() {
         sfw_width: 1200,
         sfw_height: 900,
         sfw_byte_size: 1024,
+        sfw_preview_image_key: 'sfw-preview-key',
+        sfw_preview_width: 800,
+        sfw_preview_height: 600,
+        sfw_preview_byte_size: 512,
         nsfw_width: null,
         nsfw_height: null,
         nsfw_byte_size: null,

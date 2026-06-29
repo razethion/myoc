@@ -18,6 +18,10 @@
 	"assets": {
 		"directory": "./public"
 	},
+  "images": {
+    "binding": "IMAGES",
+    "remote": true
+  },
 	"vars": {
 		"MEDIA_PUBLIC_BASE_URL": "https://m.myoc.art"
 	},
