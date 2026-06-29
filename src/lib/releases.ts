@@ -1,4 +1,4 @@
-export const APP_VERSION = '2026.06.29.01'
+export const APP_VERSION = '2026.06.29.02'
 
 export type ReleaseNote = {
     version: string
@@ -9,6 +9,15 @@ export type ReleaseNote = {
 }
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+    {
+        version: '2026.06.29.02',
+        releasedOn: 'June 29, 2026',
+        title: '',
+        summary: '',
+        changes: [
+            '',
+        ],
+    },
     {
         version: '2026.06.29.01',
         releasedOn: 'June 29, 2026',
