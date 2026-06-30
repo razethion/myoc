@@ -1,7 +1,9 @@
 import {mkdir, readFile, readdir, rm, writeFile} from 'node:fs/promises'
+import {existsSync, readFileSync} from 'node:fs'
 import {dirname, resolve} from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {execFile, spawn} from 'node:child_process'
+import {createHash, createHmac} from 'node:crypto'
 import readline from 'node:readline/promises'
 import {stdin as input, stdout as output} from 'node:process'
 
@@ -9,6 +11,9 @@ const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const tmpDir = resolve(rootDir, '.tmp')
 const wranglerBin = resolve(rootDir, 'node_modules', 'wrangler', 'bin', 'wrangler.js')
 const localD1StateDir = resolve(rootDir, '.wrangler', 'state', 'v3', 'd1', 'miniflare-D1DatabaseObject')
+const args = new Set(process.argv.slice(2))
+loadLocalEnv('.env')
+loadLocalEnv('.dev.vars')
 const importTableOrder = [
     'd1_migrations',
     'users',
@@ -32,9 +37,14 @@ const config = {
     devR2Bucket: process.env.DEV_R2_BUCKET || 'myoc-dev',
     concurrency: Number(process.env.CLONE_R2_CONCURRENCY || 8),
     workerPort: Number(process.env.CLONE_R2_WORKER_PORT || 8799),
+    r2Mode: optionValue('--r2-mode') || process.env.CLONE_R2_MODE || 'auto',
+    r2AccountId: process.env.CLOUDFLARE_ACCOUNT_ID || process.env.R2_ACCOUNT_ID || '',
+    r2Endpoint: process.env.R2_ENDPOINT || '',
+    r2AccessKeyId: process.env.R2_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID || '',
+    r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY || '',
+    r2Region: process.env.R2_REGION || process.env.AWS_REGION || 'auto',
 }
 
-const args = new Set(process.argv.slice(2))
 const dryRun = args.has('--dry-run')
 const yes = args.has('--yes') || args.has('-y')
 const skipD1 = args.has('--skip-d1')
@@ -53,14 +63,22 @@ Targets:
   D1: remote ${config.prodD1Database} -> local ${config.localD1Database}
   R2: remote ${config.prodR2Bucket} -> remote ${config.devR2Bucket}
 
-R2 uses a temporary local Worker with remote R2 bindings. No S3 access-key env vars are needed,
-but Wrangler must be logged in to the Cloudflare account that can access both buckets.
+R2 prefers server-side S3 CopyObject when R2 S3 credentials are available. Otherwise it falls
+back to a temporary local Worker with remote R2 bindings.
 
 Options:
-  --yes       Skip confirmation.
-  --dry-run   Print planned R2 object changes without changing R2 or D1.
-  --skip-d1   Skip D1 clone.
-  --skip-r2   Skip R2 clone.
+  --yes                Skip confirmation.
+  --dry-run            Print planned R2 object changes without changing R2 or D1.
+  --skip-d1            Skip D1 clone.
+  --skip-r2            Skip R2 clone.
+  --r2-mode=auto|s3|worker
+                       Choose the R2 clone implementation. Default: auto.
+
+S3 R2 env, loaded from the shell, .env, or .dev.vars:
+  CLOUDFLARE_ACCOUNT_ID or R2_ACCOUNT_ID
+  R2_ACCESS_KEY_ID or AWS_ACCESS_KEY_ID
+  R2_SECRET_ACCESS_KEY or AWS_SECRET_ACCESS_KEY
+  R2_ENDPOINT optional, defaults to https://<account>.r2.cloudflarestorage.com
 `)
     process.exit(0)
 }
@@ -69,6 +87,45 @@ function assertSafeConfig() {
     if (config.prodR2Bucket === config.devR2Bucket) {
         throw new Error('Refusing to clone R2 because PROD_R2_BUCKET and DEV_R2_BUCKET are the same.')
     }
+    if (!['auto', 's3', 'worker'].includes(config.r2Mode)) {
+        throw new Error(`Unsupported R2 clone mode "${config.r2Mode}". Use auto, s3, or worker.`)
+    }
+}
+
+function optionValue(name) {
+    const prefix = `${name}=`
+    const value = process.argv.slice(2).find((arg) => arg.startsWith(prefix))
+    return value ? value.slice(prefix.length) : ''
+}
+
+function loadLocalEnv(filename) {
+    const file = resolve(rootDir, filename)
+    if (!existsSync(file)) return
+
+    for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
+        const trimmed = line.trim()
+        if (!trimmed || trimmed.startsWith('#')) continue
+
+        const equalsIndex = trimmed.indexOf('=')
+        if (equalsIndex === -1) continue
+
+        const key = trimmed.slice(0, equalsIndex).trim()
+        const value = unquoteEnvValue(trimmed.slice(equalsIndex + 1).trim())
+        if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && process.env[key] === undefined) {
+            process.env[key] = value
+        }
+    }
+}
+
+function unquoteEnvValue(value) {
+    if (
+        (value.startsWith('"') && value.endsWith('"'))
+        || (value.startsWith("'") && value.endsWith("'"))
+    ) {
+        return value.slice(1, -1)
+    }
+
+    return value
 }
 
 async function confirmDestructiveWork() {
@@ -340,6 +397,290 @@ function isManagedSqliteStatement(line) {
 }
 
 async function cloneR2() {
+    if (shouldUseS3R2Clone()) {
+        await cloneR2WithS3()
+        return
+    }
+
+    if (config.r2Mode === 's3') {
+        throw new Error('R2 S3 clone mode requires CLOUDFLARE_ACCOUNT_ID/R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, and R2_SECRET_ACCESS_KEY.')
+    }
+
+    console.log('R2 S3 credentials were not found; falling back to temporary local Worker clone.')
+    await cloneR2WithWorker()
+}
+
+function shouldUseS3R2Clone() {
+    if (config.r2Mode === 'worker') return false
+    return Boolean(r2S3Endpoint() && config.r2AccessKeyId && config.r2SecretAccessKey)
+}
+
+function r2S3Endpoint() {
+    if (config.r2Endpoint) return config.r2Endpoint.replace(/\/+$/, '')
+    if (config.r2AccountId) return `https://${config.r2AccountId}.r2.cloudflarestorage.com`
+    return ''
+}
+
+async function cloneR2WithS3() {
+    console.log('Using R2 S3 CopyObject for server-side bucket clone.')
+    console.log('[r2] Listing source bucket...')
+    const sourceObjects = await listAllR2S3(config.prodR2Bucket, 'source')
+    console.log('[r2] Listing destination bucket...')
+    const destObjects = await listAllR2S3(config.devR2Bucket, 'destination')
+    const sourceByKey = new Map(sourceObjects.map((object) => [object.key, object]))
+    const destByKey = new Map(destObjects.map((object) => [object.key, object]))
+    const toCopy = sourceObjects.filter((source) => {
+        const dest = destByKey.get(source.key)
+        return !dest || dest.size !== source.size || dest.etag !== source.etag
+    })
+    const toDelete = destObjects.filter((dest) => !sourceByKey.has(dest.key))
+    const summary = {
+        sourceObjects: sourceObjects.length,
+        destObjects: destObjects.length,
+        toCopy: toCopy.length,
+        toDelete: toDelete.length,
+        copied: 0,
+        deleted: 0,
+    }
+
+    console.log(`[r2] Plan: ${summary.toCopy} copy/update, ${summary.toDelete} delete, ${summary.sourceObjects} source object(s), ${summary.destObjects} destination object(s).`)
+
+    if (dryRun) {
+        console.log('[r2] Dry run: no R2 objects were changed.')
+        console.log(`R2 plan: ${summary.toCopy} copy/update, ${summary.toDelete} delete, ${summary.sourceObjects} source object(s).`)
+        return
+    }
+
+    console.log(`[r2] Copying/updating objects with concurrency ${config.concurrency}...`)
+    await runPool(toCopy, config.concurrency, async (object) => {
+        await copyR2S3Object(object.key)
+        summary.copied += 1
+        if (summary.copied === 1 || summary.copied % 100 === 0 || summary.copied === summary.toCopy) {
+            console.log(`[r2] Copied/updated ${summary.copied}/${summary.toCopy} object(s).`)
+        }
+    })
+
+    console.log('[r2] Deleting objects missing from source...')
+    for (const keys of chunks(toDelete.map((object) => object.key), 1000)) {
+        await deleteR2S3Objects(config.devR2Bucket, keys)
+        summary.deleted += keys.length
+        console.log(`[r2] Deleted ${summary.deleted}/${summary.toDelete} object(s).`)
+    }
+
+    console.log(`R2 plan: ${summary.toCopy} copy/update, ${summary.toDelete} delete, ${summary.sourceObjects} source object(s).`)
+    console.log(`R2 applied: ${summary.copied} copied/updated, ${summary.deleted} deleted.`)
+}
+
+async function listAllR2S3(bucket, label) {
+    const objects = []
+    let continuationToken
+    let pageCount = 0
+
+    do {
+        const query = {
+            'list-type': '2',
+            'max-keys': '1000',
+            'encoding-type': 'url',
+        }
+        if (continuationToken) query['continuation-token'] = continuationToken
+
+        const response = await r2S3Request({
+            method: 'GET',
+            bucket,
+            query,
+        })
+        const xml = await response.text()
+        const pageObjects = [...xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)].map((match) => ({
+            key: decodeS3XmlValue(xmlTagValue(match[1], 'Key')),
+            etag: stripEtagQuotes(xmlTagValue(match[1], 'ETag')),
+            size: Number(xmlTagValue(match[1], 'Size')),
+        }))
+
+        objects.push(...pageObjects)
+        pageCount += 1
+        console.log(`[r2] Listed ${objects.length} ${label} object(s) across ${pageCount} page(s).`)
+
+        const truncated = xmlTagValue(xml, 'IsTruncated') === 'true'
+        continuationToken = truncated ? decodeS3XmlValue(xmlTagValue(xml, 'NextContinuationToken')) : ''
+    } while (continuationToken)
+
+    return objects
+}
+
+async function copyR2S3Object(key) {
+    await r2S3Request({
+        method: 'PUT',
+        bucket: config.devR2Bucket,
+        key,
+        headers: {
+            'x-amz-copy-source': s3CopySource(config.prodR2Bucket, key),
+            'x-amz-metadata-directive': 'COPY',
+        },
+    })
+}
+
+async function deleteR2S3Objects(bucket, keys) {
+    if (keys.length === 0) return
+
+    const body = [
+        '<Delete>',
+        '<Quiet>true</Quiet>',
+        ...keys.map((key) => `<Object><Key>${escapeXml(key)}</Key></Object>`),
+        '</Delete>',
+    ].join('')
+
+    await r2S3Request({
+        method: 'POST',
+        bucket,
+        query: {delete: ''},
+        headers: {
+            'content-md5': md5Base64(body),
+            'content-type': 'application/xml',
+        },
+        body,
+    })
+}
+
+async function r2S3Request({method, bucket, key = '', query = {}, headers = {}, body = ''}) {
+    const endpoint = r2S3Endpoint()
+    const url = new URL(`${endpoint}/${encodeS3Path(bucket)}${key ? `/${encodeS3Path(key)}` : ''}`)
+    for (const [name, value] of Object.entries(query)) {
+        url.searchParams.set(name, value)
+    }
+
+    const signedHeaders = signR2S3Request({method, url, headers, body})
+    const response = await fetch(url, {
+        method,
+        headers: signedHeaders,
+        body: body || undefined,
+    })
+
+    if (!response.ok) {
+        const responseBody = await response.text()
+        throw new Error(`R2 S3 ${method} ${url.pathname}${url.search} failed: ${response.status} ${response.statusText}\n${responseBody}`)
+    }
+
+    return response
+}
+
+function signR2S3Request({method, url, headers, body}) {
+    const now = new Date()
+    const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '')
+    const dateStamp = amzDate.slice(0, 8)
+    const payloadHash = sha256Hex(body)
+    const requestHeaders = new Headers(headers)
+    requestHeaders.set('host', url.host)
+    requestHeaders.set('x-amz-content-sha256', payloadHash)
+    requestHeaders.set('x-amz-date', amzDate)
+
+    const canonicalHeaders = [...requestHeaders.entries()]
+        .map(([name, value]) => [name.toLowerCase(), value.trim().replace(/\s+/g, ' ')])
+        .sort(([left], [right]) => left.localeCompare(right))
+    const signedHeaderNames = canonicalHeaders.map(([name]) => name).join(';')
+    const canonicalRequest = [
+        method,
+        url.pathname,
+        canonicalQueryString(url.searchParams),
+        canonicalHeaders.map(([name, value]) => `${name}:${value}\n`).join(''),
+        signedHeaderNames,
+        payloadHash,
+    ].join('\n')
+    const scope = `${dateStamp}/${config.r2Region}/s3/aws4_request`
+    const stringToSign = [
+        'AWS4-HMAC-SHA256',
+        amzDate,
+        scope,
+        sha256Hex(canonicalRequest),
+    ].join('\n')
+    const signingKey = awsSigningKey(config.r2SecretAccessKey, dateStamp, config.r2Region, 's3')
+    const signature = hmacHex(signingKey, stringToSign)
+
+    requestHeaders.set('authorization', [
+        `AWS4-HMAC-SHA256 Credential=${config.r2AccessKeyId}/${scope}`,
+        `SignedHeaders=${signedHeaderNames}`,
+        `Signature=${signature}`,
+    ].join(', '))
+
+    return requestHeaders
+}
+
+function canonicalQueryString(searchParams) {
+    return [...searchParams.entries()]
+        .sort(([leftName, leftValue], [rightName, rightValue]) => (
+            leftName === rightName ? leftValue.localeCompare(rightValue) : leftName.localeCompare(rightName)
+        ))
+        .map(([name, value]) => `${awsEncode(name)}=${awsEncode(value)}`)
+        .join('&')
+}
+
+function awsSigningKey(secretAccessKey, dateStamp, region, service) {
+    const dateKey = hmacBuffer(`AWS4${secretAccessKey}`, dateStamp)
+    const dateRegionKey = hmacBuffer(dateKey, region)
+    const dateRegionServiceKey = hmacBuffer(dateRegionKey, service)
+    return hmacBuffer(dateRegionServiceKey, 'aws4_request')
+}
+
+function sha256Hex(value) {
+    return createHash('sha256').update(value).digest('hex')
+}
+
+function md5Base64(value) {
+    return createHash('md5').update(value).digest('base64')
+}
+
+function hmacBuffer(key, value) {
+    return createHmac('sha256', key).update(value).digest()
+}
+
+function hmacHex(key, value) {
+    return createHmac('sha256', key).update(value).digest('hex')
+}
+
+function encodeS3Path(value) {
+    return value.split('/').map(awsEncode).join('/')
+}
+
+function awsEncode(value) {
+    return encodeURIComponent(value)
+        .replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)
+}
+
+function s3CopySource(bucket, key) {
+    return `/${encodeS3Path(bucket)}/${encodeS3Path(key)}`
+}
+
+function xmlTagValue(xml, tagName) {
+    const match = xml.match(new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`))
+    return match ? unescapeXml(match[1]) : ''
+}
+
+function decodeS3XmlValue(value) {
+    return decodeURIComponent(value.replaceAll('+', '%20'))
+}
+
+function stripEtagQuotes(etag) {
+    return etag.replace(/^"|"$/g, '')
+}
+
+function escapeXml(value) {
+    return value
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&apos;')
+}
+
+function unescapeXml(value) {
+    return value
+        .replaceAll('&apos;', "'")
+        .replaceAll('&quot;', '"')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&amp;', '&')
+}
+
+async function cloneR2WithWorker() {
     await mkdir(tmpDir, {recursive: true})
 
     const workerFile = resolve(tmpDir, 'r2-clone-worker.mjs')
@@ -525,6 +866,26 @@ async function stopR2CloneWorker(state) {
 
 function delay(ms) {
     return new Promise((resolvePromise) => setTimeout(resolvePromise, ms))
+}
+
+async function runPool(items, concurrency, worker) {
+    let nextIndex = 0
+    const workers = Array.from({length: Math.max(1, Math.min(concurrency, items.length || 1))}, async () => {
+        while (nextIndex < items.length) {
+            const index = nextIndex
+            nextIndex += 1
+            await worker(items[index])
+        }
+    })
+    await Promise.all(workers)
+}
+
+function chunks(items, size) {
+    const result = []
+    for (let index = 0; index < items.length; index += size) {
+        result.push(items.slice(index, index + size))
+    }
+    return result
 }
 
 function r2CloneWorkerSource() {

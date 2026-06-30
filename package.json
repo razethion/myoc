@@ -15,8 +15,10 @@
     "db:seed:local": "wrangler d1 execute myoc-db --local --file seeds/development.sql",
     "db:prepare:local": "npm run db:migrate:local && npm run db:seed:local",
     "env:clone:prod-to-dev": "node scripts/clone-prod-to-dev.mjs",
-    "env:clone:prod-to-dev:dry-run": "node scripts/clone-prod-to-dev.mjs --dry-run",
-    "env:clone:prod-to-dev:yes": "node scripts/clone-prod-to-dev.mjs --yes",
+    "env:clone:prod-to-dev:dry-run": "npm run env:clone:prod-to-dev -- --dry-run",
+    "env:clone:prod-to-dev:yes": "npm run env:clone:prod-to-dev -- --yes",
+    "env:clone:prod-to-dev:s3:dry-run": "npm run env:clone:prod-to-dev -- --dry-run --r2-mode=s3",
+    "env:clone:prod-to-dev:s3:yes": "npm run env:clone:prod-to-dev -- --yes --r2-mode=s3",
     "deploy": "npm run check && npm run build && wrangler deploy --minify",
     "cf-typegen": "wrangler types"
   },
