@@ -12,10 +12,13 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     {
         version: '2026.06.29.02',
         releasedOn: 'June 29, 2026',
-        title: '',
-        summary: '',
+        title: 'Fresh homepage',
+        summary: 'The homepage has a modern animated post-hero redesign.',
         changes: [
-            '',
+            'Kept the dragon hero and rebuilt every section below it with modern CSS effects, animated cards, scrollable rails, and larger visual pacing.',
+            'Kept the dragon artwork as the hero visual with a modern animated presentation.',
+            'Added subtle motion accents, an animated feature rail, and more modern hover interactions across the homepage.',
+            'Updated the homepage release messaging so the current version notification has useful details.',
         ],
     },
     {

@@ -32,7 +32,6 @@ import {
 import {
     HomePage,
     homePageDescription,
-    type HomePageDiscoverCharacter,
     type HomePageStats
 } from '../views/pages/HomePage'
 import {
@@ -65,7 +64,6 @@ const CHARACTER_NAME_RULES = 'letters, numbers, spaces, apostrophes, quotation m
 const GALLERY_IMAGE_CACHE_CONTROL = 'public, max-age=31536000, immutable'
 
 const HOME_PAGE_STATS_CACHE_KEY = 'home:stats:v1'
-const HOME_PAGE_DISCOVER_CACHE_KEY = 'home:discover:v2'
 const HOME_PAGE_CACHE_TTL_SECONDS = 600
 const D1_SAFE_VARIABLES_PER_QUERY = 90
 
@@ -75,16 +73,14 @@ function getRandomLetter(): string {
 }
 
 pageRoutes.get('/', async (c) => {
-    const [currentUser, stats, discoverCharacters] = await Promise.all([
+    const [currentUser, stats] = await Promise.all([
         getCurrentUser(c),
         getCachedHomePageStats(c.env.CACHE, c.env.DB),
-        getCachedDiscoverCharacters(c.env.CACHE, c.env.DB),
     ])
 
     return c.html(
         <HomePage
             currentUser={currentUser}
-            discoverCharacters={discoverCharacters}
             guestInitial={getRandomLetter()}
             mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
             siteUrl={new URL(c.req.url).origin}
@@ -1351,117 +1347,6 @@ async function getTableCount(db: D1Database, tableName: 'users' | 'characters' |
     return Number.isFinite(count) ? count : 0
 }
 
-async function getCachedDiscoverCharacters(cache: KVNamespace | undefined, db: D1Database): Promise<HomePageDiscoverCharacter[]> {
-    const cached = await getCachedJson<HomePageDiscoverCharacter[]>(cache, HOME_PAGE_DISCOVER_CACHE_KEY)
-
-    if (Array.isArray(cached) && cached.every(isHomePageDiscoverCharacter)) {
-        return cached
-    }
-
-    const characters = await getDiscoverCharacters(db)
-    await putCachedJson(cache, HOME_PAGE_DISCOVER_CACHE_KEY, characters)
-
-    return characters
-}
-
-async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCharacter[]> {
-    const result = await db.prepare(
-        `WITH approved_sfw_media AS (SELECT id,
-              character_id,
-              sfw_image_key,
-              sfw_preview_image_key,
-              sfw_content_type,
-              sfw_artist,
-              sfw_homepage_allowed
-                                     FROM character_media
-                                     WHERE sfw_image_key IS NOT NULL
-                                       AND sfw_review_status = 'approved'
-                                       AND sfw_approved_at IS NOT NULL
-                                       AND sfw_approved_at >= updated_at),
-              character_image_counts AS (SELECT character_id,
-                                                SUM(
-                                                        CASE WHEN sfw_image_key IS NOT NULL THEN 1 ELSE 0 END
-                                                            + CASE WHEN nsfw_image_key IS NOT NULL THEN 1 ELSE 0 END
-                                                ) AS image_count
-                                         FROM character_media
-                                         WHERE sfw_image_key IS NOT NULL
-                                            OR nsfw_image_key IS NOT NULL
-                                         GROUP BY character_id),
-              eligible_characters AS (
-             SELECT characters.id,
-                    characters.user_id,
-                    characters.name,
-                    characters.profile_image_key,
-                    users.username AS owner_username,
-                    character_image_counts.image_count
-             FROM characters
-             INNER JOIN users ON users.id = characters.user_id
-             INNER JOIN character_image_counts
-                        ON character_image_counts.character_id = characters.id
-             INNER JOIN approved_sfw_media
-                        ON approved_sfw_media.character_id = characters.id
-             GROUP BY characters.id,
-                      characters.user_id,
-                      characters.name,
-                      characters.profile_image_key,
-                      users.username,
-                      character_image_counts.image_count
-             HAVING COUNT(approved_sfw_media.id) >= 5
-                AND SUM(CASE WHEN approved_sfw_media.sfw_homepage_allowed = 1 THEN 1 ELSE 0 END) >= 1
-             ORDER BY RANDOM()
-             LIMIT 6
-         )
-         SELECT eligible_characters.id,
-                eligible_characters.user_id,
-                eligible_characters.name,
-                eligible_characters.profile_image_key,
-                eligible_characters.owner_username,
-                eligible_characters.image_count,
-                preview_media.id AS preview_media_id,
-                preview_media.sfw_image_key AS preview_image_key,
-                preview_media.sfw_preview_image_key AS preview_thumbnail_image_key,
-                preview_media.sfw_content_type AS preview_content_type,
-                preview_media.sfw_artist AS preview_artist
-         FROM eligible_characters
-                  INNER JOIN approved_sfw_media AS preview_media
-            ON preview_media.id = (
-                SELECT id
-                FROM approved_sfw_media
-                WHERE character_id = eligible_characters.id
-                  AND sfw_homepage_allowed = 1
-                ORDER BY RANDOM()
-                LIMIT 1
-            )`,
-    )
-        .all<{
-            id: string
-            user_id: string
-            name: string
-            profile_image_key: string
-            owner_username: string
-            image_count: number | string
-            preview_media_id: string
-            preview_image_key: string
-            preview_thumbnail_image_key: string | null
-            preview_content_type: string | null
-            preview_artist: string | null
-        }>()
-
-    return (result.results ?? []).map((character) => ({
-        id: character.id,
-        userId: character.user_id,
-        name: character.name,
-        ownerUsername: character.owner_username,
-        profileImageKey: character.profile_image_key,
-        previewMediaId: character.preview_media_id,
-        previewImageKey: character.preview_image_key,
-        previewThumbnailImageKey: character.preview_thumbnail_image_key ?? null,
-        previewContentType: character.preview_content_type ?? 'image/png',
-        previewArtist: character.preview_artist ?? '',
-        imageCount: Number(character.image_count) || 0,
-    }))
-}
-
 async function getCachedJson<T>(cache: KVNamespace | undefined, key: string): Promise<T | null> {
     if (!cache) {
         return null
@@ -1496,25 +1381,6 @@ function isHomePageStats(value: unknown): value is HomePageStats {
     return Number.isFinite(stats.users)
         && Number.isFinite(stats.characters)
         && Number.isFinite(stats.mediaItems)
-}
-
-function isHomePageDiscoverCharacter(value: unknown): value is HomePageDiscoverCharacter {
-    if (!value || typeof value !== 'object') {
-        return false
-    }
-
-    const character = value as Record<string, unknown>
-
-    return typeof character.id === 'string'
-        && typeof character.userId === 'string'
-        && typeof character.name === 'string'
-        && typeof character.ownerUsername === 'string'
-        && typeof character.profileImageKey === 'string'
-        && typeof character.previewMediaId === 'string'
-        && typeof character.previewImageKey === 'string'
-        && (typeof character.previewThumbnailImageKey === 'string' || character.previewThumbnailImageKey === null)
-        && typeof character.previewArtist === 'string'
-        && Number.isFinite(character.imageCount)
 }
 
 function userProfileUrl(username: string): string {

@@ -5,12 +5,13 @@ import {createMockDb} from '../../test/mockD1'
 import {createCsrfToken, type UserRecord} from '../../lib/auth/session'
 import {expectSessionCookie} from '../../test/assertions'
 
-async function postLogin(body: unknown, db: D1Database, url = '/login'): Promise<Response> {
+async function postLogin(body: unknown, db: D1Database, url = '/login', cookie?: string): Promise<Response> {
     return apiRoutes.request(url, {
         method: 'POST',
         body: typeof body === 'string' ? body : JSON.stringify(body),
         headers: {
             'content-type': 'application/json',
+            ...(cookie ? {cookie} : {}),
         },
     }, {
         DB: db,
@@ -168,6 +169,19 @@ describe('POST /login', () => {
         expect(boundStatements[1]?.sql).toContain(['DELETE FROM', 'sessions'].join(' '))
         expect(boundStatements[2]?.sql).toContain(['INSERT INTO', 'sessions'].join(' '))
         expect(boundStatements[2]?.binds[1]).toBe(user.id)
+    })
+
+    it('allows login when a stale session cookie is present', async () => {
+        const user = await createTestUser('password123')
+        const {db} = createMockDb({firstResults: [user]})
+
+        const response = await postLogin({
+            username: 'testuser',
+            password: 'password123',
+        }, db, 'https://example.com/login', 'myoc_session=stale-session-token')
+
+        expect(response.status).toBe(200)
+        expectSessionCookie(response)
     })
 })
 
