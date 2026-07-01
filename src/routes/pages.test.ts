@@ -34,6 +34,7 @@ function createProfilePageDb(options: {
     characterCount?: number
     mediaCount?: number
     discoverCharacters?: unknown[]
+    homeGalleryImages?: unknown[]
     activeToyhouseImportJob?: unknown
     activeToyhouseImportItems?: unknown[]
     toyhouseImportItemsError?: Error
@@ -78,6 +79,10 @@ function createProfilePageDb(options: {
         return options.profileUser ?? null
     }
     const allForSql = async (sql: string): Promise<QueryResult> => {
+        if (sql.includes('character_media.sfw_homepage_allowed = 1')) {
+            return {results: options.homeGalleryImages ?? []}
+        }
+
         if (sql.includes('eligible_characters')) {
             return {results: options.discoverCharacters ?? []}
         }
@@ -224,10 +229,10 @@ describe('public page redirects', () => {
 
         expect(response.status).toBe(200)
         expect(html).toContain('<title>MyOC | High-Resolution Character Gallery</title>')
-        expect(html).toContain('MyOC keeps character art easy to browse.')
+        expect(html).toContain('Easy maintenance. Easy browsing.')
         expect(html).toContain('data-home-gallery-wall')
         expect(html).toContain('home-hero-stats')
-        expect(html).not.toContain('stats stats-vertical')
+        expect(html).toContain('stats stats-vertical')
         expect(html).not.toContain('Character-first archive')
         expect(html).not.toContain('Library flow')
         expect(html).not.toContain('MyOC is source available.')
@@ -240,7 +245,111 @@ describe('public page redirects', () => {
         expect(html).toContain('4,096')
     })
 
-    it('does not render or query discover characters on the hero-only homepage', async () => {
+    it('renders approved homepage gallery thumbnails below the hero', async () => {
+        const db = createProfilePageDb({
+            homeGalleryImages: [
+                {
+                    id: 'media-1',
+                    user_id: 'owner-1',
+                    character_id: 'character-1',
+                    sfw_image_key: 'full-key',
+                    sfw_content_type: 'image/png',
+                    sfw_preview_image_key: 'preview-thumb-key',
+                    sfw_width: 640,
+                    sfw_height: 960,
+                    sfw_preview_width: 320,
+                    sfw_preview_height: 480,
+                    sfw_artist: 'Demo Artist',
+                    character_name: 'Quartz Dragon',
+                },
+            ],
+        })
+        const response = await getAppPath('/', db)
+        const html = await response.text()
+        const preparedSql = (db.prepare as unknown as { mock: { calls: [string][] } }).mock.calls
+            .map(([sql]) => sql)
+            .join('\n')
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Gallery-first profiles')
+        expect(html).toContain('data-home-approved-gallery')
+        expect(html).toContain('data-gallery-tile')
+        expect(html).toContain("document.querySelectorAll('[data-home-approved-gallery]')")
+        expect(html).toContain('var imageObserver = new IntersectionObserver(function (entries)')
+        expect(html).toContain('imageObserver.observe(tile)')
+        expect(html).toContain('imageObserver.unobserve(entry.target)')
+        expect(html).toContain("rootMargin: '400px 0px', threshold: 0.01")
+        expect(html).toContain('function tileIsNearViewport(tile)')
+        expect(html).toContain('var tileQueue = []')
+        expect(html).toContain('var tileQueueRunning = false')
+        expect(html).toContain('var tileLoadDelay = 65')
+        expect(html).toContain('var galleryLoadingStarted = false')
+        expect(html).toContain('function enqueueTile(tile)')
+        expect(html).toContain('function processTileQueue()')
+        expect(html).toContain('function startGalleryLoading()')
+        expect(html).toContain('if (galleryLoadingStarted)')
+        expect(html).toContain('window.setTimeout(processTileQueue, tileLoadDelay)')
+        expect(html).toContain('enqueueTile(entry.target)')
+        expect(html).toContain("window.addEventListener('scroll', startGalleryLoading, {once: true, passive: true})")
+        expect(html).toContain('if ((window.scrollY || document.documentElement.scrollTop) > 0)')
+        expect(html).toContain('var preloadMargin = 400')
+        expect(html).not.toContain("gallery.querySelectorAll('[data-gallery-tile]').forEach(function (tile, index)")
+        expect(html).not.toContain('}, index * 65)')
+        expect(html).not.toContain('function preloadGalleryImages()')
+        expect(html).not.toContain("window.addEventListener('load', schedulePreload, {once: true})")
+        expect(html).toContain("window.requestAnimationFrame(function ()")
+        expect(html).not.toContain("rootMargin: '0px', threshold: 0.01")
+        expect(html).toContain('border-color: transparent')
+        expect(html).toContain('contain: layout paint')
+        expect(html).toContain('content-visibility: auto')
+        expect(html).toContain('.home-float {\n                animation: none;')
+        expect(html).toContain('@media (min-width: 1024px) {\n                .home-float {')
+        expect(html).not.toContain("rootMargin: '35% 0px 35% 0px'")
+        expect(html).toContain('object-contain')
+        expect(html).toContain('border border-white bg-black')
+        expect(html).not.toContain('bg-black shadow-xl shadow-base-300/35')
+        expect(html).toContain('bg-[#141414]')
+        expect(html).toContain('relative -mx-4 mt-8 max-h-[50vh] overflow-hidden sm:-mx-6')
+        expect(html).toContain('home-approved-gallery relative -left-8 -top-6 w-[calc(100%+4rem)] max-w-none columns-4 gap-2 lg:absolute')
+        expect(html).not.toContain('home-approved-gallery absolute left-0 top-1/2')
+        expect(html).not.toContain('columns-2 gap-2 sm:columns-3 lg:absolute')
+        expect(html).toContain('home-reveal relative z-20 aspect-4/5 w-full')
+        expect(html).not.toContain('home-reveal relative z-20 mb-8 aspect-4/5 w-full')
+        expect(html).toContain('home-float absolute inset-0 overflow-visible bg-transparent')
+        expect(html).toContain('h-full w-full object-contain object-center')
+        expect(html).not.toContain('h-[min(72vh,36rem)]')
+        expect(html).not.toContain('max-h-[82vh]')
+        expect(html).toContain('px-4 pt-10 pb-8 sm:px-6 sm:pt-14 sm:pb-8')
+        expect(html).not.toContain('px-4 pt-10 pb-16')
+        expect(html).toContain('relative z-10 mx-auto grid max-w-7xl gap-8 lg:h-full')
+        expect(html).not.toContain('relative z-10 mx-auto grid h-full max-w-7xl')
+        expect(html).toContain('lg:columns-6')
+        expect(html).not.toContain('xl:columns-7')
+        expect(html).not.toContain('2xl:columns-8')
+        expect(html).not.toContain('relative z-0 mx-auto grid')
+        expect(html).not.toContain('data-home-gallery-vignette')
+        expect(html).not.toContain('pointer-events-none absolute inset-0 z-10 overflow-hidden')
+        expect(html).not.toContain('blur-3xl')
+        expect(html).not.toContain('rgba(20, 20, 20')
+        expect(html).not.toContain('radial-gradient')
+        expect(html).not.toContain('linear-gradient')
+        expect(html).not.toContain('mask-image')
+        expect(html).not.toContain('home-gallery-scan')
+        expect(html).toContain('aria-hidden="true" class="absolute inset-0 bg-black"')
+        expect(html).not.toContain('skeleton absolute')
+        expect(html).toContain('style="aspect-ratio:320 / 480"')
+        expect(html).toContain('data-src="https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview/preview-thumb-key.webp"')
+        expect(html).toContain('data-fallback-src="https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/full-key.png"')
+        expect(html).toContain('alt="Quartz Dragon gallery art by Demo Artist"')
+        expect(html).toContain('width="320"')
+        expect(html).toContain('height="480"')
+        expect(html.match(/data-gallery-tile="true"/g)?.length).toBe(48)
+        expect(preparedSql).toContain("sfw_review_status = 'approved'")
+        expect(preparedSql).toContain('sfw_homepage_allowed = 1')
+        expect(preparedSql).toContain('sfw_preview_image_key IS NOT NULL')
+    })
+
+    it('does not render or query discover characters on the homepage', async () => {
         const db = createProfilePageDb({
             discoverCharacters: [
                 {
@@ -264,7 +373,7 @@ describe('public page redirects', () => {
             .join('\n')
 
         expect(response.status).toBe(200)
-        expect(html).toContain('MyOC keeps character art easy to browse.')
+        expect(html).toContain('Easy maintenance. Easy browsing.')
         expect(html).not.toContain('Characters worth opening.')
         expect(html).not.toContain('Quartz Dragon')
         expect(html).not.toContain('by @demo_owner')
@@ -276,9 +385,9 @@ describe('public page redirects', () => {
         expect(html).not.toContain('https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview/preview-thumb-key.webp')
         expect(html).not.toContain('https://m.myoc.art/characters/owner-1/character-1/profile/profile-key.webp')
         expect(preparedSql).not.toContain('eligible_characters')
-        expect(preparedSql).not.toContain('sfw_preview_image_key')
-        expect(preparedSql).not.toContain("sfw_review_status = 'approved'")
-        expect(preparedSql).not.toContain('sfw_homepage_allowed')
+        expect(preparedSql).toContain('sfw_preview_image_key IS NOT NULL')
+        expect(preparedSql).toContain("sfw_review_status = 'approved'")
+        expect(preparedSql).toContain('sfw_homepage_allowed = 1')
     })
 
     it('renders homepage stats from KV cache', async () => {
@@ -301,7 +410,7 @@ describe('public page redirects', () => {
         expect(html).toContain('56')
         expect(html).not.toContain('Cached Quartz')
         expect(html).not.toContain('42 images')
-        expect(db.prepare).not.toHaveBeenCalled()
+        expect(db.prepare).toHaveBeenCalledTimes(1)
     })
 
     it('redirects logged-in users away from login and register', async () => {
@@ -342,10 +451,10 @@ describe('public page redirects', () => {
         expect(archiveResponse.status).toBe(200)
         expect(showcaseResponse.status).toBe(200)
         expect(unknownResponse.status).toBe(200)
-        expect(archiveHtml).toContain('MyOC keeps character art easy to browse.')
-        expect(showcaseHtml).toContain('MyOC keeps character art easy to browse.')
-        expect(showcaseHtml).toContain('razfalling.png')
-        expect(unknownHtml).toContain('MyOC keeps character art easy to browse.')
+        expect(archiveHtml).toContain('Easy maintenance. Easy browsing.')
+        expect(showcaseHtml).toContain('Easy maintenance. Easy browsing.')
+        expect(showcaseHtml).toContain('razfalling.webp')
+        expect(unknownHtml).toContain('Easy maintenance. Easy browsing.')
     })
 
     it('renders the what is new page with sequential version entries', async () => {

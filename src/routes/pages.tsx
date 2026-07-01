@@ -32,6 +32,7 @@ import {
 import {
     HomePage,
     homePageDescription,
+    type HomePageGalleryImage,
     type HomePageStats
 } from '../views/pages/HomePage'
 import {
@@ -49,6 +50,8 @@ import {WhatsNewPage} from '../views/pages/WhatsNewPage'
 import {searchAll} from '../lib/search'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import {
+    characterMediaImageUrl,
+    characterMediaPreviewImageUrl,
     characterHeightChartImageUrl,
     characterProfileImageObjectKey,
 } from '../lib/media/url'
@@ -73,14 +76,16 @@ function getRandomLetter(): string {
 }
 
 pageRoutes.get('/', async (c) => {
-    const [currentUser, stats] = await Promise.all([
+    const [currentUser, stats, galleryImages] = await Promise.all([
         getCurrentUser(c),
         getCachedHomePageStats(c.env.CACHE, c.env.DB),
+        getHomePageGalleryImages(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL),
     ])
 
     return c.html(
         <HomePage
             currentUser={currentUser}
+            galleryImages={galleryImages}
             guestInitial={getRandomLetter()}
             mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
             siteUrl={new URL(c.req.url).origin}
@@ -1338,6 +1343,134 @@ async function getCachedHomePageStats(cache: KVNamespace | undefined, db: D1Data
     await putCachedJson(cache, HOME_PAGE_STATS_CACHE_KEY, stats)
 
     return stats
+}
+
+async function getHomePageGalleryImages(db: D1Database, mediaBaseUrl: string): Promise<HomePageGalleryImage[]> {
+    const result = await db.prepare(
+        `SELECT character_media.id,
+                character_media.user_id,
+                character_media.character_id,
+                character_media.sfw_image_key,
+                character_media.sfw_preview_image_key,
+                character_media.sfw_content_type,
+                character_media.sfw_width,
+                character_media.sfw_height,
+                character_media.sfw_preview_width,
+                character_media.sfw_preview_height,
+                character_media.sfw_artist,
+                characters.name AS character_name
+         FROM character_media
+         INNER JOIN characters ON characters.id = character_media.character_id
+         WHERE character_media.sfw_review_status = 'approved'
+           AND character_media.sfw_homepage_allowed = 1
+           AND character_media.sfw_preview_image_key IS NOT NULL
+         ORDER BY COALESCE(character_media.sfw_approved_at, character_media.created_at) DESC,
+                  character_media.id DESC
+         LIMIT 90`,
+    ).all<{
+        id: string
+        user_id: string
+        character_id: string
+        sfw_image_key: string | null
+        sfw_preview_image_key: string | null
+        sfw_content_type: string | null
+        sfw_width: number | null
+        sfw_height: number | null
+        sfw_preview_width: number | null
+        sfw_preview_height: number | null
+        sfw_artist: string | null
+        character_name: string | null
+    }>()
+
+    const images = (result.results ?? [])
+        .filter((image): image is typeof image & {
+            sfw_preview_image_key: string
+        } => Boolean(image.sfw_preview_image_key))
+        .map((image) => {
+            const artist = image.sfw_artist?.trim() || 'an unknown artist'
+            const characterName = image.character_name?.trim() || 'character'
+            const width = image.sfw_preview_width ?? image.sfw_width ?? 512
+            const height = image.sfw_preview_height ?? image.sfw_height ?? 512
+
+            return {
+                id: image.id,
+                alt: `${characterName} gallery art by ${artist}`,
+                fallbackSrc: image.sfw_image_key
+                    ? characterMediaImageUrl(
+                        mediaBaseUrl,
+                        image.user_id,
+                        image.character_id,
+                        image.id,
+                        image.sfw_image_key,
+                        'sfw',
+                        image.sfw_content_type,
+                    )
+                    : null,
+                height,
+                src: characterMediaPreviewImageUrl(
+                    mediaBaseUrl,
+                    image.user_id,
+                    image.character_id,
+                    image.id,
+                    image.sfw_preview_image_key,
+                    'sfw',
+                ),
+                width,
+            }
+        })
+
+    return selectHomePageGalleryImageMix(images)
+}
+
+function selectHomePageGalleryImageMix(images: HomePageGalleryImage[]): HomePageGalleryImage[] {
+    const unused = new Set(images.map((image) => image.id))
+    const groups = {
+        tall: images.filter((image) => image.height / Math.max(1, image.width) >= 1.2),
+        wide: images.filter((image) => image.width / Math.max(1, image.height) >= 1.2),
+        square: images.filter((image) => {
+            const ratio = image.width / Math.max(1, image.height)
+
+            return ratio > 0.8 && ratio < 1.2
+        }),
+    }
+    const pattern: Array<keyof typeof groups> = [
+        'tall',
+        'wide',
+        'tall',
+        'square',
+        'wide',
+        'tall',
+        'wide',
+        'square',
+        'tall',
+        'wide',
+        'tall',
+        'square',
+        'wide',
+        'tall',
+        'wide',
+        'tall',
+        'square',
+        'wide',
+        'tall',
+        'wide',
+        'square',
+    ]
+    const selected: HomePageGalleryImage[] = []
+
+    for (const groupName of pattern) {
+        const candidate = groups[groupName].find((image) => unused.has(image.id))
+            ?? images.find((image) => unused.has(image.id))
+
+        if (!candidate) {
+            break
+        }
+
+        unused.delete(candidate.id)
+        selected.push(candidate)
+    }
+
+    return selected
 }
 
 async function getTableCount(db: D1Database, tableName: 'users' | 'characters' | 'character_media'): Promise<number> {

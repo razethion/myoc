@@ -9,8 +9,18 @@ export type HomePageStats = {
     mediaItems: number
 }
 
+export type HomePageGalleryImage = {
+    id: string
+    alt: string
+    fallbackSrc?: string | null
+    height: number
+    src: string
+    width: number
+}
+
 type HomePageProps = {
     currentUser?: CurrentUser | null
+    galleryImages: HomePageGalleryImage[]
     guestInitial: string
     mediaBaseUrl: string
     siteUrl: string
@@ -23,6 +33,57 @@ const HOME_PAGE_IMAGE_PATH = '/assets/myocbanner.webp'
 const HOME_PAGE_IMAGE_ALT = 'Easily share character art without losing quality. No fuss.'
 const HOME_PAGE_HERO_IMAGE_PATH = '/assets/razfalling.webp'
 const HOME_PAGE_HERO_IMAGE_ALT = 'Red dragon character art floating against a purple sky'
+const HOME_PAGE_GALLERY_SLOT_COUNT = 48
+const HOME_PAGE_GALLERY_FALLBACK_ASPECTS = [
+    '1 / 1',
+    '4 / 5',
+    '5 / 4',
+    '3 / 4',
+    '1 / 1',
+    '2 / 3',
+    '4 / 3',
+    '5 / 7',
+    '1 / 1',
+    '3 / 5',
+    '6 / 5',
+    '4 / 5',
+    '1 / 1',
+    '5 / 6',
+    '3 / 4',
+    '7 / 5',
+    '2 / 3',
+    '1 / 1',
+    '5 / 4',
+    '4 / 7',
+    '6 / 5',
+    '3 / 4',
+    '7 / 5',
+    '1 / 1',
+    '2 / 3',
+    '5 / 4',
+    '4 / 5',
+    '6 / 5',
+    '3 / 5',
+    '1 / 1',
+    '5 / 6',
+    '7 / 4',
+    '4 / 5',
+    '1 / 1',
+    '2 / 3',
+    '6 / 5',
+    '5 / 7',
+    '7 / 5',
+    '3 / 4',
+    '1 / 1',
+    '5 / 4',
+    '4 / 7',
+    '1 / 1',
+    '3 / 5',
+    '6 / 5',
+    '4 / 5',
+    '5 / 6',
+    '7 / 4',
+]
 
 function formatCount(value: number): string {
     return Math.max(0, value).toLocaleString('en-US')
@@ -108,7 +169,8 @@ function HomePageHead({siteUrl, stats}: { siteUrl: string; stats: HomePageStats 
 
 function HomePageMotionStyles() {
     return (
-        <style>{`
+        <style dangerouslySetInnerHTML={{
+            __html: `
             @keyframes home-fade-up {
                 from {
                     opacity: 0;
@@ -131,16 +193,6 @@ function HomePageMotionStyles() {
                 }
             }
 
-            @keyframes home-scan {
-                from {
-                    transform: translateY(-100%);
-                }
-
-                to {
-                    transform: translateY(100%);
-                }
-            }
-
             @keyframes home-grid-drift {
                 from {
                     transform: translate3d(-4rem, -4rem, 0);
@@ -156,30 +208,47 @@ function HomePageMotionStyles() {
             }
 
             .home-float {
-                animation: home-float var(--home-float-duration, 7s) ease-in-out infinite;
-            }
-
-            .home-gallery-scan::after {
-                background: linear-gradient(180deg, transparent, color-mix(in oklab, var(--color-base-content) 20%, transparent), transparent);
-                content: "";
-                inset: 0;
-                opacity: 0.18;
-                pointer-events: none;
-                position: absolute;
-                transform: translateY(-100%);
-                animation: home-scan 5.5s ease-in-out infinite;
+                animation: none;
             }
 
             .home-hero-grid {
                 animation: home-grid-drift 28s linear infinite;
             }
 
+            .home-approved-gallery-tile {
+                contain: layout paint;
+                content-visibility: auto;
+                transition: border-color 180ms ease;
+            }
+
+            .home-approved-gallery-tile.is-loaded {
+                border-color: transparent;
+            }
+
+            .home-approved-gallery-tile img {
+                opacity: 0;
+                transition: opacity 300ms ease;
+            }
+
+            .home-approved-gallery-tile.is-loaded img {
+                opacity: 1;
+            }
+
+            @media (min-width: 1024px) {
+                .home-float {
+                    animation: home-float var(--home-float-duration, 7s) ease-in-out infinite;
+                }
+            }
+
             @media (prefers-reduced-motion: reduce) {
                 .home-reveal,
                 .home-float,
-                .home-gallery-scan::after,
                 .home-hero-grid {
                     animation: none;
+                }
+
+                .home-approved-gallery-tile img {
+                    transition: none;
                 }
             }
 
@@ -217,7 +286,241 @@ function HomePageMotionStyles() {
                     display: none;
                 }
             }
-        `}</style>
+        `
+        }}></style>
+    )
+}
+
+function HomeApprovedGalleryScript() {
+    return (
+        <script dangerouslySetInnerHTML={{
+            __html: `
+            (function () {
+                var galleries = document.querySelectorAll('[data-home-approved-gallery]');
+                var tileQueue = [];
+                var tileQueueRunning = false;
+                var tileLoadDelay = 65;
+                var galleryLoadingStarted = false;
+
+                function loadTile(tile) {
+                    if (tile.dataset.loaded === 'true') {
+                        return;
+                    }
+
+                    tile.dataset.loaded = 'true';
+                    var image = tile.querySelector('img[data-src]');
+
+                    if (!image) {
+                        tile.classList.add('is-loaded');
+                        return;
+                    }
+
+                    function markLoaded() {
+                        window.requestAnimationFrame(function () {
+                            window.requestAnimationFrame(function () {
+                                tile.classList.add('is-loaded');
+                            });
+                        });
+                    }
+
+                    image.addEventListener('load', function () {
+                        markLoaded();
+                    }, {once: true});
+
+                    image.addEventListener('error', function () {
+                        var fallbackSrc = image.dataset.fallbackSrc;
+
+                        if (fallbackSrc && image.src !== fallbackSrc) {
+                            image.src = fallbackSrc;
+                            image.removeAttribute('data-fallback-src');
+                            return;
+                        }
+
+                        markLoaded();
+                    });
+
+                    image.src = image.dataset.src;
+                    image.removeAttribute('data-src');
+
+                    if (image.complete) {
+                        markLoaded();
+                    }
+                }
+
+                function processTileQueue() {
+                    if (tileQueue.length === 0) {
+                        tileQueueRunning = false;
+                        return;
+                    }
+
+                    tileQueueRunning = true;
+                    var tile = tileQueue.shift();
+                    loadTile(tile);
+
+                    window.setTimeout(processTileQueue, tileLoadDelay);
+                }
+
+                function enqueueTile(tile) {
+                    if (tile.dataset.loaded === 'true' || tile.dataset.queued === 'true') {
+                        return;
+                    }
+
+                    tile.dataset.queued = 'true';
+                    tileQueue.push(tile);
+
+                    if (!tileQueueRunning) {
+                        processTileQueue();
+                    }
+                }
+
+                function tileIsNearViewport(tile) {
+                    var rect = tile.getBoundingClientRect();
+                    var viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+                    var preloadMargin = 400;
+
+                    return rect.top < viewportHeight + preloadMargin && rect.bottom > -preloadMargin;
+                }
+
+                function loadVisibleTiles() {
+                    galleries.forEach(function (gallery) {
+                        gallery.querySelectorAll('[data-gallery-tile]').forEach(function (tile) {
+                            if (tileIsNearViewport(tile)) {
+                                enqueueTile(tile);
+                            }
+                        });
+                    });
+                }
+
+                if (galleries.length === 0) {
+                    return;
+                }
+
+                function startGalleryLoading() {
+                    if (galleryLoadingStarted) {
+                        return;
+                    }
+
+                    galleryLoadingStarted = true;
+
+                    if (!('IntersectionObserver' in window)) {
+                        window.addEventListener('scroll', loadVisibleTiles, {passive: true});
+                        window.addEventListener('resize', loadVisibleTiles);
+                        loadVisibleTiles();
+                        return;
+                    }
+
+                    var imageObserver = new IntersectionObserver(function (entries) {
+                        entries.forEach(function (entry) {
+                            if (entry.isIntersecting) {
+                                enqueueTile(entry.target);
+                                imageObserver.unobserve(entry.target);
+                            }
+                        });
+                    }, {rootMargin: '400px 0px', threshold: 0.01});
+
+                    galleries.forEach(function (gallery) {
+                        gallery.querySelectorAll('[data-gallery-tile]').forEach(function (tile) {
+                            imageObserver.observe(tile);
+                        });
+                    });
+                }
+
+                if ((window.scrollY || document.documentElement.scrollTop) > 0) {
+                    startGalleryLoading();
+                } else {
+                    window.addEventListener('scroll', startGalleryLoading, {once: true, passive: true});
+                }
+            })();
+        `
+        }}></script>
+    )
+}
+
+function HomeApprovedGalleryTile({
+                                     image,
+                                     index,
+                                 }: {
+    image?: HomePageGalleryImage
+    index: number
+}) {
+    const aspectRatio = image
+        ? `${Math.max(1, image.width)} / ${Math.max(1, image.height)}`
+        : HOME_PAGE_GALLERY_FALLBACK_ASPECTS[index % HOME_PAGE_GALLERY_FALLBACK_ASPECTS.length]
+
+    return (
+        <figure
+            class="home-approved-gallery-tile relative mb-2 break-inside-avoid overflow-hidden rounded-lg border border-white bg-black"
+            data-gallery-tile
+            style={`aspect-ratio:${aspectRatio}`}
+        >
+            <div aria-hidden="true" class="absolute inset-0 bg-black"></div>
+            {image ? (
+                <img
+                    alt={image.alt}
+                    class="relative z-10 h-full w-full object-contain"
+                    data-fallback-src={image.fallbackSrc ?? undefined}
+                    data-src={image.src}
+                    decoding="async"
+                    height={image.height}
+                    loading="lazy"
+                    width={image.width}
+                />
+            ) : null}
+        </figure>
+    )
+}
+
+function GalleryFeatureSection({galleryImages}: { galleryImages: HomePageGalleryImage[] }) {
+    const displayImages = galleryImages.length > 0
+        ? Array.from({length: HOME_PAGE_GALLERY_SLOT_COUNT}, (_, index) => galleryImages[index % galleryImages.length])
+        : []
+
+    return (
+        <section class="relative isolate overflow-hidden bg-[#141414] px-4 py-16 sm:px-6 lg:px-8 lg:py-24">
+            <div class="relative mx-auto grid max-w-7xl gap-10 lg:grid-cols-2 lg:items-center">
+                <div class="relative z-20 max-w-xl">
+                    <p class="text-sm font-bold uppercase text-base-content/55">Gallery-first profiles</p>
+                    <h2 class="font-display mt-4 text-4xl leading-tight sm:text-5xl">Art that feels organized before
+                        anyone clicks.</h2>
+                    <p class="mt-5 text-base leading-7 text-base-content/75 lg:text-lg lg:leading-8">
+                        Build character galleries around the way people browse: quick thumbnails, clean rows, and
+                        full-resolution media when they want the detail.
+                    </p>
+                    <dl class="mt-8 grid gap-5 sm:grid-cols-3 lg:grid-cols-1">
+                        <div>
+                            <dt class="font-bold">Fast previews</dt>
+                            <dd class="mt-2 text-sm leading-6 text-base-content/65">Approved thumbnails keep the page
+                                light before full art is opened.
+                            </dd>
+                        </div>
+                        <div>
+                            <dt class="font-bold">Character context</dt>
+                            <dd class="mt-2 text-sm leading-6 text-base-content/65">Every image lives with the
+                                character, artist credit, and profile it belongs to.
+                            </dd>
+                        </div>
+                        <div>
+                            <dt class="font-bold">Room to grow</dt>
+                            <dd class="mt-2 text-sm leading-6 text-base-content/65">Keep adding art without turning a
+                                profile into a hard-to-scan folder dump.
+                            </dd>
+                        </div>
+                    </dl>
+                </div>
+                <div
+                    class="relative -mx-4 mt-8 max-h-[50vh] overflow-hidden sm:-mx-6 lg:mx-0 lg:mt-0 lg:max-h-none lg:min-h-[40rem] lg:overflow-visible">
+                    <div
+                        class="home-approved-gallery relative -left-8 -top-6 w-[calc(100%+4rem)] max-w-none columns-4 gap-2 lg:absolute lg:left-0 lg:top-1/2 lg:z-0 lg:w-[calc(50vw+24rem)] lg:-translate-y-1/2 lg:columns-6 xl:w-[calc(50vw+34rem)] 2xl:w-[calc(50vw+42rem)]"
+                        data-home-approved-gallery
+                    >
+                        {Array.from({length: HOME_PAGE_GALLERY_SLOT_COUNT}, (_, index) => (
+                            <HomeApprovedGalleryTile image={displayImages[index]} index={index}/>
+                        ))}
+                    </div>
+                </div>
+            </div>
+            <HomeApprovedGalleryScript/>
+        </section>
     )
 }
 
@@ -281,10 +584,11 @@ function HomeStats({stats}: { stats: HomePageStats }) {
 
 function HeroDragonArt() {
     return (
-        <div class="home-reveal relative min-h-0 [animation-delay:140ms] lg:h-full lg:min-h-0"
-             data-home-gallery-wall>
+        <div
+            class="home-reveal relative z-20 aspect-4/5 w-full [animation-delay:140ms] lg:h-full lg:min-h-0 lg:aspect-auto"
+            data-home-gallery-wall>
             <figure
-                class="home-float home-gallery-scan relative aspect-4/5 w-full overflow-hidden rounded-lg bg-base-200 shadow-2xl shadow-base-300/40 [--home-float-duration:9s] [--home-float-x:0.35rem] [--home-float-y:-0.65rem] [--home-rotate:-1deg] lg:absolute lg:inset-0 lg:aspect-auto">
+                class="home-float absolute inset-0 overflow-visible bg-transparent [--home-float-duration:9s] [--home-float-x:0.35rem] [--home-float-y:-0.65rem] [--home-rotate:-1deg] lg:overflow-hidden lg:rounded-lg lg:bg-base-200 lg:shadow-2xl lg:shadow-base-300/40">
                 <img
                     alt={HOME_PAGE_HERO_IMAGE_ALT}
                     class="h-full w-full object-contain object-center lg:object-cover"
@@ -306,10 +610,10 @@ function HeroDragonArt() {
 function HeroSection({stats}: { stats: HomePageStats }) {
     return (
         <section
-            class="home-hero-section relative isolate overflow-visible bg-base-100 px-4 py-10 sm:px-6 sm:py-14 lg:h-[calc(100dvh-4rem)] lg:overflow-hidden lg:px-8 lg:py-8">
+            class="home-hero-section relative isolate overflow-visible bg-base-100 px-4 pt-10 pb-8 sm:px-6 sm:pt-14 sm:pb-8 lg:h-[calc(100dvh-4rem)] lg:overflow-hidden lg:px-8 lg:py-8">
             <HeroGridBackdrop/>
             <div
-                class="relative z-10 mx-auto grid h-full max-w-7xl gap-8 lg:grid-cols-[minmax(0,0.82fr)_minmax(0,1.18fr)] lg:items-center xl:gap-12">
+                class="relative z-10 mx-auto grid max-w-7xl gap-8 lg:h-full lg:grid-cols-[minmax(0,0.82fr)_minmax(0,1.18fr)] lg:items-center xl:gap-12">
                 <div>
                     <h1 class="home-hero-title font-display home-reveal mt-4 text-5xl leading-none [animation-delay:60ms] sm:text-6xl xl:text-7xl">Easy
                         maintenance. Easy browsing.</h1>
@@ -319,7 +623,7 @@ function HeroSection({stats}: { stats: HomePageStats }) {
                     <HomeSearchForm/>
                     <div
                         class="home-hero-actions home-reveal mt-4 flex flex-col gap-3 [animation-delay:160ms] sm:flex-row sm:items-center lg:mt-5">
-                        <div class="aura aura-gold aura-lg w-full sm:w-auto">
+                        <div class="full sm:w-auto">
                             <a class="btn btn-primary h-auto min-h-10 w-full whitespace-normal text-center sm:w-auto lg:btn-lg"
                                href="/register">Start a gallery</a>
                         </div>
@@ -336,12 +640,13 @@ function HeroSection({stats}: { stats: HomePageStats }) {
     )
 }
 
-export function HomePage({currentUser, guestInitial, mediaBaseUrl, siteUrl, stats}: HomePageProps) {
+export function HomePage({currentUser, galleryImages, guestInitial, mediaBaseUrl, siteUrl, stats}: HomePageProps) {
     return (
         <BaseLayout head={<HomePageHead siteUrl={siteUrl} stats={stats}/>} title={HOME_PAGE_TITLE}>
             <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl}/>
             <main>
                 <HeroSection stats={stats}/>
+                <GalleryFeatureSection galleryImages={galleryImages}/>
             </main>
         </BaseLayout>
     )
