@@ -7,3 +7,44 @@
     themes: false;
 }
 
+/*noinspection CssUnknownTarget*/
+@font-face {
+    font-display: swap;
+    font-family: "Nohemi";
+    font-style: normal;
+    font-weight: 100 900;
+    src: url("assets/Nohemi.woff2") format("woff2");
+}
+
+@theme {
+    --font-sans: "Nohemi", ui-sans-serif, system-ui, sans-serif;
+    --font-display: "Nohemi", ui-sans-serif, system-ui, sans-serif;
+}
+
+html,
+body {
+    font-family: var(--font-sans), sans-serif;
+    font-optical-sizing: auto;
+    text-rendering: geometricPrecision;
+}
+
+:root,
+[data-theme="black"] {
+    --radius-selector: 0.5rem;
+    --radius-field: 0.5rem;
+    --radius-box: 0.5rem;
+}
+
+button,
+input,
+optgroup,
+select,
+textarea {
+    font-family: inherit;
+}
+
+.font-display {
+    font-family: var(--font-display), sans-serif;
+    font-variation-settings: "wght" 860;
+    font-weight: 860;
+}

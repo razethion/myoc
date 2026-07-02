@@ -32,10 +32,10 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
     const shouldShowVersionNotification = Boolean(currentUser && currentUser.lastSeenVersion !== APP_VERSION)
 
     return (
-        <header class="sticky top-0 z-50 border-b border-base-300 bg-base-200/95 px-4 py-2 backdrop-blur sm:px-6">
+        <header class="sticky top-0 z-50 border-b border-base-300 bg-base-200/95 px-4 py-2 sm:px-6">
             <div class="navbar min-h-0 p-0">
                 <div class="flex-1">
-                    <a class="text-xl font-bold" href="/">MyOC</a>
+                    <a class="font-display text-2xl" href="/">MyOC</a>
                 </div>
 
                 <div class="mx-3 hidden w-full max-w-md flex-none md:block">

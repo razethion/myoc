@@ -425,13 +425,6 @@ function CharacterPageStyles() {
                 width: 0.9rem;
             }
 
-            .gallery-image-loader-text {
-                font-size: 0.72rem;
-                font-weight: 600;
-                line-height: 1;
-                white-space: nowrap;
-            }
-
             @keyframes gallery-loader-spin {
                 to {
                     transform: rotate(360deg);
@@ -571,7 +564,6 @@ function GalleryImage({
             />
             <div aria-hidden="true" class="gallery-image-loader" data-gallery-image-loader>
                 <span class="gallery-image-loader-spinner"></span>
-                <span class="gallery-image-loader-text" data-gallery-image-loader-text>Loading fullres...</span>
             </div>
             {media.isNsfwHidden || media.safeDisplayIsNsfwHidden ? (
                 <div aria-hidden="true" class="nsfw-media-warning" hidden={!media.isNsfwHidden}>

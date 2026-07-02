@@ -23,11 +23,11 @@
     "hono": "^4.12.27"
   },
   "devDependencies": {
-    "@tailwindcss/cli": "^4.3.1",
-    "daisyui": "^5.6.3",
-    "tailwindcss": "^4.3.1",
+    "@tailwindcss/cli": "^4.3.2",
+    "daisyui": "^5.6.6",
+    "tailwindcss": "^4.3.2",
     "typescript": "^6.0.3",
     "vitest": "^4.1.9",
-    "wrangler": "^4.104.0"
+    "wrangler": "^4.106.0"
   }
 }

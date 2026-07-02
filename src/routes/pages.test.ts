@@ -9,6 +9,7 @@ import {createWebpDataUrl} from '../test/imageFixtures'
 const mediaPublicBaseUrl = 'https://m.myoc.art'
 
 afterEach(() => {
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
 })
 
@@ -34,6 +35,8 @@ function createProfilePageDb(options: {
     characterCount?: number
     mediaCount?: number
     discoverCharacters?: unknown[]
+    homeGalleryImages?: unknown[]
+    homeHeightChartCharacters?: unknown[]
     activeToyhouseImportJob?: unknown
     activeToyhouseImportItems?: unknown[]
     toyhouseImportItemsError?: Error
@@ -78,6 +81,14 @@ function createProfilePageDb(options: {
         return options.profileUser ?? null
     }
     const allForSql = async (sql: string): Promise<QueryResult> => {
+        if (sql.includes('character_media.sfw_homepage_allowed = 1')) {
+            return {results: options.homeGalleryImages ?? []}
+        }
+
+        if (sql.includes('lower(users.username) = ?') && sql.includes('characters.height_chart_json <>')) {
+            return {results: options.homeHeightChartCharacters ?? []}
+        }
+
         if (sql.includes('eligible_characters')) {
             return {results: options.discoverCharacters ?? []}
         }
@@ -224,17 +235,301 @@ describe('public page redirects', () => {
 
         expect(response.status).toBe(200)
         expect(html).toContain('<title>MyOC | High-Resolution Character Gallery</title>')
-        expect(html).toContain('MyOC is source available.')
-        expect(html).toContain('href="https://github.com/razethion/myoc"')
-        expect(html).toContain('home-loading-image')
-        expect(html).toContain('data-gallery-image-loader')
+        expect(html).toContain('Easy maintenance. Easy browsing.')
+        expect(html).toContain('data-home-gallery-wall')
+        expect(html).toContain('home-hero-stats')
+        expect(html).toContain('stats stats-vertical')
+        expect(html).not.toContain('Character-first archive')
+        expect(html).not.toContain('Library flow')
+        expect(html).not.toContain('MyOC is source available.')
+        expect(html).not.toContain('href="https://github.com/razethion/myoc"')
+        expect(html).not.toContain('home-loading-image')
+        expect(html).not.toContain('data-gallery-image-loader')
         expect(html).toContain('href="/u/demo"')
         expect(html).toContain('24')
         expect(html).toContain('128')
         expect(html).toContain('4,096')
     })
 
-    it('renders discover characters with at least five approved SFW images and a homepage-approved preview', async () => {
+    it('renders approved homepage gallery thumbnails below the hero', async () => {
+        vi.spyOn(Math, 'random').mockReturnValue(0)
+
+        const db = createProfilePageDb({
+            homeGalleryImages: [
+                {
+                    id: 'media-1',
+                    user_id: 'owner-1',
+                    character_id: 'character-1',
+                    sfw_image_key: 'full-key',
+                    sfw_content_type: 'image/png',
+                    sfw_preview_image_key: 'preview-thumb-key',
+                    sfw_width: 640,
+                    sfw_height: 960,
+                    sfw_preview_width: 320,
+                    sfw_preview_height: 480,
+                    sfw_artist: 'Demo Artist',
+                    character_name: 'Quartz Dragon',
+                    owner_username: 'demo_owner',
+                },
+                {
+                    id: 'media-2',
+                    user_id: 'owner-2',
+                    character_id: 'character-2',
+                    sfw_image_key: 'second-full-key',
+                    sfw_content_type: 'image/jpeg',
+                    sfw_preview_image_key: 'second-preview-thumb-key',
+                    sfw_width: 960,
+                    sfw_height: 640,
+                    sfw_preview_width: 480,
+                    sfw_preview_height: 320,
+                    sfw_artist: 'Second Artist',
+                    character_name: 'Wide Lynx',
+                    owner_username: 'second_owner',
+                },
+            ],
+        })
+        const response = await getAppPath('/', db)
+        const html = await response.text()
+        const preparedSql = (db.prepare as unknown as { mock: { calls: [string][] } }).mock.calls
+            .map(([sql]) => sql)
+            .join('\n')
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Gallery Management')
+        expect(html).toContain('data-home-approved-gallery')
+        expect(html).toContain('data-gallery-tile')
+        expect(html).toContain("document.querySelectorAll('[data-home-approved-gallery]')")
+        expect(html).toContain('var imageObserver = new IntersectionObserver(function (entries)')
+        expect(html).toContain('imageObserver.observe(tile)')
+        expect(html).toContain('imageObserver.unobserve(entry.target)')
+        expect(html).toContain("rootMargin: '400px 0px', threshold: 0.01")
+        expect(html).toContain('function tileIsNearViewport(tile)')
+        expect(html).toContain('var tileQueue = []')
+        expect(html).toContain('var tileQueueRunning = false')
+        expect(html).toContain('var tileLoadDelay = 65')
+        expect(html).toContain('var galleryLoadingStarted = false')
+        expect(html).toContain('function enqueueTile(tile)')
+        expect(html).toContain('function processTileQueue()')
+        expect(html).toContain('function startGalleryLoading()')
+        expect(html).toContain('if (galleryLoadingStarted)')
+        expect(html).toContain('window.setTimeout(processTileQueue, tileLoadDelay)')
+        expect(html).toContain('enqueueTile(entry.target)')
+        expect(html).toContain("window.addEventListener('scroll', startGalleryLoading, {once: true, passive: true})")
+        expect(html).toContain('if ((window.scrollY || document.documentElement.scrollTop) > 0)')
+        expect(html).toContain('var preloadMargin = 400')
+        expect(html).not.toContain("gallery.querySelectorAll('[data-gallery-tile]').forEach(function (tile, index)")
+        expect(html).not.toContain('}, index * 65)')
+        expect(html).not.toContain('function preloadGalleryImages()')
+        expect(html).not.toContain("window.addEventListener('load', schedulePreload, {once: true})")
+        expect(html).toContain("window.requestAnimationFrame(function ()")
+        expect(html).not.toContain("rootMargin: '0px', threshold: 0.01")
+        expect(html).toContain('border-color: transparent')
+        expect(html).toContain('contain: layout paint')
+        expect(html).toContain('content-visibility: auto')
+        expect(html).toContain('.home-float {\n                animation: none;')
+        expect(html).toContain('@media (min-width: 1024px) {')
+        expect(html).toContain('animation: home-float var(--home-float-duration, 7s) ease-in-out infinite;')
+        expect(html).not.toContain("rootMargin: '35% 0px 35% 0px'")
+        expect(html).toContain('object-contain')
+        expect(html).toContain('border border-white bg-black')
+        expect(html).not.toContain('bg-black shadow-xl shadow-base-300/35')
+        expect(html).not.toContain('shadow-xl')
+        expect(html).not.toContain('shadow-2xl')
+        expect(html).not.toContain('backdrop-blur')
+        expect(html).not.toContain('drop-shadow')
+        expect(html).toContain('bg-[#141414]')
+        expect(html).toContain('relative -mx-4 mt-8 max-h-[50vh] overflow-hidden sm:-mx-6')
+        expect(html).toContain('home-approved-gallery relative -left-8 -top-6 w-[calc(100%+4rem)] max-w-none columns-4 gap-2 lg:absolute')
+        expect(html).not.toContain('home-approved-gallery absolute left-0 top-1/2')
+        expect(html).not.toContain('columns-2 gap-2 sm:columns-3 lg:absolute')
+        expect(html).toContain('home-reveal relative z-20 aspect-4/5 w-full')
+        expect(html).not.toContain('home-reveal relative z-20 mb-8 aspect-4/5 w-full')
+        expect(html).toContain('home-float absolute inset-0 overflow-visible bg-transparent')
+        expect(html).toContain('h-full w-full object-contain object-center')
+        expect(html).not.toContain('h-[min(72vh,36rem)]')
+        expect(html).not.toContain('max-h-[82vh]')
+        expect(html).toContain('px-4 pt-10 pb-8 sm:px-6 sm:pt-14 sm:pb-8')
+        expect(html).not.toContain('px-4 pt-10 pb-16')
+        expect(html).toContain('relative z-10 mx-auto grid max-w-7xl gap-8 lg:h-full')
+        expect(html).not.toContain('relative z-10 mx-auto grid h-full max-w-7xl')
+        expect(html).toContain('lg:columns-6')
+        expect(html).not.toContain('xl:columns-7')
+        expect(html).not.toContain('2xl:columns-8')
+        expect(html).not.toContain('relative z-0 mx-auto grid')
+        expect(html).not.toContain('data-home-gallery-vignette')
+        expect(html).not.toContain('pointer-events-none absolute inset-0 z-10 overflow-hidden')
+        expect(html).not.toContain('blur-3xl')
+        expect(html).not.toContain('rgba(20, 20, 20')
+        expect(html).not.toContain('radial-gradient')
+        expect(html).not.toContain('linear-gradient')
+        expect(html).not.toContain('bg-linear-to-t')
+        expect(html).not.toContain('mask-image')
+        expect(html).not.toContain('home-gallery-scan')
+        expect(html).toContain('aria-hidden="true" class="absolute inset-0 bg-black"')
+        expect(html).not.toContain('skeleton absolute')
+        expect(html).toContain('style="aspect-ratio:320 / 480"')
+        expect(html).toContain('href="/u/demo_owner/Quartz%20Dragon"')
+        expect(html).toContain('data-src="https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview/preview-thumb-key.webp"')
+        expect(html).toContain('data-fallback-src="https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/full-key.png"')
+        expect(html).toContain('alt="Quartz Dragon gallery art by Demo Artist"')
+        expect(html).toContain('href="/u/second_owner/Wide%20Lynx"')
+        expect(html).toContain('data-src="https://m.myoc.art/characters/owner-2/character-2/media/media-2/sfw/preview/second-preview-thumb-key.webp"')
+        expect(html.indexOf('second-preview-thumb-key.webp')).toBeLessThan(html.indexOf('preview-thumb-key.webp'))
+        expect(html).toContain('width="320"')
+        expect(html).toContain('height="480"')
+        expect(html.match(/data-gallery-tile="true"/g)?.length).toBe(48)
+        expect(preparedSql).toContain('users.username AS owner_username')
+        expect(preparedSql).toContain('INNER JOIN users ON users.id = characters.user_id')
+        expect(preparedSql).toContain("sfw_review_status = 'approved'")
+        expect(preparedSql).toContain('sfw_homepage_allowed = 1')
+        expect(preparedSql).toContain('sfw_preview_image_key IS NOT NULL')
+        expect(preparedSql).toContain('ORDER BY RANDOM()')
+        expect(preparedSql).not.toContain('ORDER BY COALESCE(character_media.sfw_approved_at, character_media.created_at) DESC')
+    })
+
+    it('caches randomized homepage gallery thumbnails for one day', async () => {
+        vi.spyOn(Math, 'random').mockReturnValue(0)
+
+        const db = createProfilePageDb({
+            homeGalleryImages: [
+                {
+                    id: 'media-1',
+                    user_id: 'owner-1',
+                    character_id: 'character-1',
+                    sfw_image_key: 'full-key',
+                    sfw_content_type: 'image/png',
+                    sfw_preview_image_key: 'preview-thumb-key',
+                    sfw_width: 640,
+                    sfw_height: 960,
+                    sfw_preview_width: 320,
+                    sfw_preview_height: 480,
+                    sfw_artist: 'Demo Artist',
+                    character_name: 'Quartz Dragon',
+                    owner_username: 'demo_owner',
+                },
+            ],
+        })
+        const cache = createMockKVNamespace()
+        const response = await getAppPath('/', db, {}, cache)
+        const cachePutCalls = (cache.put as unknown as { mock: { calls: unknown[][] } }).mock.calls
+        const galleryCachePut = cachePutCalls.find(([key]) => key === 'home:gallery:v1')
+
+        expect(response.status).toBe(200)
+        expect(galleryCachePut).toBeTruthy()
+        expect(galleryCachePut?.[2]).toEqual({expirationTtl: 60 * 60 * 24})
+        expect(JSON.parse(galleryCachePut?.[1] as string)).toEqual([
+            expect.objectContaining({
+                href: '/u/demo_owner/Quartz%20Dragon',
+                src: 'https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview/preview-thumb-key.webp',
+            }),
+        ])
+    })
+
+    it('renders the homepage height chart preview from Razeth chart models', async () => {
+        const db = createProfilePageDb({
+            homeHeightChartCharacters: [
+                {
+                    id: 'character-ivo',
+                    name: 'DRD-5548 "Ivo"',
+                    user_id: 'user-razeth',
+                    username: 'razeth',
+                    height_chart_json: JSON.stringify({
+                        version: 1,
+                        height: {meters: 1.2},
+                        image: {
+                            key: 'ivo-chart-key',
+                            contentType: 'image/png',
+                            naturalWidth: 420,
+                            naturalHeight: 980,
+                        },
+                        calibration: {
+                            headYPercent: 8,
+                            footYPercent: 96,
+                            footIsVirtual: false,
+                        },
+                    }),
+                },
+                {
+                    id: 'character-luxor',
+                    name: 'Luxor',
+                    user_id: 'user-razeth',
+                    username: 'razeth',
+                    height_chart_json: JSON.stringify({
+                        version: 1,
+                        height: {meters: 3.6},
+                        image: {
+                            key: 'luxor-chart-key',
+                            contentType: 'image/webp',
+                            naturalWidth: 760,
+                            naturalHeight: 1500,
+                        },
+                        calibration: {
+                            headYPercent: 5,
+                            footYPercent: 92,
+                            footIsVirtual: false,
+                        },
+                    }),
+                },
+            ],
+        })
+        const response = await getAppPath('/', db)
+        const html = await response.text()
+        const preparedSql = (db.prepare as unknown as { mock: { calls: [string][] } }).mock.calls
+            .map(([sql]) => sql)
+            .join('\n')
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Height Charts')
+        expect(html).toContain('How do you stack up?')
+        expect(html).toContain('data-home-chart-x-pct="33"')
+        expect(html).toContain('data-home-chart-x-pct="67"')
+        expect(html).toContain('https://m.myoc.art/characters/user-razeth/character-ivo/height-chart/ivo-chart-key.png')
+        expect(html).toContain('https://m.myoc.art/characters/user-razeth/character-luxor/height-chart/luxor-chart-key.webp')
+        expect(html).toContain('home-size-chart-grid-line')
+        expect(html).toContain('home-size-chart-plot.is-visible .home-size-chart-character.is-positioned')
+        expect(html).toContain('transition: opacity 480ms ease, transform 680ms cubic-bezier')
+        expect(html).toContain('--home-chart-enter-delay:0ms')
+        expect(html).toContain('--home-chart-enter-delay:110ms')
+        expect(html).toContain("var revealObserver = new IntersectionObserver(function (entries)")
+        expect(html).toContain("revealPlot(entry.target)")
+        expect(html).not.toContain('2 characters')
+        expect(preparedSql).toContain('lower(users.username) = ?')
+        expect(preparedSql).toContain('characters.height_chart_json <>')
+    })
+
+    it('renders the product vision page', async () => {
+        const response = await getAppPath('/product-vision')
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Product Vision | MyOC')
+        expect(html).toContain('Making character art easy to store and share.')
+        expect(html).toContain('What MyOC is')
+        expect(html).toContain('What MyOC isn&#39;t')
+    })
+
+    it('renders the site policies page', async () => {
+        const response = await getAppPath('/site-policies')
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Site Policies | MyOC')
+        expect(html).toContain('Rules for hosting, sharing, and moderating character media.')
+        expect(html).toContain('Content classification and NSFW rules')
+        expect(html).toContain('Technical abuse and platform integrity')
+    })
+
+    it('renders the size chart content preferences warning', async () => {
+        const response = await getAppPath('/size-chart')
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Size Chart | MyOC')
+        expect(html).toContain('alert alert-warning')
+        expect(html).toContain('This feature does not yet support content preferences. You may see NSFW media unexpectedly.')
+    })
+
+    it('renders discover galleries worth browsing on the homepage', async () => {
         const db = createProfilePageDb({
             discoverCharacters: [
                 {
@@ -258,28 +553,24 @@ describe('public page redirects', () => {
             .join('\n')
 
         expect(response.status).toBe(200)
-        expect(html).toContain('Characters with galleries worth browsing.')
+        expect(html).toContain('Easy maintenance. Easy browsing.')
+        expect(html).toContain('Galleries worth browsing.')
         expect(html).toContain('Quartz Dragon')
         expect(html).toContain('by @demo_owner')
         expect(html).toContain('7 images')
         expect(html).toContain('href="/u/demo_owner/Quartz%20Dragon"')
-        expect(html).toContain('home-loading-media image-loading aspect-4/3 bg-base-300')
-        expect(html).toContain('home-loading-media image-loading h-14 w-14 shrink-0')
-        expect(html).toContain('loading loading-spinner loading-lg text-base-content')
-        expect(html).toContain('loading loading-spinner loading-sm text-base-content')
+        expect(html).toContain('alt="Quartz Dragon gallery preview by Demo Artist"')
         expect(html).toContain('https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview/preview-thumb-key.webp')
         expect(html).toContain('https://m.myoc.art/characters/owner-1/character-1/profile/profile-key.webp')
-        expect(preparedSql).toContain('sfw_preview_image_key')
-        expect(preparedSql).toContain("sfw_review_status = 'approved'")
-        expect(preparedSql).toContain('character_image_counts.image_count')
-        expect(preparedSql).toContain('CASE WHEN nsfw_image_key IS NOT NULL THEN 1 ELSE 0 END')
+        expect(preparedSql).toContain('eligible_characters')
         expect(preparedSql).toContain('HAVING COUNT(approved_sfw_media.id) >= 5')
-        expect(preparedSql).toContain('SUM(CASE WHEN approved_sfw_media.sfw_homepage_allowed = 1 THEN 1 ELSE 0 END) >= 1')
-        expect(preparedSql).toContain('AND sfw_homepage_allowed = 1')
-        expect(preparedSql).toContain('sfw_approved_at >= updated_at')
+        expect(preparedSql.replace(/\s+/g, ' ')).toContain('SUM(CASE WHEN approved_sfw_media.sfw_homepage_allowed = 1 THEN 1 ELSE 0 END) >= 1')
+        expect(preparedSql).toContain('sfw_preview_image_key IS NOT NULL')
+        expect(preparedSql).toContain("sfw_review_status = 'approved'")
+        expect(preparedSql).toContain('sfw_homepage_allowed = 1')
     })
 
-    it('renders homepage stats and discover characters from KV cache', async () => {
+    it('renders homepage stats from KV cache', async () => {
         const db = createProfilePageDb()
         const cache = createMockKVNamespace({
             values: {
@@ -298,8 +589,20 @@ describe('public page redirects', () => {
                         previewMediaId: 'cached-media',
                         previewImageKey: 'cached-preview-key',
                         previewThumbnailImageKey: 'cached-preview-thumb-key',
-                        previewArtist: 'Cached Artist',
+                        previewContentType: 'image/png',
+                        previewArtist: 'Cache Artist',
                         imageCount: 42,
+                    },
+                ],
+                'home:gallery:v1': [
+                    {
+                        id: 'cached-gallery-media',
+                        alt: 'Cached gallery art by Cache Artist',
+                        fallbackSrc: 'https://m.myoc.art/characters/cached-owner/cached-character/media/cached-gallery-media/sfw/cached-full-key.png',
+                        height: 320,
+                        href: '/u/cached_user/Cached%20Quartz',
+                        src: 'https://m.myoc.art/characters/cached-owner/cached-character/media/cached-gallery-media/sfw/preview/cached-gallery-preview-key.webp',
+                        width: 480,
                     },
                 ],
             },
@@ -314,7 +617,10 @@ describe('public page redirects', () => {
         expect(html).toContain('Cached Quartz')
         expect(html).toContain('42 images')
         expect(html).toContain('https://m.myoc.art/characters/cached-owner/cached-character/media/cached-media/sfw/preview/cached-preview-thumb-key.webp')
-        expect(db.prepare).not.toHaveBeenCalled()
+        expect(html).toContain('https://m.myoc.art/characters/cached-owner/cached-character/profile/cached-profile-key.webp')
+        expect(html).toContain('href="/u/cached_user/Cached%20Quartz"')
+        expect(html).toContain('data-src="https://m.myoc.art/characters/cached-owner/cached-character/media/cached-gallery-media/sfw/preview/cached-gallery-preview-key.webp"')
+        expect(db.prepare).toHaveBeenCalledTimes(1)
     })
 
     it('redirects logged-in users away from login and register', async () => {
@@ -342,6 +648,23 @@ describe('public page redirects', () => {
         expect(homeResponse.status).toBe(200)
         expect(loginResponse.status).toBe(200)
         expect(registerResponse.status).toBe(200)
+    })
+
+    it('ignores obsolete home page variant query parameters', async () => {
+        const archiveResponse = await getAppPath('/?home=archive')
+        const showcaseResponse = await getAppPath('/?home=showcase')
+        const unknownResponse = await getAppPath('/?home=unknown')
+        const archiveHtml = await archiveResponse.text()
+        const showcaseHtml = await showcaseResponse.text()
+        const unknownHtml = await unknownResponse.text()
+
+        expect(archiveResponse.status).toBe(200)
+        expect(showcaseResponse.status).toBe(200)
+        expect(unknownResponse.status).toBe(200)
+        expect(archiveHtml).toContain('Easy maintenance. Easy browsing.')
+        expect(showcaseHtml).toContain('Easy maintenance. Easy browsing.')
+        expect(showcaseHtml).toContain('razfalling.webp')
+        expect(unknownHtml).toContain('Easy maintenance. Easy browsing.')
     })
 
     it('renders the what is new page with sequential version entries', async () => {
@@ -1621,11 +1944,12 @@ describe('GET /u/:username', () => {
         expect(html).toContain('loading="lazy"')
         expect(html).toContain('decoding="async"')
         expect(html).toContain('data-gallery-image-loader')
-        expect(html).toContain('data-gallery-image-loader-text')
         expect(html).toContain('left: 0.5rem;')
         expect(html).toContain('top: 0.5rem;')
         expect(html).toContain('gallery-loader-spin')
-        expect(html).toContain('Loading fullres...')
+        expect(html).toContain('gallery-image-loader-spinner')
+        expect(html).not.toContain('data-gallery-image-loader-text')
+        expect(html).not.toContain('Loading fullres...')
         expect(html).toContain('Load 18+ media')
         expect(html).toContain('data-display-nsfw-media="false"')
         expect(html).toContain('data-nsfw-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/both-nsfw-key.png"')
