@@ -42,10 +42,15 @@ function createProfilePageDb(options: {
     toyhouseImportItemsError?: Error
     imageApprovalItem?: unknown
     imageApprovalQueue?: unknown[]
+    imageApprovalCount?: number
     imageApprovalHistory?: unknown[]
     adminReports?: unknown[]
 } = {}): D1Database {
     const firstForSql = async (sql: string) => {
+        if (sql.includes('sfw_image_key IS NOT NULL') && sql.includes('nsfw_image_key IS NOT NULL') && sql.includes('AS count')) {
+            return {count: options.imageApprovalCount ?? options.imageApprovalQueue?.length ?? 0}
+        }
+
         if (sql.includes('COUNT(*) AS count') && sql.includes('FROM character_media')) {
             return {count: options.mediaCount ?? 0}
         }
@@ -1764,9 +1769,11 @@ describe('GET /admin', () => {
         expect(html).toContain('"fullImageUrl":"https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/sfw-key.png"')
         expect(html).toContain('"objectKey":"characters/owner-1/character-1/media/media-1/sfw/sfw-key.png"')
         expect(html).toContain('"username":"uploader"')
+        expect(html).toContain('"pendingCount":1')
         expect(html).toContain('"profileUrl":"/u/uploader"')
         expect(html).toContain('"url":"/u/uploader/Quartz"')
         expect(html).toContain('admin-approval-image-grid')
+        expect(html).toContain('formatPendingCount')
         expect(html).toContain('handleKeyboardShortcuts')
         expect(html).toContain("a: ['sfw', 'approve_sfw_homepage']")
         expect(html).toContain("openVariantInNewTab('nsfw')")
