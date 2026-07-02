@@ -1,5 +1,5 @@
 import type {CurrentUser} from '../../lib/auth/session'
-import {chunkGalleryItems} from '../../lib/gallery'
+import {chunkGalleryItems, shouldForceGalleryRowFullWidth} from '../../lib/gallery'
 import {
     characterMediaImageUrl,
     characterMediaNsfwBlurImageUrl,
@@ -1233,13 +1233,13 @@ export function CharacterPage({
 
                 {tabs.map((tab, tabIndex) => {
                     const visualRows = tab.rows.length > 0
-                        ? tab.rows.flatMap((row) => {
+                        ? tab.rows.flatMap((row, rowIndex) => {
                             const rowMedia = row.mediaIds
                                 .map((mediaId) => mediaById.get(mediaId))
                                 .filter((item): item is DisplayMedia => Boolean(item))
 
                             return chunkGalleryItems(rowMedia).map((mediaItems, index) => ({
-                                forceFullWidth: row.forceFullWidth === true && row.mediaIds.length === 1 && rowMedia.length === 1 && mediaItems.length === 1 && index === 0,
+                                forceFullWidth: shouldForceGalleryRowFullWidth(row, rowIndex, tab.rows.length) && rowMedia.length === 1 && mediaItems.length === 1 && index === 0,
                                 mediaItems,
                             }))
                         })

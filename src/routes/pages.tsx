@@ -2,7 +2,7 @@ import {Hono, type Context} from 'hono'
 import {getCurrentUser, isAdminUser, toSqlTimestamp} from '../lib/auth/session'
 import {getImageApprovalData} from '../lib/admin/imageApprovals'
 import {getAdminReportsData} from '../lib/admin/reports'
-import {chunkGalleryItems} from '../lib/gallery'
+import {chunkGalleryItems, shouldForceGalleryRowFullWidth} from '../lib/gallery'
 import type {UserSocialLink} from '../lib/socialLinks'
 import type {Bindings} from '../types/bindings'
 import {AuthPage} from '../views/pages/AuthPage'
@@ -2491,7 +2491,7 @@ async function getCharacterGalleryTabs(
     return (tabResult.results ?? []).map((tab) => ({
         id: tab.id,
         name: tab.name,
-        rows: splitOversizedGalleryRows(rowsByTab.get(tab.id) ?? []),
+        rows: normalizeGalleryRowFullWidths(splitOversizedGalleryRows(rowsByTab.get(tab.id) ?? [])),
     }))
 }
 
@@ -2529,4 +2529,13 @@ function splitOversizedGalleryRows(
             forceFullWidth: canForceFullWidth && mediaIds.length === 1,
         }))
     })
+}
+
+function normalizeGalleryRowFullWidths(
+    rows: CharacterSettingsGalleryTab['rows'],
+): CharacterSettingsGalleryTab['rows'] {
+    return rows.map((row, index) => ({
+        ...row,
+        forceFullWidth: shouldForceGalleryRowFullWidth(row, index, rows.length),
+    }))
 }

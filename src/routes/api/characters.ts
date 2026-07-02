@@ -1,7 +1,7 @@
 import {Hono} from 'hono'
 import type {Context} from 'hono'
 import {getCurrentUser, toSqlTimestamp, type CurrentUser} from '../../lib/auth/session'
-import {GALLERY_MAX_IMAGES_PER_ROW} from '../../lib/gallery'
+import {GALLERY_MAX_IMAGES_PER_ROW, shouldForceGalleryRowFullWidth} from '../../lib/gallery'
 import {
     characterHeightChartImageObjectKey,
     characterHeightChartImageUrl,
@@ -2538,7 +2538,7 @@ function parseGalleryLayout(body: GalleryLayoutRequest): ParsedGalleryLayout | {
             const row = {
                 id: rowId,
                 mediaIds: [] as string[],
-                forceFullWidth: false,
+                forceFullWidth: rowItem.forceFullWidth === true,
             }
 
             for (const rawMediaId of rowItem.mediaIds) {
@@ -2562,10 +2562,12 @@ function parseGalleryLayout(body: GalleryLayoutRequest): ParsedGalleryLayout | {
                 row.mediaIds.push(mediaId)
             }
 
-            row.forceFullWidth = rowItem.forceFullWidth === true && row.mediaIds.length === 1
             tab.rows.push(row)
         }
 
+        tab.rows.forEach((row, rowIndex) => {
+            row.forceFullWidth = shouldForceGalleryRowFullWidth(row, rowIndex, tab.rows.length)
+        })
         parsed.tabs.push(tab)
     }
 

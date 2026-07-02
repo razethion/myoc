@@ -2236,7 +2236,7 @@ describe('PUT /characters/:id/gallery', () => {
         ])
     })
 
-    it('persists force full width only on single-image rows', async () => {
+    it('persists force full width for non-final single-image rows and checked final single-image rows', async () => {
         const sessionToken = 'session-token'
         const character = createCharacterRecord()
         const {db, boundStatements} = createMockDb({
@@ -2259,9 +2259,9 @@ describe('PUT /characters/:id/gallery', () => {
                 id: 'tab-default',
                 name: 'default',
                 rows: [
-                    {id: 'row-forced', mediaIds: ['media-one'], forceFullWidth: true},
-                    {id: 'row-unforced', mediaIds: ['media-two']},
+                    {id: 'row-auto', mediaIds: ['media-one'], forceFullWidth: false},
                     {id: 'row-ignored', mediaIds: ['media-three', 'media-four'], forceFullWidth: true},
+                    {id: 'row-final-forced', mediaIds: ['media-two'], forceFullWidth: true},
                 ],
             }],
         }, db, {
@@ -2274,17 +2274,56 @@ describe('PUT /characters/:id/gallery', () => {
             gallery: { tabs: { rows: { id: string; mediaIds: string[]; forceFullWidth: boolean }[] }[] }
         }
         expect(body.gallery.tabs[0]?.rows).toEqual([
-            {id: 'row-forced', mediaIds: ['media-one'], forceFullWidth: true},
-            {id: 'row-unforced', mediaIds: ['media-two'], forceFullWidth: false},
+            {id: 'row-auto', mediaIds: ['media-one'], forceFullWidth: true},
             {id: 'row-ignored', mediaIds: ['media-three', 'media-four'], forceFullWidth: false},
+            {id: 'row-final-forced', mediaIds: ['media-two'], forceFullWidth: true},
         ])
 
         const rowInsertStatements = boundStatements.filter((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_rows'].join(' ')))
         expect(rowInsertStatements.every((statement) => statement.sql.includes('force_full_width'))).toBe(true)
         expect(rowInsertStatements.map((statement) => [statement.binds[0], statement.binds[5]])).toEqual([
-            ['row-forced', 1],
-            ['row-unforced', 0],
+            ['row-auto', 1],
             ['row-ignored', 0],
+            ['row-final-forced', 1],
+        ])
+    })
+
+    it('allows a single-row tab to leave force full width disabled', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character],
+            allResults: [[
+                {id: 'media-one'},
+            ], [
+                {id: 'media-one'},
+            ]],
+        })
+
+        const response = await putGallery(character.id, {
+            tabs: [{
+                id: 'tab-default',
+                name: 'default',
+                rows: [
+                    {id: 'row-only', mediaIds: ['media-one'], forceFullWidth: false},
+                ],
+            }],
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            gallery: { tabs: { rows: { id: string; mediaIds: string[]; forceFullWidth: boolean }[] }[] }
+        }
+        expect(body.gallery.tabs[0]?.rows).toEqual([
+            {id: 'row-only', mediaIds: ['media-one'], forceFullWidth: false},
+        ])
+
+        const rowInsertStatements = boundStatements.filter((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_rows'].join(' ')))
+        expect(rowInsertStatements.map((statement) => [statement.binds[0], statement.binds[5]])).toEqual([
+            ['row-only', 0],
         ])
     })
 

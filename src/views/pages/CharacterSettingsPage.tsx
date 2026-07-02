@@ -190,15 +190,28 @@ function createEmptyGalleryRow() {
     return { id: createId(), mediaIds: [], forceFullWidth: false };
 }
 
-function normalizeRowForceFullWidth(row) {
+function shouldForceRowFullWidth(row, rowIndex, rowCount) {
+    return row && Array.isArray(row.mediaIds) && row.mediaIds.length === 1 && (rowIndex < rowCount - 1 || row.forceFullWidth === true);
+}
+
+function normalizeRowForceFullWidth(row, rowIndex, rowCount) {
     if (!row) return row;
-    row.forceFullWidth = row.forceFullWidth === true && Array.isArray(row.mediaIds) && row.mediaIds.length === 1;
+    if (Number.isInteger(rowIndex) && Number.isInteger(rowCount)) {
+        row.forceFullWidth = shouldForceRowFullWidth(row, rowIndex, rowCount);
+    } else {
+        row.forceFullWidth = row.forceFullWidth === true && Array.isArray(row.mediaIds) && row.mediaIds.length === 1;
+    }
     return row;
+}
+
+function normalizeLayoutForceFullWidth(layout) {
+    if (!layout || !Array.isArray(layout.rows)) return;
+    layout.rows.forEach((row, rowIndex) => normalizeRowForceFullWidth(row, rowIndex, layout.rows.length));
 }
 
 function normalizeInitialGalleryLayout(tab) {
     const rows = Array.isArray(tab.rows)
-        ? tab.rows.map((row) => normalizeRowForceFullWidth({
+        ? tab.rows.map((row) => ({
             id: row && row.id ? String(row.id) : createId(),
             mediaIds: Array.isArray(row && row.mediaIds)
                 ? row.mediaIds.filter((mediaId) => typeof mediaId === 'string')
@@ -207,11 +220,13 @@ function normalizeInitialGalleryLayout(tab) {
         }))
         : [];
 
-    return {
+    const layout = {
         id: tab && tab.id ? String(tab.id) : createId(),
         name: tab && tab.name ? String(tab.name) : 'default',
         rows: rows.length > 0 ? rows : [createEmptyGalleryRow()]
     };
+    normalizeLayoutForceFullWidth(layout);
+    return layout;
 }
 
 function showAlert(message, isSuccess) {
@@ -339,8 +354,8 @@ function getActiveLayout() {
 function ensureLayoutRows(layout) {
     if (!layout) return;
     if (!Array.isArray(layout.rows)) layout.rows = [];
-    layout.rows.forEach(normalizeRowForceFullWidth);
     if (layout.rows.length === 0) layout.rows.push(createEmptyGalleryRow());
+    normalizeLayoutForceFullWidth(layout);
 }
 
 function getUsedMediaIds(tagId) {
@@ -596,31 +611,38 @@ function updateActiveTabControls() {
 }
 
 function moveActiveGalleryRow(rowIndex, direction) {
-    const rows = getActiveLayout().rows;
+    const layout = getActiveLayout();
+    const rows = layout.rows;
     const targetIndex = rowIndex + direction;
     if (rowIndex < 0 || targetIndex < 0 || rowIndex >= rows.length || targetIndex >= rows.length) return false;
     const [row] = rows.splice(rowIndex, 1);
     rows.splice(targetIndex, 0, row);
+    normalizeLayoutForceFullWidth(layout);
     return true;
 }
 
 function insertActiveGalleryRow(rowIndex) {
-    const rows = getActiveLayout().rows;
+    const layout = getActiveLayout();
+    const rows = layout.rows;
     rows.splice(Math.max(0, Math.min(rowIndex, rows.length)), 0, createEmptyGalleryRow());
+    normalizeLayoutForceFullWidth(layout);
 }
 
 function removeActiveGalleryRow(rowIndex) {
-    const rows = getActiveLayout().rows;
+    const layout = getActiveLayout();
+    const rows = layout.rows;
     if (rows.length <= 1 || rowIndex < 0 || rowIndex >= rows.length) return false;
     rows.splice(rowIndex, 1);
+    normalizeLayoutForceFullWidth(layout);
     return true;
 }
 
 function removeFromActiveRow(rowIndex, mediaId) {
-    const row = getActiveLayout().rows[rowIndex];
+    const layout = getActiveLayout();
+    const row = layout.rows[rowIndex];
     if (!row) return false;
     row.mediaIds = row.mediaIds.filter((id) => id !== mediaId);
-    normalizeRowForceFullWidth(row);
+    normalizeLayoutForceFullWidth(layout);
     return true;
 }
 
@@ -638,6 +660,7 @@ function createRowControlButton(label, text, className, dataset) {
 
 function renderRows() {
     const layout = getActiveLayout();
+    normalizeLayoutForceFullWidth(layout);
     galleryRows.replaceChildren();
     layout.rows.forEach((rowData, rowIndex) => {
         const shell = document.createElement('div');
@@ -645,7 +668,6 @@ function renderRows() {
         shell.dataset.galleryRow = String(rowIndex);
 
         const preview = document.createElement('div');
-        normalizeRowForceFullWidth(rowData);
         preview.className = 'gallery-row-preview justified-row' + (rowData.forceFullWidth ? ' row-force-full-width' : '');
         preview.dataset.dropzone = '';
         preview.dataset.rowIndex = String(rowIndex);
@@ -687,7 +709,7 @@ function renderRows() {
         const deleteButton = createRowControlButton('Delete row', 'Delete', 'btn btn-sm btn-error', { deleteRow: rowIndex });
         deleteButton.disabled = layout.rows.length === 1;
         controls.append(count);
-        if (rowData.mediaIds.length === 1) controls.append(forceFullWidthLabel);
+        if (rowData.mediaIds.length === 1 && rowIndex === layout.rows.length - 1) controls.append(forceFullWidthLabel);
         controls.append(moveUpButton, moveDownButton, addAboveButton, addBelowButton, deleteButton);
 
         shell.append(preview, controls);
@@ -859,7 +881,7 @@ async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}, progress)
         layout.rows.push(targetRow);
     }
     targetRow.mediaIds.push(result.media.id);
-    normalizeRowForceFullWidth(targetRow);
+    normalizeLayoutForceFullWidth(layout);
     renderGallery();
     if (progress) progress({ status: 'Done', percent: 100, detail: 'Upload complete' });
     return result.media;
@@ -928,8 +950,8 @@ function removeMediaFromLayouts(mediaId) {
         ensureLayoutRows(layout);
         layout.rows.forEach((row) => {
             row.mediaIds = row.mediaIds.filter((id) => id !== mediaId);
-            normalizeRowForceFullWidth(row);
         });
+        normalizeLayoutForceFullWidth(layout);
     });
 }
 
@@ -968,10 +990,12 @@ galleryRows.addEventListener('change', (event) => {
     if (!forceFullWidthInput) return;
     const rowShell = forceFullWidthInput.closest('[data-gallery-row]');
     if (!rowShell) return;
-    const row = getActiveLayout().rows[Number(rowShell.dataset.galleryRow)];
+    const layout = getActiveLayout();
+    const rowIndex = Number(rowShell.dataset.galleryRow);
+    const row = layout.rows[rowIndex];
     if (!row) return;
     row.forceFullWidth = forceFullWidthInput.checked === true && row.mediaIds.length === 1;
-    normalizeRowForceFullWidth(row);
+    normalizeLayoutForceFullWidth(layout);
     renderGallery();
 });
 
@@ -1115,11 +1139,10 @@ function moveMediaToDrop() {
 
     if (sourceRow) {
         sourceRow.mediaIds = sourceRow.mediaIds.filter((id) => id !== mediaId);
-        normalizeRowForceFullWidth(sourceRow);
     }
     const insertIndex = Math.max(0, Math.min(dragState.drop.insertIndex, targetRow.mediaIds.length));
     targetRow.mediaIds.splice(insertIndex, 0, mediaId);
-    normalizeRowForceFullWidth(targetRow);
+    normalizeLayoutForceFullWidth(layout);
     return true;
 }
 
@@ -1511,10 +1534,10 @@ characterSettingsForm.addEventListener('submit', async (event) => {
                 tabs: Array.from(tagLayouts.values()).map((layout) => ({
                     id: layout.id,
                     name: layout.name,
-                    rows: layout.rows.map((row) => ({
+                    rows: layout.rows.map((row, rowIndex) => ({
                         id: row.id,
                         mediaIds: row.mediaIds,
-                        forceFullWidth: row.forceFullWidth === true && row.mediaIds.length === 1
+                        forceFullWidth: shouldForceRowFullWidth(row, rowIndex, layout.rows.length)
                     }))
                 }))
             })
