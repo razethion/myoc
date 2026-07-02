@@ -1,4 +1,5 @@
 import type { Child } from 'hono/jsx'
+import {raw} from 'hono/html'
 
 type BaseLayoutProps = {
     title: string
@@ -8,17 +9,20 @@ type BaseLayoutProps = {
 
 export function BaseLayout({ title, head, children }: BaseLayoutProps) {
     return (
-        <html data-theme="black" lang="en">
+        <>
+            {raw('<!DOCTYPE html>')}
+            <html data-theme="black" lang="en">
             <head>
-                <meta charset="UTF-8" />
-                <meta content="width=device-width, initial-scale=1" name="viewport" />
+                <meta charset="UTF-8"/>
+                <meta content="width=device-width, initial-scale=1" name="viewport"/>
                 <title>{title}</title>
-                <link href="/app.css" rel="stylesheet" />
+                <link href="/app.css" rel="stylesheet"/>
                 {head}
             </head>
             <body class="min-h-screen overflow-x-hidden bg-base-100 text-base-content">
-                {children}
+            {children}
             </body>
-        </html>
+            </html>
+        </>
     )
 }
