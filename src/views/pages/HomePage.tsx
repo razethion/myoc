@@ -1,6 +1,7 @@
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 import type {CurrentUser} from '../../lib/auth/session'
+import {characterMediaImageUrl, characterMediaPreviewImageUrl, characterProfileImageUrl} from '../../lib/media/url'
 import {absoluteUrl} from '../meta'
 
 export type HomePageStats = {
@@ -14,8 +15,23 @@ export type HomePageGalleryImage = {
     alt: string
     fallbackSrc?: string | null
     height: number
+    href: string
     src: string
     width: number
+}
+
+export type HomePageDiscoverCharacter = {
+    id: string
+    userId: string
+    name: string
+    ownerUsername: string
+    profileImageKey: string
+    previewMediaId: string
+    previewImageKey: string
+    previewThumbnailImageKey: string | null
+    previewContentType: string | null
+    previewArtist: string
+    imageCount: number
 }
 
 export type HomePageHeightChartCharacter = {
@@ -37,6 +53,7 @@ export type HomePageHeightChartCharacter = {
 
 type HomePageProps = {
     currentUser?: CurrentUser | null
+    discoverCharacters: HomePageDiscoverCharacter[]
     galleryImages: HomePageGalleryImage[]
     guestInitial: string
     heightChartCharacters: HomePageHeightChartCharacter[]
@@ -144,6 +161,10 @@ const HOME_PAGE_GALLERY_FALLBACK_ASPECTS = [
 
 function formatCount(value: number): string {
     return Math.max(0, value).toLocaleString('en-US')
+}
+
+function characterUrl(character: HomePageDiscoverCharacter): string {
+    return `/u/${encodeURIComponent(character.ownerUsername)}/${encodeURIComponent(character.name)}`
 }
 
 export function homePageDescription(stats: HomePageStats): string {
@@ -300,8 +321,7 @@ function HomePageMotionStyles() {
             }
 
             .home-size-chart-plot {
-                background: linear-gradient(90deg, rgb(255 255 255 / 0.06) 1px, transparent 1px), linear-gradient(180deg, rgb(255 255 255 / 0.05) 1px, transparent 1px), #000;
-                background-size: 64px 64px;
+                background: #000;
                 height: 100%;
                 overflow: hidden;
                 position: relative;
@@ -337,7 +357,15 @@ function HomePageMotionStyles() {
             }
 
             .home-size-chart-character.is-positioned {
-                transform: none;
+                opacity: 0;
+                transform: translate3d(-5rem, 0, 0);
+                transition: opacity 480ms ease, transform 680ms cubic-bezier(0.16, 1, 0.3, 1);
+                transition-delay: var(--home-chart-enter-delay, 0ms);
+            }
+
+            .home-size-chart-plot.is-visible .home-size-chart-character.is-positioned {
+                opacity: 1;
+                transform: translate3d(0, 0, 0);
             }
 
             .home-size-chart-empty {
@@ -369,6 +397,13 @@ function HomePageMotionStyles() {
                 .home-float,
                 .home-hero-grid {
                     animation: none;
+                }
+
+                .home-size-chart-character.is-positioned {
+                    opacity: 1;
+                    transform: translate3d(0, 0, 0);
+                    transition: none;
+                    transition-delay: 0ms;
                 }
 
                 .home-approved-gallery-tile img {
@@ -537,7 +572,7 @@ function HomeHeightChartPreview({characters}: { characters: HomePageHeightChartC
                         {layout.items
                             .slice()
                             .sort((a, b) => a.layer - b.layer)
-                            .map((item) => (
+                            .map((item, index) => (
                                 <img
                                     alt=""
                                     aria-hidden="true"
@@ -548,7 +583,7 @@ function HomeHeightChartPreview({characters}: { characters: HomePageHeightChartC
                                     decoding="async"
                                     loading="lazy"
                                     src={item.character.image.url}
-                                    style={`--home-chart-image-height:${chartPercent(item.imageHeight)};--home-chart-image-top:${chartPercent(item.top)};--home-chart-layer:${item.layer};--home-chart-x:${item.xPct};`}
+                                    style={`--home-chart-enter-delay:${index * 110}ms;--home-chart-image-height:${chartPercent(item.imageHeight)};--home-chart-image-top:${chartPercent(item.top)};--home-chart-layer:${item.layer};--home-chart-x:${item.xPct};`}
                                 />
                             ))}
                     </>
@@ -597,8 +632,37 @@ function HomeHeightChartScript() {
                     document.querySelectorAll('[data-home-size-chart-plot]').forEach(layoutPlot);
                 }
 
+                function revealPlot(plot) {
+                    plot.classList.add('is-visible');
+                }
+
+                function initRevealObserver() {
+                    var plots = document.querySelectorAll('[data-home-size-chart-plot]');
+
+                    if (!('IntersectionObserver' in window)) {
+                        plots.forEach(revealPlot);
+                        return;
+                    }
+
+                    var revealObserver = new IntersectionObserver(function (entries) {
+                        entries.forEach(function (entry) {
+                            if (!entry.isIntersecting) {
+                                return;
+                            }
+
+                            revealPlot(entry.target);
+                            revealObserver.unobserve(entry.target);
+                        });
+                    }, {rootMargin: '0px 0px -12% 0px', threshold: 0.18});
+
+                    plots.forEach(function (plot) {
+                        revealObserver.observe(plot);
+                    });
+                }
+
                 function init() {
                     layoutCharts();
+                    initRevealObserver();
 
                     if ('ResizeObserver' in window) {
                         var observer = new ResizeObserver(layoutCharts);
@@ -623,10 +687,111 @@ function HomeHeightChartScript() {
     )
 }
 
+function DiscoverGalleriesSection({
+                                      characters,
+                                      mediaBaseUrl,
+                                  }: {
+    characters: HomePageDiscoverCharacter[]
+    mediaBaseUrl: string
+}) {
+    if (characters.length === 0) {
+        return null
+    }
+
+    return (
+        <section class="bg-base-100 px-4 py-16 sm:px-6 lg:px-8 lg:py-24">
+            <div class="mx-auto max-w-7xl">
+                <div
+                    class="grid gap-8 border-b border-base-content/10 pb-8 lg:grid-cols-[minmax(0,0.82fr)_minmax(0,1fr)] lg:items-end">
+                    <div>
+                        <p class="text-sm font-bold uppercase text-base-content/55">Discover</p>
+                        <h2 class="font-display mt-4 text-4xl leading-tight sm:text-5xl">
+                            Galleries worth browsing.
+                        </h2>
+                    </div>
+                    <div class="max-w-2xl lg:justify-self-end">
+                        <p class="text-base leading-7 text-base-content/70 lg:text-lg lg:leading-8">
+                            Browse real character galleries with approved preview art, clear ownership, and enough
+                            media to actually explore.
+                        </p>
+                        <a class="btn btn-outline mt-5 h-auto min-h-10 whitespace-normal text-center" href="/search">
+                            Search all profiles
+                        </a>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 border-l border-t border-base-content/10 lg:grid-cols-3">
+                    {characters.map((character) => {
+                        const previewUrl = character.previewThumbnailImageKey
+                            ? characterMediaPreviewImageUrl(
+                                mediaBaseUrl,
+                                character.userId,
+                                character.id,
+                                character.previewMediaId,
+                                character.previewThumbnailImageKey,
+                                'sfw',
+                            )
+                            : characterMediaImageUrl(
+                                mediaBaseUrl,
+                                character.userId,
+                                character.id,
+                                character.previewMediaId,
+                                character.previewImageKey,
+                                'sfw',
+                                character.previewContentType,
+                            )
+                        const profileImageUrl = characterProfileImageUrl(
+                            mediaBaseUrl,
+                            character.userId,
+                            character.id,
+                            character.profileImageKey,
+                        )
+                        const artist = character.previewArtist || 'Unknown artist'
+
+                        return (
+                            <a class="group border-b border-r border-base-content/10 bg-base-100 transition-colors hover:bg-base-200/80"
+                               href={characterUrl(character)}>
+                                <figure class="relative aspect-4/3 overflow-hidden bg-black">
+                                    <img
+                                        alt={`${character.name} gallery preview by ${artist}`}
+                                        class="h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]"
+                                        decoding="async"
+                                        loading="lazy"
+                                        src={previewUrl}
+                                    />
+                                    <figcaption class="absolute inset-x-0 bottom-0 bg-black/85 p-2 text-white sm:p-4">
+                                        <p class="text-[0.65rem] font-bold uppercase tracking-wide text-white/70 sm:text-xs">Featured
+                                            gallery</p>
+                                        <p class="mt-1 text-xs font-semibold sm:text-sm">{formatCount(character.imageCount)} images</p>
+                                    </figcaption>
+                                </figure>
+                                <div class="flex min-w-0 items-center gap-2 p-3 sm:gap-4 sm:p-5">
+                                    <img
+                                        alt={`${character.name} profile image`}
+                                        class="h-10 w-10 shrink-0 rounded-lg bg-base-300 object-cover sm:h-14 sm:w-14"
+                                        decoding="async"
+                                        loading="lazy"
+                                        src={profileImageUrl}
+                                    />
+                                    <div class="min-w-0">
+                                        <h3 class="truncate text-sm font-bold sm:text-xl">{character.name}</h3>
+                                        <p class="truncate text-sm text-base-content/65">by
+                                            @{character.ownerUsername}</p>
+                                    </div>
+                                </div>
+                            </a>
+                        )
+                    })}
+                </div>
+            </div>
+        </section>
+    )
+}
+
 function HeightChartFeatureSection({characters}: { characters: HomePageHeightChartCharacter[] }) {
     return (
         <section class="relative isolate overflow-hidden bg-base-100">
-            <div class="grid lg:min-h-[44rem] lg:grid-cols-2">
+            <div class="grid lg:min-h-176 lg:grid-cols-2">
                 <div class="relative lg:min-h-full">
                     <HomeHeightChartPreview characters={characters}/>
                 </div>
@@ -874,13 +1039,9 @@ function HomeApprovedGalleryTile({
     const aspectRatio = image
         ? `${Math.max(1, image.width)} / ${Math.max(1, image.height)}`
         : HOME_PAGE_GALLERY_FALLBACK_ASPECTS[index % HOME_PAGE_GALLERY_FALLBACK_ASPECTS.length]
-
-    return (
-        <figure
-            class="home-approved-gallery-tile relative mb-2 break-inside-avoid overflow-hidden rounded-lg border border-white bg-black"
-            data-gallery-tile
-            style={`aspect-ratio:${aspectRatio}`}
-        >
+    const tileClass = 'home-approved-gallery-tile relative mb-2 block break-inside-avoid overflow-hidden rounded-lg border border-white bg-black'
+    const tileContent = (
+        <>
             <div aria-hidden="true" class="absolute inset-0 bg-black"></div>
             {image ? (
                 <img
@@ -894,6 +1055,30 @@ function HomeApprovedGalleryTile({
                     width={image.width}
                 />
             ) : null}
+        </>
+    )
+
+    if (image) {
+        return (
+            <a
+                aria-label={image.alt}
+                class={tileClass}
+                data-gallery-tile
+                href={image.href}
+                style={`aspect-ratio:${aspectRatio}`}
+            >
+                {tileContent}
+            </a>
+        )
+    }
+
+    return (
+        <figure
+            class={tileClass}
+            data-gallery-tile
+            style={`aspect-ratio:${aspectRatio}`}
+        >
+            {tileContent}
         </figure>
     )
 }
@@ -934,7 +1119,7 @@ function GalleryFeatureSection({galleryImages}: { galleryImages: HomePageGallery
                     </dl>
                 </div>
                 <div
-                    class="relative -mx-4 mt-8 max-h-[50vh] overflow-hidden sm:-mx-6 lg:mx-0 lg:mt-0 lg:max-h-none lg:min-h-[40rem] lg:overflow-visible">
+                    class="relative -mx-4 mt-8 max-h-[50vh] overflow-hidden sm:-mx-6 lg:mx-0 lg:mt-0 lg:max-h-none lg:min-h-160 lg:overflow-visible">
                     <div
                         class="home-approved-gallery relative -left-8 -top-6 w-[calc(100%+4rem)] max-w-none columns-4 gap-2 lg:absolute lg:left-0 lg:top-1/2 lg:z-0 lg:w-[calc(50vw+24rem)] lg:-translate-y-1/2 lg:columns-6 xl:w-[calc(50vw+34rem)] 2xl:w-[calc(50vw+42rem)]"
                         data-home-approved-gallery
@@ -952,18 +1137,22 @@ function GalleryFeatureSection({galleryImages}: { galleryImages: HomePageGallery
 
 function HeroGridBackdrop() {
     return (
-        <svg
+        <div
             aria-hidden="true"
-            class="home-hero-grid pointer-events-none absolute -inset-16 z-0 h-[calc(100%+8rem)] w-[calc(100%+8rem)]"
-            preserveAspectRatio="none"
+            class="pointer-events-none absolute inset-0 z-0 overflow-hidden"
         >
-            <defs>
-                <pattern height="64" id="home-hero-grid-pattern" patternUnits="userSpaceOnUse" width="64">
-                    <path d="M 64 0 H 0 V 64" fill="none" stroke="rgba(0, 195, 255, 0.19)" stroke-width="1"/>
-                </pattern>
-            </defs>
-            <rect fill="url(#home-hero-grid-pattern)" height="100%" width="100%"/>
-        </svg>
+            <svg
+                class="home-hero-grid absolute -inset-16 h-[calc(100%+8rem)] w-[calc(100%+8rem)]"
+                preserveAspectRatio="none"
+            >
+                <defs>
+                    <pattern height="64" id="home-hero-grid-pattern" patternUnits="userSpaceOnUse" width="64">
+                        <path d="M 64 0 H 0 V 64" fill="none" stroke="rgba(0, 195, 255, 0.19)" stroke-width="1"/>
+                    </pattern>
+                </defs>
+                <rect fill="url(#home-hero-grid-pattern)" height="100%" width="100%"/>
+            </svg>
+        </div>
     )
 }
 
@@ -989,7 +1178,7 @@ function HomeSearchForm() {
 function HomeStats({stats}: { stats: HomePageStats }) {
     return (
         <div
-            class="stats stats-vertical w-full min-w-0 border border-base-300 bg-base-100/70 shadow backdrop-blur sm:stats-horizontal">
+            class="stats stats-vertical w-full min-w-0 border border-base-300 bg-base-100/70 sm:stats-horizontal">
             <div class="home-hero-stat stat min-w-0 place-items-center px-4 py-3 text-center lg:py-4">
                 <div class="stat-value max-w-full truncate text-3xl lg:text-4xl">{formatCount(stats.users)}</div>
                 <div class="stat-title text-xs uppercase tracking-wide">Users</div>
@@ -1014,7 +1203,7 @@ function HeroDragonArt() {
             class="home-reveal relative z-20 aspect-4/5 w-full [animation-delay:140ms] lg:h-full lg:min-h-0 lg:aspect-auto"
             data-home-gallery-wall>
             <figure
-                class="home-float absolute inset-0 overflow-visible bg-transparent [--home-float-duration:9s] [--home-float-x:0.35rem] [--home-float-y:-0.65rem] [--home-rotate:-1deg] lg:overflow-hidden lg:rounded-lg lg:bg-base-200 lg:shadow-2xl lg:shadow-base-300/40">
+                class="home-float absolute inset-0 overflow-visible bg-transparent [--home-float-duration:9s] [--home-float-x:0.35rem] [--home-float-y:-0.65rem] [--home-rotate:-1deg] lg:overflow-hidden lg:rounded-lg lg:bg-base-200">
                 <img
                     alt={HOME_PAGE_HERO_IMAGE_ALT}
                     class="h-full w-full object-contain object-center lg:object-cover"
@@ -1024,7 +1213,7 @@ function HeroDragonArt() {
                     src={HOME_PAGE_HERO_IMAGE_PATH}
                 />
                 <figcaption
-                    class="home-hero-art-card absolute bottom-1 left-3 z-10 max-w-60 rounded-lg border border-base-300 bg-base-100/85 p-3 shadow-xl backdrop-blur sm:bottom-3 sm:left-4 lg:bottom-6 lg:left-8 lg:p-4">
+                    class="home-hero-art-card absolute bottom-1 left-3 z-10 max-w-60 rounded-lg border border-base-300 bg-base-100/85 p-3 sm:bottom-3 sm:left-4 lg:bottom-6 lg:left-8 lg:p-4">
                     <p class="text-xs font-bold uppercase text-base-content/60">credit</p>
                     <p class="mt-1 text-lg font-black">@NU_M00N</p>
                 </figcaption>
@@ -1068,6 +1257,7 @@ function HeroSection({stats}: { stats: HomePageStats }) {
 
 export function HomePage({
                              currentUser,
+                             discoverCharacters,
                              galleryImages,
                              guestInitial,
                              heightChartCharacters,
@@ -1080,6 +1270,7 @@ export function HomePage({
             <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl}/>
             <main>
                 <HeroSection stats={stats}/>
+                <DiscoverGalleriesSection characters={discoverCharacters} mediaBaseUrl={mediaBaseUrl}/>
                 <GalleryFeatureSection galleryImages={galleryImages}/>
                 <HeightChartFeatureSection characters={heightChartCharacters}/>
                 <AdditionalFeaturesSection/>

@@ -18,6 +18,8 @@ export const RELEASE_NOTES: ReleaseNote[] = [
             'Reworked the homepage to be more user friendly.',
             'Added a product vision page to make it clear what we are doing and what we stand for.',
             'Added the site policies page so everyone knows what is and is not allowed.',
+            'Added a warning to the sizechart regarding display preferences.',
+            'Fixed a bug with loading spinners on character media.',
         ],
     },
     {
