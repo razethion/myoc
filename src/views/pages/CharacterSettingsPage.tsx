@@ -3,6 +3,7 @@ import {GALLERY_MAX_IMAGES_PER_ROW} from '../../lib/gallery'
 import {characterMediaImageUrl, characterMediaPreviewImageUrl, characterProfileImageUrl} from '../../lib/media/url'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
+import {PROFILE_CROPPER_BROWSER_HELPERS} from '../profileCropperScript'
 
 export type CharacterSettingsCharacter = {
     id: string
@@ -101,6 +102,7 @@ const maxGalleryImagesPerRow = ${safeJson(GALLERY_MAX_IMAGES_PER_ROW)};
 const mediaLibrary = new Map(${safeJson(media)}.map((item) => [item.id, item]));
 const tagLayouts = new Map(${safeJson(galleryTabs)}.map((tab) => [tab.id, tab]));
 let activeTagId = ${safeJson(galleryTabs[0]?.id ?? 'default')};
+${PROFILE_CROPPER_BROWSER_HELPERS}
 let dragCandidate = null;
 let dragState = null;
 let pendingDeleteMediaId = null;
@@ -268,25 +270,14 @@ async function loadCharacterProfileForCropping(file) {
     if (characterProfileObjectUrl) URL.revokeObjectURL(characterProfileObjectUrl);
     characterProfileObjectUrl = URL.createObjectURL(file);
     characterProfileCropImage.src = characterProfileObjectUrl;
-    characterProfileCropperInstance = new Cropper(characterProfileCropImage, {
-        aspectRatio: 1,
-        autoCropArea: 1,
-        background: false,
-        viewMode: 1,
-        zoomable: false,
-        zoomOnTouch: false,
-        zoomOnWheel: false,
-    });
+    characterProfileCropper.classList.remove('hidden');
+    characterProfileCropperInstance = createProfileCropper(characterProfileCropImage);
+    await initializeProfileCropper(characterProfileCropperInstance);
 }
 
-function createCroppedCharacterProfileFile() {
+async function createCroppedCharacterProfileFile() {
     if (!characterProfileCropperInstance) throw new Error('Choose a profile image first.');
-    const canvas = characterProfileCropperInstance.getCroppedCanvas({
-        width: 512,
-        height: 512,
-        imageSmoothingEnabled: true,
-        imageSmoothingQuality: 'high',
-    });
+    const canvas = await createProfileCropCanvas(characterProfileCropperInstance);
     return new Promise((resolve, reject) => {
         canvas.toBlob((blob) => {
             if (!blob) {
@@ -1395,8 +1386,8 @@ characterProfileImageInput.addEventListener('change', async () => {
     if (!file) return;
     try {
         await loadCharacterProfileForCropping(file);
-        characterProfileCropper.classList.remove('hidden');
     } catch (error) {
+        resetCharacterProfileCropper();
         showAlert(error.message || 'Could not prepare profile image.', false);
         characterProfileImageInput.value = '';
     }
@@ -1520,7 +1511,6 @@ export function CharacterSettingsPage({
 
     return (
         <BaseLayout
-            head={<link href="/vendor/cropperjs/cropper.min.css" rel="stylesheet"/>}
             title={`${character.name} Settings | MyOC`}
         >
             <Navbar currentUser={currentUser} guestInitial={currentUser.username.charAt(0).toUpperCase()} mediaBaseUrl={mediaBaseUrl}/>
@@ -1543,6 +1533,7 @@ export function CharacterSettingsPage({
                     .gallery-layout-tab-action:not(:disabled) { border: 1px solid color-mix(in oklab, var(--color-base-content) 34%, transparent); box-shadow: 0 1px 0 color-mix(in oklab, var(--color-base-content) 18%, transparent); }
                     .gallery-layout-tab-action:disabled { background: var(--color-base-300); border: 1px dashed color-mix(in oklab, var(--color-base-content) 42%, transparent); color: color-mix(in oklab, var(--color-base-content) 62%, transparent); opacity: 1; }
                     .gallery-layout-panel { border-top-left-radius: 0; }
+                    [data-character-profile-cropper] cropper-canvas { height: min(22rem, 55vh); }
                     .character-settings-toast-message { animation: character-settings-toast-fade 3400ms ease forwards; pointer-events: auto; }
                     @keyframes character-settings-toast-fade {
                         0%, 82% { opacity: 1; transform: translateY(0); }

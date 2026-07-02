@@ -8,6 +8,7 @@ import {
 } from '../../lib/socialLinks'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
+import {PROFILE_CROPPER_BROWSER_HELPERS} from '../profileCropperScript'
 
 type UserSettingsPageProps = {
     currentUser: CurrentUser
@@ -108,6 +109,7 @@ function UserSettingsPageScript() {
         const profilePhotoImages = document.querySelectorAll('[data-profile-photo-image]');
         let profilePhotoCropperInstance = null;
         let profilePhotoObjectUrl = null;
+        ${PROFILE_CROPPER_BROWSER_HELPERS}
 
         function showSettingsAlert(message, isSuccess = false) {
             settingsAlertMessage.textContent = message;
@@ -236,6 +238,30 @@ function UserSettingsPageScript() {
             });
         }
 
+        function resetProfilePhotoCropper() {
+            if (profilePhotoCropperInstance) {
+                profilePhotoCropperInstance.destroy();
+                profilePhotoCropperInstance = null;
+            }
+
+            if (profilePhotoObjectUrl) {
+                URL.revokeObjectURL(profilePhotoObjectUrl);
+                profilePhotoObjectUrl = null;
+            }
+
+            if (profilePhotoCropImage) {
+                profilePhotoCropImage.removeAttribute('src');
+            }
+
+            if (profilePhotoCropper) {
+                profilePhotoCropper.classList.add('hidden');
+            }
+
+            if (profilePhotoButton) {
+                profilePhotoButton.disabled = true;
+            }
+        }
+
         async function loadProfilePhotoForCropping(file) {
             if (!file.type.startsWith('image/')) {
                 throw new Error('Choose an image file.');
@@ -256,15 +282,9 @@ function UserSettingsPageScript() {
 
             profilePhotoObjectUrl = URL.createObjectURL(file);
             profilePhotoCropImage.src = profilePhotoObjectUrl;
-            profilePhotoCropperInstance = new Cropper(profilePhotoCropImage, {
-                aspectRatio: 1,
-                autoCropArea: 1,
-                background: false,
-                viewMode: 1,
-                zoomable: false,
-                zoomOnTouch: false,
-                zoomOnWheel: false,
-            });
+            profilePhotoCropper.classList.remove('hidden');
+            profilePhotoCropperInstance = createProfileCropper(profilePhotoCropImage);
+            await initializeProfileCropper(profilePhotoCropperInstance);
         }
 
         async function createCroppedProfilePhoto() {
@@ -272,12 +292,7 @@ function UserSettingsPageScript() {
                 throw new Error('Choose a profile photo first.');
             }
 
-            const canvas = profilePhotoCropperInstance.getCroppedCanvas({
-                width: 512,
-                height: 512,
-                imageSmoothingEnabled: true,
-                imageSmoothingQuality: 'high',
-            });
+            const canvas = await createProfileCropCanvas(profilePhotoCropperInstance);
 
             return await canvasToBlob(canvas);
         }
@@ -285,9 +300,7 @@ function UserSettingsPageScript() {
         if (profilePhotoInput && profilePhotoButton && profilePhotoCropper && profilePhotoCropImage) {
             profilePhotoInput.addEventListener('change', async () => {
                 clearSettingsAlert();
-                profilePhotoCropperInstance = null;
-                profilePhotoButton.disabled = true;
-                profilePhotoCropper.classList.add('hidden');
+                resetProfilePhotoCropper();
 
                 const file = profilePhotoInput.files && profilePhotoInput.files[0];
 
@@ -297,9 +310,9 @@ function UserSettingsPageScript() {
 
                 try {
                     await loadProfilePhotoForCropping(file);
-                    profilePhotoCropper.classList.remove('hidden');
                     profilePhotoButton.disabled = false;
                 } catch (error) {
+                    resetProfilePhotoCropper();
                     showSettingsAlert(error instanceof Error ? error.message : 'Could not prepare profile photo.');
                 }
             });
@@ -357,9 +370,7 @@ function UserSettingsPageScript() {
                     }
 
                     profilePhotoInput.value = '';
-                    profilePhotoCropperInstance.destroy();
-                    profilePhotoCropperInstance = null;
-                    profilePhotoCropper.classList.add('hidden');
+                    resetProfilePhotoCropper();
                     showSettingsAlert('Profile photo updated.', true);
                 } catch {
                     showSettingsAlert('Could not reach the server. Try again.');
@@ -430,8 +441,10 @@ export function UserSettingsPage({currentUser, socialLinks = [], mediaBaseUrl}: 
     const socialValues = createSettingsSocialLinks(socialLinks)
 
     return (
-        <BaseLayout head={<link href="/vendor/cropperjs/cropper.min.css" rel="stylesheet"/>}
-                    title="User Settings | MyOC">
+        <BaseLayout
+            head={<style>{`[data-profile-photo-cropper] cropper-canvas { height: min(22rem, 55vh); }`}</style>}
+            title="User Settings | MyOC"
+        >
             <Navbar currentUser={currentUser} mediaBaseUrl={mediaBaseUrl}/>
 
             <main class="container mx-auto max-w-3xl px-3 py-6 sm:px-0">
