@@ -2,6 +2,7 @@ import type {CurrentUser} from '../../lib/auth/session'
 import {characterProfileImageUrl} from '../../lib/media/url'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
+import {PROFILE_CROPPER_BROWSER_HELPERS} from '../profileCropperScript'
 
 export type CharacterManagementFolder = {
     id: string
@@ -141,9 +142,8 @@ function CharacterManagementStyles() {
                 overscroll-behavior: contain;
                 padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
             }
-            #create-character-modal [data-character-profile-cropper] [data-character-profile-crop-image],
-            #create-character-modal [data-character-profile-cropper] .cropper-container {
-                max-height: 40dvh !important;
+            #create-character-modal [data-character-profile-cropper] cropper-canvas {
+                height: 40dvh;
             }
             @media (min-width: 640px) {
                 #create-character-modal {
@@ -153,9 +153,8 @@ function CharacterManagementStyles() {
                 #create-character-modal .modal-box {
                     max-height: calc(100dvh - 2rem);
                 }
-                #create-character-modal [data-character-profile-cropper] [data-character-profile-crop-image],
-                #create-character-modal [data-character-profile-cropper] .cropper-container {
-                    max-height: 22rem !important;
+                #create-character-modal [data-character-profile-cropper] cropper-canvas {
+                    height: 22rem;
                 }
             }
             .toast-message { animation: toast-fade 2600ms ease forwards; }
@@ -182,6 +181,7 @@ function CharacterManagementScript({tree, csrfToken}: { tree: CharacterManagemen
         let characterProfileObjectUrl = null;
         let currentFolderNestRow = null;
         let currentFolderSortKey = '';
+        ${PROFILE_CROPPER_BROWSER_HELPERS}
         const folderDropMarker = document.createElement('div');
         folderDropMarker.className = 'folder-drop-marker';
 
@@ -507,25 +507,14 @@ function CharacterManagementScript({tree, csrfToken}: { tree: CharacterManagemen
             if (characterProfileObjectUrl) URL.revokeObjectURL(characterProfileObjectUrl);
             characterProfileObjectUrl = URL.createObjectURL(file);
             characterProfileCropImage.src = characterProfileObjectUrl;
-            characterProfileCropperInstance = new Cropper(characterProfileCropImage, {
-                aspectRatio: 1,
-                autoCropArea: 1,
-                background: false,
-                viewMode: 1,
-                zoomable: false,
-                zoomOnTouch: false,
-                zoomOnWheel: false,
-            });
+            characterProfileCropper.classList.remove('hidden');
+            characterProfileCropperInstance = createProfileCropper(characterProfileCropImage);
+            await initializeProfileCropper(characterProfileCropperInstance);
         }
 
-        function createCroppedCharacterProfileDataUrl() {
+        async function createCroppedCharacterProfileDataUrl() {
             if (!characterProfileCropperInstance) throw new Error('Choose a profile image first.');
-            const canvas = characterProfileCropperInstance.getCroppedCanvas({
-                width: 512,
-                height: 512,
-                imageSmoothingEnabled: true,
-                imageSmoothingQuality: 'high',
-            });
+            const canvas = await createProfileCropCanvas(characterProfileCropperInstance);
             return canvas.toDataURL('image/webp', 0.9);
         }
 
@@ -560,8 +549,8 @@ function CharacterManagementScript({tree, csrfToken}: { tree: CharacterManagemen
             if (!file) return;
             try {
                 await loadCharacterProfileForCropping(file);
-                characterProfileCropper.classList.remove('hidden');
             } catch (error) {
+                resetCharacterProfileCropper();
                 showToast(error.message || 'Could not prepare profile image.', true);
                 characterProfileInput.value = '';
             }
@@ -574,7 +563,7 @@ function CharacterManagementScript({tree, csrfToken}: { tree: CharacterManagemen
             try {
                 const name = document.getElementById('new-character-name').value.trim();
                 const folderId = normalizeFolderId(document.getElementById('new-character-folder').value);
-                const profileImageData = createCroppedCharacterProfileDataUrl();
+                const profileImageData = await createCroppedCharacterProfileDataUrl();
                 const result = await apiJson('/api/characters', {
                     method: 'POST',
                     body: JSON.stringify({ name, folderId, profileImageData }),
@@ -868,10 +857,7 @@ export function CharacterManagementPage({
     return (
         <BaseLayout
             head={(
-                <>
-                    <link href="/vendor/cropperjs/cropper.min.css" rel="stylesheet"/>
-                    <CharacterManagementStyles/>
-                </>
+                <CharacterManagementStyles/>
             )}
             title="Character Management | MyOC"
         >
