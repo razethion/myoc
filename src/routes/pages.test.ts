@@ -682,6 +682,12 @@ describe('public page redirects', () => {
         expect(html).toContain('Current version')
         expect(html).toContain('Release Notes')
         expect(html).toContain('badge badge-primary')
+        if (RELEASE_NOTES.some((release) => release.important)) {
+            expect(html).toContain('alert alert-warning alert-dash')
+            expect(html).toContain('This change requires user interaction')
+            expect(html).toContain('badge badge-warning')
+            expect(html).toContain('Important!')
+        }
         expect(html).toContain('badge badge-outline')
         expect(html).toContain('href="/whats-new"')
     })
@@ -1536,7 +1542,6 @@ describe('GET /edit/:characterId', () => {
                 name: 'RAZETH',
                 profile_image_key: 'profile-image-key',
                 description: 'Character description.',
-                gallery_fullsize_last_row: 1,
             },
             characterMedia: [{
                 id: 'media-1',
@@ -1558,6 +1563,7 @@ describe('GET /edit/:characterId', () => {
                 row_id: 'row-1',
                 tab_id: 'tab-1',
                 row_sort_order: 0,
+                force_full_width: 1,
                 media_id: 'media-1',
                 media_sort_order: 0,
             }],
@@ -1572,7 +1578,7 @@ describe('GET /edit/:characterId', () => {
         expect(html).toContain('href="/u/demo/RAZETH"')
         expect(html).toContain('https://m.myoc.art/characters/current-user/character-1/profile/profile-image-key.webp')
         expect(html).toContain('https://m.myoc.art/characters/current-user/character-1/media/media-1/sfw/sfw-image-key.png')
-        expect(html).toContain('Gallery Sorting')
+        expect(html).toContain('Gallery Tabs')
         expect(html).toContain('tabs tabs-border')
         expect(html).toContain('id="move-active-gallery-tab-left"')
         expect(html).toContain('.gallery-layout-tab.tab-active')
@@ -1581,6 +1587,18 @@ describe('GET /edit/:characterId', () => {
         expect(html).toContain('id="rename-active-gallery-tab"')
         expect(html).toContain('btn btn-dash btn-warning btn-sm btn-square')
         expect(html).toContain('btn btn-error btn-sm btn-square')
+        expect(html).toContain('Force full width')
+        expect(html).toContain('"forceFullWidth":true')
+        expect(html).toContain('Used on ')
+        expect(html).toContain('not used')
+        expect(html).toContain('id="save-character-settings-warning"')
+        expect(html).toContain('Place all media on at least one gallery tab before saving.')
+        expect(html).not.toContain('id="add-gallery-row"')
+        expect(html).toContain('id="gallery-rows"')
+        expect(html).toContain('gallery-row-preview')
+        expect(html).toContain('gallery-drop-marker')
+        expect(html).toContain('data-gallery-draggable')
+        expect(html).not.toContain('id="remove-row-modal"')
         expect(html).toContain('const csrfToken =')
         expectPatternAllowsReportedCharacterNames(html, 'character-name')
     })
@@ -1827,7 +1845,6 @@ describe('GET /u/:username', () => {
                 name: 'RAZETH',
                 profile_image_key: 'character-profile-key',
                 description: 'Character page description.',
-                gallery_fullsize_last_row: 1,
             },
             characterMedia: [
                 {
@@ -1901,20 +1918,23 @@ describe('GET /u/:username', () => {
                     row_id: 'row-1',
                     tab_id: 'tab-default',
                     row_sort_order: 0,
+                    force_full_width: 0,
                     media_id: 'sfw-media',
                     media_sort_order: 0,
-                },
-                {
-                    row_id: 'row-1',
-                    tab_id: 'tab-default',
-                    row_sort_order: 0,
-                    media_id: 'both-media',
-                    media_sort_order: 1,
                 },
                 {
                     row_id: 'row-2',
                     tab_id: 'tab-default',
                     row_sort_order: 1,
+                    force_full_width: 0,
+                    media_id: 'both-media',
+                    media_sort_order: 0,
+                },
+                {
+                    row_id: 'row-3',
+                    tab_id: 'tab-default',
+                    row_sort_order: 2,
+                    force_full_width: 1,
                     media_id: 'nsfw-media',
                     media_sort_order: 0,
                 },
@@ -1955,6 +1975,7 @@ describe('GET /u/:username', () => {
         expect(html).toContain('data-nsfw-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/both-nsfw-key.png"')
         expect(html).toContain('data-nsfw-preview-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/preview/both-nsfw-preview-key.webp"')
         expect(html).toContain('data-nsfw-title="Both NSFW Artist"')
+        expect(html.match(/class="justified-row row-force-full-width"/g)).toHaveLength(3)
         expect(html).toContain('data-safe-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"')
         expect(html).toContain('data-title="SFW Artist"')
         expect(html).toContain('data-title="Both SFW Artist"')
@@ -2005,7 +2026,6 @@ describe('GET /u/:username', () => {
                 name: 'RAZETH',
                 profile_image_key: 'character-profile-key',
                 description: '',
-                gallery_fullsize_last_row: 0,
             },
             characterMedia: [
                 {
@@ -2076,7 +2096,6 @@ describe('GET /u/:username', () => {
                 name: 'RAZETH',
                 profile_image_key: 'character-profile-key',
                 description: '',
-                gallery_fullsize_last_row: 0,
             },
             characterMedia: [
                 {
@@ -2142,7 +2161,6 @@ describe('GET /u/:username', () => {
                 name: 'RAZETH',
                 profile_image_key: 'character-profile-key',
                 description: '',
-                gallery_fullsize_last_row: 0,
             },
         }))
 
@@ -2169,7 +2187,6 @@ describe('GET /u/:username', () => {
                 name: 'RAZETH',
                 profile_image_key: 'character-profile-key',
                 description: '',
-                gallery_fullsize_last_row: 0,
             },
             characterMedia: [
                 {
@@ -2257,7 +2274,6 @@ describe('GET /u/:username', () => {
                 name: 'RAZETH',
                 profile_image_key: 'character-profile-key',
                 description: '',
-                gallery_fullsize_last_row: 0,
             },
             characterMedia: [
                 {

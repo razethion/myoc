@@ -1,5 +1,5 @@
 import type {CurrentUser} from '../../lib/auth/session'
-import {APP_VERSION} from '../../lib/releases'
+import {APP_VERSION, RELEASE_NOTES} from '../../lib/releases'
 import {profilePhotoUrl} from '../../lib/media/url'
 
 type NavbarProps = {
@@ -9,6 +9,7 @@ type NavbarProps = {
 }
 
 const LAST_SEEN_VERSION_STORAGE_KEY = 'myoc:lastSeenVersion'
+const CURRENT_RELEASE = RELEASE_NOTES.find((release) => release.version === APP_VERSION)
 
 export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarProps) {
     const avatarName = currentUser?.username ?? guestInitial
@@ -133,28 +134,46 @@ function VersionNotification({
     isAuthenticated: boolean
     showInitially: boolean
 }) {
+    const isImportantRelease = Boolean(CURRENT_RELEASE?.important)
+    const notificationClass = isImportantRelease
+        ? 'alert alert-warning alert-dash alert-vertical sm:alert-horizontal mt-2 w-full text-sm'
+        : 'mt-2 rounded border border-primary/35 bg-primary/10 px-3 py-2 text-sm'
+    const actions = (
+        <div class="flex items-center justify-center gap-2 sm:justify-end">
+            <a class="btn btn-primary btn-xs" href="/whats-new" data-version-notification-link>What's
+                new</a>
+            <button
+                aria-label="Dismiss version notification"
+                class="btn btn-ghost btn-xs btn-square"
+                data-version-notification-dismiss
+                type="button"
+            >
+                x
+            </button>
+        </div>
+    )
+
     return (
         <>
             <div
-                class={`mt-2 rounded border border-primary/35 bg-primary/10 px-3 py-2 text-sm ${showInitially ? '' : 'hidden'}`}
+                class={`${notificationClass} ${showInitially ? '' : 'hidden'}`}
                 data-authenticated={isAuthenticated ? 'true' : 'false'}
                 data-version-notification
             >
-                <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <p class="font-semibold">New in v{APP_VERSION}</p>
-                    <div class="flex items-center gap-2">
-                        <a class="btn btn-primary btn-xs" href="/whats-new" data-version-notification-link>What's
-                            new</a>
-                        <button
-                            aria-label="Dismiss version notification"
-                            class="btn btn-ghost btn-xs btn-square"
-                            data-version-notification-dismiss
-                            type="button"
-                        >
-                            x
-                        </button>
+                {isImportantRelease ? (
+                    <>
+                        <div class="min-w-0 text-center sm:text-left">
+                            <p class="font-semibold">New in v{APP_VERSION}</p>
+                            <p class="text-xs font-semibold">This change requires user interaction</p>
+                        </div>
+                        {actions}
+                    </>
+                ) : (
+                    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <p class="font-semibold">New in v{APP_VERSION}</p>
+                        {actions}
                     </div>
-                </div>
+                )}
             </div>
             <VersionNotificationScript csrfToken={csrfToken} isAuthenticated={isAuthenticated}/>
         </>
@@ -219,18 +238,24 @@ function VersionNotificationScript({
         }
     }
 
-    document.querySelector('[data-version-notification-dismiss]')?.addEventListener('click', () => {
-        markLocalSeen();
-        hideNotification();
-        void markRemoteSeen();
-    });
+    const link = document.querySelector('[data-version-notification-link]');
+    if (link) {
+        link.addEventListener('click', () => {
+            markLocalSeen();
+            void markRemoteSeen();
+        });
+    }
 
-    document.querySelector('[data-version-notification-link]')?.addEventListener('click', () => {
-        markLocalSeen();
-        void markRemoteSeen();
-    });
+    const dismiss = document.querySelector('[data-version-notification-dismiss]');
+    if (dismiss) {
+        dismiss.addEventListener('click', () => {
+            markLocalSeen();
+            void markRemoteSeen();
+            hideNotification();
+        });
+    }
 })();
 `
 
-    return <script dangerouslySetInnerHTML={{__html: script}}></script>
+    return <script dangerouslySetInnerHTML={{__html: script}}/>
 }

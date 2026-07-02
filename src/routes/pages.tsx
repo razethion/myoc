@@ -2,7 +2,7 @@ import {Hono, type Context} from 'hono'
 import {getCurrentUser, isAdminUser, toSqlTimestamp} from '../lib/auth/session'
 import {getImageApprovalData} from '../lib/admin/imageApprovals'
 import {getAdminReportsData} from '../lib/admin/reports'
-import {chunkGalleryItems} from '../lib/gallery'
+import {chunkGalleryItems, shouldForceGalleryRowFullWidth} from '../lib/gallery'
 import type {UserSocialLink} from '../lib/socialLinks'
 import type {Bindings} from '../types/bindings'
 import {AuthPage} from '../views/pages/AuthPage'
@@ -2057,7 +2057,6 @@ async function getCharacterPageCharacter(
                 name,
                 profile_image_key,
                 description,
-                gallery_fullsize_last_row,
                 height_chart_json
          FROM characters
          WHERE user_id = ?
@@ -2072,7 +2071,6 @@ async function getCharacterPageCharacter(
             name: string
             profile_image_key: string
             description: string | null
-            gallery_fullsize_last_row: number | null
             height_chart_json: string
         }>()
 
@@ -2086,7 +2084,6 @@ async function getCharacterPageCharacter(
         name: character.name,
         profileImageKey: character.profile_image_key,
         description: character.description ?? '',
-        galleryFullsizeLastRow: Boolean(character.gallery_fullsize_last_row),
         hasHeightChart: hasUsableHeightChart(character.height_chart_json),
     }
 }
@@ -2235,8 +2232,7 @@ async function getCharacterSettingsCharacter(
                 user_id,
                 name,
                 profile_image_key,
-                description,
-                gallery_fullsize_last_row
+                description
          FROM characters
          WHERE id = ?
            AND user_id = ?
@@ -2249,7 +2245,6 @@ async function getCharacterSettingsCharacter(
             name: string
             profile_image_key: string
             description: string | null
-            gallery_fullsize_last_row: number | null
         }>()
 
     if (!character) {
@@ -2262,7 +2257,6 @@ async function getCharacterSettingsCharacter(
         name: character.name,
         profileImageKey: character.profile_image_key,
         description: character.description ?? '',
-        galleryFullsizeLastRow: Boolean(character.gallery_fullsize_last_row),
     }
 }
 
@@ -2452,6 +2446,7 @@ async function getCharacterGalleryTabs(
             `SELECT character_gallery_rows.id            AS row_id,
                     character_gallery_rows.tab_id        AS tab_id,
                     character_gallery_rows.sort_order    AS row_sort_order,
+                    character_gallery_rows.force_full_width AS force_full_width,
                     character_gallery_row_media.media_id AS media_id,
                     character_gallery_row_media.sort_order AS media_sort_order
              FROM character_gallery_rows
@@ -2466,6 +2461,7 @@ async function getCharacterGalleryTabs(
                 row_id: string
                 tab_id: string
                 row_sort_order: number
+                force_full_width: number | null
                 media_id: string | null
                 media_sort_order: number | null
             }>(),
@@ -2481,6 +2477,7 @@ async function getCharacterGalleryTabs(
             tabRow = {
                 id: row.row_id,
                 mediaIds: [],
+                forceFullWidth: Boolean(row.force_full_width),
             }
             tabRows.push(tabRow)
             rowsByTab.set(row.tab_id, tabRows)
@@ -2494,7 +2491,7 @@ async function getCharacterGalleryTabs(
     return (tabResult.results ?? []).map((tab) => ({
         id: tab.id,
         name: tab.name,
-        rows: splitOversizedGalleryRows(rowsByTab.get(tab.id) ?? []),
+        rows: normalizeGalleryRowFullWidths(splitOversizedGalleryRows(rowsByTab.get(tab.id) ?? [])),
     }))
 }
 
@@ -2507,6 +2504,7 @@ function createDefaultGalleryTabs(media: CharacterSettingsMedia[]): CharacterSet
         rows: mediaIdChunks.map((mediaIds) => ({
             id: crypto.randomUUID(),
             mediaIds,
+            forceFullWidth: false,
         })),
     }]
 }
@@ -2516,14 +2514,28 @@ function splitOversizedGalleryRows(
 ): CharacterSettingsGalleryTab['rows'] {
     return rows.flatMap((row) => {
         const mediaIdChunks = chunkGalleryItems(row.mediaIds)
+        const canForceFullWidth = row.forceFullWidth && row.mediaIds.length === 1
 
         if (mediaIdChunks.length === 0) {
-            return [row]
+            return [{
+                ...row,
+                forceFullWidth: false,
+            }]
         }
 
         return mediaIdChunks.map((mediaIds, index) => ({
             id: index === 0 ? row.id : crypto.randomUUID(),
             mediaIds,
+            forceFullWidth: canForceFullWidth && mediaIds.length === 1,
         }))
     })
+}
+
+function normalizeGalleryRowFullWidths(
+    rows: CharacterSettingsGalleryTab['rows'],
+): CharacterSettingsGalleryTab['rows'] {
+    return rows.map((row, index) => ({
+        ...row,
+        forceFullWidth: shouldForceGalleryRowFullWidth(row, index, rows.length),
+    }))
 }

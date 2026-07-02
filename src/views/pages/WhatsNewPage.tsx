@@ -54,7 +54,8 @@ function WhatsNewStyles() {
 function ReleaseBlock({release, isCurrent}: { release: ReleaseNote, isCurrent: boolean }) {
     return (
         <li class="relative grid gap-4 pl-10 sm:pl-14">
-            <span class="whats-new-dot absolute left-1.5 top-6 h-3 w-3 rounded-full bg-primary sm:left-4"></span>
+            <span
+                class={`whats-new-dot absolute left-1.5 top-6 h-3 w-3 rounded-full sm:left-4 ${release.important ? 'bg-warning' : 'bg-primary'}`}></span>
             <article class="rounded-lg border border-base-300 bg-base-200/90 p-5 shadow-xl sm:p-6">
                 <div
                     class="flex flex-col gap-3 border-b border-base-300 pb-4 sm:flex-row sm:items-start sm:justify-between">
@@ -63,6 +64,7 @@ function ReleaseBlock({release, isCurrent}: { release: ReleaseNote, isCurrent: b
                         <h2 class="mt-2 text-2xl font-black leading-tight sm:text-3xl">{release.title}</h2>
                     </div>
                     <div class="flex flex-wrap gap-2">
+                        {release.important ? <span class="badge badge-warning">Important!</span> : null}
                         {isCurrent ? <span class="badge badge-primary">Current</span> : null}
                         <span class="badge badge-outline">v{release.version}</span>
                     </div>

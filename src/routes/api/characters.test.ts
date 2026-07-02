@@ -1992,7 +1992,6 @@ describe('PUT /characters/:id/gallery', () => {
         })
 
         const response = await putGallery(character.id, {
-            fullsizeLastRow: true,
             tabs: [],
         }, db, {
             sessionToken,
@@ -2006,32 +2005,6 @@ describe('PUT /characters/:id/gallery', () => {
         expect(db.batch).not.toHaveBeenCalled()
     })
 
-    it('rejects gallery tabs with no rows', async () => {
-        const sessionToken = 'session-token'
-        const character = createCharacterRecord()
-        const {db} = createMockDb({
-            firstResults: [currentUserRecord, character],
-        })
-
-        const response = await putGallery(character.id, {
-            fullsizeLastRow: true,
-            tabs: [{
-                id: 'tab-one',
-                name: 'default',
-                rows: [],
-            }],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
-
-        expect(response.status).toBe(400)
-        expect(await response.json()).toEqual({
-            error: 'Gallery tabs must contain at least one row',
-        })
-        expect(db.batch).not.toHaveBeenCalled()
-    })
-
     it('rejects gallery rows containing more than five images', async () => {
         const sessionToken = 'session-token'
         const character = createCharacterRecord()
@@ -2040,7 +2013,6 @@ describe('PUT /characters/:id/gallery', () => {
         })
 
         const response = await putGallery(character.id, {
-            fullsizeLastRow: true,
             tabs: [{
                 id: 'tab-one',
                 name: 'default',
@@ -2070,7 +2042,6 @@ describe('PUT /characters/:id/gallery', () => {
         })
 
         const response = await putGallery(character.id, {
-            fullsizeLastRow: true,
             tabs: [{
                 id: 'tab-one',
                 name: 'default',
@@ -2109,7 +2080,6 @@ describe('PUT /characters/:id/gallery', () => {
         })
 
         const response = await putGallery(character.id, {
-            fullsizeLastRow: true,
             tabs: [{
                 id: 'tab-one',
                 name: 'default',
@@ -2131,23 +2101,17 @@ describe('PUT /characters/:id/gallery', () => {
         expect(db.batch).toHaveBeenCalledTimes(1)
     })
 
-    it('saves validated gallery layouts as normalized JSON structure', async () => {
+    it('saves tab-only gallery layouts as normalized JSON structure', async () => {
         const sessionToken = 'session-token'
         const character = createCharacterRecord()
         const {db, boundStatements} = createMockDb({
             firstResults: [currentUserRecord, character],
-            allResults: [[{id: 'media-one'}]],
         })
 
         const response = await putGallery(character.id, {
-            fullsizeLastRow: true,
             tabs: [{
                 id: 'tab-one',
                 name: 'default',
-                rows: [{
-                    id: 'row-one',
-                    mediaIds: ['media-one'],
-                }],
             }],
         }, db, {
             sessionToken,
@@ -2157,21 +2121,17 @@ describe('PUT /characters/:id/gallery', () => {
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({
             gallery: {
-                fullsizeLastRow: true,
                 tabs: [{
                     id: 'tab-one',
                     name: 'default',
-                    rows: [{
-                        id: 'row-one',
-                        mediaIds: ['media-one'],
-                    }],
+                    rows: [],
                 }],
             },
         })
         expect(db.batch).toHaveBeenCalledTimes(1)
         expect(boundStatements.some((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_tabs'].join(' ')))).toBe(true)
-        expect(boundStatements.some((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_rows'].join(' ')))).toBe(true)
-        expect(boundStatements.some((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_row_media'].join(' ')))).toBe(true)
+        expect(boundStatements.some((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_rows'].join(' ')))).toBe(false)
+        expect(boundStatements.some((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_row_media'].join(' ')))).toBe(false)
     })
 
     it('persists gallery tabs in request order', async () => {
@@ -2183,11 +2143,10 @@ describe('PUT /characters/:id/gallery', () => {
         })
 
         const response = await putGallery(character.id, {
-            fullsizeLastRow: false,
             tabs: [
-                {id: 'tab-zeta', name: 'Zeta', rows: [{id: 'row-zeta', mediaIds: []}]},
-                {id: 'tab-alpha', name: 'Alpha', rows: [{id: 'row-alpha', mediaIds: []}]},
-                {id: 'tab-default', name: 'default', rows: [{id: 'row-default', mediaIds: []}]},
+                {id: 'tab-zeta', name: 'Zeta'},
+                {id: 'tab-alpha', name: 'Alpha'},
+                {id: 'tab-default', name: 'default'},
             ],
         }, db, {
             sessionToken,
@@ -2218,7 +2177,6 @@ describe('PUT /characters/:id/gallery', () => {
         })
 
         const response = await putGallery(character.id, {
-            fullsizeLastRow: false,
             tabs: [{
                 id: 'tab-default',
                 name: 'default',
@@ -2248,6 +2206,193 @@ describe('PUT /characters/:id/gallery', () => {
         ])
     })
 
+    it('persists force full width for non-final single-image rows and checked final single-image rows', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character],
+            allResults: [[
+                {id: 'media-one'},
+                {id: 'media-two'},
+                {id: 'media-three'},
+                {id: 'media-four'},
+            ], [
+                {id: 'media-one'},
+                {id: 'media-two'},
+                {id: 'media-three'},
+                {id: 'media-four'},
+            ]],
+        })
+
+        const response = await putGallery(character.id, {
+            tabs: [{
+                id: 'tab-default',
+                name: 'default',
+                rows: [
+                    {id: 'row-auto', mediaIds: ['media-one'], forceFullWidth: false},
+                    {id: 'row-ignored', mediaIds: ['media-three', 'media-four'], forceFullWidth: true},
+                    {id: 'row-final-forced', mediaIds: ['media-two'], forceFullWidth: true},
+                ],
+            }],
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            gallery: { tabs: { rows: { id: string; mediaIds: string[]; forceFullWidth: boolean }[] }[] }
+        }
+        expect(body.gallery.tabs[0]?.rows).toEqual([
+            {id: 'row-auto', mediaIds: ['media-one'], forceFullWidth: true},
+            {id: 'row-ignored', mediaIds: ['media-three', 'media-four'], forceFullWidth: false},
+            {id: 'row-final-forced', mediaIds: ['media-two'], forceFullWidth: true},
+        ])
+
+        const rowInsertStatements = boundStatements.filter((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_rows'].join(' ')))
+        expect(rowInsertStatements.every((statement) => statement.sql.includes('force_full_width'))).toBe(true)
+        expect(rowInsertStatements.map((statement) => [statement.binds[0], statement.binds[5]])).toEqual([
+            ['row-auto', 1],
+            ['row-ignored', 0],
+            ['row-final-forced', 1],
+        ])
+    })
+
+    it('allows a single-row tab to leave force full width disabled', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character],
+            allResults: [[
+                {id: 'media-one'},
+            ], [
+                {id: 'media-one'},
+            ]],
+        })
+
+        const response = await putGallery(character.id, {
+            tabs: [{
+                id: 'tab-default',
+                name: 'default',
+                rows: [
+                    {id: 'row-only', mediaIds: ['media-one'], forceFullWidth: false},
+                ],
+            }],
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            gallery: { tabs: { rows: { id: string; mediaIds: string[]; forceFullWidth: boolean }[] }[] }
+        }
+        expect(body.gallery.tabs[0]?.rows).toEqual([
+            {id: 'row-only', mediaIds: ['media-one'], forceFullWidth: false},
+        ])
+
+        const rowInsertStatements = boundStatements.filter((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_rows'].join(' ')))
+        expect(rowInsertStatements.map((statement) => [statement.binds[0], statement.binds[5]])).toEqual([
+            ['row-only', 0],
+        ])
+    })
+
+    it('rejects gallery layouts when uploaded media is not placed on any tab', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+            allResults: [
+                [{id: 'media-one'}],
+                [{id: 'media-one'}, {id: 'media-two'}],
+            ],
+        })
+
+        const response = await putGallery(character.id, {
+            tabs: [{
+                id: 'tab-default',
+                name: 'default',
+                rows: [{id: 'row-one', mediaIds: ['media-one']}],
+            }],
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'All character media must be placed on at least one gallery tab',
+        })
+        expect(db.batch).not.toHaveBeenCalled()
+    })
+
+    it('rejects empty gallery rows when the character has uploaded media', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+            allResults: [
+                [{id: 'media-one'}],
+                [{id: 'media-one'}],
+            ],
+        })
+
+        const response = await putGallery(character.id, {
+            tabs: [{
+                id: 'tab-default',
+                name: 'default',
+                rows: [
+                    {id: 'row-one', mediaIds: ['media-one']},
+                    {id: 'row-empty', mediaIds: []},
+                ],
+            }],
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Gallery rows cannot be empty while this character has media',
+        })
+        expect(db.batch).not.toHaveBeenCalled()
+    })
+
+    it('rejects blank gallery tabs when the character has uploaded media', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+            allResults: [
+                [{id: 'media-one'}],
+                [{id: 'media-one'}],
+            ],
+        })
+
+        const response = await putGallery(character.id, {
+            tabs: [
+                {
+                    id: 'tab-default',
+                    name: 'default',
+                    rows: [{id: 'row-one', mediaIds: ['media-one']}],
+                },
+                {
+                    id: 'tab-blank',
+                    name: 'Blank',
+                },
+            ],
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Gallery tabs cannot be blank while this character has media',
+        })
+        expect(db.batch).not.toHaveBeenCalled()
+    })
+
     it('saves a custom name for the default gallery tab', async () => {
         const sessionToken = 'session-token'
         const character = createCharacterRecord()
@@ -2257,11 +2402,9 @@ describe('PUT /characters/:id/gallery', () => {
         })
 
         const response = await putGallery(character.id, {
-            fullsizeLastRow: false,
             tabs: [{
                 id: 'tab-default',
                 name: 'References',
-                rows: [{id: 'row-default', mediaIds: []}],
             }],
         }, db, {
             sessionToken,
@@ -2273,7 +2416,7 @@ describe('PUT /characters/:id/gallery', () => {
         expect(body.gallery.tabs).toEqual([{
             id: 'tab-default',
             name: 'References',
-            rows: [{id: 'row-default', mediaIds: []}],
+            rows: [],
         }])
         const tabInsertStatement = boundStatements.find((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_tabs'].join(' ')))
         expect(tabInsertStatement?.binds[3]).toBe('References')

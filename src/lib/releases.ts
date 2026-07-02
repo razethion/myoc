@@ -1,14 +1,28 @@
-export const APP_VERSION = '2026.07.01.01'
-
 export type ReleaseNote = {
     version: string
     releasedOn: string
     title: string
     summary: string
     changes: string[]
+    important?: boolean
 }
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+    {
+        version: '2026.07.02.01',
+        releasedOn: 'July 2, 2026',
+        title: 'Improved gallery editor',
+        summary: 'It\'s now easier than ever to edit your gallery.',
+        important: true,
+        changes: [
+            'The gallery editor is now simpler and easier to use and understand the expected layout.',
+            'Drag-and-drop is more reliable and predictable.',
+            'IMPORTANT: "Fullsize last row" was replaced by a new setting that works across tabs. If you ' +
+            'used this feature, your preference was not saved. You should check your gallery to ensure ' +
+            'the final row renders how you want. Because the previous feature was tab-agnostic, ' +
+            'we could not infer your preferences.',
+        ],
+    },
     {
         version: '2026.07.01.01',
         releasedOn: 'July 1, 2026',
@@ -111,3 +125,14 @@ export const RELEASE_NOTES: ReleaseNote[] = [
         ],
     },
 ]
+
+function latestReleaseVersion(releases: ReleaseNote[]) {
+    const latestRelease = releases[0]
+    if (!latestRelease) {
+        throw new Error('RELEASE_NOTES must include at least one release.')
+    }
+
+    return latestRelease.version
+}
+
+export const APP_VERSION = latestReleaseVersion(RELEASE_NOTES)
