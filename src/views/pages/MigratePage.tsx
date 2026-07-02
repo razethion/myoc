@@ -576,7 +576,6 @@ function ToyhouseClientImportScript({
             method: 'PUT',
             headers: {'content-type': 'application/json'},
             body: JSON.stringify({
-                fullsizeLastRow: false,
                 tabs: [{
                     id: crypto.randomUUID(),
                     name: 'default',

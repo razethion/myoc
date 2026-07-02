@@ -18,7 +18,6 @@ export type CharacterPageCharacter = {
     name: string
     profileImageKey: string
     description: string
-    galleryFullsizeLastRow: boolean
     hasHeightChart: boolean
 }
 
@@ -49,6 +48,7 @@ export type CharacterPageGalleryTab = {
     rows: {
         id: string
         mediaIds: string[]
+        forceFullWidth: boolean
     }[]
 }
 
@@ -366,12 +366,18 @@ function CharacterPageStyles() {
                 position: relative;
             }
 
-            .justified-row.last-row:not(.last-row-full) {
+            .justified-row:not(.row-force-full-width) {
                 justify-content: flex-start;
             }
 
-            .justified-row.last-row:not(.last-row-full) .gallery-media:only-child {
+            .justified-row:not(.row-force-full-width) .gallery-media:only-child {
                 flex: 0 1 min(100%, 34rem);
+            }
+
+            .justified-row.row-force-full-width .gallery-media:only-child {
+                flex: 1 1 100%;
+                max-width: none;
+                width: 100%;
             }
 
             .gallery-image {
@@ -1131,6 +1137,7 @@ export function CharacterPage({
         rows: [{
             id: 'default-row',
             mediaIds: media.map((item) => item.id),
+            forceFullWidth: false,
         }],
     }]
     const defaultTabName = tabs[0]?.name ?? 'default'
@@ -1225,31 +1232,34 @@ export function CharacterPage({
                 ) : null}
 
                 {tabs.map((tab, tabIndex) => {
-                    const visualRows = tab.rows.flatMap((row) => {
-                        const rowMedia = row.mediaIds
-                            .map((mediaId) => mediaById.get(mediaId))
-                            .filter((item): item is DisplayMedia => Boolean(item))
+                    const visualRows = tab.rows.length > 0
+                        ? tab.rows.flatMap((row) => {
+                            const rowMedia = row.mediaIds
+                                .map((mediaId) => mediaById.get(mediaId))
+                                .filter((item): item is DisplayMedia => Boolean(item))
 
-                        return chunkGalleryItems(rowMedia)
-                    })
+                            return chunkGalleryItems(rowMedia).map((mediaItems, index) => ({
+                                forceFullWidth: row.forceFullWidth === true && row.mediaIds.length === 1 && rowMedia.length === 1 && mediaItems.length === 1 && index === 0,
+                                mediaItems,
+                            }))
+                        })
+                        : chunkGalleryItems([...mediaById.values()].filter((item): item is DisplayMedia => Boolean(item))).map((mediaItems) => ({
+                            forceFullWidth: false,
+                            mediaItems,
+                        }))
 
                     return (
                         <section class="gallery-tab-panel justified-gallery" data-gallery-tab-panel={tab.name}
                                  hidden={tabIndex > 0}>
-                            {visualRows.map((rowMedia, rowIndex) => {
-                                const isLastRow = rowIndex === visualRows.length - 1
-
-                                return (
-                                    <div
-                                        class={`justified-row ${isLastRow ? 'last-row' : ''} ${isLastRow && character.galleryFullsizeLastRow ? 'last-row-full' : ''}`}>
-                                        {rowMedia.map((item) => <GalleryImage
-                                            allowNsfwToggle={allowNsfwToggle}
-                                            deferMediaLoad={tabs.length > 1 && tabIndex > 0}
-                                            media={item}
-                                        />)}
-                                    </div>
-                                )
-                            })}
+                            {visualRows.map((row) => (
+                                <div class={`justified-row ${row.forceFullWidth ? 'row-force-full-width' : ''}`}>
+                                    {row.mediaItems.map((item) => <GalleryImage
+                                        allowNsfwToggle={allowNsfwToggle}
+                                        deferMediaLoad={tabs.length > 1 && tabIndex > 0}
+                                        media={item}
+                                    />)}
+                                </div>
+                            ))}
                         </section>
                     )
                 })}
