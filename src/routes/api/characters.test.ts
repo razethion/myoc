@@ -434,6 +434,37 @@ describe('POST /characters/tree', () => {
         expect(db.batch).not.toHaveBeenCalled()
     })
 
+    it('chunks tree ownership validation to stay under D1 SQL variable limits', async () => {
+        const sessionToken = 'session-token'
+        const folders = Array.from({length: 120}, (_, index) => `folder-${index}`)
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord],
+            allResults: [
+                folders.slice(0, 50).map((id) => ({id})),
+                folders.slice(50, 100).map((id) => ({id})),
+                folders.slice(100).map((id) => ({id})),
+            ],
+        })
+
+        const response = await postTree({
+            items: folders.map((id) => ({type: 'folder', id})),
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ok: true})
+
+        const ownershipQueries = boundStatements.filter((statement) => (
+            statement.sql.includes('FROM character_folders') && statement.sql.includes('id IN')
+        ))
+
+        expect(ownershipQueries).toHaveLength(3)
+        expect(ownershipQueries.map((statement) => statement.binds.length)).toEqual([51, 51, 21])
+        expect(db.batch).toHaveBeenCalledTimes(1)
+    })
+
     it('updates folder parents, character folders, and sort order from the tree JSON', async () => {
         const sessionToken = 'session-token'
         const {db, boundStatements} = createMockDb({
@@ -2027,6 +2058,46 @@ describe('PUT /characters/:id/gallery', () => {
         expect(db.batch).not.toHaveBeenCalled()
     })
 
+    it('chunks gallery media ownership validation to stay under D1 SQL variable limits', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const mediaIds = Array.from({length: 120}, (_, index) => `media-${index}`)
+        const rows = Array.from({length: 24}, (_, index) => ({
+            id: `row-${index}`,
+            mediaIds: mediaIds.slice(index * 5, (index + 1) * 5),
+        }))
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character],
+            allResults: [
+                mediaIds.slice(0, 50).map((id) => ({id})),
+                mediaIds.slice(50, 100).map((id) => ({id})),
+                mediaIds.slice(100).map((id) => ({id})),
+            ],
+        })
+
+        const response = await putGallery(character.id, {
+            fullsizeLastRow: true,
+            tabs: [{
+                id: 'tab-one',
+                name: 'default',
+                rows,
+            }],
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+
+        const ownershipQueries = boundStatements.filter((statement) => (
+            statement.sql.includes('FROM character_media') && statement.sql.includes('id IN')
+        ))
+
+        expect(ownershipQueries).toHaveLength(3)
+        expect(ownershipQueries.map((statement) => statement.binds.length)).toEqual([52, 52, 22])
+        expect(db.batch).toHaveBeenCalledTimes(1)
+    })
+
     it('saves validated gallery layouts as normalized JSON structure', async () => {
         const sessionToken = 'session-token'
         const character = createCharacterRecord()
@@ -2367,10 +2438,55 @@ describe('DELETE /characters/:id', () => {
         expect(boundStatements[1]?.sql).toContain('FROM characters')
         expect(boundStatements[1]?.binds).toEqual(['character-id', currentUserRecord.id])
         expect(boundStatements[2]?.sql).toContain('FROM character_media')
-        expect(boundStatements[2]?.binds).toEqual([character.id, currentUserRecord.id])
+        expect(boundStatements[2]?.binds).toEqual([character.id, currentUserRecord.id, 100])
         expect(boundStatements[3]?.sql).toContain(['DELETE FROM', 'characters'].join(' '))
         expect(boundStatements[3]?.binds).toEqual([character.id, currentUserRecord.id])
         expect(mediaBucket.delete).toHaveBeenCalledWith('characters/current-user/character-id/profile/profile-image-id.webp')
+    })
+
+    it('loads media objects in chunks before deleting a character', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const firstMediaChunk = Array.from({length: 100}, (_, index) => createMediaRecord({
+            id: `media-${index.toString().padStart(3, '0')}`,
+            sfw_image_key: `sfw-key-${index}`,
+            created_at: '2026-06-11 12:00:00',
+        }))
+        const secondMediaChunk = [createMediaRecord({
+            id: 'media-100',
+            sfw_image_key: 'sfw-key-100',
+            created_at: '2026-06-11 12:00:01',
+        })]
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character],
+            allResults: [firstMediaChunk, secondMediaChunk],
+        })
+
+        const response = await deleteCharacter('character-id', {
+            confirmName: 'Vyn',
+            permanent: true,
+        }, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(204)
+
+        const mediaQueries = boundStatements.filter((statement) => statement.sql.includes('FROM character_media'))
+
+        expect(mediaQueries).toHaveLength(2)
+        expect(mediaQueries[0]?.binds).toEqual([character.id, currentUserRecord.id, 100])
+        expect(mediaQueries[1]?.binds).toEqual([
+            character.id,
+            currentUserRecord.id,
+            '2026-06-11 12:00:00',
+            '2026-06-11 12:00:00',
+            'media-099',
+            100,
+        ])
+        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/current-user/character-id/media/media-100/sfw/sfw-key-100.png')
     })
 
     it('does not call R2 when the deleted character has no profile image', async () => {

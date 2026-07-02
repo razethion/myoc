@@ -211,8 +211,11 @@ const GALLERY_CHUNK_SIZE = 8 * 1024 * 1024
 const GALLERY_MAX_TABS = 20
 const GALLERY_MAX_ROWS = 100
 const GALLERY_MAX_MEDIA_PLACEMENTS = 500
+const GALLERY_MAX_MEDIA_PER_CHARACTER = GALLERY_MAX_MEDIA_PLACEMENTS
 const TREE_MAX_ITEMS = 500
 const TREE_MAX_DEPTH = 20
+const SQL_IN_CLAUSE_CHUNK_SIZE = 50
+const SQL_SELECT_CHUNK_SIZE = 100
 const CHARACTER_NAME_ALLOWED_PATTERN = /^(?=.*[A-Za-z0-9])[A-Za-z0-9 _'".()-]+$/
 const CHARACTER_NAME_RULES = 'letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses'
 const DISPLAY_NAME_ALLOWED_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 _'.()-]*$/
@@ -947,6 +950,10 @@ characterRoutes.post('/toyhouse-import-items/:itemId/complete', async (c) => {
         return c.json({error: 'Import item can only complete one media rating'}, 400)
     }
 
+    if (!await characterHasMediaCapacity(c.env.DB, currentUser.id, item.character_id)) {
+        return c.json({error: `Characters can contain ${GALLERY_MAX_MEDIA_PER_CHARACTER} gallery images or fewer`}, 409)
+    }
+
     const completedKeys: string[] = []
 
     try {
@@ -1109,6 +1116,10 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
 
     if (!nsfwUpload && nsfwPreview) {
         return c.json({error: 'NSFW preview requires an NSFW upload'}, 400)
+    }
+
+    if (!await characterHasMediaCapacity(c.env.DB, currentUser.id, character.id)) {
+        return c.json({error: `Characters can contain ${GALLERY_MAX_MEDIA_PER_CHARACTER} gallery images or fewer`}, 409)
     }
 
     const completedKeys: string[] = []
@@ -2684,17 +2695,25 @@ async function getOwnedFolderIds(db: D1Database, userId: string, folderIds: stri
         return new Set()
     }
 
-    const placeholders = folderIds.map(() => '?').join(', ')
-    const result = await db.prepare(
-        `SELECT id
-         FROM character_folders
-         WHERE user_id = ?
-           AND id IN (${placeholders})`,
-    )
-        .bind(userId, ...folderIds)
-        .all<Pick<CharacterFolderRecord, 'id'>>()
+    const ownedIds = new Set<string>()
 
-    return new Set((result.results ?? []).map((folder) => folder.id))
+    for (const chunk of chunkArray(folderIds, SQL_IN_CLAUSE_CHUNK_SIZE)) {
+        const placeholders = chunk.map(() => '?').join(', ')
+        const result = await db.prepare(
+            `SELECT id
+             FROM character_folders
+             WHERE user_id = ?
+               AND id IN (${placeholders})`,
+        )
+            .bind(userId, ...chunk)
+            .all<Pick<CharacterFolderRecord, 'id'>>()
+
+        for (const folder of result.results ?? []) {
+            ownedIds.add(folder.id)
+        }
+    }
+
+    return ownedIds
 }
 
 async function getOwnedCharacterIds(db: D1Database, userId: string, characterIds: string[]): Promise<Set<string>> {
@@ -2702,17 +2721,35 @@ async function getOwnedCharacterIds(db: D1Database, userId: string, characterIds
         return new Set()
     }
 
-    const placeholders = characterIds.map(() => '?').join(', ')
-    const result = await db.prepare(
-        `SELECT id
-         FROM characters
-         WHERE user_id = ?
-           AND id IN (${placeholders})`,
-    )
-        .bind(userId, ...characterIds)
-        .all<Pick<CharacterRecord, 'id'>>()
+    const ownedIds = new Set<string>()
 
-    return new Set((result.results ?? []).map((character) => character.id))
+    for (const chunk of chunkArray(characterIds, SQL_IN_CLAUSE_CHUNK_SIZE)) {
+        const placeholders = chunk.map(() => '?').join(', ')
+        const result = await db.prepare(
+            `SELECT id
+             FROM characters
+             WHERE user_id = ?
+               AND id IN (${placeholders})`,
+        )
+            .bind(userId, ...chunk)
+            .all<Pick<CharacterRecord, 'id'>>()
+
+        for (const character of result.results ?? []) {
+            ownedIds.add(character.id)
+        }
+    }
+
+    return ownedIds
+}
+
+function chunkArray<T>(items: T[], chunkSize: number): T[][] {
+    const chunks: T[][] = []
+
+    for (let index = 0; index < items.length; index += chunkSize) {
+        chunks.push(items.slice(index, index + chunkSize))
+    }
+
+    return chunks
 }
 
 async function getOwnedMediaIds(
@@ -2725,18 +2762,43 @@ async function getOwnedMediaIds(
         return new Set()
     }
 
-    const placeholders = mediaIds.map(() => '?').join(', ')
-    const result = await db.prepare(
-        `SELECT id
+    const ownedIds = new Set<string>()
+
+    for (const chunk of chunkArray(mediaIds, SQL_IN_CLAUSE_CHUNK_SIZE)) {
+        const placeholders = chunk.map(() => '?').join(', ')
+        const result = await db.prepare(
+            `SELECT id
+             FROM character_media
+             WHERE user_id = ?
+               AND character_id = ?
+               AND id IN (${placeholders})`,
+        )
+            .bind(userId, characterId, ...chunk)
+            .all<Pick<CharacterMediaRecord, 'id'>>()
+
+        for (const media of result.results ?? []) {
+            ownedIds.add(media.id)
+        }
+    }
+
+    return ownedIds
+}
+
+async function characterHasMediaCapacity(
+    db: D1Database,
+    userId: string,
+    characterId: string,
+): Promise<boolean> {
+    const row = await db.prepare(
+        `SELECT COUNT(*) AS count
          FROM character_media
          WHERE user_id = ?
-           AND character_id = ?
-           AND id IN (${placeholders})`,
+           AND character_id = ?`,
     )
-        .bind(userId, characterId, ...mediaIds)
-        .all<Pick<CharacterMediaRecord, 'id'>>()
+        .bind(userId, characterId)
+        .first<{ count: number }>()
 
-    return new Set((result.results ?? []).map((media) => media.id))
+    return Number(row?.count ?? 0) < GALLERY_MAX_MEDIA_PER_CHARACTER
 }
 
 function readJsonProfileImage(body: CreateCharacterRequest): JsonProfileImage | null {
@@ -3077,7 +3139,21 @@ async function getCharacterMedia(
         .bind(characterId, userId)
         .all<CharacterMediaRecord>()
 
-    return result.results ?? []
+        if (rows.length < SQL_SELECT_CHUNK_SIZE) {
+            return media
+        }
+
+        const lastRow: CharacterMediaRecord | undefined = rows.at(-1)
+
+        if (!lastRow) {
+            return media
+        }
+
+        cursor = {
+            created_at: lastRow.created_at,
+            id: lastRow.id,
+        }
+    }
 }
 
 async function validateGalleryImage(file: File, label: string): Promise<{
