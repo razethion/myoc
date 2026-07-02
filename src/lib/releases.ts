@@ -1,4 +1,4 @@
-export const APP_VERSION = '2026.06.29.01'
+export const APP_VERSION = '2026.07.01.01'
 
 export type ReleaseNote = {
     version: string
@@ -9,6 +9,19 @@ export type ReleaseNote = {
 }
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+    {
+        version: '2026.07.01.01',
+        releasedOn: 'July 1, 2026',
+        title: 'New homepage, and rules!',
+        summary: 'Reworked the homepage and added a vision and rules page.',
+        changes: [
+            'Reworked the homepage to be more user friendly.',
+            'Added a product vision page to make it clear what we are doing and what we stand for.',
+            'Added the site policies page so everyone knows what is and is not allowed.',
+            'Added a warning to the sizechart regarding display preferences.',
+            'Fixed a bug with loading spinners on character media.',
+        ],
+    },
     {
         version: '2026.06.29.01',
         releasedOn: 'June 29, 2026',

@@ -7,9 +7,14 @@ import {
 import type {Bindings} from '../../types/bindings'
 
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+const PUBLIC_UNSAFE_PATHS = new Set(['/login', '/api/login', '/users', '/api/users'])
 
 export async function csrfProtection(c: Context<{ Bindings: Bindings }>, next: Next): Promise<Response | void> {
     if (!UNSAFE_METHODS.has(c.req.method)) {
+        return await next()
+    }
+
+    if (PUBLIC_UNSAFE_PATHS.has(new URL(c.req.url).pathname)) {
         return await next()
     }
 

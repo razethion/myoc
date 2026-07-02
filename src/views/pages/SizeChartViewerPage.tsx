@@ -869,6 +869,9 @@ export function SizeChartViewerPage({currentUser, guestInitial, mediaBaseUrl}: S
                     <p class="max-w-xl text-sm text-base-content/70">Search the site for characters with saved height
                         data, then add them to a temporary comparison chart.</p>
                 </div>
+                <div class="alert alert-warning alert-dash mb-4" role="alert">
+                    <span>This feature does not yet support content preferences. You may see NSFW media unexpectedly.</span>
+                </div>
                 <div class="size-chart-shell">
                     <section class="size-chart-panel">
                         <div class="flex items-center justify-between gap-3 border-b border-base-300 px-4 py-3">

@@ -6,6 +6,8 @@ dist/
 !.yarn/releases
 .vscode/*
 .ai/
+.agents/
+skills-lock.json
 !.vscode/launch.json
 !.vscode/*.code-snippets
 .idea/workspace.xml
