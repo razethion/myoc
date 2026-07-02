@@ -564,7 +564,7 @@ describe('public page redirects', () => {
         expect(html).toContain('https://m.myoc.art/characters/owner-1/character-1/profile/profile-key.webp')
         expect(preparedSql).toContain('eligible_characters')
         expect(preparedSql).toContain('HAVING COUNT(approved_sfw_media.id) >= 5')
-        expect(preparedSql).toContain('SUM(CASE WHEN approved_sfw_media.sfw_homepage_allowed = 1 THEN 1 ELSE 0 END) >= 1')
+        expect(preparedSql.replace(/\s+/g, ' ')).toContain('SUM(CASE WHEN approved_sfw_media.sfw_homepage_allowed = 1 THEN 1 ELSE 0 END) >= 1')
         expect(preparedSql).toContain('sfw_preview_image_key IS NOT NULL')
         expect(preparedSql).toContain("sfw_review_status = 'approved'")
         expect(preparedSql).toContain('sfw_homepage_allowed = 1')
