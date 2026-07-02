@@ -7,12 +7,13 @@
     themes: false;
 }
 
+/*noinspection CssUnknownTarget*/
 @font-face {
     font-display: swap;
     font-family: "Nohemi";
     font-style: normal;
     font-weight: 100 900;
-    src: url("/assets/Nohemi.woff2") format("woff2");
+    src: url("assets/Nohemi.woff2") format("woff2");
 }
 
 @theme {
@@ -22,7 +23,7 @@
 
 html,
 body {
-    font-family: var(--font-sans);
+    font-family: var(--font-sans), sans-serif;
     font-optical-sizing: auto;
     text-rendering: geometricPrecision;
 }
@@ -43,7 +44,7 @@ textarea {
 }
 
 .font-display {
-    font-family: var(--font-display);
+    font-family: var(--font-display), sans-serif;
     font-variation-settings: "wght" 860;
     font-weight: 860;
 }

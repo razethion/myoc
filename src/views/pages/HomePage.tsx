@@ -18,10 +18,28 @@ export type HomePageGalleryImage = {
     width: number
 }
 
+export type HomePageHeightChartCharacter = {
+    id: string
+    name: string
+    ownerUsername: string
+    heightMeters: number
+    image: {
+        naturalHeight: number
+        naturalWidth: number
+        url: string
+    }
+    calibration: {
+        footIsVirtual: boolean
+        footYPercent: number
+        headYPercent: number
+    }
+}
+
 type HomePageProps = {
     currentUser?: CurrentUser | null
     galleryImages: HomePageGalleryImage[]
     guestInitial: string
+    heightChartCharacters: HomePageHeightChartCharacter[]
     mediaBaseUrl: string
     siteUrl: string
     stats: HomePageStats
@@ -34,6 +52,45 @@ const HOME_PAGE_IMAGE_ALT = 'Easily share character art without losing quality. 
 const HOME_PAGE_HERO_IMAGE_PATH = '/assets/razfalling.webp'
 const HOME_PAGE_HERO_IMAGE_ALT = 'Red dragon character art floating against a purple sky'
 const HOME_PAGE_GALLERY_SLOT_COUNT = 48
+const HOME_PAGE_INCHES_PER_METER = 39.37007874015748
+const HOME_PAGE_SIZE_CHART_VERTICAL_PAD = 18
+const HOME_PAGE_SIZE_CHART_HEIGHT = 620
+const HOME_PAGE_SIZE_CHART_HEADROOM_METERS = 0.18
+const HOME_PAGE_SIZE_CHART_BOTTOM_ROOM_METERS = 0.04
+const HOME_PAGE_FEATURE_BLOCKS = [
+    {
+        title: 'Simple content preferences',
+        body: 'Toggle your media preferences as you please. Only see what you want to see.',
+    },
+    {
+        title: 'Adult content friendly',
+        body: 'And on that note, we know not everybody is an angel. We don\'t mind.',
+    },
+    {
+        title: 'No CSS arms race',
+        body: 'Sorry if that\'s your thing, but it isn\'t ours. Everyone shares the same profile.',
+    },
+    {
+        title: 'Control visibility',
+        body: 'Private accounts. Plain and simple. (Coming soon)',
+    },
+    {
+        title: 'Uptime? Yeah I\'ve got time.',
+        body: 'MyOC runs on serverless infrastructure, backed by Cloudflare. We don\'t go down unless they do.',
+    },
+    {
+        title: 'Source-available (nerd)',
+        body: 'We always welcome contributions to our project. Judge my code on github @ razethion/myoc',
+    },
+    {
+        title: 'One clear goal',
+        body: 'Make character galleries simple and beautiful. We plan to keep it that way.',
+    },
+    {
+        title: 'Fandom-run',
+        body: 'Created and maintained by character owners, just like you.',
+    },
+]
 const HOME_PAGE_GALLERY_FALLBACK_ASPECTS = [
     '1 / 1',
     '4 / 5',
@@ -234,7 +291,74 @@ function HomePageMotionStyles() {
                 opacity: 1;
             }
 
+            .home-size-chart-panel {
+                background: #000;
+                height: max(18rem, calc(100vw * 620 / 760));
+                overflow: hidden;
+                position: relative;
+                width: 100%;
+            }
+
+            .home-size-chart-plot {
+                background: linear-gradient(90deg, rgb(255 255 255 / 0.06) 1px, transparent 1px), linear-gradient(180deg, rgb(255 255 255 / 0.05) 1px, transparent 1px), #000;
+                background-size: 64px 64px;
+                height: 100%;
+                overflow: hidden;
+                position: relative;
+                width: 100%;
+            }
+
+            .home-size-chart-grid-line {
+                background: rgb(255 255 255 / 0.28);
+                height: 1px;
+                left: 0;
+                position: absolute;
+                right: 0;
+                transform: translateY(-50%);
+            }
+
+            .home-size-chart-zero-line {
+                background: rgb(255 255 255 / 0.52);
+            }
+
+            .home-size-chart-character {
+                display: block;
+                height: calc(var(--home-chart-image-height, 0) * 1%);
+                left: calc(var(--home-chart-x, 50) * 1%);
+                max-width: none;
+                object-fit: contain;
+                pointer-events: none;
+                position: absolute;
+                top: calc(var(--home-chart-image-top, 0) * 1%);
+                transform: translateX(-50%);
+                user-select: none;
+                width: auto;
+                z-index: var(--home-chart-layer, 1);
+            }
+
+            .home-size-chart-character.is-positioned {
+                transform: none;
+            }
+
+            .home-size-chart-empty {
+                align-items: center;
+                color: rgb(255 255 255 / 0.58);
+                display: flex;
+                font-size: 1rem;
+                font-weight: 800;
+                height: 100%;
+                justify-content: center;
+                padding: 1rem;
+                text-align: center;
+                text-transform: uppercase;
+            }
+
             @media (min-width: 1024px) {
+                .home-size-chart-panel {
+                    height: 100%;
+                    min-height: clamp(32rem, 62vh, 44rem);
+                }
+
                 .home-float {
                     animation: home-float var(--home-float-duration, 7s) ease-in-out infinite;
                 }
@@ -288,6 +412,310 @@ function HomePageMotionStyles() {
             }
         `
         }}></style>
+    )
+}
+
+function niceStep(rawStep: number, candidates: number[]): number {
+    return candidates.find((candidate) => candidate >= rawStep) ?? candidates[candidates.length - 1]
+}
+
+function gridStep(maxMeters: number): number {
+    const maxFeet = maxMeters * HOME_PAGE_INCHES_PER_METER / 12
+    const stepFeet = maxFeet <= 18
+        ? 1
+        : niceStep(maxFeet / 14, [2, 5, 10, 20, 50, 100, 200, 500])
+
+    return stepFeet * 12 / HOME_PAGE_INCHES_PER_METER
+}
+
+function gridLines(maxMeters: number): number[] {
+    const lines = []
+    const stepMeters = gridStep(maxMeters)
+
+    for (let meters = 0; meters <= maxMeters + 0.001; meters += stepMeters) {
+        lines.push(meters)
+    }
+
+    return lines
+}
+
+function measuredPixels(character: HomePageHeightChartCharacter): number {
+    return Math.max(
+        1,
+        ((character.calibration.footYPercent - character.calibration.headYPercent) / 100) * character.image.naturalHeight,
+    )
+}
+
+function roundChartMaxMeters(maxMeters: number): number {
+    const maxFeet = maxMeters * HOME_PAGE_INCHES_PER_METER / 12
+
+    return Math.max(60 / HOME_PAGE_INCHES_PER_METER, Math.ceil(maxFeet) * 12 / HOME_PAGE_INCHES_PER_METER)
+}
+
+function characterFootPixels(character: HomePageHeightChartCharacter): number {
+    return (character.calibration.footYPercent / 100) * character.image.naturalHeight
+}
+
+function characterTopMeters(character: HomePageHeightChartCharacter): number {
+    return (characterFootPixels(character) / measuredPixels(character)) * character.heightMeters
+}
+
+function characterBottomMeters(character: HomePageHeightChartCharacter): number {
+    return ((characterFootPixels(character) - character.image.naturalHeight) / measuredPixels(character)) * character.heightMeters
+}
+
+function chartCharacterXPct(index: number, count: number): number {
+    if (count === 1) {
+        return 50
+    }
+
+    return index === 0 ? 33 : 67
+}
+
+function chartLayout(characters: HomePageHeightChartCharacter[]) {
+    const plotHeight = Math.max(120, HOME_PAGE_SIZE_CHART_HEIGHT - HOME_PAGE_SIZE_CHART_VERTICAL_PAD * 2)
+    const chartMin = Math.min(
+        0,
+        ...characters.map((character) => characterBottomMeters(character) - HOME_PAGE_SIZE_CHART_BOTTOM_ROOM_METERS),
+    )
+    const chartMax = roundChartMaxMeters(Math.max(
+        60 / HOME_PAGE_INCHES_PER_METER,
+        ...characters.map((character) => character.heightMeters),
+        ...characters.map((character) => characterTopMeters(character) + HOME_PAGE_SIZE_CHART_HEADROOM_METERS),
+    ))
+    const pxPerMeter = plotHeight / Math.max(0.01, chartMax - chartMin)
+    const zeroY = HOME_PAGE_SIZE_CHART_HEIGHT
+        - HOME_PAGE_SIZE_CHART_VERTICAL_PAD
+        - (0 - chartMin) * pxPerMeter
+    const items = characters.map((character, index) => {
+        const scale = (character.heightMeters * pxPerMeter) / measuredPixels(character)
+        const imageWidth = Math.max(24, character.image.naturalWidth * scale)
+        const imageHeight = Math.max(24, character.image.naturalHeight * scale)
+        const top = zeroY - characterFootPixels(character) * scale
+
+        return {
+            character,
+            imageWidth,
+            imageHeight,
+            top,
+            layer: characters.length - index,
+            xPct: chartCharacterXPct(index, characters.length),
+        }
+    })
+
+    return {chartMax, chartMin, items, pxPerMeter, zeroY}
+}
+
+function chartY(meters: number, layout: ReturnType<typeof chartLayout>): number {
+    return HOME_PAGE_SIZE_CHART_HEIGHT
+        - HOME_PAGE_SIZE_CHART_VERTICAL_PAD
+        - (meters - layout.chartMin) * layout.pxPerMeter
+}
+
+function chartPercent(value: number): string {
+    return ((value / HOME_PAGE_SIZE_CHART_HEIGHT) * 100).toFixed(4)
+}
+
+function HomeHeightChartPreview({characters}: { characters: HomePageHeightChartCharacter[] }) {
+    const displayCharacters = characters
+        .slice()
+        .sort((a, b) => b.heightMeters - a.heightMeters)
+        .slice(0, 2)
+    const layout = chartLayout(displayCharacters)
+
+    return (
+        <div class="home-size-chart-panel">
+            <div class="home-size-chart-plot" data-home-size-chart-plot="true">
+                {displayCharacters.length > 0 ? (
+                    <>
+                        {gridLines(layout.chartMax).map((meters) => (
+                            <div
+                                class={`home-size-chart-grid-line${meters === 0 ? ' home-size-chart-zero-line' : ''}`}
+                                style={`top:${chartPercent(chartY(meters, layout))}%`}
+                            />
+                        ))}
+                        {layout.items
+                            .slice()
+                            .sort((a, b) => a.layer - b.layer)
+                            .map((item) => (
+                                <img
+                                    alt=""
+                                    aria-hidden="true"
+                                    class="home-size-chart-character"
+                                    data-home-chart-width-ratio={(item.imageWidth / HOME_PAGE_SIZE_CHART_HEIGHT).toFixed(6)}
+                                    data-home-chart-x-pct={item.xPct}
+                                    data-home-size-chart-character="true"
+                                    decoding="async"
+                                    loading="lazy"
+                                    src={item.character.image.url}
+                                    style={`--home-chart-image-height:${chartPercent(item.imageHeight)};--home-chart-image-top:${chartPercent(item.top)};--home-chart-layer:${item.layer};--home-chart-x:${item.xPct};`}
+                                />
+                            ))}
+                    </>
+                ) : (
+                    <div class="home-size-chart-empty">Height chart preview unavailable</div>
+                )}
+            </div>
+        </div>
+    )
+}
+
+function HomeHeightChartScript() {
+    return (
+        <script dangerouslySetInnerHTML={{
+            __html: `
+            (function () {
+                function clamp(value, min, max) {
+                    return Math.min(Math.max(value, min), max);
+                }
+
+                function layoutPlot(plot) {
+                    var height = Math.max(1, plot.clientHeight || 0);
+                    var width = Math.max(1, plot.clientWidth || 0);
+                    var characters = plot.querySelectorAll('[data-home-size-chart-character]');
+
+                    characters.forEach(function (character) {
+                        var xPct = clamp(Number(character.dataset.homeChartXPct), 0, 100);
+                        var widthRatio = Number(character.dataset.homeChartWidthRatio);
+
+                        if (!Number.isFinite(xPct) || !Number.isFinite(widthRatio) || widthRatio <= 0) {
+                            return;
+                        }
+
+                        var imageWidth = Math.max(24, widthRatio * height);
+                        var maxLeft = Math.max(0, width - imageWidth);
+                        var targetCenter = width * (xPct / 100);
+                        var left = clamp(targetCenter - imageWidth / 2, 0, maxLeft);
+
+                        character.style.left = left + 'px';
+                        character.style.width = imageWidth + 'px';
+                        character.classList.add('is-positioned');
+                    });
+                }
+
+                function layoutCharts() {
+                    document.querySelectorAll('[data-home-size-chart-plot]').forEach(layoutPlot);
+                }
+
+                function init() {
+                    layoutCharts();
+
+                    if ('ResizeObserver' in window) {
+                        var observer = new ResizeObserver(layoutCharts);
+                        document.querySelectorAll('[data-home-size-chart-plot]').forEach(function (plot) {
+                            observer.observe(plot);
+                        });
+                    } else {
+                        window.addEventListener('resize', layoutCharts);
+                    }
+
+                    window.addEventListener('load', layoutCharts);
+                }
+
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', init);
+                } else {
+                    init();
+                }
+            })();
+        `,
+        }}></script>
+    )
+}
+
+function HeightChartFeatureSection({characters}: { characters: HomePageHeightChartCharacter[] }) {
+    return (
+        <section class="relative isolate overflow-hidden bg-base-100">
+            <div class="grid lg:min-h-[44rem] lg:grid-cols-2">
+                <div class="relative lg:min-h-full">
+                    <HomeHeightChartPreview characters={characters}/>
+                </div>
+                <div class="relative z-20 flex px-4 py-16 sm:px-6 lg:items-center lg:px-8 lg:py-24">
+                    <div class="max-w-xl">
+                        <p class="text-sm font-bold uppercase text-base-content/55">Height Charts</p>
+                        <h2 class="font-display mt-4 text-4xl leading-tight sm:text-5xl">How do you stack up?</h2>
+                        <p class="mt-5 text-base leading-7 text-base-content/75 lg:text-lg lg:leading-8">
+                            Quickly and easily see your characters compared to others.
+                        </p>
+                        <dl class="mt-8 grid gap-5 sm:grid-cols-3 lg:grid-cols-1">
+                            <div>
+                                <dt class="font-bold">Easy calibration</dt>
+                                <dd class="mt-2 text-sm leading-6 text-base-content/65">
+                                    No need to be pixel pefect. Tell us exactly where your characters' head and
+                                    feet are, and we'll do the rest... that is, once you decide how tall your characters
+                                    are ;)
+                                </dd>
+                            </div>
+                            <div>
+                                <dt class="font-bold">Searchable and Scalable</dt>
+                                <dd class="mt-2 text-sm leading-6 text-base-content/65">
+                                    Stack any of your characters up against any of your other characters... or your
+                                    friends characters... or even your enemies!
+                                </dd>
+                            </div>
+                            <div>
+                                <dt class="font-bold">Save and share</dt>
+                                <dd class="mt-2 text-sm leading-6 text-base-content/65">
+                                    Save charts as an image, or share the link to your layout with others.
+                                </dd>
+                            </div>
+                        </dl>
+                        <div class="mt-8 flex justify-start">
+                            <a class="btn btn-outline h-auto min-h-10 whitespace-normal text-center"
+                               href="/size-chart">Open size chart</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <HomeHeightChartScript/>
+        </section>
+    )
+}
+
+function AdditionalFeaturesSection() {
+    return (
+        <section class="bg-base-200 px-4 py-14 sm:px-6 lg:px-8 lg:py-18">
+            <div class="mx-auto max-w-7xl">
+                <div
+                    class="grid gap-8 border-b border-base-content/10 pb-8 lg:grid-cols-[minmax(0,0.72fr)_minmax(0,1fr)] lg:items-end">
+                    <div>
+                        <p class="text-sm font-bold uppercase text-base-content/55">OTHER FEATURES</p>
+                        <h2 class="font-display mt-3 text-3xl leading-tight sm:text-4xl">And more and more and more and
+                            more and more and...</h2>
+                    </div>
+                    <p class="max-w-2xl text-sm leading-6 text-base-content/70 lg:justify-self-end">
+                        Designed to be simple and easy to use, not bloated with junk.
+                    </p>
+                </div>
+                <div class="grid border-l border-t border-base-content/10 sm:grid-cols-2 lg:grid-cols-4">
+                    {HOME_PAGE_FEATURE_BLOCKS.map((feature) => (
+                        <article
+                            class="border-b border-r border-base-content/10 p-6">
+                            <div class="flex items-baseline justify-between gap-4">
+                                <h3 class="text-base font-bold leading-6">{feature.title}</h3>
+                            </div>
+                            <p class="mt-3 text-sm leading-6 text-base-content/65">{feature.body}</p>
+                        </article>
+                    ))}
+                </div>
+            </div>
+        </section>
+    )
+}
+
+function HomeCallToActionSection() {
+    return (
+        <section class="border-t border-base-content/10 bg-base-100 px-4 py-12 sm:px-6 lg:px-8">
+            <div
+                class="mx-auto flex max-w-5xl flex-col items-stretch gap-3 sm:grid sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center sm:gap-5">
+                <a class="btn btn-outline h-auto min-h-10 whitespace-normal text-center sm:justify-self-end"
+                   href="/product-vision">Product Vision</a>
+                <a class="btn btn-primary btn-lg h-auto min-h-14 whitespace-normal px-8 text-center sm:btn-xl sm:min-w-72"
+                   href="/register">Start your profile</a>
+                <a class="btn btn-outline h-auto min-h-10 whitespace-normal text-center sm:justify-self-start"
+                   href="/site-policies">Site Policies</a>
+            </div>
+        </section>
     )
 }
 
@@ -479,30 +907,28 @@ function GalleryFeatureSection({galleryImages}: { galleryImages: HomePageGallery
         <section class="relative isolate overflow-hidden bg-[#141414] px-4 py-16 sm:px-6 lg:px-8 lg:py-24">
             <div class="relative mx-auto grid max-w-7xl gap-10 lg:grid-cols-2 lg:items-center">
                 <div class="relative z-20 max-w-xl">
-                    <p class="text-sm font-bold uppercase text-base-content/55">Gallery-first profiles</p>
-                    <h2 class="font-display mt-4 text-4xl leading-tight sm:text-5xl">Art that feels organized before
-                        anyone clicks.</h2>
+                    <p class="text-sm font-bold uppercase text-base-content/55">Gallery Management</p>
+                    <h2 class="font-display mt-4 text-4xl leading-tight sm:text-5xl">Your art, front and center.</h2>
                     <p class="mt-5 text-base leading-7 text-base-content/75 lg:text-lg lg:leading-8">
-                        Build character galleries around the way people browse: quick thumbnails, clean rows, and
-                        full-resolution media when they want the detail.
+                        Display your character's full resolution art instantly, with no cropped thumbs or extra clicks.
                     </p>
                     <dl class="mt-8 grid gap-5 sm:grid-cols-3 lg:grid-cols-1">
                         <div>
-                            <dt class="font-bold">Fast previews</dt>
-                            <dd class="mt-2 text-sm leading-6 text-base-content/65">Approved thumbnails keep the page
-                                light before full art is opened.
+                            <dt class="font-bold">Quality first</dt>
+                            <dd class="mt-2 text-sm leading-6 text-base-content/65">Instantly see the gallery as it
+                                should be, and get served the original quality media seconds later.
                             </dd>
                         </div>
                         <div>
-                            <dt class="font-bold">Character context</dt>
-                            <dd class="mt-2 text-sm leading-6 text-base-content/65">Every image lives with the
-                                character, artist credit, and profile it belongs to.
+                            <dt class="font-bold">Totally Tabular</dt>
+                            <dd class="mt-2 text-sm leading-6 text-base-content/65">Divide your art into multiple
+                                sub-galleries for easy organization. Or don't, I'm not your dad.
                             </dd>
                         </div>
                         <div>
-                            <dt class="font-bold">Room to grow</dt>
-                            <dd class="mt-2 text-sm leading-6 text-base-content/65">Keep adding art without turning a
-                                profile into a hard-to-scan folder dump.
+                            <dt class="font-bold">Easy setup</dt>
+                            <dd class="mt-2 text-sm leading-6 text-base-content/65">Choose exactly how you want your
+                                gallery arranged; display one piec.
                             </dd>
                         </div>
                     </dl>
@@ -640,13 +1066,24 @@ function HeroSection({stats}: { stats: HomePageStats }) {
     )
 }
 
-export function HomePage({currentUser, galleryImages, guestInitial, mediaBaseUrl, siteUrl, stats}: HomePageProps) {
+export function HomePage({
+                             currentUser,
+                             galleryImages,
+                             guestInitial,
+                             heightChartCharacters,
+                             mediaBaseUrl,
+                             siteUrl,
+                             stats,
+                         }: HomePageProps) {
     return (
         <BaseLayout head={<HomePageHead siteUrl={siteUrl} stats={stats}/>} title={HOME_PAGE_TITLE}>
             <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl}/>
             <main>
                 <HeroSection stats={stats}/>
                 <GalleryFeatureSection galleryImages={galleryImages}/>
+                <HeightChartFeatureSection characters={heightChartCharacters}/>
+                <AdditionalFeaturesSection/>
+                <HomeCallToActionSection/>
             </main>
         </BaseLayout>
     )

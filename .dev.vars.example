@@ -1,8 +1,1 @@
 MEDIA_PUBLIC_BASE_URL=https://m.dev.myoc.art
-
-# Optional: enables scripts/clone-prod-to-dev.mjs to copy R2 objects server-side with S3 CopyObject.
-# Keep real values in .dev.vars only; .dev.vars is ignored by git.
-CLOUDFLARE_ACCOUNT_ID=
-R2_ENDPOINT=
-R2_ACCESS_KEY_ID=
-R2_SECRET_ACCESS_KEY=

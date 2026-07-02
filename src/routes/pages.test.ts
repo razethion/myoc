@@ -35,6 +35,7 @@ function createProfilePageDb(options: {
     mediaCount?: number
     discoverCharacters?: unknown[]
     homeGalleryImages?: unknown[]
+    homeHeightChartCharacters?: unknown[]
     activeToyhouseImportJob?: unknown
     activeToyhouseImportItems?: unknown[]
     toyhouseImportItemsError?: Error
@@ -81,6 +82,10 @@ function createProfilePageDb(options: {
     const allForSql = async (sql: string): Promise<QueryResult> => {
         if (sql.includes('character_media.sfw_homepage_allowed = 1')) {
             return {results: options.homeGalleryImages ?? []}
+        }
+
+        if (sql.includes('lower(users.username) = ?') && sql.includes('characters.height_chart_json <>')) {
+            return {results: options.homeHeightChartCharacters ?? []}
         }
 
         if (sql.includes('eligible_characters')) {
@@ -271,7 +276,7 @@ describe('public page redirects', () => {
             .join('\n')
 
         expect(response.status).toBe(200)
-        expect(html).toContain('Gallery-first profiles')
+        expect(html).toContain('Gallery Management')
         expect(html).toContain('data-home-approved-gallery')
         expect(html).toContain('data-gallery-tile')
         expect(html).toContain("document.querySelectorAll('[data-home-approved-gallery]')")
@@ -303,7 +308,8 @@ describe('public page redirects', () => {
         expect(html).toContain('contain: layout paint')
         expect(html).toContain('content-visibility: auto')
         expect(html).toContain('.home-float {\n                animation: none;')
-        expect(html).toContain('@media (min-width: 1024px) {\n                .home-float {')
+        expect(html).toContain('@media (min-width: 1024px) {')
+        expect(html).toContain('animation: home-float var(--home-float-duration, 7s) ease-in-out infinite;')
         expect(html).not.toContain("rootMargin: '35% 0px 35% 0px'")
         expect(html).toContain('object-contain')
         expect(html).toContain('border border-white bg-black')
@@ -332,7 +338,6 @@ describe('public page redirects', () => {
         expect(html).not.toContain('blur-3xl')
         expect(html).not.toContain('rgba(20, 20, 20')
         expect(html).not.toContain('radial-gradient')
-        expect(html).not.toContain('linear-gradient')
         expect(html).not.toContain('mask-image')
         expect(html).not.toContain('home-gallery-scan')
         expect(html).toContain('aria-hidden="true" class="absolute inset-0 bg-black"')
@@ -347,6 +352,94 @@ describe('public page redirects', () => {
         expect(preparedSql).toContain("sfw_review_status = 'approved'")
         expect(preparedSql).toContain('sfw_homepage_allowed = 1')
         expect(preparedSql).toContain('sfw_preview_image_key IS NOT NULL')
+    })
+
+    it('renders the homepage height chart preview from Razeth chart models', async () => {
+        const db = createProfilePageDb({
+            homeHeightChartCharacters: [
+                {
+                    id: 'character-ivo',
+                    name: 'DRD-5548 "Ivo"',
+                    user_id: 'user-razeth',
+                    username: 'razeth',
+                    height_chart_json: JSON.stringify({
+                        version: 1,
+                        height: {meters: 1.2},
+                        image: {
+                            key: 'ivo-chart-key',
+                            contentType: 'image/png',
+                            naturalWidth: 420,
+                            naturalHeight: 980,
+                        },
+                        calibration: {
+                            headYPercent: 8,
+                            footYPercent: 96,
+                            footIsVirtual: false,
+                        },
+                    }),
+                },
+                {
+                    id: 'character-luxor',
+                    name: 'Luxor',
+                    user_id: 'user-razeth',
+                    username: 'razeth',
+                    height_chart_json: JSON.stringify({
+                        version: 1,
+                        height: {meters: 3.6},
+                        image: {
+                            key: 'luxor-chart-key',
+                            contentType: 'image/webp',
+                            naturalWidth: 760,
+                            naturalHeight: 1500,
+                        },
+                        calibration: {
+                            headYPercent: 5,
+                            footYPercent: 92,
+                            footIsVirtual: false,
+                        },
+                    }),
+                },
+            ],
+        })
+        const response = await getAppPath('/', db)
+        const html = await response.text()
+        const preparedSql = (db.prepare as unknown as { mock: { calls: [string][] } }).mock.calls
+            .map(([sql]) => sql)
+            .join('\n')
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Height Charts')
+        expect(html).toContain('How do you stack up?')
+        expect(html).toContain('data-home-chart-x-pct="33"')
+        expect(html).toContain('data-home-chart-x-pct="67"')
+        expect(html).toContain('https://m.myoc.art/characters/user-razeth/character-ivo/height-chart/ivo-chart-key.png')
+        expect(html).toContain('https://m.myoc.art/characters/user-razeth/character-luxor/height-chart/luxor-chart-key.webp')
+        expect(html).toContain('home-size-chart-grid-line')
+        expect(html).not.toContain('2 characters')
+        expect(preparedSql).toContain('lower(users.username) = ?')
+        expect(preparedSql).toContain('characters.height_chart_json <>')
+    })
+
+    it('renders the product vision page', async () => {
+        const response = await getAppPath('/product-vision')
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Product Vision | MyOC')
+        expect(html).toContain('Making character art easy to store and share.')
+        expect(html).toContain('What MyOC is')
+        expect(html).toContain('What MyOC isn&#39;t')
+    })
+
+    it('renders the site policies page', async () => {
+        const response = await getAppPath('/site-policies')
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Site Policies | MyOC')
+        expect(html).toContain('Rules for hosting, sharing, and moderating character media.')
+        expect(html).toContain('Content classification and NSFW rules')
+        expect(html).toContain('Technical abuse and platform integrity')
     })
 
     it('does not render or query discover characters on the homepage', async () => {
@@ -410,7 +503,7 @@ describe('public page redirects', () => {
         expect(html).toContain('56')
         expect(html).not.toContain('Cached Quartz')
         expect(html).not.toContain('42 images')
-        expect(db.prepare).toHaveBeenCalledTimes(1)
+        expect(db.prepare).toHaveBeenCalledTimes(2)
     })
 
     it('redirects logged-in users away from login and register', async () => {

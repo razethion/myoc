@@ -1,11 +1,11 @@
-import { Hono, type Context } from 'hono'
+import {Hono, type Context} from 'hono'
 import {getCurrentUser, isAdminUser, toSqlTimestamp} from '../lib/auth/session'
 import {getImageApprovalData} from '../lib/admin/imageApprovals'
 import {getAdminReportsData} from '../lib/admin/reports'
 import {chunkGalleryItems} from '../lib/gallery'
 import type {UserSocialLink} from '../lib/socialLinks'
-import type { Bindings } from '../types/bindings'
-import { AuthPage } from '../views/pages/AuthPage'
+import type {Bindings} from '../types/bindings'
+import {AuthPage} from '../views/pages/AuthPage'
 import {AdminPage, isAdminSection, type AdminSection} from '../views/pages/AdminPage'
 import {AdminImageApprovalsPage} from '../views/pages/AdminImageApprovalsPage'
 import {AdminReportsPage} from '../views/pages/AdminReportsPage'
@@ -33,6 +33,7 @@ import {
     HomePage,
     homePageDescription,
     type HomePageGalleryImage,
+    type HomePageHeightChartCharacter,
     type HomePageStats
 } from '../views/pages/HomePage'
 import {
@@ -42,8 +43,10 @@ import {
     type ToyhouseMigrationResult,
 } from '../views/pages/MigratePage'
 import {NotFoundPage} from '../views/pages/NotFoundPage'
+import {ProductVisionPage} from '../views/pages/ProductVisionPage'
 import {ProfilePage, type ProfilePageUser} from '../views/pages/ProfilePage'
 import {SearchPage} from '../views/pages/SearchPage'
+import {SitePoliciesPage} from '../views/pages/SitePoliciesPage'
 import {SizeChartViewerPage} from '../views/pages/SizeChartViewerPage'
 import {UserSettingsPage} from '../views/pages/UserSettingsPage'
 import {WhatsNewPage} from '../views/pages/WhatsNewPage'
@@ -76,10 +79,11 @@ function getRandomLetter(): string {
 }
 
 pageRoutes.get('/', async (c) => {
-    const [currentUser, stats, galleryImages] = await Promise.all([
+    const [currentUser, stats, galleryImages, heightChartCharacters] = await Promise.all([
         getCurrentUser(c),
         getCachedHomePageStats(c.env.CACHE, c.env.DB),
         getHomePageGalleryImages(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL),
+        getHomePageHeightChartCharacters(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL),
     ])
 
     return c.html(
@@ -87,6 +91,7 @@ pageRoutes.get('/', async (c) => {
             currentUser={currentUser}
             galleryImages={galleryImages}
             guestInitial={getRandomLetter()}
+            heightChartCharacters={heightChartCharacters}
             mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
             siteUrl={new URL(c.req.url).origin}
             stats={stats}
@@ -490,6 +495,30 @@ pageRoutes.get('/size-chart', async (c) => {
     )
 })
 
+pageRoutes.get('/product-vision', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    return c.html(
+        <ProductVisionPage
+            currentUser={currentUser}
+            guestInitial={currentUser?.username.charAt(0).toUpperCase() ?? getRandomLetter()}
+            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+        />,
+    )
+})
+
+pageRoutes.get('/site-policies', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    return c.html(
+        <SitePoliciesPage
+            currentUser={currentUser}
+            guestInitial={currentUser?.username.charAt(0).toUpperCase() ?? getRandomLetter()}
+            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+        />,
+    )
+})
+
 pageRoutes.get('/whats-new', async (c) => {
     const currentUser = await getCurrentUser(c)
 
@@ -881,10 +910,10 @@ async function prepareToyhouseClientImportPlan(
 
                     itemIds.push(importItemId)
                     staged.statements.push(db.prepare(
-                        `INSERT OR IGNORE INTO toyhouse_import_items (
-                             id, job_id, user_id, character_id, toyhouse_character_id, toyhouse_image_url,
-                             import_mode, rating, status, media_id, error, sort_order, created_at, updated_at
-                         )
+                        `INSERT OR IGNORE INTO toyhouse_import_items (id, job_id, user_id, character_id,
+                                                                      toyhouse_character_id, toyhouse_image_url,
+                                                                      import_mode, rating, status, media_id, error,
+                                                                      sort_order, created_at, updated_at)
                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     ).bind(
                         importItemId,
@@ -1005,9 +1034,9 @@ async function getActiveToyhouseClientImportPlan(
                 item.media_id,
                 character.name
          FROM toyhouse_import_items item
-         INNER JOIN characters character
-            ON character.id = item.character_id
-           AND character.user_id = item.user_id
+                  INNER JOIN characters character
+                             ON character.id = item.character_id
+                                 AND character.user_id = item.user_id
          WHERE item.job_id = ?
            AND item.user_id = ?
          ORDER BY character.name COLLATE NOCASE, item.sort_order, item.created_at`,
@@ -1069,12 +1098,10 @@ async function getActiveToyhouseImportJob(db: D1Database, userId: string): Promi
          FROM toyhouse_import_jobs import_job
          WHERE import_job.user_id = ?
            AND import_job.status <> 'complete'
-           AND EXISTS (
-               SELECT 1
-               FROM toyhouse_import_items item
-               WHERE item.job_id = import_job.id
-                 AND item.user_id = import_job.user_id
-           )
+           AND EXISTS (SELECT 1
+                       FROM toyhouse_import_items item
+                       WHERE item.job_id = import_job.id
+                         AND item.user_id = import_job.user_id)
          ORDER BY import_job.updated_at DESC
          LIMIT 1`,
     )
@@ -1360,7 +1387,7 @@ async function getHomePageGalleryImages(db: D1Database, mediaBaseUrl: string): P
                 character_media.sfw_artist,
                 characters.name AS character_name
          FROM character_media
-         INNER JOIN characters ON characters.id = character_media.character_id
+                  INNER JOIN characters ON characters.id = character_media.character_id
          WHERE character_media.sfw_review_status = 'approved'
            AND character_media.sfw_homepage_allowed = 1
            AND character_media.sfw_preview_image_key IS NOT NULL
@@ -1422,6 +1449,209 @@ async function getHomePageGalleryImages(db: D1Database, mediaBaseUrl: string): P
     return selectHomePageGalleryImageMix(images)
 }
 
+type HomePageHeightChartRow = {
+    id: string
+    name: string
+    user_id: string
+    username: string
+    height_chart_json: string
+}
+
+type HomePageHeightChartJson = {
+    version: 1
+    height: {
+        meters: number
+    }
+    image: {
+        key: string
+        contentType: string
+        naturalWidth: number
+        naturalHeight: number
+    } | null
+    calibration: {
+        headYPercent: number
+        footYPercent: number
+        footIsVirtual: boolean
+    }
+}
+
+async function getHomePageHeightChartCharacters(
+    db: D1Database,
+    mediaBaseUrl: string,
+): Promise<HomePageHeightChartCharacter[]> {
+    const result = await db.prepare(
+        `SELECT characters.id,
+                characters.name,
+                characters.user_id,
+                characters.height_chart_json,
+                users.username
+         FROM characters
+                  INNER JOIN users ON users.id = characters.user_id
+         WHERE lower(users.username) = ?
+           AND characters.height_chart_json <> ''
+           AND (
+             lower(characters.name) LIKE ? ESCAPE '\\'
+                 OR lower(characters.name) LIKE ? ESCAPE '\\'
+             )
+         ORDER BY lower(characters.name)
+         LIMIT 12`,
+    )
+        .bind('razeth', '%ivo%', '%luxor%')
+        .all<HomePageHeightChartRow>()
+
+    const rows = result.results ?? []
+    const selected: HomePageHeightChartCharacter[] = []
+    const selectedIds = new Set<string>()
+
+    for (const targetName of ['ivo', 'luxor']) {
+        const candidate = rows
+            .map((row) => ({
+                row,
+                score: targetNameScore(row.name, targetName),
+                chart: parseHomePageHeightChartJson(row.height_chart_json),
+            }))
+            .filter((item): item is typeof item & {
+                chart: HomePageHeightChartJson & { image: NonNullable<HomePageHeightChartJson['image']> }
+                score: number
+            } => item.score !== null && Boolean(item.chart?.image) && !selectedIds.has(item.row.id))
+            .sort((a, b) => a.score - b.score || a.row.name.localeCompare(b.row.name))
+            .at(0)
+
+        if (!candidate) {
+            continue
+        }
+
+        selectedIds.add(candidate.row.id)
+        selected.push({
+            id: candidate.row.id,
+            name: candidate.row.name,
+            ownerUsername: candidate.row.username,
+            heightMeters: candidate.chart.height.meters,
+            image: {
+                naturalHeight: candidate.chart.image.naturalHeight,
+                naturalWidth: candidate.chart.image.naturalWidth,
+                url: characterHeightChartImageUrl(
+                    mediaBaseUrl,
+                    candidate.row.user_id,
+                    candidate.row.id,
+                    candidate.chart.image.key,
+                    candidate.chart.image.contentType,
+                ),
+            },
+            calibration: candidate.chart.calibration,
+        })
+    }
+
+    return selected
+}
+
+function targetNameScore(characterName: string, targetName: string): number | null {
+    const normalizedName = characterName.trim().toLowerCase()
+    const tokens = normalizedName.split(/[^a-z0-9]+/).filter(Boolean)
+
+    if (normalizedName === targetName) {
+        return 0
+    }
+
+    if (tokens.includes(targetName)) {
+        return 1
+    }
+
+    return normalizedName.includes(targetName) ? 2 : null
+}
+
+function parseJsonRecord(value: string | null | undefined): Record<string, unknown> | null {
+    if (!value) {
+        return null
+    }
+
+    try {
+        const parsed = JSON.parse(value) as unknown
+
+        if (!parsed || typeof parsed !== 'object') {
+            return null
+        }
+
+        return parsed as Record<string, unknown>
+    } catch {
+        return null
+    }
+}
+
+function recordValue(source: Record<string, unknown>, key: string): Record<string, unknown> | null {
+    const value = source[key]
+
+    return value && typeof value === 'object' ? value as Record<string, unknown> : null
+}
+
+function parseHeightChartParts(value: string | null | undefined): {
+    calibration: Record<string, unknown> | null
+    height: Record<string, unknown> | null
+    image: Record<string, unknown> | null
+} | null {
+    const chart = parseJsonRecord(value)
+
+    if (!chart) {
+        return null
+    }
+
+    return {
+        calibration: recordValue(chart, 'calibration'),
+        height: recordValue(chart, 'height'),
+        image: recordValue(chart, 'image'),
+    }
+}
+
+function parseHomePageHeightChartJson(value: string | null | undefined): HomePageHeightChartJson | null {
+    const parts = parseHeightChartParts(value)
+
+    if (!parts?.height || !parts.calibration || !parts.image) {
+        return null
+    }
+
+    const {calibration, height, image} = parts
+
+    const meters = Number(height.meters)
+    const headYPercent = Number(calibration.headYPercent)
+    const footYPercent = Number(calibration.footYPercent)
+    const naturalWidth = Number(image.naturalWidth)
+    const naturalHeight = Number(image.naturalHeight)
+    const key = typeof image.key === 'string' ? image.key : ''
+
+    if (
+        !key
+        || !Number.isFinite(meters)
+        || meters <= 0
+        || !Number.isFinite(headYPercent)
+        || !Number.isFinite(footYPercent)
+        || !Number.isFinite(naturalWidth)
+        || naturalWidth <= 0
+        || !Number.isFinite(naturalHeight)
+        || naturalHeight <= 0
+        || footYPercent <= headYPercent
+    ) {
+        return null
+    }
+
+    return {
+        version: 1,
+        height: {
+            meters,
+        },
+        image: {
+            key,
+            contentType: typeof image.contentType === 'string' ? image.contentType : 'image/png',
+            naturalWidth,
+            naturalHeight,
+        },
+        calibration: {
+            headYPercent,
+            footYPercent,
+            footIsVirtual: Boolean(calibration.footIsVirtual),
+        },
+    }
+}
+
 function selectHomePageGalleryImageMix(images: HomePageGalleryImage[]): HomePageGalleryImage[] {
     const unused = new Set(images.map((image) => image.id))
     const groups = {
@@ -1474,7 +1704,8 @@ function selectHomePageGalleryImageMix(images: HomePageGalleryImage[]): HomePage
 }
 
 async function getTableCount(db: D1Database, tableName: 'users' | 'characters' | 'character_media'): Promise<number> {
-    const row = await db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).first<{count: number | string | null}>()
+    const row = await db.prepare(`SELECT COUNT(*) AS count
+                                  FROM ${tableName}`).first<{ count: number | string | null }>()
     const count = Number(row?.count ?? 0)
 
     return Number.isFinite(count) ? count : 0
@@ -1661,37 +1892,20 @@ async function getCharacterPageCharacter(
 }
 
 function hasUsableHeightChart(value: string | null | undefined): boolean {
-    if (!value) {
-        return false
-    }
+    const parts = parseHeightChartParts(value)
 
-    try {
-        const parsed = JSON.parse(value) as unknown
-
-        if (!parsed || typeof parsed !== 'object') {
-            return false
-        }
-
-        const chart = parsed as Record<string, unknown>
-        const image = chart.image && typeof chart.image === 'object' ? chart.image as Record<string, unknown> : null
-        const height = chart.height && typeof chart.height === 'object' ? chart.height as Record<string, unknown> : null
-        const calibration = chart.calibration && typeof chart.calibration === 'object' ? chart.calibration as Record<string, unknown> : null
-
-        return Boolean(
-            image
-            && typeof image.key === 'string'
-            && image.key
-            && Number.isFinite(Number(image.naturalWidth))
-            && Number.isFinite(Number(image.naturalHeight))
-            && height
-            && Number.isFinite(Number(height.meters))
-            && calibration
-            && Number.isFinite(Number(calibration.headYPercent))
-            && Number.isFinite(Number(calibration.footYPercent)),
-        )
-    } catch {
-        return false
-    }
+    return Boolean(
+        parts?.image
+        && typeof parts.image.key === 'string'
+        && parts.image.key
+        && Number.isFinite(Number(parts.image.naturalWidth))
+        && Number.isFinite(Number(parts.image.naturalHeight))
+        && parts.height
+        && Number.isFinite(Number(parts.height.meters))
+        && parts.calibration
+        && Number.isFinite(Number(parts.calibration.headYPercent))
+        && Number.isFinite(Number(parts.calibration.footYPercent)),
+    )
 }
 
 function findFolderPath(
@@ -1899,67 +2113,46 @@ function parseCharacterHeightChartEditorData(
     userId: string,
     characterId: string,
 ): CharacterHeightChartEditorData | null {
-    if (!value) {
+    const parts = parseHeightChartParts(value)
+
+    if (!parts?.height || !parts.calibration) {
         return null
     }
 
-    try {
-        const parsed = JSON.parse(value) as unknown
+    const {calibration, height, image} = parts
 
-        if (!parsed || typeof parsed !== 'object') {
-            return null
-        }
+    const meters = Number(height.meters)
+    const headYPercent = Number(calibration.headYPercent)
+    const footYPercent = Number(calibration.footYPercent)
 
-        const chart = parsed as Record<string, unknown>
-        const height = chart.height && typeof chart.height === 'object'
-            ? chart.height as Record<string, unknown>
-            : null
-        const calibration = chart.calibration && typeof chart.calibration === 'object'
-            ? chart.calibration as Record<string, unknown>
-            : null
-        const image = chart.image && typeof chart.image === 'object'
-            ? chart.image as Record<string, unknown>
-            : null
-
-        if (!height || !calibration) {
-            return null
-        }
-
-        const meters = Number(height.meters)
-        const headYPercent = Number(calibration.headYPercent)
-        const footYPercent = Number(calibration.footYPercent)
-
-        if (!Number.isFinite(meters) || !Number.isFinite(headYPercent) || !Number.isFinite(footYPercent)) {
-            return null
-        }
-
-        const imageKey = typeof image?.key === 'string' ? image.key : ''
-        const contentType = typeof image?.contentType === 'string' ? image.contentType : 'image/png'
-        const naturalWidth = Number(image?.naturalWidth)
-        const naturalHeight = Number(image?.naturalHeight)
-
-        return {
-            version: 1,
-            height: {
-                meters,
-            },
-            image: imageKey && Number.isFinite(naturalWidth) && Number.isFinite(naturalHeight)
-                ? {
-                    key: imageKey,
-                    contentType,
-                    naturalWidth,
-                    naturalHeight,
-                    url: characterHeightChartImageUrl(mediaBaseUrl, userId, characterId, imageKey, contentType),
-                }
-                : null,
-            calibration: {
-                headYPercent,
-                footYPercent,
-                footIsVirtual: Boolean(calibration.footIsVirtual),
-            },
-        }
-    } catch {
+    if (!Number.isFinite(meters) || !Number.isFinite(headYPercent) || !Number.isFinite(footYPercent)) {
         return null
+    }
+
+    const imageKey = typeof image?.key === 'string' ? image.key : ''
+    const contentType = typeof image?.contentType === 'string' ? image.contentType : 'image/png'
+    const naturalWidth = Number(image?.naturalWidth)
+    const naturalHeight = Number(image?.naturalHeight)
+
+    return {
+        version: 1,
+        height: {
+            meters,
+        },
+        image: imageKey && Number.isFinite(naturalWidth) && Number.isFinite(naturalHeight)
+            ? {
+                key: imageKey,
+                contentType,
+                naturalWidth,
+                naturalHeight,
+                url: characterHeightChartImageUrl(mediaBaseUrl, userId, characterId, imageKey, contentType),
+            }
+            : null,
+        calibration: {
+            headYPercent,
+            footYPercent,
+            footIsVirtual: Boolean(calibration.footIsVirtual),
+        },
     }
 }
 
@@ -2056,13 +2249,14 @@ async function getCharacterGalleryTabs(
                 sort_order: number
             }>(),
         db.prepare(
-            `SELECT character_gallery_rows.id AS row_id,
-                    character_gallery_rows.tab_id AS tab_id,
-                    character_gallery_rows.sort_order AS row_sort_order,
+            `SELECT character_gallery_rows.id            AS row_id,
+                    character_gallery_rows.tab_id        AS tab_id,
+                    character_gallery_rows.sort_order    AS row_sort_order,
                     character_gallery_row_media.media_id AS media_id,
                     character_gallery_row_media.sort_order AS media_sort_order
              FROM character_gallery_rows
-             LEFT JOIN character_gallery_row_media ON character_gallery_row_media.row_id = character_gallery_rows.id
+                      LEFT JOIN character_gallery_row_media
+                                ON character_gallery_row_media.row_id = character_gallery_rows.id
              WHERE character_gallery_rows.character_id = ?
                AND character_gallery_rows.user_id = ?
              ORDER BY character_gallery_rows.sort_order, character_gallery_row_media.sort_order`,
