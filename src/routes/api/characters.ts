@@ -1,7 +1,7 @@
 import {Hono} from 'hono'
 import type {Context} from 'hono'
 import {getCurrentUser, toSqlTimestamp, type CurrentUser} from '../../lib/auth/session'
-import {GALLERY_MAX_IMAGES_PER_ROW} from '../../lib/gallery'
+import {GALLERY_MAX_IMAGES_PER_ROW, shouldForceGalleryRowFullWidth} from '../../lib/gallery'
 import {
     characterHeightChartImageObjectKey,
     characterHeightChartImageUrl,
@@ -64,7 +64,6 @@ type HeightChartSaveRequest = {
 }
 
 type GalleryLayoutRequest = {
-    fullsizeLastRow?: unknown
     tabs?: unknown
 }
 
@@ -129,7 +128,6 @@ type CharacterRecord = {
     folder_id: string | null
     sort_order: number
     description?: string
-    gallery_fullsize_last_row?: number
     height_chart_json?: string
     created_at: string
     updated_at: string
@@ -1389,15 +1387,21 @@ characterRoutes.put('/:id/gallery', async (c) => {
         }
     }
 
+    const allCharacterMediaIds = await getCharacterMediaIds(c.env.DB, currentUser.id, character.id)
+    const completeGalleryValidation = validateCompleteGalleryLayout(parsed, allCharacterMediaIds)
+
+    if (completeGalleryValidation) {
+        return c.json({error: completeGalleryValidation.error}, 400)
+    }
+
     const now = toSqlTimestamp(new Date())
     const statements: D1PreparedStatement[] = [
         c.env.DB.prepare(
             `UPDATE characters
-             SET gallery_fullsize_last_row = ?,
-                 updated_at = ?
+             SET updated_at = ?
              WHERE id = ?
                AND user_id = ?`,
-        ).bind(parsed.fullsizeLastRow ? 1 : 0, now, character.id, currentUser.id),
+        ).bind(now, character.id, currentUser.id),
         c.env.DB.prepare(
             `DELETE
              FROM character_gallery_tabs
@@ -1414,9 +1418,10 @@ characterRoutes.put('/:id/gallery', async (c) => {
 
         tab.rows.forEach((row, rowIndex) => {
             statements.push(c.env.DB.prepare(
-                `INSERT INTO character_gallery_rows (id, user_id, character_id, tab_id, sort_order, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            ).bind(row.id, currentUser.id, character.id, tab.id, rowIndex, now, now))
+                `INSERT INTO character_gallery_rows (id, user_id, character_id, tab_id, sort_order, force_full_width,
+                                                     created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            ).bind(row.id, currentUser.id, character.id, tab.id, rowIndex, row.forceFullWidth ? 1 : 0, now, now))
 
             row.mediaIds.forEach((mediaId, mediaIndex) => {
                 statements.push(c.env.DB.prepare(
@@ -1431,7 +1436,6 @@ characterRoutes.put('/:id/gallery', async (c) => {
 
     return c.json({
         gallery: {
-            fullsizeLastRow: parsed.fullsizeLastRow,
             tabs: parsed.tabs,
         },
     })
@@ -1533,7 +1537,6 @@ function toPublicCharacter(baseUrl: string, character: CharacterRecord) {
             : null,
         folderId: character.folder_id,
         description: character.description ?? '',
-        galleryFullsizeLastRow: Boolean(character.gallery_fullsize_last_row),
         createdAt: character.created_at,
         updatedAt: character.updated_at,
     }
@@ -2437,7 +2440,6 @@ function normalizeArtistName(value: unknown): { artist: string } | { error: stri
 }
 
 type ParsedGalleryLayout = {
-    fullsizeLastRow: boolean
     mediaIds: Set<string>
     tabs: {
         id: string
@@ -2445,6 +2447,7 @@ type ParsedGalleryLayout = {
         rows: {
             id: string
             mediaIds: string[]
+            forceFullWidth: boolean
         }[]
     }[]
 }
@@ -2459,7 +2462,6 @@ function parseGalleryLayout(body: GalleryLayoutRequest): ParsedGalleryLayout | {
     }
 
     const parsed: ParsedGalleryLayout = {
-        fullsizeLastRow: body.fullsizeLastRow === true,
         mediaIds: new Set(),
         tabs: [],
     }
@@ -2488,23 +2490,21 @@ function parseGalleryLayout(body: GalleryLayoutRequest): ParsedGalleryLayout | {
             return name
         }
 
-        if (!Array.isArray(tabItem.rows)) {
-            return {error: 'Gallery tab rows are required'}
-        }
+        const rowItems = tabItem.rows === undefined ? [] : tabItem.rows
 
-        if (tabItem.rows.length < 1) {
-            return {error: 'Gallery tabs must contain at least one row'}
+        if (!Array.isArray(rowItems)) {
+            return {error: 'Gallery tab rows are required'}
         }
 
         const tab = {
             id: tabId,
             name: name.name,
-            rows: [] as { id: string; mediaIds: string[] }[],
+            rows: [] as { id: string; mediaIds: string[]; forceFullWidth: boolean }[],
         }
         const mediaIdsInTab = new Set<string>()
         tabIds.add(tabId)
 
-        for (const rowItem of tabItem.rows) {
+        for (const rowItem of rowItems) {
             rowCount += 1
 
             if (rowCount > GALLERY_MAX_ROWS) {
@@ -2538,6 +2538,7 @@ function parseGalleryLayout(body: GalleryLayoutRequest): ParsedGalleryLayout | {
             const row = {
                 id: rowId,
                 mediaIds: [] as string[],
+                forceFullWidth: rowItem.forceFullWidth === true,
             }
 
             for (const rawMediaId of rowItem.mediaIds) {
@@ -2564,10 +2565,40 @@ function parseGalleryLayout(body: GalleryLayoutRequest): ParsedGalleryLayout | {
             tab.rows.push(row)
         }
 
+        tab.rows.forEach((row, rowIndex) => {
+            row.forceFullWidth = shouldForceGalleryRowFullWidth(row, rowIndex, tab.rows.length)
+        })
         parsed.tabs.push(tab)
     }
 
     return parsed
+}
+
+function validateCompleteGalleryLayout(
+    layout: ParsedGalleryLayout,
+    allCharacterMediaIds: Set<string>,
+): { error: string } | null {
+    if (allCharacterMediaIds.size === 0) {
+        return null
+    }
+
+    for (const mediaId of allCharacterMediaIds) {
+        if (!layout.mediaIds.has(mediaId)) {
+            return {error: 'All character media must be placed on at least one gallery tab'}
+        }
+    }
+
+    for (const tab of layout.tabs) {
+        if (tab.rows.length === 0 || tab.rows.every((row) => row.mediaIds.length === 0)) {
+            return {error: 'Gallery tabs cannot be blank while this character has media'}
+        }
+
+        if (tab.rows.some((row) => row.mediaIds.length === 0)) {
+            return {error: 'Gallery rows cannot be empty while this character has media'}
+        }
+    }
+
+    return null
 }
 
 type FlattenedTreeItem = {
@@ -2784,6 +2815,23 @@ async function getOwnedMediaIds(
     return ownedIds
 }
 
+async function getCharacterMediaIds(
+    db: D1Database,
+    userId: string,
+    characterId: string,
+): Promise<Set<string>> {
+    const result = await db.prepare(
+        `SELECT id
+         FROM character_media
+         WHERE user_id = ?
+           AND character_id = ?`,
+    )
+        .bind(userId, characterId)
+        .all<Pick<CharacterMediaRecord, 'id'>>()
+
+    return new Set((result.results ?? []).map((media) => media.id))
+}
+
 async function characterHasMediaCapacity(
     db: D1Database,
     userId: string,
@@ -2960,7 +3008,6 @@ async function getOwnedCharacter(db: D1Database, userId: string, characterId: st
                 folder_id,
                 sort_order,
                 description,
-                gallery_fullsize_last_row,
                 height_chart_json,
                 created_at,
                 updated_at

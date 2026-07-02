@@ -11,7 +11,6 @@ export type CharacterSettingsCharacter = {
     name: string
     profileImageKey: string
     description: string
-    galleryFullsizeLastRow: boolean
 }
 
 export type CharacterSettingsMedia = {
@@ -41,6 +40,7 @@ export type CharacterSettingsGalleryTab = {
     rows: {
         id: string
         mediaIds: string[]
+        forceFullWidth: boolean
     }[]
 }
 
@@ -100,12 +100,12 @@ const character = ${safeJson(character)};
 const csrfToken = ${safeJson(csrfToken)};
 const maxGalleryImagesPerRow = ${safeJson(GALLERY_MAX_IMAGES_PER_ROW)};
 const mediaLibrary = new Map(${safeJson(media)}.map((item) => [item.id, item]));
-const tagLayouts = new Map(${safeJson(galleryTabs)}.map((tab) => [tab.id, tab]));
+const tagLayouts = new Map(${safeJson(galleryTabs)}.map((tab) => [tab.id, normalizeInitialGalleryLayout(tab)]));
 let activeTagId = ${safeJson(galleryTabs[0]?.id ?? 'default')};
 ${PROFILE_CROPPER_BROWSER_HELPERS}
+let pendingDeleteMediaId = null;
 let dragCandidate = null;
 let dragState = null;
-let pendingDeleteMediaId = null;
 
 const mediaPool = document.getElementById('all-media-pool');
 const mediaCount = document.getElementById('all-media-count');
@@ -117,7 +117,6 @@ const moveActiveTabLeftButton = document.getElementById('move-active-gallery-tab
 const moveActiveTabRightButton = document.getElementById('move-active-gallery-tab-right');
 const renameActiveGalleryTabButton = document.getElementById('rename-active-gallery-tab');
 const deleteActiveGalleryTabButton = document.getElementById('delete-active-gallery-tab');
-const addGalleryRowButton = document.getElementById('add-gallery-row');
 const saveCharacterSettingsButton = document.getElementById('save-character-settings');
 const saveCharacterSettingsWarning = document.getElementById('save-character-settings-warning');
 const settingsToastRegion = document.querySelector('[data-character-settings-toast-region]');
@@ -127,7 +126,6 @@ const characterProfileImageInput = document.getElementById('character-profile-ph
 const characterProfileImagePreview = document.querySelector('[data-character-profile-image-preview]');
 const characterProfileCropper = document.querySelector('[data-character-profile-cropper]');
 const characterProfileCropImage = document.querySelector('[data-character-profile-crop-image]');
-const fullsizeLastRowInput = document.getElementById('fullsize-last-row');
 const uploadMediaButton = document.getElementById('upload-media-button');
 const bulkUploadButton = document.getElementById('bulk-upload-images');
 const uploadImageModal = document.getElementById('upload-image-modal');
@@ -155,7 +153,6 @@ const renameGalleryTagForm = document.getElementById('rename-gallery-tag-form');
 const renameGalleryTagNameInput = document.getElementById('rename-gallery-tag-name');
 const deleteMediaModal = document.getElementById('delete-media-modal');
 const deleteGalleryTagModal = document.getElementById('delete-gallery-tag-modal');
-const removeRowModal = document.getElementById('remove-row-modal');
 const editImageArtistModal = document.getElementById('edit-image-artist-modal');
 const editImageArtistForm = document.getElementById('edit-image-artist-form');
 const editImageSfwFileInput = document.getElementById('edit-gallery-image-sfw-file');
@@ -174,7 +171,6 @@ const confirmDeleteCharacterButton = document.getElementById('confirm-delete-cha
 
 let pendingDeleteTagId = null;
 let pendingRenameTagId = null;
-let removeTargetRowIndex = null;
 let bulkUploadFiles = [];
 let editTargetMediaId = null;
 let editRemoveSfw = false;
@@ -188,6 +184,49 @@ function displayGalleryTabName(name) {
 
 function createId() {
     return crypto.randomUUID ? crypto.randomUUID() : 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+}
+
+function createEmptyGalleryRow() {
+    return { id: createId(), mediaIds: [], forceFullWidth: false };
+}
+
+function shouldForceRowFullWidth(row, rowIndex, rowCount) {
+    return row && Array.isArray(row.mediaIds) && row.mediaIds.length === 1 && (rowIndex < rowCount - 1 || row.forceFullWidth === true);
+}
+
+function normalizeRowForceFullWidth(row, rowIndex, rowCount) {
+    if (!row) return row;
+    if (Number.isInteger(rowIndex) && Number.isInteger(rowCount)) {
+        row.forceFullWidth = shouldForceRowFullWidth(row, rowIndex, rowCount);
+    } else {
+        row.forceFullWidth = row.forceFullWidth === true && Array.isArray(row.mediaIds) && row.mediaIds.length === 1;
+    }
+    return row;
+}
+
+function normalizeLayoutForceFullWidth(layout) {
+    if (!layout || !Array.isArray(layout.rows)) return;
+    layout.rows.forEach((row, rowIndex) => normalizeRowForceFullWidth(row, rowIndex, layout.rows.length));
+}
+
+function normalizeInitialGalleryLayout(tab) {
+    const rows = Array.isArray(tab.rows)
+        ? tab.rows.map((row) => ({
+            id: row && row.id ? String(row.id) : createId(),
+            mediaIds: Array.isArray(row && row.mediaIds)
+                ? row.mediaIds.filter((mediaId) => typeof mediaId === 'string')
+                : [],
+            forceFullWidth: Boolean(row && row.forceFullWidth)
+        }))
+        : [];
+
+    const layout = {
+        id: tab && tab.id ? String(tab.id) : createId(),
+        name: tab && tab.name ? String(tab.name) : 'default',
+        rows: rows.length > 0 ? rows : [createEmptyGalleryRow()]
+    };
+    normalizeLayoutForceFullWidth(layout);
+    return layout;
 }
 
 function showAlert(message, isSuccess) {
@@ -307,33 +346,47 @@ function normalizeTagName(name) {
 }
 
 function getActiveLayout() {
-    return tagLayouts.get(activeTagId) || Array.from(tagLayouts.values())[0];
+    const layout = tagLayouts.get(activeTagId) || Array.from(tagLayouts.values())[0];
+    ensureLayoutRows(layout);
+    return layout;
+}
+
+function ensureLayoutRows(layout) {
+    if (!layout) return;
+    if (!Array.isArray(layout.rows)) layout.rows = [];
+    if (layout.rows.length === 0) layout.rows.push(createEmptyGalleryRow());
+    normalizeLayoutForceFullWidth(layout);
 }
 
 function getUsedMediaIds(tagId) {
     const layout = tagLayouts.get(tagId);
-    return new Set(layout ? layout.rows.flatMap((row) => row.mediaIds) : []);
+    return new Set(layout && Array.isArray(layout.rows) ? layout.rows.flatMap((row) => row.mediaIds) : []);
 }
 
-function getMediaUsageTabCount(mediaId) {
-    let count = 0;
+function getActiveUsedMediaIds() {
+    return getUsedMediaIds(activeTagId);
+}
+
+function getMediaUsageCounts() {
+    const counts = new Map();
+    mediaLibrary.forEach((_, mediaId) => counts.set(mediaId, 0));
     tagLayouts.forEach((layout) => {
-        if (layout.rows.some((row) => row.mediaIds.includes(mediaId))) count += 1;
+        ensureLayoutRows(layout);
+        const usedInTab = new Set(layout.rows.flatMap((row) => row.mediaIds));
+        usedInTab.forEach((mediaId) => counts.set(mediaId, (counts.get(mediaId) || 0) + 1));
     });
-    return count;
+    return counts;
 }
 
-function getUnusedMediaCount() {
-    let count = 0;
-    mediaLibrary.forEach((media) => {
-        if (getMediaUsageTabCount(media.id) === 0) count += 1;
-    });
-    return count;
+function mediaUsageText(tabCount) {
+    if (tabCount === 0) return 'not used';
+    return 'Used on ' + tabCount + ' ' + (tabCount === 1 ? 'tab' : 'tabs');
 }
 
 function getOverflowRowCount() {
     let count = 0;
     tagLayouts.forEach((layout) => {
+        ensureLayoutRows(layout);
         layout.rows.forEach((row) => {
             if (row.mediaIds.length > maxGalleryImagesPerRow) count += 1;
         });
@@ -341,8 +394,60 @@ function getOverflowRowCount() {
     return count;
 }
 
+function getGalleryValidationErrors() {
+    const errors = [];
+    const overflowRows = getOverflowRowCount();
+    if (overflowRows > 0) {
+        errors.push('Rows can contain at most ' + maxGalleryImagesPerRow + ' images.');
+    }
+
+    if (mediaLibrary.size === 0) {
+        return errors;
+    }
+
+    const usageCounts = getMediaUsageCounts();
+    const unusedCount = Array.from(usageCounts.values()).filter((count) => count === 0).length;
+    if (unusedCount > 0) {
+        errors.push('Place all media on at least one gallery tab before saving.');
+    }
+
+    let blankTabs = 0;
+    let emptyRows = 0;
+    tagLayouts.forEach((layout) => {
+        ensureLayoutRows(layout);
+        if (layout.rows.length === 0 || layout.rows.every((row) => row.mediaIds.length === 0)) {
+            blankTabs += 1;
+        }
+        emptyRows += layout.rows.filter((row) => row.mediaIds.length === 0).length;
+    });
+
+    if (blankTabs > 0) {
+        errors.push('Every tab needs at least one image before saving.');
+    }
+
+    if (emptyRows > 0) {
+        errors.push('Remove empty rows before saving.');
+    }
+
+    return errors;
+}
+
 function mediaDisplayUrl(media) {
     return media.nsfwPreviewImageUrl || media.nsfwImageUrl || media.sfwPreviewImageUrl || media.sfwImageUrl || '';
+}
+
+function mediaDisplayDimensions(media) {
+    const candidates = [
+        [media.nsfwPreviewImageUrl, media.nsfwPreviewWidth, media.nsfwPreviewHeight],
+        [media.nsfwImageUrl, media.nsfwWidth, media.nsfwHeight],
+        [media.sfwPreviewImageUrl, media.sfwPreviewWidth, media.sfwPreviewHeight],
+        [media.sfwImageUrl, media.sfwWidth, media.sfwHeight]
+    ];
+    const match = candidates.find(([url, width, height]) => url && Number(width) > 0 && Number(height) > 0);
+    return {
+        width: Number(match ? match[1] : 1) || 1,
+        height: Number(match ? match[2] : 1) || 1
+    };
 }
 
 function mediaSfwDisplayUrl(media) {
@@ -370,17 +475,15 @@ function createImageRatingBadge(media) {
     return badge;
 }
 
-function createMediaThumb(media, variant) {
+function createPoolMediaThumb(media, usedInActiveTab, tabUsageCount) {
     const item = document.createElement('div');
-    item.className = variant === 'pool'
-        ? 'media-pool-item group w-[calc((100%_-_1.5rem)/3)] cursor-grab active:cursor-grabbing sm:w-24'
-        : 'gallery-image group relative aspect-square w-[calc((100%_-_1.5rem)/3)] cursor-grab overflow-hidden rounded bg-base-300 active:cursor-grabbing sm:h-24 sm:w-24';
+    item.className = 'media-pool-item group w-[calc((100%_-_1.5rem)/3)] sm:w-24';
     item.dataset.mediaId = media.id;
-    item.dataset.galleryDraggable = '';
-    item.dataset.gallerySource = variant;
+    item.dataset.galleryDraggable = usedInActiveTab ? 'false' : 'true';
+    item.dataset.gallerySource = 'pool';
     item.tabIndex = 0;
-    item.role = 'button';
-    item.ariaLabel = variant === 'pool' ? 'Drag media into a gallery row' : 'Drag media to reorder';
+    item.title = usedInActiveTab ? 'Already used in the active tab' : 'Drag into the active gallery tab';
+    item.setAttribute('aria-disabled', usedInActiveTab ? 'true' : 'false');
 
     const thumb = document.createElement('div');
     thumb.className = 'relative aspect-square overflow-hidden rounded bg-base-300';
@@ -390,7 +493,6 @@ function createMediaThumb(media, variant) {
     image.alt = mediaAlt(media);
     image.dataset.mediaThumbImage = '';
     image.decoding = 'async';
-    image.draggable = false;
     image.loading = 'lazy';
     image.src = mediaDisplayUrl(media);
 
@@ -402,36 +504,58 @@ function createMediaThumb(media, variant) {
     editButton.innerHTML = '<svg aria-hidden="true" class="h-4 w-4 sm:h-3 sm:w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M16.862 3.487a2.1 2.1 0 0 1 2.97 2.97L8.76 17.53 4.5 18.75l1.22-4.26L16.862 3.487z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg>';
 
     const removeButton = document.createElement('button');
-    removeButton.ariaLabel = variant === 'pool' ? 'Delete media' : 'Remove from row';
+    removeButton.ariaLabel = 'Delete media';
     removeButton.className = 'btn btn-error btn-sm btn-circle absolute right-1 top-1 z-10 min-h-8 h-8 w-8 opacity-95 sm:btn-xs sm:min-h-6 sm:h-6 sm:w-6';
     removeButton.dataset.removeImage = '';
     removeButton.type = 'button';
     removeButton.textContent = 'x';
 
     thumb.append(image, editButton, removeButton, createImageRatingBadge(media));
+    const usage = document.createElement('div');
+    usage.className = 'mt-1 rounded px-1.5 py-1 text-center text-[0.65rem] font-bold leading-tight ' + (tabUsageCount > 0 ? 'bg-success text-success-content' : 'bg-warning text-warning-content');
+    usage.textContent = mediaUsageText(tabUsageCount);
+    item.append(thumb, usage);
+    return item;
+}
 
-    if (variant === 'pool') {
-        const usageCount = getMediaUsageTabCount(media.id);
-        const usage = document.createElement('div');
-        usage.className = 'mt-1 rounded px-1.5 py-1 text-center text-[0.65rem] font-bold leading-tight ' + (usageCount > 0 ? 'bg-success text-success-content' : 'bg-error text-error-content');
-        usage.textContent = usageCount > 0 ? 'Used on ' + usageCount + (usageCount === 1 ? ' tab' : ' tabs') : 'Unused';
-        item.append(thumb, usage);
-        return item;
-    }
+function createRowMediaThumb(media, rowIndex) {
+    const item = document.createElement('div');
+    const dimensions = mediaDisplayDimensions(media);
+    item.className = 'gallery-row-media group';
+    item.dataset.mediaId = media.id;
+    item.dataset.galleryDraggable = 'true';
+    item.dataset.gallerySource = 'row';
+    item.dataset.rowIndex = String(rowIndex);
+    item.style.setProperty('--media-width', String(dimensions.width));
+    item.style.setProperty('--media-height', String(dimensions.height));
+    item.style.setProperty('--media-aspect', String(dimensions.width / dimensions.height));
+    item.tabIndex = 0;
+    item.title = 'Drag to move image';
 
-    item.append(thumb);
+    const image = document.createElement('img');
+    image.className = 'gallery-row-image';
+    image.alt = mediaAlt(media);
+    image.decoding = 'async';
+    image.loading = 'lazy';
+    image.src = mediaDisplayUrl(media);
+
+    const removeButton = document.createElement('button');
+    removeButton.ariaLabel = 'Remove image from row';
+    removeButton.className = 'btn btn-error btn-xs btn-circle gallery-row-remove-image opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100';
+    removeButton.dataset.removeRowImage = '';
+    removeButton.type = 'button';
+    removeButton.textContent = 'x';
+
+    item.append(image, removeButton, createImageRatingBadge(media));
     return item;
 }
 
 function renderMediaPool() {
-    const usedInActiveTab = getUsedMediaIds(activeTagId);
+    const usedInActiveTab = getActiveUsedMediaIds();
+    const usageCounts = getMediaUsageCounts();
     mediaPool.replaceChildren();
     mediaLibrary.forEach((media) => {
-        const item = createMediaThumb(media, 'pool');
-        const isUsed = usedInActiveTab.has(media.id);
-        item.setAttribute('aria-disabled', isUsed ? 'true' : 'false');
-        item.title = isUsed ? 'Already used in this tab' : 'Drag into a row';
-        mediaPool.append(item);
+        mediaPool.append(createPoolMediaThumb(media, usedInActiveTab.has(media.id), usageCounts.get(media.id) || 0));
     });
     mediaCount.textContent = mediaLibrary.size + ' media';
 }
@@ -487,310 +611,130 @@ function updateActiveTabControls() {
 }
 
 function moveActiveGalleryRow(rowIndex, direction) {
-    const rows = getActiveLayout().rows;
+    const layout = getActiveLayout();
+    const rows = layout.rows;
     const targetIndex = rowIndex + direction;
     if (rowIndex < 0 || targetIndex < 0 || rowIndex >= rows.length || targetIndex >= rows.length) return false;
     const [row] = rows.splice(rowIndex, 1);
     rows.splice(targetIndex, 0, row);
+    normalizeLayoutForceFullWidth(layout);
     return true;
 }
 
 function insertActiveGalleryRow(rowIndex) {
-    const rows = getActiveLayout().rows;
-    rows.splice(Math.max(0, Math.min(rowIndex, rows.length)), 0, { id: createId(), mediaIds: [] });
+    const layout = getActiveLayout();
+    const rows = layout.rows;
+    rows.splice(Math.max(0, Math.min(rowIndex, rows.length)), 0, createEmptyGalleryRow());
+    normalizeLayoutForceFullWidth(layout);
+}
+
+function removeActiveGalleryRow(rowIndex) {
+    const layout = getActiveLayout();
+    const rows = layout.rows;
+    if (rows.length <= 1 || rowIndex < 0 || rowIndex >= rows.length) return false;
+    rows.splice(rowIndex, 1);
+    normalizeLayoutForceFullWidth(layout);
+    return true;
+}
+
+function removeFromActiveRow(rowIndex, mediaId) {
+    const layout = getActiveLayout();
+    const row = layout.rows[rowIndex];
+    if (!row) return false;
+    row.mediaIds = row.mediaIds.filter((id) => id !== mediaId);
+    normalizeLayoutForceFullWidth(layout);
+    return true;
+}
+
+function createRowControlButton(label, text, className, dataset) {
+    const button = document.createElement('button');
+    button.ariaLabel = label;
+    button.className = className;
+    button.type = 'button';
+    button.textContent = text;
+    Object.entries(dataset).forEach(([key, value]) => {
+        button.dataset[key] = String(value);
+    });
+    return button;
 }
 
 function renderRows() {
     const layout = getActiveLayout();
+    normalizeLayoutForceFullWidth(layout);
     galleryRows.replaceChildren();
     layout.rows.forEach((rowData, rowIndex) => {
-        const row = document.createElement('div');
-        row.className = 'rounded-box border border-base-300 bg-base-100 p-4';
-        row.dataset.galleryRow = String(rowIndex);
-        const header = document.createElement('div');
-        header.className = 'mb-3 flex flex-wrap items-center justify-between gap-2';
-        const title = document.createElement('h5');
-        title.className = 'font-semibold';
-        title.textContent = 'Row ' + (rowIndex + 1);
-        const rowActions = document.createElement('div');
-        rowActions.className = 'flex flex-wrap items-center justify-end gap-2';
-        const rowCount = document.createElement('span');
-        rowCount.className = 'badge ' + (rowData.mediaIds.length > maxGalleryImagesPerRow ? 'badge-error' : 'badge-neutral');
-        rowCount.textContent = rowData.mediaIds.length + '/' + maxGalleryImagesPerRow;
-        const moveUpButton = document.createElement('button');
-        moveUpButton.ariaLabel = 'Move row up';
-        moveUpButton.className = 'btn btn-sm btn-square';
-        moveUpButton.dataset.moveRow = '-1';
-        moveUpButton.disabled = rowIndex === 0;
-        moveUpButton.title = 'Move row up';
-        moveUpButton.type = 'button';
-        moveUpButton.textContent = '↑';
-        const moveDownButton = document.createElement('button');
-        moveDownButton.ariaLabel = 'Move row down';
-        moveDownButton.className = 'btn btn-sm btn-square';
-        moveDownButton.dataset.moveRow = '1';
-        moveDownButton.disabled = rowIndex === layout.rows.length - 1;
-        moveDownButton.title = 'Move row down';
-        moveDownButton.type = 'button';
-        moveDownButton.textContent = '↓';
-        const insertAboveButton = document.createElement('button');
-        insertAboveButton.className = 'btn btn-sm btn-primary';
-        insertAboveButton.dataset.insertRow = String(rowIndex);
-        insertAboveButton.type = 'button';
-        insertAboveButton.textContent = 'Insert Above';
-        const insertBelowButton = document.createElement('button');
-        insertBelowButton.className = 'btn btn-sm btn-primary';
-        insertBelowButton.dataset.insertRow = String(rowIndex + 1);
-        insertBelowButton.type = 'button';
-        insertBelowButton.textContent = 'Insert Below';
-        const removeButton = document.createElement('button');
-        removeButton.className = 'btn btn-sm btn-error btn-outline';
-        removeButton.dataset.removeRow = '';
-        removeButton.disabled = layout.rows.length === 1;
-        removeButton.title = layout.rows.length === 1 ? 'Each tab needs at least one row' : 'Remove row';
-        removeButton.type = 'button';
-        removeButton.textContent = 'Remove Row';
-        rowActions.append(rowCount, moveUpButton, moveDownButton, insertAboveButton, insertBelowButton, removeButton);
-        const dropzone = document.createElement('div');
-        dropzone.className = 'gallery-dropzone flex min-h-28 flex-wrap gap-3 rounded border border-dashed border-base-300 bg-base-200 p-3';
-        dropzone.dataset.dropzone = '';
-        dropzone.dataset.rowIndex = String(rowIndex);
+        const shell = document.createElement('div');
+        shell.className = 'gallery-row-editor';
+        shell.dataset.galleryRow = String(rowIndex);
+
+        const preview = document.createElement('div');
+        preview.className = 'gallery-row-preview justified-row' + (rowData.forceFullWidth ? ' row-force-full-width' : '');
+        preview.dataset.dropzone = '';
+        preview.dataset.rowIndex = String(rowIndex);
+
         if (rowData.mediaIds.length === 0) {
-            const emptyRow = document.createElement('span');
-            emptyRow.className = 'gallery-empty-row self-center text-xs text-base-content/60';
-            emptyRow.textContent = 'No images in this row';
-            dropzone.append(emptyRow);
+            const empty = document.createElement('div');
+            empty.className = 'gallery-row-empty';
+            empty.textContent = 'Drop images here';
+            preview.append(empty);
+        } else {
+            rowData.mediaIds.forEach((mediaId) => {
+                const media = mediaLibrary.get(mediaId);
+                if (media) preview.append(createRowMediaThumb(media, rowIndex));
+            });
         }
-        rowData.mediaIds.forEach((mediaId) => {
-            const media = mediaLibrary.get(mediaId);
-            if (media) dropzone.append(createMediaThumb(media, 'row'));
-        });
-        header.append(title, rowActions);
-        row.append(header, dropzone);
-        galleryRows.append(row);
+
+        const controls = document.createElement('div');
+        controls.className = 'gallery-row-controls';
+        const count = document.createElement('span');
+        count.className = 'badge badge-dash ' + (rowData.mediaIds.length > maxGalleryImagesPerRow ? 'badge-error' : 'badge-info');
+        count.textContent = rowData.mediaIds.length + '/' + maxGalleryImagesPerRow;
+        const forceFullWidthLabel = document.createElement('label');
+        forceFullWidthLabel.className = 'gallery-row-force-full-width label cursor-pointer justify-start gap-2 rounded border border-base-300 bg-base-100 px-2 py-1 text-xs font-semibold';
+        const forceFullWidthInput = document.createElement('input');
+        forceFullWidthInput.className = 'checkbox checkbox-sm';
+        forceFullWidthInput.checked = rowData.forceFullWidth === true;
+        forceFullWidthInput.dataset.toggleForceFullWidth = '';
+        forceFullWidthInput.type = 'checkbox';
+        const forceFullWidthText = document.createElement('span');
+        forceFullWidthText.className = 'label-text text-xs';
+        forceFullWidthText.textContent = 'Force full width';
+        forceFullWidthLabel.append(forceFullWidthInput, forceFullWidthText);
+        const moveUpButton = createRowControlButton('Move row up', 'Move Up', 'btn btn-sm btn-secondary', { moveRow: -1 });
+        moveUpButton.disabled = rowIndex === 0;
+        const moveDownButton = createRowControlButton('Move row down', 'Move Down', 'btn btn-sm btn-secondary', { moveRow: 1 });
+        moveDownButton.disabled = rowIndex === layout.rows.length - 1;
+        const addAboveButton = createRowControlButton('Add row above', '+ Above', 'btn btn-sm btn-secondary', { insertRow: rowIndex });
+        const addBelowButton = createRowControlButton('Add row below', '+ Below', 'btn btn-sm btn-secondary', { insertRow: rowIndex + 1 });
+        const deleteButton = createRowControlButton('Delete row', 'Delete', 'btn btn-sm btn-error', { deleteRow: rowIndex });
+        deleteButton.disabled = layout.rows.length === 1;
+        controls.append(count);
+        if (rowData.mediaIds.length === 1 && rowIndex === layout.rows.length - 1) controls.append(forceFullWidthLabel);
+        controls.append(moveUpButton, moveDownButton, addAboveButton, addBelowButton, deleteButton);
+
+        shell.append(preview, controls);
+        galleryRows.append(shell);
     });
+}
+
+function renderActiveGalleryTabPanel() {
+    const layout = getActiveLayout();
     activeGalleryTagTitle.textContent = displayGalleryTabName(layout.name);
-    activeGalleryTagMeta.textContent = layout.rows.length + (layout.rows.length === 1 ? ' row' : ' rows') + ' / ' + getUsedMediaIds(activeTagId).size + ' images';
+    activeGalleryTagMeta.textContent = layout.rows.length + (layout.rows.length === 1 ? ' row' : ' rows') + ' / ' + getActiveUsedMediaIds().size + ' images';
     updateActiveTabControls();
 }
 
 function renderGallery() {
+    const validationErrors = getGalleryValidationErrors();
     renderTabs();
     renderRows();
+    renderActiveGalleryTabPanel();
     renderMediaPool();
-    const unusedMediaCount = getUnusedMediaCount();
-    const overflowRowCount = getOverflowRowCount();
-    saveCharacterSettingsButton.disabled = getActiveLayout().rows.length === 0 || unusedMediaCount > 0 || overflowRowCount > 0;
-    saveCharacterSettingsWarning.hidden = unusedMediaCount === 0 && overflowRowCount === 0;
-    if (overflowRowCount > 0) {
-        saveCharacterSettingsWarning.textContent = 'Move images so every row has ' + maxGalleryImagesPerRow + ' or fewer images before saving changes.';
-    } else {
-        saveCharacterSettingsWarning.textContent = unusedMediaCount === 1
-            ? 'Delete 1 unused media item before saving changes.'
-            : 'Delete ' + unusedMediaCount + ' unused media items before saving changes.';
+    saveCharacterSettingsButton.disabled = tagLayouts.size === 0 || validationErrors.length > 0;
+    if (saveCharacterSettingsWarning) {
+        saveCharacterSettingsWarning.hidden = validationErrors.length === 0;
+        saveCharacterSettingsWarning.textContent = validationErrors.join(' ');
     }
-}
-
-function removeFromActiveRow(rowIndex, mediaId) {
-    const row = getActiveLayout().rows[rowIndex];
-    if (!row) return;
-    row.mediaIds = row.mediaIds.filter((id) => id !== mediaId);
-    renderGallery();
-}
-
-function isNoopDrop(item, rowIndex, insertIndex) {
-    if (!item || item.type !== 'row' || item.rowIndex !== rowIndex) return false;
-    const sourceRow = getActiveLayout().rows[rowIndex];
-    const sourceIndex = sourceRow ? sourceRow.mediaIds.indexOf(item.mediaId) : -1;
-    return sourceIndex >= 0 && (insertIndex === sourceIndex || insertIndex === sourceIndex + 1);
-}
-
-function moveMediaToRow(item, rowIndex, insertIndex) {
-    if (!item || isNoopDrop(item, rowIndex, insertIndex)) return false;
-    const layout = getActiveLayout();
-    const targetRow = layout.rows[rowIndex];
-    const mediaId = item.mediaId;
-    if (!targetRow || !mediaLibrary.has(mediaId)) return;
-    const isSameRowMove = item.type === 'row' && item.rowIndex === rowIndex;
-
-    if (!isSameRowMove && targetRow.mediaIds.length >= maxGalleryImagesPerRow) {
-        showAlert('Rows can contain at most ' + maxGalleryImagesPerRow + ' images.', false);
-        return false;
-    }
-
-    let targetIndex = Math.max(0, Math.min(insertIndex, targetRow.mediaIds.length));
-    if (item.type === 'row') {
-        const sourceRow = layout.rows[item.rowIndex];
-        const sourceIndex = sourceRow ? sourceRow.mediaIds.indexOf(mediaId) : -1;
-        if (sourceIndex < 0) return false;
-        sourceRow.mediaIds.splice(sourceIndex, 1);
-        if (item.rowIndex === rowIndex && sourceIndex < targetIndex) targetIndex -= 1;
-    } else if (getUsedMediaIds(activeTagId).has(mediaId)) {
-        return false;
-    }
-
-    targetRow.mediaIds.splice(Math.max(0, Math.min(targetIndex, targetRow.mediaIds.length)), 0, mediaId);
-    return true;
-}
-
-function createDragGhost(source, x, y) {
-    const rect = source.getBoundingClientRect();
-    const ghost = document.createElement('div');
-    ghost.className = 'gallery-drag-ghost';
-    ghost.style.width = rect.width + 'px';
-    ghost.style.height = rect.height + 'px';
-    ghost.style.transform = 'translate3d(' + (x - rect.width / 2) + 'px,' + (y - rect.height / 2) + 'px,0)';
-    ghost.textContent = 'Move';
-    document.body.append(ghost);
-    return ghost;
-}
-
-function moveDragGhost(x, y) {
-    if (!dragState || !dragState.ghost) return;
-    dragState.ghost.style.transform = 'translate3d(' + (x - dragState.ghost.offsetWidth / 2) + 'px,' + (y - dragState.ghost.offsetHeight / 2) + 'px,0)';
-}
-
-function scrollDuringGalleryDrag(y) {
-    const edgeSize = 72;
-    const maxStep = 18;
-    let step = 0;
-    if (y < edgeSize) {
-        step = -Math.ceil(((edgeSize - y) / edgeSize) * maxStep);
-    } else if (y > window.innerHeight - edgeSize) {
-        step = Math.ceil(((y - (window.innerHeight - edgeSize)) / edgeSize) * maxStep);
-    }
-    if (step) window.scrollBy(0, step);
-}
-
-function getDropIndexForPoint(dropzone, x, y) {
-    const images = Array.from(dropzone.querySelectorAll('.gallery-image:not(.gallery-drag-source)'));
-    if (images.length === 0) return 0;
-
-    const rows = [];
-    images.forEach((image, index) => {
-        const rect = image.getBoundingClientRect();
-        const centerY = rect.top + rect.height / 2;
-        let row = rows.find((candidate) => Math.abs(candidate.centerY - centerY) < Math.max(12, rect.height / 2));
-        if (!row) {
-            row = { centerY, items: [] };
-            rows.push(row);
-        }
-        row.items.push({ image, index, rect });
-    });
-    rows.sort((a, b) => a.centerY - b.centerY);
-
-    let activeRow = rows[0];
-    let closestDistance = Math.abs(y - activeRow.centerY);
-    rows.forEach((row) => {
-        const distance = Math.abs(y - row.centerY);
-        if (distance < closestDistance) {
-            activeRow = row;
-            closestDistance = distance;
-        }
-    });
-    activeRow.items.sort((a, b) => a.rect.left - b.rect.left);
-
-    if (x <= activeRow.items[0].rect.left + activeRow.items[0].rect.width / 2) {
-        return activeRow.items[0].index;
-    }
-
-    for (const item of activeRow.items) {
-        if (x < item.rect.left + item.rect.width / 2) return item.index;
-    }
-
-    const lastItem = activeRow.items[activeRow.items.length - 1];
-    return lastItem.index + 1;
-}
-
-function updateDropMarker(x, y) {
-    if (!dragState) return;
-    const target = document.elementFromPoint(x, y);
-    const dropzone = target ? target.closest('[data-dropzone]') : null;
-    document.querySelectorAll('.gallery-dropzone.drop-active').forEach((zone) => zone.classList.remove('drop-active'));
-    if (!dropzone) {
-        dragState.drop = null;
-        dragState.marker.remove();
-        return;
-    }
-    const rowIndex = Number(dropzone.dataset.rowIndex);
-    const insertIndex = getDropIndexForPoint(dropzone, x, y);
-    dragState.drop = { rowIndex, insertIndex };
-    dropzone.classList.add('drop-active');
-    const images = Array.from(dropzone.querySelectorAll('.gallery-image:not(.gallery-drag-source)'));
-    const beforeImage = images[insertIndex];
-    if (beforeImage) {
-        dropzone.insertBefore(dragState.marker, beforeImage);
-    } else {
-        dropzone.append(dragState.marker);
-    }
-}
-
-function startGalleryDrag(candidate, event) {
-    const source = candidate.source;
-    dragState = {
-        type: candidate.type,
-        mediaId: candidate.mediaId,
-        rowIndex: candidate.rowIndex,
-        ghost: createDragGhost(source, event.clientX, event.clientY),
-        marker: document.createElement('div'),
-        drop: null,
-    };
-    dragState.marker.className = 'gallery-drop-marker';
-    source.classList.add('gallery-drag-source');
-    document.body.classList.add('gallery-is-dragging');
-    moveDragGhost(event.clientX, event.clientY);
-    updateDropMarker(event.clientX, event.clientY);
-}
-
-function cleanupGalleryDrag() {
-    document.body.classList.remove('gallery-is-dragging');
-    document.querySelectorAll('.gallery-drag-source').forEach((item) => item.classList.remove('gallery-drag-source'));
-    document.querySelectorAll('.gallery-dropzone.drop-active').forEach((zone) => zone.classList.remove('drop-active'));
-    if (dragState) {
-        dragState.ghost.remove();
-        dragState.marker.remove();
-    }
-    dragState = null;
-    dragCandidate = null;
-}
-
-function beginGalleryDragCandidate(event, item) {
-    if (event.button !== undefined && event.button !== 0) return;
-    if (event.target.closest('[data-edit-image-artist],[data-remove-image]')) return;
-    if (item.getAttribute('aria-disabled') === 'true') return;
-    event.preventDefault();
-    const row = item.closest('[data-gallery-row]');
-    dragCandidate = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-        source: item,
-        type: item.dataset.gallerySource,
-        mediaId: item.dataset.mediaId,
-        rowIndex: row ? Number(row.dataset.galleryRow) : null,
-    };
-    item.setPointerCapture?.(event.pointerId);
-}
-
-function handleGalleryPointerMove(event) {
-    if (!dragCandidate || event.pointerId !== dragCandidate.pointerId) return;
-    const distance = Math.hypot(event.clientX - dragCandidate.startX, event.clientY - dragCandidate.startY);
-    if (!dragState && distance >= 6) startGalleryDrag(dragCandidate, event);
-    if (!dragState) return;
-    event.preventDefault();
-    moveDragGhost(event.clientX, event.clientY);
-    scrollDuringGalleryDrag(event.clientY);
-    updateDropMarker(event.clientX, event.clientY);
-}
-
-function handleGalleryPointerEnd(event) {
-    if (!dragCandidate || event.pointerId !== dragCandidate.pointerId) return;
-    if (dragState && dragState.drop && moveMediaToRow(dragState, dragState.drop.rowIndex, dragState.drop.insertIndex)) {
-        cleanupGalleryDrag();
-        renderGallery();
-        return;
-    }
-    cleanupGalleryDrag();
 }
 
 function renderImagePreview(preview, src, emptyText) {
@@ -933,10 +877,11 @@ async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}, progress)
     const layout = getActiveLayout();
     let targetRow = layout.rows[layout.rows.length - 1];
     if (!targetRow || targetRow.mediaIds.length >= maxGalleryImagesPerRow) {
-        targetRow = { id: createId(), mediaIds: [] };
+        targetRow = createEmptyGalleryRow();
         layout.rows.push(targetRow);
     }
     targetRow.mediaIds.push(result.media.id);
+    normalizeLayoutForceFullWidth(layout);
     renderGallery();
     if (progress) progress({ status: 'Done', percent: 100, detail: 'Upload complete' });
     return result.media;
@@ -1002,48 +947,56 @@ function openEditMediaModal(mediaId) {
 
 function removeMediaFromLayouts(mediaId) {
     tagLayouts.forEach((layout) => {
+        ensureLayoutRows(layout);
         layout.rows.forEach((row) => {
             row.mediaIds = row.mediaIds.filter((id) => id !== mediaId);
         });
+        normalizeLayoutForceFullWidth(layout);
     });
 }
 
 galleryRows.addEventListener('click', (event) => {
-    const removeImageButton = event.target.closest('[data-remove-image]');
-    const editButton = event.target.closest('[data-edit-image-artist]');
+    const mediaItem = event.target.closest('[data-media-id]');
+    const rowShell = event.target.closest('[data-gallery-row]');
+    const removeImageButton = event.target.closest('[data-remove-row-image]');
     const moveRowButton = event.target.closest('[data-move-row]');
     const insertRowButton = event.target.closest('[data-insert-row]');
-    const removeRowButton = event.target.closest('[data-remove-row]');
-    const row = event.target.closest('[data-gallery-row]');
-    if (removeImageButton && row) {
-        removeFromActiveRow(Number(row.dataset.galleryRow), removeImageButton.closest('[data-media-id]').dataset.mediaId);
+    const deleteRowButton = event.target.closest('[data-delete-row]');
+
+    if (removeImageButton && mediaItem && rowShell) {
+        removeFromActiveRow(Number(rowShell.dataset.galleryRow), mediaItem.dataset.mediaId);
+        renderGallery();
         return;
     }
-    if (editButton) {
-        openEditMediaModal(editButton.closest('[data-media-id]').dataset.mediaId);
+
+    if (moveRowButton && rowShell) {
+        if (moveActiveGalleryRow(Number(rowShell.dataset.galleryRow), Number(moveRowButton.dataset.moveRow))) renderGallery();
         return;
     }
-    if (moveRowButton && row) {
-        if (moveActiveGalleryRow(Number(row.dataset.galleryRow), Number(moveRowButton.dataset.moveRow))) renderGallery();
-        return;
-    }
+
     if (insertRowButton) {
         insertActiveGalleryRow(Number(insertRowButton.dataset.insertRow));
         renderGallery();
         return;
     }
-    if (removeRowButton && row) {
-        const rowIndex = Number(row.dataset.galleryRow);
-        const rows = getActiveLayout().rows;
-        if (rows.length <= 1) return;
-        if (rows[rowIndex].mediaIds.length > 0) {
-            removeTargetRowIndex = rowIndex;
-            removeRowModal.showModal();
-            return;
-        }
-        rows.splice(rowIndex, 1);
-        renderGallery();
+
+    if (deleteRowButton && rowShell) {
+        if (removeActiveGalleryRow(Number(rowShell.dataset.galleryRow))) renderGallery();
     }
+});
+
+galleryRows.addEventListener('change', (event) => {
+    const forceFullWidthInput = event.target.closest('[data-toggle-force-full-width]');
+    if (!forceFullWidthInput) return;
+    const rowShell = forceFullWidthInput.closest('[data-gallery-row]');
+    if (!rowShell) return;
+    const layout = getActiveLayout();
+    const rowIndex = Number(rowShell.dataset.galleryRow);
+    const row = layout.rows[rowIndex];
+    if (!row) return;
+    row.forceFullWidth = forceFullWidthInput.checked === true && row.mediaIds.length === 1;
+    normalizeLayoutForceFullWidth(layout);
+    renderGallery();
 });
 
 mediaPool.addEventListener('click', (event) => {
@@ -1062,20 +1015,185 @@ mediaPool.addEventListener('click', (event) => {
     }
 });
 
+function getDragItem(target) {
+    const item = target.closest('[data-gallery-draggable]');
+    return item && item.dataset.galleryDraggable === 'true' ? item : null;
+}
+
+function createDragGhost(source, x, y) {
+    const rect = source.getBoundingClientRect();
+    const ghost = document.createElement('div');
+    ghost.className = 'gallery-drag-ghost';
+    ghost.style.width = rect.width + 'px';
+    ghost.style.height = rect.height + 'px';
+    ghost.style.transform = 'translate3d(' + (x - rect.width / 2) + 'px,' + (y - rect.height / 2) + 'px,0)';
+    const image = source.querySelector('img');
+    if (image) {
+        const ghostImage = image.cloneNode();
+        ghost.append(ghostImage);
+    }
+    document.body.append(ghost);
+    return ghost;
+}
+
+function moveDragGhost(x, y) {
+    if (!dragState || !dragState.ghost) return;
+    dragState.ghost.style.transform = 'translate3d(' + (x - dragState.ghost.offsetWidth / 2) + 'px,' + (y - dragState.ghost.offsetHeight / 2) + 'px,0)';
+}
+
+function scrollDuringGalleryDrag(y) {
+    const edgeSize = 72;
+    const maxStep = 18;
+    let step = 0;
+    if (y < edgeSize) {
+        step = -Math.ceil(((edgeSize - y) / edgeSize) * maxStep);
+    } else if (y > window.innerHeight - edgeSize) {
+        step = Math.ceil(((y - (window.innerHeight - edgeSize)) / edgeSize) * maxStep);
+    }
+    if (step) window.scrollBy(0, step);
+}
+
+function rowMediaElements(dropzone) {
+    return Array.from(dropzone.querySelectorAll('.gallery-row-media:not(.gallery-drag-source)'));
+}
+
+function getDropIndexForPoint(dropzone, x) {
+    const images = rowMediaElements(dropzone);
+    if (images.length === 0) return 0;
+    for (let index = 0; index < images.length; index += 1) {
+        const rect = images[index].getBoundingClientRect();
+        if (x < rect.left + rect.width / 2) return index;
+    }
+    return images.length;
+}
+
+function updateDropMarker(x, y) {
+    if (!dragState) return;
+    const target = document.elementFromPoint(x, y);
+    const dropzone = target ? target.closest('[data-dropzone]') : null;
+    document.querySelectorAll('.gallery-row-preview.drop-active').forEach((zone) => zone.classList.remove('drop-active'));
+    if (!dropzone) {
+        dragState.drop = null;
+        dragState.marker.remove();
+        return;
+    }
+    const rowIndex = Number(dropzone.dataset.rowIndex);
+    const insertIndex = getDropIndexForPoint(dropzone, x);
+    dragState.drop = { rowIndex, insertIndex };
+    dropzone.classList.add('drop-active');
+    const images = rowMediaElements(dropzone);
+    const beforeImage = images[insertIndex];
+    if (beforeImage) {
+        dropzone.insertBefore(dragState.marker, beforeImage);
+    } else if (images.length === 0 && dropzone.firstChild) {
+        dropzone.insertBefore(dragState.marker, dropzone.firstChild);
+    } else {
+        dropzone.append(dragState.marker);
+    }
+}
+
+function startGalleryDrag(candidate, event) {
+    dragState = {
+        type: candidate.type,
+        mediaId: candidate.mediaId,
+        rowIndex: candidate.rowIndex,
+        ghost: createDragGhost(candidate.source, event.clientX, event.clientY),
+        marker: document.createElement('div'),
+        drop: null
+    };
+    dragState.marker.className = 'gallery-drop-marker';
+    candidate.source.classList.add('gallery-drag-source');
+    document.body.classList.add('gallery-is-dragging');
+    moveDragGhost(event.clientX, event.clientY);
+    updateDropMarker(event.clientX, event.clientY);
+}
+
+function cleanupGalleryDrag() {
+    document.body.classList.remove('gallery-is-dragging');
+    document.querySelectorAll('.gallery-drag-source').forEach((item) => item.classList.remove('gallery-drag-source'));
+    document.querySelectorAll('.gallery-row-preview.drop-active').forEach((zone) => zone.classList.remove('drop-active'));
+    if (dragState) {
+        dragState.ghost.remove();
+        dragState.marker.remove();
+    }
+    dragState = null;
+    dragCandidate = null;
+}
+
+function moveMediaToDrop() {
+    if (!dragState || !dragState.drop) return false;
+    const layout = getActiveLayout();
+    const targetRow = layout.rows[dragState.drop.rowIndex];
+    const mediaId = dragState.mediaId;
+    if (!targetRow || !mediaLibrary.has(mediaId)) return false;
+
+    const sourceRow = dragState.type === 'row' ? layout.rows[dragState.rowIndex] : null;
+    const isSameRowMove = sourceRow === targetRow;
+    if (!isSameRowMove && targetRow.mediaIds.length >= maxGalleryImagesPerRow) {
+        showAlert('Rows can contain at most ' + maxGalleryImagesPerRow + ' images.', false);
+        return false;
+    }
+    if (dragState.type === 'pool' && getActiveUsedMediaIds().has(mediaId)) {
+        return false;
+    }
+
+    if (sourceRow) {
+        sourceRow.mediaIds = sourceRow.mediaIds.filter((id) => id !== mediaId);
+    }
+    const insertIndex = Math.max(0, Math.min(dragState.drop.insertIndex, targetRow.mediaIds.length));
+    targetRow.mediaIds.splice(insertIndex, 0, mediaId);
+    normalizeLayoutForceFullWidth(layout);
+    return true;
+}
+
+function beginGalleryDragCandidate(event) {
+    if (event.button !== undefined && event.button !== 0) return;
+    if (event.target.closest('[data-edit-image-artist],[data-remove-image],[data-remove-row-image],button,a,input,textarea,select')) return;
+    const item = getDragItem(event.target);
+    if (!item) return;
+    event.preventDefault();
+    const row = item.closest('[data-gallery-row]');
+    dragCandidate = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        source: item,
+        type: item.dataset.gallerySource,
+        mediaId: item.dataset.mediaId,
+        rowIndex: row ? Number(row.dataset.galleryRow) : null
+    };
+    item.setPointerCapture?.(event.pointerId);
+}
+
+function handleGalleryPointerMove(event) {
+    if (!dragCandidate || event.pointerId !== dragCandidate.pointerId) return;
+    const distance = Math.hypot(event.clientX - dragCandidate.startX, event.clientY - dragCandidate.startY);
+    if (!dragState && distance >= 6) startGalleryDrag(dragCandidate, event);
+    if (!dragState) return;
+    event.preventDefault();
+    moveDragGhost(event.clientX, event.clientY);
+    scrollDuringGalleryDrag(event.clientY);
+    updateDropMarker(event.clientX, event.clientY);
+}
+
+function handleGalleryPointerEnd(event) {
+    if (!dragCandidate || event.pointerId !== dragCandidate.pointerId) return;
+    if (dragState && moveMediaToDrop()) {
+        cleanupGalleryDrag();
+        renderGallery();
+        return;
+    }
+    cleanupGalleryDrag();
+}
+
 function preventNativeGalleryDrag(event) {
     if (event.target.closest('[data-gallery-draggable]')) event.preventDefault();
 }
 
-function handleGalleryPointerDown(event) {
-    const item = event.target.closest('[data-gallery-draggable]');
-    if (!item) return;
-    beginGalleryDragCandidate(event, item);
-}
-
 galleryRows.addEventListener('dragstart', preventNativeGalleryDrag);
 mediaPool.addEventListener('dragstart', preventNativeGalleryDrag);
-galleryRows.addEventListener('pointerdown', handleGalleryPointerDown);
-mediaPool.addEventListener('pointerdown', handleGalleryPointerDown);
+galleryRows.addEventListener('pointerdown', beginGalleryDragCandidate);
+mediaPool.addEventListener('pointerdown', beginGalleryDragCandidate);
 window.addEventListener('pointermove', handleGalleryPointerMove, { passive: false });
 window.addEventListener('pointerup', handleGalleryPointerEnd);
 window.addEventListener('pointercancel', handleGalleryPointerEnd);
@@ -1115,17 +1233,12 @@ deleteActiveGalleryTabButton.addEventListener('click', () => {
     deleteGalleryTagModal.showModal();
 });
 
-addGalleryRowButton.addEventListener('click', () => {
-    getActiveLayout().rows.push({ id: createId(), mediaIds: [] });
-    renderGallery();
-});
-
 galleryTagForm.addEventListener('submit', (event) => {
     event.preventDefault();
     const name = normalizeTagName(galleryTagNameInput.value);
     if (!name) return;
     const id = createId();
-    tagLayouts.set(id, { id, name, rows: [{ id: createId(), mediaIds: [] }] });
+    tagLayouts.set(id, { id, name, rows: [createEmptyGalleryRow()] });
     activeTagId = id;
     galleryTagModal.close();
     renderGallery();
@@ -1153,19 +1266,6 @@ deleteGalleryTagModal.addEventListener('click', (event) => {
         tagLayouts.delete(pendingDeleteTagId);
         activeTagId = Array.from(tagLayouts.keys())[0];
         deleteGalleryTagModal.close();
-        renderGallery();
-    }
-});
-
-removeRowModal.addEventListener('click', (event) => {
-    if (event.target.matches('[data-cancel-remove-row]')) {
-        removeRowModal.close();
-        return;
-    }
-    if (event.target.matches('[data-confirm-remove-row]') && removeTargetRowIndex !== null) {
-        const rows = getActiveLayout().rows;
-        if (rows.length > 1) rows.splice(removeTargetRowIndex, 1);
-        removeRowModal.close();
         renderGallery();
     }
 });
@@ -1396,6 +1496,12 @@ characterProfileImageInput.addEventListener('change', async () => {
 characterSettingsForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     clearAlert();
+    const validationErrors = getGalleryValidationErrors();
+    if (validationErrors.length > 0) {
+        renderGallery();
+        showAlert(validationErrors[0], false);
+        return;
+    }
     try {
         setLoading(saveCharacterSettingsButton, true, 'Saving...');
         if (characterProfileImageInput.files[0]) {
@@ -1425,8 +1531,15 @@ characterSettingsForm.addEventListener('submit', async (event) => {
             method: 'PUT',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
-                fullsizeLastRow: fullsizeLastRowInput.checked,
-                tabs: Array.from(tagLayouts.values())
+                tabs: Array.from(tagLayouts.values()).map((layout) => ({
+                    id: layout.id,
+                    name: layout.name,
+                    rows: layout.rows.map((row, rowIndex) => ({
+                        id: row.id,
+                        mediaIds: row.mediaIds,
+                        forceFullWidth: shouldForceRowFullWidth(row, rowIndex, layout.rows.length)
+                    }))
+                }))
             })
         });
         showAlert('Character settings saved.', true);
@@ -1483,11 +1596,10 @@ renameGalleryTagModal.addEventListener('close', () => {
 });
 deleteMediaModal.addEventListener('close', () => pendingDeleteMediaId = null);
 deleteGalleryTagModal.addEventListener('close', () => pendingDeleteTagId = null);
-removeRowModal.addEventListener('close', () => removeTargetRowIndex = null);
 
 if (tagLayouts.size === 0) {
     const defaultTabId = createId();
-    tagLayouts.set(defaultTabId, { id: defaultTabId, name: 'default', rows: [{ id: createId(), mediaIds: [] }] });
+    tagLayouts.set(defaultTabId, { id: defaultTabId, name: 'default', rows: [createEmptyGalleryRow()] });
     activeTagId = defaultTabId;
 }
 
@@ -1514,17 +1626,36 @@ export function CharacterSettingsPage({
             title={`${character.name} Settings | MyOC`}
         >
             <Navbar currentUser={currentUser} guestInitial={currentUser.username.charAt(0).toUpperCase()} mediaBaseUrl={mediaBaseUrl}/>
-            <main class="container mx-auto max-w-3xl px-3 py-6 sm:px-0">
+            <main class="container mx-auto max-w-7xl px-3 py-6 sm:px-4">
                 <style>{`
-                    .media-pool-item, .gallery-image { contain: layout paint; touch-action: none; user-select: none; }
-                    .media-pool-item [data-media-thumb-image], .gallery-image [data-media-thumb-image] { pointer-events: none; -webkit-user-drag: none; user-select: none; }
-                    .media-pool-item.gallery-drag-source, .gallery-image.gallery-drag-source { opacity: 0.35; }
-                    .media-pool-item[aria-disabled="true"] [data-media-thumb-image] { cursor: not-allowed; filter: grayscale(1); opacity: 0.35; }
-                    .gallery-dropzone.drop-active { outline: 2px dashed currentColor; outline-offset: 4px; }
-                    .gallery-drop-marker { align-self: stretch; border: 2px dashed var(--color-primary); border-radius: var(--radius-field, 0.25rem); min-height: 5rem; width: calc((100% - 1.5rem) / 3); }
-                    @media (min-width: 40rem) { .gallery-drop-marker { width: 6rem; } }
-                    .gallery-drag-ghost { align-items: center; background: color-mix(in oklab, var(--color-primary) 18%, var(--color-base-300)); border: 2px solid var(--color-primary); border-radius: var(--radius-field, 0.25rem); box-shadow: 0 1rem 2.5rem rgb(0 0 0 / 0.28); color: var(--color-base-content); display: flex; font-size: 0.7rem; font-weight: 800; justify-content: center; left: 0; letter-spacing: 0; opacity: 0.95; pointer-events: none; position: fixed; text-transform: uppercase; top: 0; z-index: 9999; }
+                    .media-pool-item { contain: layout paint; touch-action: none; user-select: none; }
+                    .media-pool-item[aria-disabled="true"] [data-media-thumb-image] { cursor: not-allowed; filter: grayscale(1); opacity: 0.38; }
+                    .media-pool-item [data-media-thumb-image] { pointer-events: none; user-select: none; }
+                    .gallery-row-list { display: flex; flex-direction: column; gap: 0.85rem; }
+                    .gallery-row-editor { align-items: stretch; display: grid; gap: 0.75rem; grid-template-columns: minmax(0, 1fr); }
+                    .gallery-row-preview { align-items: stretch; background: color-mix(in oklab, var(--color-base-100) 72%, var(--color-base-200)); border: 1px solid var(--color-base-300); border-radius: var(--radius-box, 0.5rem); display: flex; gap: 0.5rem; min-height: clamp(6rem, 15vw, 13.5rem); overflow: hidden; padding: 0.4rem; position: relative; width: 100%; }
+                    .gallery-row-preview.drop-active { border-color: white; box-shadow: 0 0 0 2px color-mix(in oklab, white 55%, transparent); }
+                    .gallery-row-media { aspect-ratio: var(--media-width) / var(--media-height); background: var(--color-base-300); border-radius: calc(var(--radius-field, 0.25rem) + 0.1rem); cursor: grab; flex: var(--media-aspect) 1 0; min-width: 0; overflow: hidden; position: relative; touch-action: none; user-select: none; }
+                    .gallery-row-preview:not(.row-force-full-width) .gallery-row-media:only-child { flex: 0 1 min(100%, 34rem); }
+                    .gallery-row-preview.row-force-full-width .gallery-row-media:only-child { flex: 1 1 100%; max-width: none; width: 100%; }
+                    .gallery-row-media:active { cursor: grabbing; }
+                    .gallery-row-image { display: block; height: 100%; object-fit: contain; pointer-events: none; user-select: none; width: 100%; }
+                    .gallery-row-remove-image { position: absolute; right: 0.35rem; top: 0.35rem; z-index: 3; }
+                    .gallery-row-empty { align-items: center; border: 1px dashed color-mix(in oklab, var(--color-base-content) 32%, transparent); border-radius: var(--radius-field, 0.25rem); color: color-mix(in oklab, var(--color-base-content) 62%, transparent); display: flex; flex: 1 1 auto; font-size: 0.85rem; font-weight: 700; justify-content: center; min-height: 5rem; text-transform: uppercase; }
+                    .gallery-row-controls { align-content: flex-start; align-items: center; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+                    .gallery-row-controls .badge { height: 2rem; min-width: 4rem; }
+                    .gallery-row-controls .btn { min-height: 2rem; }
+                    .gallery-row-force-full-width { min-height: 2rem; width: auto; }
+                    .gallery-drop-marker { align-self: stretch; border-left: 3px solid white; box-shadow: 0 0 0.85rem rgb(255 255 255 / 0.8); flex: 0 0 0; min-height: 5rem; pointer-events: none; z-index: 4; }
+                    .gallery-drag-source { opacity: 0.35; }
+                    .gallery-drag-ghost { border-radius: var(--radius-field, 0.25rem); box-shadow: 0 1rem 2.5rem rgb(0 0 0 / 0.42); left: 0; opacity: 0.9; overflow: hidden; pointer-events: none; position: fixed; top: 0; z-index: 9999; }
+                    .gallery-drag-ghost img { display: block; height: 100%; object-fit: cover; width: 100%; }
                     .gallery-is-dragging, .gallery-is-dragging * { cursor: grabbing !important; }
+                    @media (min-width: 40rem) {
+                        .gallery-row-editor { grid-template-columns: minmax(0, 1fr) 10rem; }
+                        .gallery-row-controls { align-items: stretch; flex-direction: column; }
+                        .gallery-row-controls .btn, .gallery-row-controls .badge, .gallery-row-force-full-width { width: 100%; }
+                    }
                     .gallery-layout-tabs { border-bottom: 1px solid var(--color-base-300); gap: 0.25rem; scrollbar-width: thin; }
                     .gallery-layout-tab { background: var(--color-base-300); border: 1px solid color-mix(in oklab, var(--color-base-content) 26%, transparent); border-bottom: 0; border-radius: var(--radius-field, 0.25rem) var(--radius-field, 0.25rem) 0 0; color: color-mix(in oklab, var(--color-base-content) 78%, transparent); font-weight: 800; min-height: 2.5rem; padding-inline: 0.9rem; white-space: nowrap; }
                     .gallery-layout-tab.tab-active { background: var(--color-base-200); border-color: var(--color-primary); color: var(--color-base-content); box-shadow: inset 0 3px 0 var(--color-primary); }
@@ -1596,15 +1727,11 @@ export function CharacterSettingsPage({
                     <section class="mt-10 space-y-6">
                         <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                             <div>
-                                <h2 class="text-2xl font-bold">Gallery Sorting</h2>
-                                <p class="text-sm text-base-content/70">Upload PNG, JPG, WebP, GIF, AVIF, or other browser-supported images, then arrange each tab into rows.</p>
+                                <h2 class="text-2xl font-bold">Gallery</h2>
+                                <p class="text-sm text-base-content/70">Upload PNG, JPG, WebP, GIF, AVIF, or other
+                                    browser-supported images, then manage the gallery tabs.</p>
                             </div>
                             <div class="flex flex-wrap items-center justify-end gap-3">
-                                <label class="label cursor-pointer gap-2">
-                                    <input checked={character.galleryFullsizeLastRow} class="checkbox checkbox-primary"
-                                           id="fullsize-last-row" type="checkbox"/>
-                                    <span class="label-text">Fullsize Last Row</span>
-                                </label>
                                 <button class="btn btn-secondary" id="bulk-upload-images" type="button">Bulk Upload</button>
                                 <button class="btn btn-primary" id="upload-media-button" type="button">Upload Image</button>
                             </div>
@@ -1620,8 +1747,9 @@ export function CharacterSettingsPage({
 
                         <div>
                             <div class="mb-3 min-w-0">
-                                <h3 class="text-lg font-semibold">Tag Gallery Layouts</h3>
-                                <p class="text-sm text-base-content/70">Each tab has its own row order and can reuse media from other tabs.</p>
+                                <h3 class="text-lg font-semibold">Gallery Tabs</h3>
+                                <p class="text-sm text-base-content/70">Create, rename, delete, and reorder the tabs
+                                    shown on this character gallery.</p>
                             </div>
                             <div aria-label="Gallery layout tabs"
                                  class="gallery-layout-tabs tabs tabs-border flex-nowrap overflow-x-auto"
@@ -1630,7 +1758,8 @@ export function CharacterSettingsPage({
                                 <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                     <div>
                                         <h4 class="font-semibold" id="active-gallery-tag-title">Default</h4>
-                                        <p class="text-sm text-base-content/70" id="active-gallery-tag-meta">0 rows</p>
+                                        <p class="text-sm text-base-content/70" id="active-gallery-tag-meta">0 rows / 0
+                                            images</p>
                                     </div>
                                     <div class="flex flex-wrap items-center gap-2 sm:justify-end">
                                         <button aria-label="Move active tab left"
@@ -1655,19 +1784,17 @@ export function CharacterSettingsPage({
                                                       stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
                                             </svg>
                                         </button>
-                                        <button class="btn btn-sm btn-primary" id="add-gallery-row" type="button">Add
-                                            Row
-                                        </button>
                                     </div>
                                 </div>
-                                <div class="space-y-4" id="gallery-rows"></div>
+                                <div class="gallery-row-list" id="gallery-rows"></div>
                             </div>
                         </div>
                     </section>
 
                     <div class="mt-8 flex flex-col items-end gap-2">
-                        <p class="text-sm text-error" hidden id="save-character-settings-warning">Delete unused media before saving changes.</p>
                         <button class="btn btn-primary" id="save-character-settings" type="submit">Save Changes</button>
+                        <p class="max-w-xl text-right text-sm font-semibold text-warning" hidden
+                           id="save-character-settings-warning"></p>
                     </div>
                 </form>
 
@@ -1801,7 +1928,8 @@ function GalleryTagDialogs() {
             <dialog class="modal" id="delete-gallery-tag-modal">
                 <div class="modal-box">
                     <h2 class="text-xl font-bold">Delete Tab?</h2>
-                    <p class="mt-3 text-sm text-base-content/80">This removes that gallery tab and its custom row order. The media stays in All Media.</p>
+                    <p class="mt-3 text-sm text-base-content/80">This removes that gallery tab. The media stays in All
+                        Media.</p>
                     <div class="modal-action"><button class="btn btn-ghost" data-cancel-delete-gallery-tag type="button">Cancel</button><button class="btn btn-error" data-confirm-delete-gallery-tag type="button">Delete Tab</button></div>
                 </div>
                 <form class="modal-backdrop" method="dialog"><button>close</button></form>
@@ -1816,16 +1944,9 @@ function MediaDialogs({characterName}: { characterName: string }) {
             <dialog class="modal" id="delete-media-modal">
                 <div class="modal-box">
                     <h2 class="text-xl font-bold">Delete Media?</h2>
-                    <p class="mt-3 text-sm text-base-content/80">This removes the media from this character entirely and removes it from every gallery tab.</p>
+                    <p class="mt-3 text-sm text-base-content/80">This removes the media from this character
+                        entirely.</p>
                     <div class="modal-action"><button class="btn btn-ghost" data-cancel-delete-media type="button">Cancel</button><button class="btn btn-error" data-confirm-delete-media type="button">Delete Media</button></div>
-                </div>
-                <form class="modal-backdrop" method="dialog"><button>close</button></form>
-            </dialog>
-            <dialog class="modal" id="remove-row-modal">
-                <div class="modal-box">
-                    <h2 class="text-xl font-bold">Remove Row?</h2>
-                    <p class="mt-3 text-sm text-base-content/80">This row contains images. Removing it will delete those images from the gallery too. Move them to another row first if you want to keep them.</p>
-                    <div class="modal-action"><button class="btn btn-ghost" data-cancel-remove-row type="button">Cancel</button><button class="btn btn-error" data-confirm-remove-row type="button">Remove Row</button></div>
                 </div>
                 <form class="modal-backdrop" method="dialog"><button>close</button></form>
             </dialog>

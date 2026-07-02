@@ -16,3 +16,11 @@ export function chunkGalleryItems<T>(
 
     return chunks
 }
+
+export function shouldForceGalleryRowFullWidth(
+    row: { mediaIds: readonly unknown[], forceFullWidth?: boolean },
+    rowIndex: number,
+    rowCount: number,
+): boolean {
+    return row.mediaIds.length === 1 && (rowIndex < rowCount - 1 || row.forceFullWidth === true)
+}
