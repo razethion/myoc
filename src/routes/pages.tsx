@@ -2514,7 +2514,7 @@ function splitOversizedGalleryRows(
 ): CharacterSettingsGalleryTab['rows'] {
     return rows.flatMap((row) => {
         const mediaIdChunks = chunkGalleryItems(row.mediaIds)
-        const canForceFullWidth = row.forceFullWidth === true && row.mediaIds.length === 1
+        const canForceFullWidth = row.forceFullWidth && row.mediaIds.length === 1
 
         if (mediaIdChunks.length === 0) {
             return [{

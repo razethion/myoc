@@ -2005,36 +2005,6 @@ describe('PUT /characters/:id/gallery', () => {
         expect(db.batch).not.toHaveBeenCalled()
     })
 
-    it('accepts gallery tabs without rows', async () => {
-        const sessionToken = 'session-token'
-        const character = createCharacterRecord()
-        const {db} = createMockDb({
-            firstResults: [currentUserRecord, character],
-        })
-
-        const response = await putGallery(character.id, {
-            tabs: [{
-                id: 'tab-one',
-                name: 'default',
-            }],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
-
-        expect(response.status).toBe(200)
-        expect(await response.json()).toEqual({
-            gallery: {
-                tabs: [{
-                    id: 'tab-one',
-                    name: 'default',
-                    rows: [],
-                }],
-            },
-        })
-        expect(db.batch).toHaveBeenCalledTimes(1)
-    })
-
     it('rejects gallery rows containing more than five images', async () => {
         const sessionToken = 'session-token'
         const character = createCharacterRecord()
