@@ -69,7 +69,7 @@ export function NotFoundPage({
                         </div>
                     </div>
 
-                    <div aria-hidden="true" class="rounded-box border border-base-300 bg-base-200/70 p-5 shadow-2xl backdrop-blur">
+                    <div aria-hidden="true" class="rounded-box border border-base-300 bg-base-200/70 p-5 shadow-2xl">
                         <div class="rounded-box border border-base-300 bg-base-100 p-4">
                             <div class="mb-4 flex items-center gap-2">
                                 <span class="h-3 w-3 rounded-full bg-error"></span>
