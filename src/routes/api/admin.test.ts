@@ -128,6 +128,7 @@ describe('GET /admin/image-approvals', () => {
         const {db} = createMockDb({
             firstResults: [
                 createCurrentUserRecord('admin'),
+                {count: 1},
                 createImageApprovalItemRow(),
             ],
             allResults: [[createImageApprovalQueueRow()], []],
@@ -137,6 +138,7 @@ describe('GET /admin/image-approvals', () => {
         const body = await response.json() as {
             current: { id: string; sfw: { objectKey: string } }
             pending: unknown[]
+            pendingCount: number
             history: unknown[]
         }
 
@@ -144,13 +146,48 @@ describe('GET /admin/image-approvals', () => {
         expect(body.current.id).toBe('media-1')
         expect(body.current.sfw.objectKey).toBe('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png')
         expect(body.pending).toHaveLength(1)
+        expect(body.pendingCount).toBe(1)
         expect(body.history).toHaveLength(0)
+    })
+
+    it('returns an exact pending approval count when the queue exceeds the sidebar page size', async () => {
+        const queueRows = Array.from({length: 50}, (_, index) => ({
+            ...createImageApprovalQueueRow(),
+            id: `media-${index}`,
+        }))
+        const {db, boundStatements} = createMockDb({
+            firstResults: [
+                createCurrentUserRecord('admin'),
+                {count: 125},
+                {
+                    ...createImageApprovalItemRow(),
+                    id: 'media-0',
+                },
+            ],
+            allResults: [queueRows, []],
+        })
+
+        const response = await getAdminApi(db, 'myoc_session=session-token', '/admin/image-approvals')
+        const body = await response.json() as {
+            pending: unknown[]
+            pendingCount: number
+        }
+        const queueStatement = boundStatements.find((statement) => (
+            statement.sql.includes('ORDER BY character_media.created_at')
+            && statement.sql.includes('LIMIT ?')
+        ))
+
+        expect(response.status).toBe(200)
+        expect(body.pending).toHaveLength(50)
+        expect(body.pendingCount).toBe(125)
+        expect(queueStatement?.binds).toEqual([50])
     })
 
     it('loads a selected historical media row even when it is not pending', async () => {
         const {db} = createMockDb({
             firstResults: [
                 createCurrentUserRecord('admin'),
+                {count: 0},
                 {
                     ...createImageApprovalItemRow(),
                     id: 'history-media',

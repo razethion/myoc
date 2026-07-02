@@ -76,6 +76,7 @@ export type ImageApprovalHistoryItem = {
 export type ImageApprovalData = {
     current: ImageApprovalItem | null
     pending: ImageApprovalQueueItem[]
+    pendingCount: number
     history: ImageApprovalHistoryItem[]
 }
 
@@ -145,8 +146,9 @@ export async function getImageApprovalData(
     mediaBaseUrl: string,
     selectedMediaId?: string | null,
 ): Promise<ImageApprovalData> {
-    const [pending, history] = await Promise.all([
+    const [pending, pendingCount, history] = await Promise.all([
         getImageApprovalQueue(db),
+        getImageApprovalCount(db),
         getImageApprovalHistory(db),
     ])
     let current = selectedMediaId
@@ -160,6 +162,7 @@ export async function getImageApprovalData(
     return {
         current,
         pending,
+        pendingCount,
         history,
     }
 }
@@ -270,6 +273,34 @@ async function getImageApprovalQueue(db: D1Database): Promise<ImageApprovalQueue
         pendingSfw: Boolean(row.sfw_image_key) && variantNeedsReview(row.sfw_review_status, row.sfw_reviewed_at, row.updated_at),
         pendingNsfw: Boolean(row.nsfw_image_key) && variantNeedsReview(row.nsfw_review_status, row.nsfw_reviewed_at, row.updated_at),
     }))
+}
+
+async function getImageApprovalCount(db: D1Database): Promise<number> {
+    const row = await db.prepare(
+        `SELECT (
+             SELECT COUNT(*)
+             FROM character_media
+             WHERE sfw_image_key IS NOT NULL
+               AND (
+                   sfw_review_status = 'pending'
+                   OR sfw_reviewed_at IS NULL
+                   OR updated_at > sfw_reviewed_at
+               )
+         ) + (
+             SELECT COUNT(*)
+             FROM character_media
+             WHERE nsfw_image_key IS NOT NULL
+               AND (
+                   nsfw_review_status = 'pending'
+                   OR nsfw_reviewed_at IS NULL
+                   OR updated_at > nsfw_reviewed_at
+               )
+         ) AS count`,
+    )
+        .bind()
+        .first<{ count: number }>()
+
+    return row?.count ?? 0
 }
 
 async function getImageApprovalHistory(db: D1Database): Promise<ImageApprovalHistoryItem[]> {
