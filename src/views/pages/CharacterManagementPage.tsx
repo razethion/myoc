@@ -75,8 +75,32 @@ function CharacterManagementStyles() {
                     linear-gradient(135deg, color-mix(in oklab, currentColor 4%, transparent), transparent 32rem);
             }
             .management-item[aria-grabbed="true"] { opacity: 0.48; }
-            .drag-handle { cursor: grab; line-height: 1; }
+            .drag-handle {
+                align-items: center;
+                cursor: grab;
+                display: inline-flex;
+                justify-content: center;
+                line-height: 1;
+                min-height: 2.5rem;
+                min-width: 2.25rem;
+                touch-action: none;
+                user-select: none;
+            }
             .management-item[aria-grabbed="true"] .drag-handle { cursor: grabbing; }
+            .management-drag-ghost {
+                box-sizing: border-box;
+                left: 0;
+                opacity: 0.9;
+                pointer-events: none;
+                position: fixed;
+                top: 0;
+                z-index: 90;
+            }
+            .management-is-dragging,
+            .management-is-dragging * {
+                cursor: grabbing !important;
+                user-select: none;
+            }
             .folder-drop-marker {
                 position: fixed;
                 z-index: 80;
@@ -86,8 +110,17 @@ function CharacterManagementStyles() {
                 box-shadow: 0 0 0 1px color-mix(in oklab, currentColor 16%, transparent), 0 0 18px color-mix(in oklab, currentColor 35%, transparent);
                 pointer-events: none;
             }
+            .character-drop-marker {
+                border-radius: 999px;
+                background: currentColor;
+                box-shadow: 0 0 0 1px color-mix(in oklab, currentColor 16%, transparent), 0 0 18px color-mix(in oklab, currentColor 35%, transparent);
+                height: 3px;
+                margin-block: 0.35rem;
+                pointer-events: none;
+            }
             .folder-row.drag-over,
-            .character-dropzone.drag-over {
+            .character-dropzone.drag-over,
+            .profile-dropzone.drag-over {
                 outline: 2px dashed currentColor;
                 outline-offset: 4px;
             }
@@ -172,10 +205,15 @@ function CharacterManagementScript({
         let characterProfileObjectUrl = null;
         let currentFolderNestRow = null;
         let currentFolderSortKey = '';
+        let currentCharacterSortKey = '';
+        let pointerDragCandidate = null;
+        let pointerDragState = null;
         ${PROFILE_CROPPER_BROWSER_HELPERS}
 
         const folderDropMarker = document.createElement('div');
         folderDropMarker.className = 'folder-drop-marker';
+        const characterDropMarker = document.createElement('div');
+        characterDropMarker.className = 'character-drop-marker';
 
         const folderTreeRoot = document.getElementById('folder-tree-root');
         const folderCount = document.getElementById('folder-count');
@@ -283,7 +321,7 @@ function CharacterManagementScript({
             const selectedClass = folder.id === selectedFolderId ? ' bg-base-300' : ' hover:bg-base-200/80';
             return '<article class="management-item" data-folder-id="' + escapeHtml(folder.id) + '" data-folder-sort-item draggable="true">' +
                 '<div class="folder-row flex items-center gap-2 rounded-box px-3 py-2 transition-colors' + selectedClass + '" data-folder-drop-target>' +
-                '<span aria-hidden="true" class="drag-handle text-base-content/55">☰</span>' +
+                '<span aria-hidden="true" class="drag-handle text-base-content/55" data-drag-handle>☰</span>' +
                 '<button aria-label="Select ' + escapeHtml(folder.name) + '" class="min-w-0 flex-1 truncate text-left font-semibold" data-select-folder type="button">' + escapeHtml(folder.name) + '</button>' +
                 '<span class="badge badge-ghost badge-sm">' + folderPlacements(folder.id).length + '</span>' +
                 '<button aria-label="Delete ' + escapeHtml(folder.name) + ' folder" class="btn btn-ghost btn-xs btn-square" data-delete-folder type="button">x</button>' +
@@ -299,7 +337,7 @@ function CharacterManagementScript({
         function profileCharacterHtml(character) {
             return '<article class="management-item rounded-box border border-base-300 bg-base-100 p-3 shadow-sm" data-profile-character-id="' + escapeHtml(character.id) + '" data-character-card draggable="true">' +
                 '<div class="flex items-center gap-3">' +
-                '<span aria-hidden="true" class="drag-handle text-base-content/55">☰</span>' +
+                '<span aria-hidden="true" class="drag-handle text-base-content/55" data-drag-handle>☰</span>' +
                 '<img alt="' + escapeHtml(character.name) + '" class="h-14 w-14 rounded-box object-cover" src="' + escapeHtml(character.profileImageUrl) + '"/>' +
                 '<div class="min-w-0 flex-1">' +
                 '<a class="block truncate font-bold" href="/edit/' + encodeURIComponent(character.id) + '">' + escapeHtml(character.name) + '</a>' +
@@ -359,7 +397,7 @@ function CharacterManagementScript({
         function placementCharacterHtml(character, folderId) {
             return '<article class="management-item rounded-box border border-base-300 bg-base-100 p-3" data-placement-character-id="' + escapeHtml(character.id) + '" data-placement-folder-id="' + escapeHtml(folderId) + '" data-character-card draggable="true">' +
                 '<div class="flex items-center gap-3">' +
-                '<span aria-hidden="true" class="drag-handle text-base-content/55">☰</span>' +
+                '<span aria-hidden="true" class="drag-handle text-base-content/55" data-drag-handle>☰</span>' +
                 '<img alt="' + escapeHtml(character.name) + '" class="h-12 w-12 rounded-box object-cover" src="' + escapeHtml(character.profileImageUrl) + '"/>' +
                 '<a class="min-w-0 flex-1 truncate font-bold" href="/edit/' + encodeURIComponent(character.id) + '">' + escapeHtml(character.name) + '</a>' +
                 '<button class="btn btn-ghost btn-sm" data-remove-placement type="button">Remove</button>' +
@@ -495,6 +533,10 @@ function CharacterManagementScript({
             return next ? items.indexOf(next) : items.length;
         }
 
+        function closestElement(target, selector) {
+            return target && target.closest ? target.closest(selector) : null;
+        }
+
         function nextFolderSortElement(item) {
             let sibling = item.nextElementSibling;
             while (sibling && !sibling.matches('[data-folder-sort-item]')) {
@@ -503,14 +545,14 @@ function CharacterManagementScript({
             return sibling;
         }
 
-        function folderPlacementFromEvent(event) {
-            const row = event.target.closest('[data-folder-drop-target]');
+        function folderPlacementFromTarget(target, pointerY) {
+            const row = closestElement(target, '[data-folder-drop-target]');
             if (row) {
                 const item = row.closest('[data-folder-sort-item]');
                 if (!item) return null;
                 const box = row.getBoundingClientRect();
                 const edgeSize = Math.min(14, Math.max(8, box.height * 0.28));
-                const pointerOffset = event.clientY - box.top;
+                const pointerOffset = pointerY - box.top;
                 if (pointerOffset <= edgeSize || pointerOffset >= box.height - edgeSize) {
                     return {
                         type: 'sort',
@@ -521,11 +563,15 @@ function CharacterManagementScript({
                 return { type: 'nest', folderId: item.dataset.folderId, row };
             }
 
-            const container = event.target.closest('[data-folder-dropzone]');
+            const container = closestElement(target, '[data-folder-dropzone]');
             if (!container) return null;
-            const index = indexFromPointer(container, event.clientY, '[data-folder-sort-item]');
+            const index = indexFromPointer(container, pointerY, '[data-folder-sort-item]');
             const items = Array.from(container.querySelectorAll(':scope > [data-folder-sort-item]'));
             return { type: 'sort', container, beforeElement: items[index] || null };
+        }
+
+        function folderPlacementFromEvent(event) {
+            return folderPlacementFromTarget(event.target, event.clientY);
         }
 
         function showFolderPlacement(placement) {
@@ -571,12 +617,22 @@ function CharacterManagementScript({
             folderDropMarker.remove();
         }
 
+        function hideCharacterDropMarker() {
+            characterDropMarker.remove();
+            currentCharacterSortKey = '';
+        }
+
         function clearDragState() {
             document.querySelectorAll('[aria-grabbed="true"]').forEach((item) => item.removeAttribute('aria-grabbed'));
             document.querySelectorAll('.drag-over').forEach((item) => item.classList.remove('drag-over'));
             hideFolderDropMarker();
+            hideCharacterDropMarker();
             currentFolderNestRow = null;
             currentFolderSortKey = '';
+            if (pointerDragState && pointerDragState.ghost) pointerDragState.ghost.remove();
+            pointerDragState = null;
+            pointerDragCandidate = null;
+            document.body.classList.remove('management-is-dragging');
             dragged = null;
         }
 
@@ -592,13 +648,282 @@ function CharacterManagementScript({
             const folderList = folderPlacements(folderId);
             const nextPlacement = { folderId, characterId, sortOrder: 0 };
             folderList.splice(Math.max(0, Math.min(insertIndex, folderList.length)), 0, nextPlacement);
+            folderList.forEach((placement, index) => {
+                placement.sortOrder = index;
+            });
             placements = placements.filter((placement) => placement.folderId !== folderId).concat(folderList);
-            normalizePlacementOrders(folderId);
         }
 
         function removeFolderPlacement(folderId, characterId) {
             placements = placements.filter((placement) => !(placement.folderId === folderId && placement.characterId === characterId));
             normalizePlacementOrders(folderId);
+        }
+
+        function dragDataForHandle(handle) {
+            const folder = handle.closest('[data-folder-sort-item]');
+            const placementCharacter = handle.closest('[data-placement-character-id]');
+            const profileCharacter = handle.closest('[data-profile-character-id]');
+            if (folder) {
+                return {
+                    item: folder,
+                    dragged: { type: 'folder', folderId: folder.dataset.folderId },
+                };
+            }
+            if (placementCharacter) {
+                return {
+                    item: placementCharacter,
+                    dragged: {
+                        type: 'character',
+                        source: 'folder',
+                        characterId: placementCharacter.dataset.placementCharacterId,
+                        folderId: placementCharacter.dataset.placementFolderId,
+                    },
+                };
+            }
+            if (profileCharacter) {
+                return {
+                    item: profileCharacter,
+                    dragged: {
+                        type: 'character',
+                        source: 'profile',
+                        characterId: profileCharacter.dataset.profileCharacterId,
+                    },
+                };
+            }
+            return null;
+        }
+
+        function createPointerDragGhost(source) {
+            const box = source.getBoundingClientRect();
+            const ghost = source.cloneNode(true);
+            ghost.classList.add('management-drag-ghost');
+            ghost.removeAttribute('aria-grabbed');
+            ghost.style.width = box.width + 'px';
+            ghost.style.height = box.height + 'px';
+            document.body.append(ghost);
+            return ghost;
+        }
+
+        function movePointerDragGhost(x, y) {
+            if (!pointerDragState || !pointerDragState.ghost) return;
+            pointerDragState.ghost.style.transform = 'translate3d(' + (x - pointerDragState.offsetX) + 'px,' + (y - pointerDragState.offsetY) + 'px,0)';
+        }
+
+        function scrollDuringPointerDrag(pointerY) {
+            const edgeSize = Math.min(96, window.innerHeight * 0.16);
+            if (pointerY < edgeSize) {
+                window.scrollBy({ top: -18, behavior: 'auto' });
+            } else if (pointerY > window.innerHeight - edgeSize) {
+                window.scrollBy({ top: 18, behavior: 'auto' });
+            }
+        }
+
+        function characterPlacementFromTarget(target, pointerY) {
+            const dropzone = closestElement(target, '[data-profile-dropzone], [data-placement-dropzone]');
+            if (!dropzone) return null;
+            const grabbed = document.querySelector('[aria-grabbed="true"]');
+            const items = Array.from(dropzone.querySelectorAll(':scope > [data-character-card]'))
+                .filter((item) => item !== grabbed);
+            const beforeElement = items.find((item) => {
+                const box = item.getBoundingClientRect();
+                return pointerY < box.top + box.height / 2;
+            }) || null;
+            return {
+                dropzone,
+                insertIndex: beforeElement ? items.indexOf(beforeElement) : items.length,
+                beforeElement,
+                type: dropzone.matches('[data-profile-dropzone]') ? 'profile' : 'folder',
+            };
+        }
+
+        function showCharacterPlacement(placement) {
+            document.querySelectorAll('[data-profile-dropzone].drag-over, [data-placement-dropzone].drag-over')
+                .forEach((dropzone) => dropzone.classList.remove('drag-over'));
+            if (!placement) {
+                hideCharacterDropMarker();
+                return;
+            }
+            const beforeId = placement.beforeElement
+                ? placement.beforeElement.dataset.profileCharacterId || placement.beforeElement.dataset.placementCharacterId || 'unknown'
+                : 'end';
+            const dropzoneId = placement.dropzone.dataset.folderId || 'profile';
+            const sortKey = placement.type + ':' + dropzoneId + ':' + beforeId;
+            placement.dropzone.classList.add('drag-over');
+            if (currentCharacterSortKey === sortKey && characterDropMarker.isConnected) return;
+            currentCharacterSortKey = sortKey;
+            if (placement.beforeElement) {
+                placement.dropzone.insertBefore(characterDropMarker, placement.beforeElement);
+            } else {
+                placement.dropzone.append(characterDropMarker);
+            }
+        }
+
+        function startPointerDrag(candidate, event) {
+            const box = candidate.item.getBoundingClientRect();
+            dragged = candidate.dragged;
+            candidate.item.setAttribute('aria-grabbed', 'true');
+            pointerDragState = {
+                ghost: createPointerDragGhost(candidate.item),
+                offsetX: event.clientX - box.left,
+                offsetY: event.clientY - box.top,
+            };
+            document.body.classList.add('management-is-dragging');
+            movePointerDragGhost(event.clientX, event.clientY);
+        }
+
+        async function applyFolderDrop(placement) {
+            if (!placement || !dragged || dragged.type !== 'folder') return false;
+            const draggedFolderId = dragged.folderId;
+            const parentFolderId = placement.type === 'nest'
+                ? placement.folderId
+                : normalizeFolderId(placement.container.dataset.parentFolderId);
+            const beforeFolderId = placement.type === 'sort' && placement.beforeElement
+                ? placement.beforeElement.dataset.folderId
+                : null;
+            if (beforeFolderId === draggedFolderId) {
+                clearDragState();
+                renderAll();
+                return true;
+            }
+            if (draggedFolderId === parentFolderId || isDescendantFolder(draggedFolderId, parentFolderId)) {
+                clearDragState();
+                renderAll();
+                showToast('A folder cannot be moved inside itself.', true);
+                return true;
+            }
+            const previousFolders = folders.map((folder) => ({ ...folder }));
+            try {
+                moveFolder(draggedFolderId, parentFolderId, beforeFolderId);
+                selectedFolderId = draggedFolderId;
+                await persistFolderTree();
+                clearDragState();
+                renderAll();
+                showToast(placement.type === 'nest' ? 'Folder nested.' : 'Folder order saved.');
+            } catch (error) {
+                folders = previousFolders;
+                clearDragState();
+                renderAll();
+                showToast(error.message, true);
+            }
+            return true;
+        }
+
+        async function applyCharacterDrop(target, pointerY) {
+            if (!dragged || dragged.type !== 'character') return false;
+            const draggedCharacterId = dragged.characterId;
+            const draggedSource = dragged.source;
+            const placement = characterPlacementFromTarget(target, pointerY);
+            if (!placement) return false;
+
+            if (placement.type === 'profile') {
+                const previousCharacters = characters.slice();
+                try {
+                    moveCharacterInProfile(draggedCharacterId, placement.insertIndex);
+                    await persistCharacterOrder();
+                    clearDragState();
+                    renderAll();
+                    showToast('Profile order saved.');
+                } catch (error) {
+                    characters = previousCharacters;
+                    clearDragState();
+                    renderAll();
+                    showToast(error.message, true);
+                }
+                return true;
+            }
+
+            if (placement.type === 'folder') {
+                const folderId = placement.dropzone.dataset.folderId;
+                const previousPlacements = placements.slice();
+                try {
+                    upsertFolderPlacement(folderId, draggedCharacterId, placement.insertIndex);
+                    await persistFolderPlacements(folderId);
+                    selectedFolderId = folderId;
+                    clearDragState();
+                    renderAll();
+                    showToast(draggedSource === 'profile' ? 'Character added to folder.' : 'Folder order saved.');
+                } catch (error) {
+                    placements = previousPlacements;
+                    clearDragState();
+                    renderAll();
+                    showToast(error.message, true);
+                }
+                return true;
+            }
+
+            return false;
+        }
+
+        function beginPointerDragCandidate(event) {
+            if (event.pointerType === 'mouse' || event.button !== 0) return;
+            const handle = closestElement(event.target, '[data-drag-handle]');
+            if (!handle) return;
+            const dragData = dragDataForHandle(handle);
+            if (!dragData) return;
+            pointerDragCandidate = {
+                ...dragData,
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startY: event.clientY,
+                handle,
+            };
+            event.preventDefault();
+            handle.setPointerCapture?.(event.pointerId);
+        }
+
+        function handlePointerDragMove(event) {
+            if (!pointerDragCandidate || event.pointerId !== pointerDragCandidate.pointerId) return;
+            const distance = Math.hypot(event.clientX - pointerDragCandidate.startX, event.clientY - pointerDragCandidate.startY);
+            if (!pointerDragState && distance >= 6) {
+                startPointerDrag(pointerDragCandidate, event);
+            }
+            if (!pointerDragState) return;
+            event.preventDefault();
+            movePointerDragGhost(event.clientX, event.clientY);
+            scrollDuringPointerDrag(event.clientY);
+            const target = document.elementFromPoint(event.clientX, event.clientY);
+            if (dragged.type === 'folder') {
+                const placement = folderPlacementFromTarget(target, event.clientY);
+                if (placement) {
+                    showFolderPlacement(placement);
+                } else {
+                    hideFolderDropMarker();
+                }
+                return;
+            }
+            showCharacterPlacement(characterPlacementFromTarget(target, event.clientY));
+        }
+
+        async function handlePointerDragEnd(event) {
+            if (!pointerDragCandidate || event.pointerId !== pointerDragCandidate.pointerId) return;
+            try {
+                pointerDragCandidate.handle.releasePointerCapture?.(event.pointerId);
+            } catch {
+                // The pointer may already be released after a browser-level touch cancellation.
+            }
+            if (!pointerDragState) {
+                pointerDragCandidate = null;
+                return;
+            }
+            event.preventDefault();
+            const target = document.elementFromPoint(event.clientX, event.clientY);
+            if (dragged.type === 'folder') {
+                const placement = folderPlacementFromTarget(target, event.clientY);
+                if (!(await applyFolderDrop(placement))) {
+                    clearDragState();
+                    renderAll();
+                }
+                return;
+            }
+            if (!(await applyCharacterDrop(target, event.clientY))) {
+                clearDragState();
+                renderAll();
+            }
+        }
+
+        function cancelPointerDrag(event) {
+            if (!pointerDragCandidate || event.pointerId !== pointerDragCandidate.pointerId) return;
+            clearDragState();
         }
 
         async function loadCharacterProfileForCropping(file) {
@@ -889,17 +1214,23 @@ function CharacterManagementScript({
                 return;
             }
 
-            const profileDropzone = event.target.closest('[data-profile-dropzone]');
-            const placementDropzone = event.target.closest('[data-placement-dropzone]');
-            if (profileDropzone || placementDropzone) {
+            const characterPlacement = characterPlacementFromTarget(event.target, event.clientY);
+            if (characterPlacement) {
                 event.preventDefault();
-                (profileDropzone || placementDropzone).classList.add('drag-over');
+                showCharacterPlacement(characterPlacement);
+            } else {
+                hideCharacterDropMarker();
             }
         });
 
         document.addEventListener('dragleave', (event) => {
             const dropzone = event.target.closest('[data-profile-dropzone], [data-placement-dropzone]');
-            if (dropzone) dropzone.classList.remove('drag-over');
+            const nextTarget = event.relatedTarget;
+            const isStillInside = nextTarget && nextTarget.nodeType && dropzone && dropzone.contains(nextTarget);
+            if (dropzone && !isStillInside) {
+                dropzone.classList.remove('drag-over');
+                if (characterDropMarker.parentElement === dropzone) hideCharacterDropMarker();
+            }
         });
 
         document.addEventListener('drop', async (event) => {
@@ -909,82 +1240,20 @@ function CharacterManagementScript({
                 const placement = folderPlacementFromEvent(event);
                 if (!placement) return;
                 event.preventDefault();
-                const parentFolderId = placement.type === 'nest'
-                    ? placement.folderId
-                    : normalizeFolderId(placement.container.dataset.parentFolderId);
-                const beforeFolderId = placement.type === 'sort' && placement.beforeElement
-                    ? placement.beforeElement.dataset.folderId
-                    : null;
-                if (beforeFolderId === dragged.folderId) {
-                    clearDragState();
-                    renderAll();
-                    return;
-                }
-                if (dragged.folderId === parentFolderId || isDescendantFolder(dragged.folderId, parentFolderId)) {
-                    clearDragState();
-                    renderAll();
-                    showToast('A folder cannot be moved inside itself.', true);
-                    return;
-                }
-                const previousFolders = folders.map((folder) => ({ ...folder }));
-                try {
-                    moveFolder(dragged.folderId, parentFolderId, beforeFolderId);
-                    selectedFolderId = dragged.folderId;
-                    await persistFolderTree();
-                    clearDragState();
-                    renderAll();
-                    showToast(placement.type === 'nest' ? 'Folder nested.' : 'Folder order saved.');
-                } catch (error) {
-                    folders = previousFolders;
-                    clearDragState();
-                    renderAll();
-                    showToast(error.message, true);
-                }
+                await applyFolderDrop(placement);
                 return;
             }
 
-            const profileDropzone = event.target.closest('[data-profile-dropzone]');
-            const placementDropzone = event.target.closest('[data-placement-dropzone]');
-
-            if (profileDropzone) {
+            if (closestElement(event.target, '[data-profile-dropzone], [data-placement-dropzone]')) {
                 event.preventDefault();
-                const previousCharacters = characters.slice();
-                try {
-                    const index = indexFromPointer(profileDropzone, event.clientY, '[data-character-card]');
-                    moveCharacterInProfile(dragged.characterId, index);
-                    await persistCharacterOrder();
-                    clearDragState();
-                    renderAll();
-                    showToast('Profile order saved.');
-                } catch (error) {
-                    characters = previousCharacters;
-                    clearDragState();
-                    renderAll();
-                    showToast(error.message, true);
-                }
-                return;
-            }
-
-            if (placementDropzone) {
-                event.preventDefault();
-                const folderId = placementDropzone.dataset.folderId;
-                const previousPlacements = placements.slice();
-                try {
-                    const index = indexFromPointer(placementDropzone, event.clientY, '[data-character-card]');
-                    upsertFolderPlacement(folderId, dragged.characterId, index);
-                    await persistFolderPlacements(folderId);
-                    selectedFolderId = folderId;
-                    clearDragState();
-                    renderAll();
-                    showToast(dragged.source === 'profile' ? 'Character added to folder.' : 'Folder order saved.');
-                } catch (error) {
-                    placements = previousPlacements;
-                    clearDragState();
-                    renderAll();
-                    showToast(error.message, true);
-                }
+                await applyCharacterDrop(event.target, event.clientY);
             }
         });
+
+        document.addEventListener('pointerdown', beginPointerDragCandidate);
+        window.addEventListener('pointermove', handlePointerDragMove, { passive: false });
+        window.addEventListener('pointerup', handlePointerDragEnd);
+        window.addEventListener('pointercancel', cancelPointerDrag);
 
         document.querySelectorAll('[data-close-create-character-modal], [data-close-create-folder-modal], [data-close-delete-character-modal]').forEach((button) => {
             button.addEventListener('click', () => button.closest('dialog').close());

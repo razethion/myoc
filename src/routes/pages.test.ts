@@ -1654,6 +1654,29 @@ describe('GET /characters', () => {
         expect(html).toContain('12 images')
         expectPatternAllowsReportedCharacterNames(html, 'new-character-name')
     })
+
+    it('renders pointer-based drag sorting for mobile character management', async () => {
+        const response = await getAppPath('/characters', createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo'),
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('data-drag-handle')
+        expect(html).toContain('touch-action: none')
+        expect(html).toContain('character-drop-marker')
+        expect(html).toContain("placement.dropzone.insertBefore(characterDropMarker, placement.beforeElement)")
+        expect(html).toContain('folderList.forEach((placement, index) =>')
+        expect(html).toContain('placement.sortOrder = index')
+        expect(html).toContain("document.addEventListener('pointerdown', beginPointerDragCandidate)")
+        expect(html).toContain("window.addEventListener('pointermove', handlePointerDragMove, { passive: false })")
+        expect(html).toContain('document.elementFromPoint(event.clientX, event.clientY)')
+        expect(html).toContain('const draggedSource = dragged.source')
+        expect(html).toContain("showToast(draggedSource === 'profile' ? 'Character added to folder.' : 'Folder order saved.')")
+        expect(html).not.toContain("showToast(dragged.source === 'profile'")
+    })
 })
 
 describe('GET /admin', () => {
