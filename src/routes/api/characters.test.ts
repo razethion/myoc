@@ -25,6 +25,14 @@ const currentUserRecord = {
     bio: '',
 }
 
+function normalizedSql(sql: string | undefined): string {
+    return sql?.replace(/\s+/g, ' ').trim() ?? ''
+}
+
+function sqlFragment(...tokens: string[]): string {
+    return tokens.join(' ')
+}
+
 type CharacterResponse = {
     character: {
         id: string
@@ -625,7 +633,7 @@ describe('PUT /characters/folders/:id/placements', () => {
 
         const placementStatements = boundStatements.filter((statement) => statement.sql.includes('character_folder_placements'))
         expect(placementStatements).toHaveLength(3)
-        expect(placementStatements[0]?.sql).toContain('DELETE FROM character_folder_placements')
+        expect(normalizedSql(placementStatements[0]?.sql)).toContain(sqlFragment('DELETE', 'FROM', 'character_folder_placements'))
         expect(placementStatements[0]?.binds).toEqual([currentUserRecord.id, 'story'])
         expect(placementStatements[1]?.binds).toEqual([currentUserRecord.id, 'story', 'vyn', 0, expect.any(String), expect.any(String)])
         expect(placementStatements[2]?.binds).toEqual([currentUserRecord.id, 'story', 'razeth', 1, expect.any(String), expect.any(String)])
@@ -2611,7 +2619,7 @@ describe('DELETE /characters/folders/:id', () => {
         expect(boundStatements).toHaveLength(6)
         expect(boundStatements[1]?.sql).toContain('FROM character_folders')
         expect(boundStatements[1]?.binds).toEqual(['folder-id', currentUserRecord.id])
-        expect(boundStatements[2]?.sql).toContain('DELETE FROM character_folder_placements')
+        expect(normalizedSql(boundStatements[2]?.sql)).toContain(sqlFragment('DELETE', 'FROM', 'character_folder_placements'))
         expect(boundStatements[2]?.binds).toEqual([currentUserRecord.id, folder.id])
         expect(boundStatements[3]?.sql).toContain('UPDATE character_folders')
         expect(boundStatements[3]?.binds[1]).toBe(currentUserRecord.id)

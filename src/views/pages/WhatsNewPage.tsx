@@ -71,6 +71,11 @@ function ReleaseBlock({release, isCurrent}: { release: ReleaseNote, isCurrent: b
                 </div>
 
                 <p class="mt-4 leading-7 text-base-content/75">{release.summary}</p>
+                {release.important ? (
+                    <div class="alert alert-warning alert-dash mt-5" role="alert">
+                        <span>This change requires user interaction. Review the notes before continuing.</span>
+                    </div>
+                ) : null}
                 <ul class="mt-5 grid gap-3">
                     {release.changes.map((change) => (
                         <li class="flex gap-3 rounded border border-base-300 bg-base-100/80 p-3">
