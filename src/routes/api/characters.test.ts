@@ -162,6 +162,31 @@ async function postTree(
     }, requestEnv(db, options.mediaBucket, options.imagesBinding))
 }
 
+async function postCharacterOrder(
+    body: unknown,
+    db: D1Database,
+    options: CharacterRequestOptions = {},
+): Promise<Response> {
+    return apiRoutes.request('https://example.com/characters/order', {
+        method: 'POST',
+        body: typeof body === 'string' ? body : JSON.stringify(body),
+        headers: createRequestHeaders(body, options),
+    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
+}
+
+async function putFolderPlacements(
+    folderId: string,
+    body: unknown,
+    db: D1Database,
+    options: CharacterRequestOptions = {},
+): Promise<Response> {
+    return apiRoutes.request(`https://example.com/characters/folders/${folderId}/placements`, {
+        method: 'PUT',
+        body: typeof body === 'string' ? body : JSON.stringify(body),
+        headers: createRequestHeaders(body, options),
+    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
+}
+
 async function initChunkedMedia(
     characterId: string,
     body: unknown,
@@ -521,6 +546,109 @@ describe('POST /characters/tree', () => {
         expect(updateStatements[4]?.binds[0]).toBeNull()
         expect(updateStatements[4]?.binds[1]).toBe(1)
         expect(updateStatements[4]?.binds[3]).toBe('kitty')
+    })
+})
+
+describe('POST /characters/order', () => {
+    it('updates the independent all-characters profile order', async () => {
+        const sessionToken = 'session-token'
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord],
+            allResults: [
+                [{id: 'razeth'}, {id: 'vyn'}],
+            ],
+        })
+
+        const response = await postCharacterOrder({
+            characterIds: ['razeth', 'vyn'],
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ok: true})
+        expect(db.batch).toHaveBeenCalledTimes(1)
+
+        const updateStatements = boundStatements.filter((statement) => statement.sql.includes('UPDATE characters'))
+        expect(updateStatements).toHaveLength(2)
+        expect(updateStatements[0]?.binds[0]).toBe(0)
+        expect(updateStatements[0]?.binds[2]).toBe('razeth')
+        expect(updateStatements[1]?.binds[0]).toBe(1)
+        expect(updateStatements[1]?.binds[2]).toBe('vyn')
+    })
+
+    it('rejects characters that are not owned by the current user', async () => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+            allResults: [
+                [{id: 'razeth'}],
+            ],
+        })
+
+        const response = await postCharacterOrder({
+            characterIds: ['razeth', 'other-users-character'],
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Character order contains characters that do not belong to the current user',
+        })
+        expect(db.batch).not.toHaveBeenCalled()
+    })
+})
+
+describe('PUT /characters/folders/:id/placements', () => {
+    it('replaces the ordered character placements for one folder', async () => {
+        const sessionToken = 'session-token'
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, {id: 'story'}],
+            allResults: [
+                [{id: 'vyn'}, {id: 'razeth'}],
+            ],
+        })
+
+        const response = await putFolderPlacements('story', {
+            characterIds: ['vyn', 'razeth'],
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ok: true})
+        expect(db.batch).toHaveBeenCalledTimes(1)
+
+        const placementStatements = boundStatements.filter((statement) => statement.sql.includes('character_folder_placements'))
+        expect(placementStatements).toHaveLength(3)
+        expect(placementStatements[0]?.sql).toContain('DELETE FROM character_folder_placements')
+        expect(placementStatements[0]?.binds).toEqual([currentUserRecord.id, 'story'])
+        expect(placementStatements[1]?.binds).toEqual([currentUserRecord.id, 'story', 'vyn', 0, expect.any(String), expect.any(String)])
+        expect(placementStatements[2]?.binds).toEqual([currentUserRecord.id, 'story', 'razeth', 1, expect.any(String), expect.any(String)])
+    })
+
+    it('rejects placements for a folder the current user does not own', async () => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, null],
+        })
+
+        const response = await putFolderPlacements('missing-folder', {
+            characterIds: ['vyn'],
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(404)
+        expect(await response.json()).toEqual({
+            error: 'Folder not found',
+        })
+        expect(db.batch).not.toHaveBeenCalled()
     })
 })
 
@@ -2480,17 +2608,19 @@ describe('DELETE /characters/folders/:id', () => {
 
         expect(response.status).toBe(204)
         expect(db.batch).toHaveBeenCalledTimes(1)
-        expect(boundStatements).toHaveLength(5)
+        expect(boundStatements).toHaveLength(6)
         expect(boundStatements[1]?.sql).toContain('FROM character_folders')
         expect(boundStatements[1]?.binds).toEqual(['folder-id', currentUserRecord.id])
-        expect(boundStatements[2]?.sql).toContain('UPDATE character_folders')
-        expect(boundStatements[2]?.binds[1]).toBe(currentUserRecord.id)
-        expect(boundStatements[2]?.binds[2]).toBe(folder.id)
-        expect(boundStatements[3]?.sql).toContain('UPDATE characters')
+        expect(boundStatements[2]?.sql).toContain('DELETE FROM character_folder_placements')
+        expect(boundStatements[2]?.binds).toEqual([currentUserRecord.id, folder.id])
+        expect(boundStatements[3]?.sql).toContain('UPDATE character_folders')
         expect(boundStatements[3]?.binds[1]).toBe(currentUserRecord.id)
         expect(boundStatements[3]?.binds[2]).toBe(folder.id)
-        expect(boundStatements[4]?.sql).toContain(['DELETE FROM', 'character_folders'].join(' '))
-        expect(boundStatements[4]?.binds).toEqual([folder.id, currentUserRecord.id])
+        expect(boundStatements[4]?.sql).toContain('UPDATE characters')
+        expect(boundStatements[4]?.binds[1]).toBe(currentUserRecord.id)
+        expect(boundStatements[4]?.binds[2]).toBe(folder.id)
+        expect(boundStatements[5]?.sql).toContain(['DELETE FROM', 'character_folders'].join(' '))
+        expect(boundStatements[5]?.binds).toEqual([folder.id, currentUserRecord.id])
     })
 })
 
