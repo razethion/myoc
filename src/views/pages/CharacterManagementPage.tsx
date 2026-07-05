@@ -20,51 +20,43 @@ export type CharacterManagementCharacter = {
     sortOrder: number
 }
 
-export type CharacterManagementTreeItem =
-    | (CharacterManagementFolder & { type: 'folder'; children: CharacterManagementTreeItem[] })
-    | (CharacterManagementCharacter & { type: 'character' })
+export type CharacterFolderPlacement = {
+    folderId: string
+    characterId: string
+    sortOrder: number
+}
 
 type CharacterManagementPageProps = {
     currentUser: CurrentUser
     folders: CharacterManagementFolder[]
     characters: CharacterManagementCharacter[]
+    placements: CharacterFolderPlacement[]
+    uploadedImageCount: number
     mediaBaseUrl: string
 }
 
-function buildTree(
+type CharacterManagementFolderTreeItem = CharacterManagementFolder & {
+    children: CharacterManagementFolderTreeItem[]
+}
+
+function buildFolderTree(
     folders: CharacterManagementFolder[],
-    characters: CharacterManagementCharacter[],
     parentFolderId: string | null = null,
-): CharacterManagementTreeItem[] {
-    const childFolders = folders
+): CharacterManagementFolderTreeItem[] {
+    return folders
         .filter((folder) => folder.parentFolderId === parentFolderId)
-        .sort(compareTreeItems)
+        .sort(compareOrderedNames)
         .map((folder) => ({
             ...folder,
-            type: 'folder' as const,
-            children: buildTree(folders, characters, folder.id),
+            children: buildFolderTree(folders, folder.id),
         }))
-    const childCharacters = characters
-        .filter((character) => character.folderId === parentFolderId)
-        .sort(compareTreeItems)
-        .map((character) => ({
-            ...character,
-            type: 'character' as const,
-        }))
-
-    return [...childFolders, ...childCharacters]
 }
 
-function compareTreeItems(left: { sortOrder: number; name: string }, right: { sortOrder: number; name: string }): number {
+function compareOrderedNames(left: { sortOrder: number; name: string }, right: {
+    sortOrder: number;
+    name: string
+}): number {
     return left.sortOrder - right.sortOrder || left.name.localeCompare(right.name)
-}
-
-function countCharacters(items: CharacterManagementTreeItem[]): number {
-    return items.reduce((count, item) => count + (item.type === 'character' ? 1 : countCharacters(item.children)), 0)
-}
-
-function countFolders(items: CharacterManagementTreeItem[]): number {
-    return items.reduce((count, item) => count + (item.type === 'folder' ? 1 + countFolders(item.children) : 0), 0)
 }
 
 function formatCount(count: number, singular: string, plural = `${singular}s`): string {
@@ -77,56 +69,83 @@ const CHARACTER_NAME_INPUT_TITLE = 'Use letters, numbers, spaces, apostrophes, q
 function CharacterManagementStyles() {
     return (
         <style>{`
-            .management-item[aria-grabbed="true"] { opacity: 0.5; }
-            .character-dropzone.drag-over {
-                outline: 2px dashed currentColor;
-                outline-offset: 4px;
+            .management-shell {
+                background:
+                    radial-gradient(circle at top left, color-mix(in oklab, currentColor 7%, transparent), transparent 28rem),
+                    linear-gradient(135deg, color-mix(in oklab, currentColor 4%, transparent), transparent 32rem);
             }
-            .folder-row.drag-over {
-                background: color-mix(in oklab, currentColor 10%, transparent);
-                outline: 1px solid color-mix(in oklab, currentColor 22%, transparent);
+            .management-item[aria-grabbed="true"] { opacity: 0.48; }
+            .drag-handle {
+                align-items: center;
+                cursor: grab;
+                display: inline-flex;
+                justify-content: center;
+                line-height: 1;
+                min-height: 2.5rem;
+                min-width: 2.25rem;
+                touch-action: none;
+                user-select: none;
+            }
+            .management-item[aria-grabbed="true"] .drag-handle { cursor: grabbing; }
+            .management-drag-ghost {
+                box-sizing: border-box;
+                left: 0;
+                opacity: 0.9;
+                pointer-events: none;
+                position: fixed;
+                top: 0;
+                z-index: 90;
+            }
+            .management-is-dragging,
+            .management-is-dragging * {
+                cursor: grabbing !important;
+                user-select: none;
             }
             .folder-drop-marker {
                 position: fixed;
                 z-index: 80;
                 height: 2px;
                 border-radius: 999px;
-                background: white;
-                box-shadow: 0 0 0 1px color-mix(in oklab, black 8%, transparent), 0 0 14px color-mix(in oklab, white 65%, transparent);
+                background: currentColor;
+                box-shadow: 0 0 0 1px color-mix(in oklab, currentColor 16%, transparent), 0 0 18px color-mix(in oklab, currentColor 35%, transparent);
                 pointer-events: none;
             }
-            .item-dropzone:empty::before {
-                content: "Drop folders here";
-                color: color-mix(in oklab, currentColor 55%, transparent);
-                font-size: 0.875rem;
+            .character-drop-marker {
+                border-radius: 999px;
+                background: currentColor;
+                box-shadow: 0 0 0 1px color-mix(in oklab, currentColor 16%, transparent), 0 0 18px color-mix(in oklab, currentColor 35%, transparent);
+                height: 3px;
+                margin-block: 0.35rem;
+                pointer-events: none;
             }
-            .character-dropzone:empty::before {
-                content: "No characters in this folder";
-                color: color-mix(in oklab, currentColor 55%, transparent);
-                font-size: 0.875rem;
+            .folder-row.drag-over,
+            .character-dropzone.drag-over,
+            .profile-dropzone.drag-over {
+                outline: 2px dashed currentColor;
+                outline-offset: 4px;
             }
-            .item-dropzone,
-            .character-dropzone {
-                min-height: 2.25rem;
-                padding-top: 0.5rem;
-                padding-bottom: 0.5rem;
+            .folder-row.drag-over {
+                background: color-mix(in oklab, currentColor 9%, transparent);
             }
-            .tree-children {
-                margin-left: clamp(1rem, 3vw, 1.5rem);
+            .folder-tree-children {
+                margin-left: clamp(0.875rem, 2.5vw, 1.35rem);
                 padding-left: 0.75rem;
-                border-left: 1px solid color-mix(in oklab, currentColor 18%, transparent);
+                border-left: 1px solid color-mix(in oklab, currentColor 14%, transparent);
             }
-            .tree-panel { overflow-x: auto; }
-            .tree-label {
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
+            .folder-dropzone:empty::before,
+            .character-dropzone:empty::before,
+            .profile-dropzone:empty::before {
+                display: block;
+                color: color-mix(in oklab, currentColor 55%, transparent);
+                font-size: 0.875rem;
+                padding: 0.75rem;
             }
-            .drag-handle {
-                cursor: grab;
-                line-height: 1;
-            }
-            .management-item[aria-grabbed="true"] .drag-handle { cursor: grabbing; }
+            .folder-dropzone:empty::before { content: "Drop folders here"; }
+            .character-dropzone:empty::before { content: "Add characters to this folder"; }
+            .profile-dropzone:empty::before { content: "Create a character to start ordering your profile"; }
+            .folder-dropzone,
+            .character-dropzone,
+            .profile-dropzone { min-height: 3rem; }
             #create-character-modal {
                 align-items: flex-start;
                 overflow-y: auto;
@@ -142,20 +161,11 @@ function CharacterManagementStyles() {
                 overscroll-behavior: contain;
                 padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
             }
-            #create-character-modal [data-character-profile-cropper] cropper-canvas {
-                height: 40dvh;
-            }
+            #create-character-modal [data-character-profile-cropper] cropper-canvas { height: 40dvh; }
             @media (min-width: 640px) {
-                #create-character-modal {
-                    align-items: center;
-                    padding: 1rem;
-                }
-                #create-character-modal .modal-box {
-                    max-height: calc(100dvh - 2rem);
-                }
-                #create-character-modal [data-character-profile-cropper] cropper-canvas {
-                    height: 22rem;
-                }
+                #create-character-modal { align-items: center; padding: 1rem; }
+                #create-character-modal .modal-box { max-height: calc(100dvh - 2rem); }
+                #create-character-modal [data-character-profile-cropper] cropper-canvas { height: 22rem; }
             }
             .toast-message { animation: toast-fade 2600ms ease forwards; }
             @keyframes toast-fade {
@@ -166,14 +176,28 @@ function CharacterManagementStyles() {
     )
 }
 
-function CharacterManagementScript({tree, csrfToken}: { tree: CharacterManagementTreeItem[]; csrfToken: string }) {
-    const initialJson = JSON.stringify(tree).replace(/</g, '\\u003c')
-        const script = `
+function CharacterManagementScript({
+                                       characters,
+                                       csrfToken,
+                                       folders,
+                                       placements,
+                                   }: {
+    characters: CharacterManagementCharacter[]
+    csrfToken: string
+    folders: CharacterManagementFolder[]
+    placements: CharacterFolderPlacement[]
+}) {
+    const foldersJson = JSON.stringify(folders).replace(/</g, '\\u003c')
+    const charactersJson = JSON.stringify(characters).replace(/</g, '\\u003c')
+    const placementsJson = JSON.stringify(placements).replace(/</g, '\\u003c')
+    const initialSelectedFolderId = folders[0]?.id ?? null
+    const script = `
         const csrfToken = ${JSON.stringify(csrfToken)};
-        let tree = ${initialJson};
-        let selectedFolderId = 'root';
-        let draggedFolderId = null;
-        let draggedCharacterId = null;
+        let folders = ${foldersJson};
+        let characters = ${charactersJson};
+        let placements = ${placementsJson};
+        let selectedFolderId = ${JSON.stringify(initialSelectedFolderId)};
+        let dragged = null;
         let deleteTargetCharacterId = null;
         let deleteTargetCharacterName = '';
         let deleteTargetFolderId = null;
@@ -181,14 +205,21 @@ function CharacterManagementScript({tree, csrfToken}: { tree: CharacterManagemen
         let characterProfileObjectUrl = null;
         let currentFolderNestRow = null;
         let currentFolderSortKey = '';
+        let currentCharacterSortKey = '';
+        let pointerDragCandidate = null;
+        let pointerDragState = null;
         ${PROFILE_CROPPER_BROWSER_HELPERS}
+
         const folderDropMarker = document.createElement('div');
         folderDropMarker.className = 'folder-drop-marker';
+        const characterDropMarker = document.createElement('div');
+        characterDropMarker.className = 'character-drop-marker';
 
         const folderTreeRoot = document.getElementById('folder-tree-root');
-        const characterList = document.getElementById('character-list');
         const folderCount = document.getElementById('folder-count');
         const characterCount = document.getElementById('character-count');
+        const profileCharacterList = document.getElementById('profile-character-list');
+        const selectedFolderPanel = document.getElementById('selected-folder-panel');
         const createCharacterModal = document.getElementById('create-character-modal');
         const createCharacterForm = document.getElementById('create-character-form');
         const createFolderModal = document.getElementById('create-folder-modal');
@@ -209,106 +240,194 @@ function CharacterManagementScript({tree, csrfToken}: { tree: CharacterManagemen
             return value && value !== 'root' ? value : null;
         }
 
-        function folderOptions(items = tree, depth = 0) {
-            const options = [{ id: 'root', label: 'Home (unsorted)' }];
-            function walk(children, level) {
-                for (const item of children) {
-                    if (item.type !== 'folder') continue;
-                    options.push({ id: item.id, label: '— '.repeat(level) + item.name });
-                    walk(item.children || [], level + 1);
+        function compareOrderedNames(left, right) {
+            return (left.sortOrder || 0) - (right.sortOrder || 0) || left.name.localeCompare(right.name);
+        }
+
+        function pluralize(count, singular, plural) {
+            return count + ' ' + (count === 1 ? singular : (plural || singular + 's'));
+        }
+
+        function characterById(characterId) {
+            return characters.find((character) => character.id === characterId) || null;
+        }
+
+        function folderById(folderId) {
+            return folders.find((folder) => folder.id === folderId) || null;
+        }
+
+        function folderChildren(parentFolderId) {
+            const normalizedParent = normalizeFolderId(parentFolderId);
+            return folders
+                .filter((folder) => folder.parentFolderId === normalizedParent)
+                .sort(compareOrderedNames);
+        }
+
+        function folderOptions() {
+            const options = [{ id: 'root', label: 'All characters only' }];
+            function walk(parentFolderId, depth) {
+                for (const folder of folderChildren(parentFolderId)) {
+                    options.push({ id: folder.id, label: '— '.repeat(depth) + folder.name });
+                    walk(folder.id, depth + 1);
                 }
             }
-            walk(items, depth);
+            walk(null, 0);
             return options;
         }
 
-        function renderFolderSelect(select, selectedValue = 'root') {
+        function renderFolderSelect(select, selectedValue) {
             if (!select) return;
             select.innerHTML = folderOptions()
                 .map((option) => '<option value="' + escapeHtml(option.id) + '"' + (option.id === selectedValue ? ' selected' : '') + '>' + escapeHtml(option.label) + '</option>')
                 .join('');
         }
 
-        function pluralize(count, singular, plural = singular + 's') {
-            return count + ' ' + (count === 1 ? singular : plural);
+        function renderAll() {
+            normalizeSelectedFolder();
+            renderFolderTree();
+            renderProfileCharacters();
+            renderSelectedFolderPanel();
+            renderFolderControls();
+            renderStats();
         }
 
-        function renderAll() {
-            renderFolderTree();
-            renderFolderControls();
-            renderCharacters();
+        function normalizeSelectedFolder() {
+            if (selectedFolderId && folderById(selectedFolderId)) return;
+            selectedFolderId = folders[0] ? folders.slice().sort(compareOrderedNames)[0].id : null;
+        }
+
+        function renderStats() {
+            folderCount.textContent = pluralize(folders.length, 'folder');
+            characterCount.textContent = pluralize(characters.length, 'character');
         }
 
         function renderFolderControls() {
-            const selectedValue = findItem('folder', selectedFolderId) ? selectedFolderId : 'root';
-            selectedFolderId = selectedValue;
+            const selectedValue = selectedFolderId || 'root';
             renderFolderSelect(document.getElementById('new-character-folder'), selectedValue);
             renderFolderSelect(document.getElementById('new-folder-parent'), selectedValue);
         }
 
         function renderFolderTree() {
-            folderTreeRoot.innerHTML = folderDropzoneHtml('root', foldersOnly(tree));
-            folderCount.textContent = pluralize(countFolders(tree), 'folder');
+            folderTreeRoot.innerHTML = folderDropzoneHtml('root');
         }
 
-        function foldersOnly(items) {
-            return items.filter((item) => item.type === 'folder');
-        }
-
-        function folderDropzoneHtml(parentFolderId, folders) {
-            return '<div class="item-dropzone" data-folder-dropzone data-parent-folder-id="' + escapeHtml(parentFolderId) + '">' +
-                folders.map(folderHtml).join('') +
+        function folderDropzoneHtml(parentFolderId) {
+            return '<div class="folder-dropzone space-y-2 py-2" data-folder-dropzone data-parent-folder-id="' + escapeHtml(parentFolderId) + '">' +
+                folderChildren(parentFolderId).map(folderHtml).join('') +
                 '</div>';
         }
 
         function folderHtml(folder) {
-            return '<article class="management-item tree-item" data-folder-id="' + escapeHtml(folder.id) + '" data-folder-sort-item draggable="true">' +
-                '<div class="tree-row folder-row flex items-center gap-3 rounded-xl px-3 py-2 transition-colors hover:bg-base-200/80" data-folder-drop-target>' +
-                '<span aria-hidden="true" class="drag-handle text-base-content/60">☰</span>' +
-                '<button aria-expanded="true" class="btn btn-ghost btn-xs btn-square" data-toggle-folder type="button">-</button>' +
-                '<span class="tree-label min-w-0 flex-1 font-semibold">' + escapeHtml(folder.name) + '</span>' +
-                '<button aria-label="Delete ' + escapeHtml(folder.name) + ' folder" class="btn btn-error btn-outline btn-xs btn-square" data-delete-folder type="button">x</button>' +
-                '</div><div class="tree-children mt-2" data-folder-children>' +
-                folderDropzoneHtml(folder.id, foldersOnly(folder.children || [])) +
+            const selectedClass = folder.id === selectedFolderId ? ' bg-base-300' : ' hover:bg-base-200/80';
+            return '<article class="management-item" data-folder-id="' + escapeHtml(folder.id) + '" data-folder-sort-item draggable="true">' +
+                '<div class="folder-row flex items-center gap-2 rounded-box px-3 py-2 transition-colors' + selectedClass + '" data-folder-drop-target>' +
+                '<span aria-hidden="true" class="drag-handle text-base-content/55" data-drag-handle>☰</span>' +
+                '<button aria-label="Select ' + escapeHtml(folder.name) + '" class="min-w-0 flex-1 truncate text-left font-semibold" data-select-folder type="button">' + escapeHtml(folder.name) + '</button>' +
+                '<span class="badge badge-ghost badge-sm">' + folderPlacements(folder.id).length + '</span>' +
+                '<button aria-label="Delete ' + escapeHtml(folder.name) + ' folder" class="btn btn-ghost btn-xs btn-square" data-delete-folder type="button">x</button>' +
+                '</div>' +
+                '<div class="folder-tree-children" data-folder-children>' + folderDropzoneHtml(folder.id) + '</div>' +
+                '</article>';
+        }
+
+        function renderProfileCharacters() {
+            profileCharacterList.innerHTML = characters.map((character) => profileCharacterHtml(character)).join('');
+        }
+
+        function profileCharacterHtml(character) {
+            return '<article class="management-item rounded-box border border-base-300 bg-base-100 p-3 shadow-sm" data-profile-character-id="' + escapeHtml(character.id) + '" data-character-card draggable="true">' +
+                '<div class="flex items-center gap-3">' +
+                '<span aria-hidden="true" class="drag-handle text-base-content/55" data-drag-handle>☰</span>' +
+                '<img alt="' + escapeHtml(character.name) + '" class="h-14 w-14 rounded-box object-cover" src="' + escapeHtml(character.profileImageUrl) + '"/>' +
+                '<div class="min-w-0 flex-1">' +
+                '<a class="block truncate font-bold" href="/edit/' + encodeURIComponent(character.id) + '">' + escapeHtml(character.name) + '</a>' +
+                '<p class="truncate text-xs text-base-content/60">Appears in ' + pluralize(folderIdsForCharacter(character.id).length, 'folder') + '</p>' +
+                '</div>' +
+                '<button aria-label="Delete ' + escapeHtml(character.name) + '" class="btn btn-ghost btn-sm btn-square" data-delete-character type="button">x</button>' +
                 '</div></article>';
         }
 
-        function renderCharacters() {
-            characterCount.textContent = pluralize(countCharacters(tree), 'character');
-            characterList.innerHTML = folderOptions().map((folder) => {
-                const children = findChildren(folder.id) || [];
-                const characters = children.filter((item) => item.type === 'character');
-                return '<section class="rounded-box border border-base-300 bg-base-100/70 p-3">' +
-                    '<div class="mb-2 flex items-center justify-between gap-3">' +
-                    '<h3 class="tree-label text-sm font-bold">' + escapeHtml(folder.label) + '</h3>' +
-                    '<span class="text-xs text-base-content/60">' + pluralize(characters.length, 'character') + '</span>' +
-                    '</div>' +
-                    '<div class="character-dropzone space-y-2 rounded-xl bg-base-200/45 p-2" data-character-dropzone data-character-folder-id="' + escapeHtml(folder.id) + '">' +
-                    characters.map((character) => characterHtml(character, folder.id)).join('') +
-                    '</div></section>';
-            }).join('');
-        }
+        function renderSelectedFolderPanel() {
+            if (!selectedFolderId || !folderById(selectedFolderId)) {
+                selectedFolderPanel.innerHTML = '<div class="rounded-box border border-dashed border-base-300 bg-base-100 p-8 text-center text-base-content/65">Create a folder, then add characters to it without changing the main profile order.</div>';
+                return;
+            }
 
-        function characterHtml(character, currentFolderId) {
-            return '<article class="management-item rounded border border-base-300 bg-base-200 p-2" data-character-id="' + escapeHtml(character.id) + '" data-character-sort-item draggable="true">' +
-                '<div class="flex flex-col gap-3 sm:flex-row sm:items-center">' +
-                '<div class="flex min-w-0 flex-1 items-center gap-3">' +
-                '<span aria-hidden="true" class="drag-handle text-base-content/60">☰</span>' +
-                '<img alt="' + escapeHtml(character.name) + '" class="h-14 w-14 rounded object-cover" src="' + escapeHtml(character.profileImageUrl) + '"/>' +
-                '<a aria-label="Edit ' + escapeHtml(character.name) + '" class="tree-label min-w-0 flex-1 font-bold" href="/edit/' + encodeURIComponent(character.id) + '">' + escapeHtml(character.name) + '</a>' +
+            const folder = folderById(selectedFolderId);
+            const placedCharacters = folderCharacters(selectedFolderId);
+            const addableCharacters = characters.filter((character) => !placements.some((placement) => placement.folderId === selectedFolderId && placement.characterId === character.id));
+            const addableCharacterItems = addableCharacters.map((character) => '<li>' +
+                '<label class="flex cursor-pointer items-center gap-3">' +
+                '<input class="checkbox checkbox-sm" data-folder-character-checkbox type="checkbox" value="' + escapeHtml(character.id) + '"/>' +
+                '<img alt="" class="h-8 w-8 rounded object-cover" src="' + escapeHtml(character.profileImageUrl) + '"/>' +
+                '<span class="min-w-0 flex-1 truncate font-semibold">' + escapeHtml(character.name) + '</span>' +
+                '</label>' +
+                '</li>').join('');
+
+            selectedFolderPanel.innerHTML = '<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">' +
+                '<div class="min-w-0">' +
+                '<p class="text-xs font-semibold uppercase tracking-[0.24em] text-base-content/50">Selected folder</p>' +
+                '<h2 class="truncate text-2xl font-black">' + escapeHtml(folder.name) + '</h2>' +
+                '<p class="mt-1 text-sm text-base-content/65">This order is only for this folder. Characters can also live in other folders.</p>' +
                 '</div>' +
-                '<div class="flex flex-wrap items-center gap-2 sm:justify-end">' +
-                '<label class="flex items-center gap-2 text-sm"><span class="opacity-70">Folder</span><select class="select select-bordered select-sm" data-character-folder-select data-character-id="' + escapeHtml(character.id) + '">' + folderOptions().map((option) => '<option value="' + escapeHtml(option.id) + '"' + (option.id === currentFolderId ? ' selected' : '') + '>' + escapeHtml(option.label) + '</option>').join('') + '</select></label>' +
-                '<button aria-label="Delete ' + escapeHtml(character.name) + '" class="btn btn-error btn-sm btn-square" data-delete-character type="button">x</button>' +
-                '</div></div></article>';
+                '<span class="badge badge-ghost whitespace-nowrap">' + placedCharacters.length + ' OCs</span>' +
+                '</div>' +
+                '<div class="mb-4">' +
+                '<details class="dropdown w-full" id="folder-character-add-dropdown">' +
+                '<summary class="btn w-full justify-between" role="button">' +
+                '<span>' + (addableCharacters.length === 0 ? 'Every character is already here' : 'Select characters to add') + '</span>' +
+                '<span class="badge badge-ghost" data-folder-character-selection-count>0 selected</span>' +
+                '</summary>' +
+                '<div class="dropdown-content z-[70] mt-2 w-full rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">' +
+                (addableCharacters.length === 0
+                    ? '<p class="p-3 text-sm text-base-content/65">Every character is already in this folder.</p>'
+                    : '<ul class="menu max-h-72 w-full overflow-y-auto p-0">' + addableCharacterItems + '</ul>' +
+                    '<div class="mt-2 flex items-center justify-between gap-2 border-t border-base-300 pt-2">' +
+                    '<span class="text-xs text-base-content/60">' + pluralize(addableCharacters.length, 'available character') + '</span>' +
+                    '<button class="btn btn-sm" data-add-selected-characters-to-folder disabled type="button">Add selected</button>' +
+                    '</div>') +
+                '</div>' +
+                '</details>' +
+                '</div>' +
+                '<div class="character-dropzone space-y-2 rounded-box bg-base-200/70 p-2" data-placement-dropzone data-folder-id="' + escapeHtml(selectedFolderId) + '">' +
+                placedCharacters.map((character) => placementCharacterHtml(character, selectedFolderId)).join('') +
+                '</div>';
         }
 
-        function countCharacters(items) {
-            return items.reduce((count, item) => count + (item.type === 'character' ? 1 : countCharacters(item.children || [])), 0);
+        function placementCharacterHtml(character, folderId) {
+            return '<article class="management-item rounded-box border border-base-300 bg-base-100 p-3" data-placement-character-id="' + escapeHtml(character.id) + '" data-placement-folder-id="' + escapeHtml(folderId) + '" data-character-card draggable="true">' +
+                '<div class="flex items-center gap-3">' +
+                '<span aria-hidden="true" class="drag-handle text-base-content/55" data-drag-handle>☰</span>' +
+                '<img alt="' + escapeHtml(character.name) + '" class="h-12 w-12 rounded-box object-cover" src="' + escapeHtml(character.profileImageUrl) + '"/>' +
+                '<a class="min-w-0 flex-1 truncate font-bold" href="/edit/' + encodeURIComponent(character.id) + '">' + escapeHtml(character.name) + '</a>' +
+                '<button class="btn btn-ghost btn-sm" data-remove-placement type="button">Remove</button>' +
+                '</div></article>';
         }
 
-        function countFolders(items) {
-            return items.reduce((count, item) => count + (item.type === 'folder' ? 1 + countFolders(item.children || []) : 0), 0);
+        function folderPlacements(folderId) {
+            return placements
+                .filter((placement) => placement.folderId === folderId)
+                .sort((left, right) => (left.sortOrder || 0) - (right.sortOrder || 0));
+        }
+
+        function folderCharacters(folderId) {
+            return folderPlacements(folderId)
+                .map((placement) => characterById(placement.characterId))
+                .filter(Boolean);
+        }
+
+        function folderIdsForCharacter(characterId) {
+            return placements
+                .filter((placement) => placement.characterId === characterId)
+                .map((placement) => placement.folderId);
+        }
+
+        function updateFolderCharacterSelectionCount() {
+            const selectedCount = selectedFolderPanel.querySelectorAll('[data-folder-character-checkbox]:checked').length;
+            const badge = selectedFolderPanel.querySelector('[data-folder-character-selection-count]');
+            const addButton = selectedFolderPanel.querySelector('[data-add-selected-characters-to-folder]');
+            if (badge) badge.textContent = selectedCount + ' selected';
+            if (addButton) addButton.disabled = selectedCount === 0;
         }
 
         function showToast(message, isError = false) {
@@ -334,87 +453,88 @@ function CharacterManagementScript({tree, csrfToken}: { tree: CharacterManagemen
             return body;
         }
 
-        function findChildren(folderId, items = tree) {
-            const normalizedFolderId = normalizeFolderId(folderId);
-            if (!normalizedFolderId) return tree;
-            for (const item of items) {
-                if (item.type === 'folder') {
-                    if (item.id === normalizedFolderId) return item.children;
-                    const found = findChildren(normalizedFolderId, item.children || []);
-                    if (found) return found;
-                }
-            }
-            return null;
+        function serializeFolderTree(parentFolderId) {
+            return folderChildren(parentFolderId).map((folder) => ({
+                type: 'folder',
+                id: folder.id,
+                children: serializeFolderTree(folder.id),
+            }));
         }
 
-        function findItem(type, id, items = tree) {
-            const normalizedId = normalizeFolderId(id) || id;
-            for (const item of items) {
-                if (item.type === type && item.id === normalizedId) return item;
-                if (item.type === 'folder') {
-                    const found = findItem(type, normalizedId, item.children || []);
-                    if (found) return found;
-                }
-            }
-            return null;
-        }
-
-        function findItemLocation(type, id, items = tree, parentFolderId = 'root') {
-            for (let index = 0; index < items.length; index += 1) {
-                const item = items[index];
-                if (item.type === type && item.id === id) return { parentFolderId, index };
-                if (item.type === 'folder') {
-                    const found = findItemLocation(type, id, item.children || [], item.id);
-                    if (found) return found;
-                }
-            }
-            return null;
-        }
-
-        function removeItem(type, id, items = tree) {
-            for (let index = 0; index < items.length; index += 1) {
-                const item = items[index];
-                if (item.type === type && item.id === id) return items.splice(index, 1)[0];
-                if (item.type === 'folder') {
-                    const removed = removeItem(type, id, item.children || []);
-                    if (removed) return removed;
-                }
-            }
-            return null;
-        }
-
-        function isDescendantFolder(folder, targetFolderId) {
-            return (folder.children || []).some((item) => item.type === 'folder' && (item.id === targetFolderId || isDescendantFolder(item, targetFolderId)));
-        }
-
-        function insertItemIntoFolder(item, folderId, index = null) {
-            const children = findChildren(folderId);
-            if (!children) throw new Error('Folder not found.');
-            const folders = children.filter((child) => child.type === 'folder').length;
-            const insertIndex = index === null ? children.length : Math.max(0, Math.min(index, children.length));
-            if (item.type === 'folder') {
-                const folderIndex = Math.min(insertIndex, folders);
-                children.splice(folderIndex, 0, item);
-            } else {
-                const characterIndex = Math.max(insertIndex, folders);
-                children.splice(characterIndex, 0, item);
-            }
-        }
-
-        async function persistTree() {
-            await apiJson('/api/characters/tree', {
+        async function persistFolderTree() {
+            await apiJson('/api/characters/folders/tree', {
                 method: 'POST',
-                body: JSON.stringify({ items: tree }),
+                body: JSON.stringify({ items: serializeFolderTree(null) }),
             });
         }
 
+        async function persistCharacterOrder() {
+            characters.forEach((character, index) => {
+                character.sortOrder = index;
+            });
+            await apiJson('/api/characters/order', {
+                method: 'POST',
+                body: JSON.stringify({ characterIds: characters.map((character) => character.id) }),
+            });
+        }
+
+        async function persistFolderPlacements(folderId) {
+            normalizePlacementOrders(folderId);
+            await apiJson('/api/characters/folders/' + encodeURIComponent(folderId) + '/placements', {
+                method: 'PUT',
+                body: JSON.stringify({ characterIds: folderPlacements(folderId).map((placement) => placement.characterId) }),
+            });
+        }
+
+        function normalizePlacementOrders(folderId) {
+            folderPlacements(folderId).forEach((placement, index) => {
+                placement.sortOrder = index;
+            });
+        }
+
+        function setFolderOrder(parentFolderId, orderedFolders) {
+            const normalizedParent = normalizeFolderId(parentFolderId);
+            orderedFolders.forEach((folder, index) => {
+                folder.parentFolderId = normalizedParent;
+                folder.sortOrder = index;
+            });
+        }
+
+        function moveFolder(folderId, targetParentFolderId, beforeFolderId) {
+            const folder = folderById(folderId);
+            if (!folder) throw new Error('Folder not found.');
+            const originalParentFolderId = folder.parentFolderId;
+            const originalSiblings = folderChildren(originalParentFolderId).filter((sibling) => sibling.id !== folderId);
+            setFolderOrder(originalParentFolderId, originalSiblings);
+
+            const targetSiblings = folderChildren(targetParentFolderId).filter((sibling) => sibling.id !== folderId);
+            let insertIndex = beforeFolderId ? targetSiblings.findIndex((sibling) => sibling.id === beforeFolderId) : targetSiblings.length;
+            if (insertIndex < 0) insertIndex = targetSiblings.length;
+            targetSiblings.splice(insertIndex, 0, folder);
+            setFolderOrder(targetParentFolderId, targetSiblings);
+        }
+
+        function isDescendantFolder(folderId, targetFolderId) {
+            let current = targetFolderId ? folderById(targetFolderId) : null;
+            while (current) {
+                if (current.id === folderId) return true;
+                current = current.parentFolderId ? folderById(current.parentFolderId) : null;
+            }
+            return false;
+        }
+
         function indexFromPointer(container, pointerY, selector) {
-            const items = Array.from(container.querySelectorAll(':scope > ' + selector));
+            const grabbed = document.querySelector('[aria-grabbed="true"]');
+            const items = Array.from(container.querySelectorAll(':scope > ' + selector)).filter((item) => item !== grabbed);
             const next = items.find((item) => {
                 const box = item.getBoundingClientRect();
                 return pointerY < box.top + box.height / 2;
             });
             return next ? items.indexOf(next) : items.length;
+        }
+
+        function closestElement(target, selector) {
+            return target && target.closest ? target.closest(selector) : null;
         }
 
         function nextFolderSortElement(item) {
@@ -425,14 +545,14 @@ function CharacterManagementScript({tree, csrfToken}: { tree: CharacterManagemen
             return sibling;
         }
 
-        function folderPlacementFromEvent(event) {
-            const row = event.target.closest('[data-folder-drop-target]');
+        function folderPlacementFromTarget(target, pointerY) {
+            const row = closestElement(target, '[data-folder-drop-target]');
             if (row) {
                 const item = row.closest('[data-folder-sort-item]');
                 if (!item) return null;
                 const box = row.getBoundingClientRect();
                 const edgeSize = Math.min(14, Math.max(8, box.height * 0.28));
-                const pointerOffset = event.clientY - box.top;
+                const pointerOffset = pointerY - box.top;
                 if (pointerOffset <= edgeSize || pointerOffset >= box.height - edgeSize) {
                     return {
                         type: 'sort',
@@ -443,11 +563,15 @@ function CharacterManagementScript({tree, csrfToken}: { tree: CharacterManagemen
                 return { type: 'nest', folderId: item.dataset.folderId, row };
             }
 
-            const container = event.target.closest('[data-folder-dropzone]');
+            const container = closestElement(target, '[data-folder-dropzone]');
             if (!container) return null;
-            const index = indexFromPointer(container, event.clientY, '[data-folder-sort-item]');
+            const index = indexFromPointer(container, pointerY, '[data-folder-sort-item]');
             const items = Array.from(container.querySelectorAll(':scope > [data-folder-sort-item]'));
             return { type: 'sort', container, beforeElement: items[index] || null };
+        }
+
+        function folderPlacementFromEvent(event) {
+            return folderPlacementFromTarget(event.target, event.clientY);
         }
 
         function showFolderPlacement(placement) {
@@ -493,11 +617,313 @@ function CharacterManagementScript({tree, csrfToken}: { tree: CharacterManagemen
             folderDropMarker.remove();
         }
 
-        function clearFolderDropState() {
+        function hideCharacterDropMarker() {
+            characterDropMarker.remove();
+            currentCharacterSortKey = '';
+        }
+
+        function clearDragState() {
+            document.querySelectorAll('[aria-grabbed="true"]').forEach((item) => item.removeAttribute('aria-grabbed'));
+            document.querySelectorAll('.drag-over').forEach((item) => item.classList.remove('drag-over'));
             hideFolderDropMarker();
-            if (currentFolderNestRow) currentFolderNestRow.classList.remove('drag-over');
+            hideCharacterDropMarker();
             currentFolderNestRow = null;
             currentFolderSortKey = '';
+            if (pointerDragState && pointerDragState.ghost) pointerDragState.ghost.remove();
+            pointerDragState = null;
+            pointerDragCandidate = null;
+            document.body.classList.remove('management-is-dragging');
+            dragged = null;
+        }
+
+        function moveCharacterInProfile(characterId, insertIndex) {
+            const currentIndex = characters.findIndex((character) => character.id === characterId);
+            if (currentIndex < 0) return;
+            const character = characters.splice(currentIndex, 1)[0];
+            characters.splice(Math.max(0, Math.min(insertIndex, characters.length)), 0, character);
+        }
+
+        function upsertFolderPlacement(folderId, characterId, insertIndex) {
+            placements = placements.filter((placement) => !(placement.folderId === folderId && placement.characterId === characterId));
+            const folderList = folderPlacements(folderId);
+            const nextPlacement = { folderId, characterId, sortOrder: 0 };
+            folderList.splice(Math.max(0, Math.min(insertIndex, folderList.length)), 0, nextPlacement);
+            folderList.forEach((placement, index) => {
+                placement.sortOrder = index;
+            });
+            placements = placements.filter((placement) => placement.folderId !== folderId).concat(folderList);
+        }
+
+        function removeFolderPlacement(folderId, characterId) {
+            placements = placements.filter((placement) => !(placement.folderId === folderId && placement.characterId === characterId));
+            normalizePlacementOrders(folderId);
+        }
+
+        function dragDataForHandle(handle) {
+            const folder = handle.closest('[data-folder-sort-item]');
+            const placementCharacter = handle.closest('[data-placement-character-id]');
+            const profileCharacter = handle.closest('[data-profile-character-id]');
+            if (folder) {
+                return {
+                    item: folder,
+                    dragged: { type: 'folder', folderId: folder.dataset.folderId },
+                };
+            }
+            if (placementCharacter) {
+                return {
+                    item: placementCharacter,
+                    dragged: {
+                        type: 'character',
+                        source: 'folder',
+                        characterId: placementCharacter.dataset.placementCharacterId,
+                        folderId: placementCharacter.dataset.placementFolderId,
+                    },
+                };
+            }
+            if (profileCharacter) {
+                return {
+                    item: profileCharacter,
+                    dragged: {
+                        type: 'character',
+                        source: 'profile',
+                        characterId: profileCharacter.dataset.profileCharacterId,
+                    },
+                };
+            }
+            return null;
+        }
+
+        function createPointerDragGhost(source) {
+            const box = source.getBoundingClientRect();
+            const ghost = source.cloneNode(true);
+            ghost.classList.add('management-drag-ghost');
+            ghost.removeAttribute('aria-grabbed');
+            ghost.style.width = box.width + 'px';
+            ghost.style.height = box.height + 'px';
+            document.body.append(ghost);
+            return ghost;
+        }
+
+        function movePointerDragGhost(x, y) {
+            if (!pointerDragState || !pointerDragState.ghost) return;
+            pointerDragState.ghost.style.transform = 'translate3d(' + (x - pointerDragState.offsetX) + 'px,' + (y - pointerDragState.offsetY) + 'px,0)';
+        }
+
+        function scrollDuringPointerDrag(pointerY) {
+            const edgeSize = Math.min(96, window.innerHeight * 0.16);
+            if (pointerY < edgeSize) {
+                window.scrollBy({ top: -18, behavior: 'auto' });
+            } else if (pointerY > window.innerHeight - edgeSize) {
+                window.scrollBy({ top: 18, behavior: 'auto' });
+            }
+        }
+
+        function characterPlacementFromTarget(target, pointerY) {
+            const dropzone = closestElement(target, '[data-profile-dropzone], [data-placement-dropzone]');
+            if (!dropzone) return null;
+            const grabbed = document.querySelector('[aria-grabbed="true"]');
+            const items = Array.from(dropzone.querySelectorAll(':scope > [data-character-card]'))
+                .filter((item) => item !== grabbed);
+            const beforeElement = items.find((item) => {
+                const box = item.getBoundingClientRect();
+                return pointerY < box.top + box.height / 2;
+            }) || null;
+            return {
+                dropzone,
+                insertIndex: beforeElement ? items.indexOf(beforeElement) : items.length,
+                beforeElement,
+                type: dropzone.matches('[data-profile-dropzone]') ? 'profile' : 'folder',
+            };
+        }
+
+        function showCharacterPlacement(placement) {
+            document.querySelectorAll('[data-profile-dropzone].drag-over, [data-placement-dropzone].drag-over')
+                .forEach((dropzone) => dropzone.classList.remove('drag-over'));
+            if (!placement) {
+                hideCharacterDropMarker();
+                return;
+            }
+            const beforeId = placement.beforeElement
+                ? placement.beforeElement.dataset.profileCharacterId || placement.beforeElement.dataset.placementCharacterId || 'unknown'
+                : 'end';
+            const dropzoneId = placement.dropzone.dataset.folderId || 'profile';
+            const sortKey = placement.type + ':' + dropzoneId + ':' + beforeId;
+            placement.dropzone.classList.add('drag-over');
+            if (currentCharacterSortKey === sortKey && characterDropMarker.isConnected) return;
+            currentCharacterSortKey = sortKey;
+            if (placement.beforeElement) {
+                placement.dropzone.insertBefore(characterDropMarker, placement.beforeElement);
+            } else {
+                placement.dropzone.append(characterDropMarker);
+            }
+        }
+
+        function startPointerDrag(candidate, event) {
+            const box = candidate.item.getBoundingClientRect();
+            dragged = candidate.dragged;
+            candidate.item.setAttribute('aria-grabbed', 'true');
+            pointerDragState = {
+                ghost: createPointerDragGhost(candidate.item),
+                offsetX: event.clientX - box.left,
+                offsetY: event.clientY - box.top,
+            };
+            document.body.classList.add('management-is-dragging');
+            movePointerDragGhost(event.clientX, event.clientY);
+        }
+
+        async function applyFolderDrop(placement) {
+            if (!placement || !dragged || dragged.type !== 'folder') return false;
+            const draggedFolderId = dragged.folderId;
+            const parentFolderId = placement.type === 'nest'
+                ? placement.folderId
+                : normalizeFolderId(placement.container.dataset.parentFolderId);
+            const beforeFolderId = placement.type === 'sort' && placement.beforeElement
+                ? placement.beforeElement.dataset.folderId
+                : null;
+            if (beforeFolderId === draggedFolderId) {
+                clearDragState();
+                renderAll();
+                return true;
+            }
+            if (draggedFolderId === parentFolderId || isDescendantFolder(draggedFolderId, parentFolderId)) {
+                clearDragState();
+                renderAll();
+                showToast('A folder cannot be moved inside itself.', true);
+                return true;
+            }
+            const previousFolders = folders.map((folder) => ({ ...folder }));
+            try {
+                moveFolder(draggedFolderId, parentFolderId, beforeFolderId);
+                selectedFolderId = draggedFolderId;
+                await persistFolderTree();
+                clearDragState();
+                renderAll();
+                showToast(placement.type === 'nest' ? 'Folder nested.' : 'Folder order saved.');
+            } catch (error) {
+                folders = previousFolders;
+                clearDragState();
+                renderAll();
+                showToast(error.message, true);
+            }
+            return true;
+        }
+
+        async function applyCharacterDrop(target, pointerY) {
+            if (!dragged || dragged.type !== 'character') return false;
+            const draggedCharacterId = dragged.characterId;
+            const draggedSource = dragged.source;
+            const placement = characterPlacementFromTarget(target, pointerY);
+            if (!placement) return false;
+
+            if (placement.type === 'profile') {
+                const previousCharacters = characters.slice();
+                try {
+                    moveCharacterInProfile(draggedCharacterId, placement.insertIndex);
+                    await persistCharacterOrder();
+                    clearDragState();
+                    renderAll();
+                    showToast('Profile order saved.');
+                } catch (error) {
+                    characters = previousCharacters;
+                    clearDragState();
+                    renderAll();
+                    showToast(error.message, true);
+                }
+                return true;
+            }
+
+            if (placement.type === 'folder') {
+                const folderId = placement.dropzone.dataset.folderId;
+                const previousPlacements = placements.slice();
+                try {
+                    upsertFolderPlacement(folderId, draggedCharacterId, placement.insertIndex);
+                    await persistFolderPlacements(folderId);
+                    selectedFolderId = folderId;
+                    clearDragState();
+                    renderAll();
+                    showToast(draggedSource === 'profile' ? 'Character added to folder.' : 'Folder order saved.');
+                } catch (error) {
+                    placements = previousPlacements;
+                    clearDragState();
+                    renderAll();
+                    showToast(error.message, true);
+                }
+                return true;
+            }
+
+            return false;
+        }
+
+        function beginPointerDragCandidate(event) {
+            if (event.pointerType === 'mouse' || event.button !== 0) return;
+            const handle = closestElement(event.target, '[data-drag-handle]');
+            if (!handle) return;
+            const dragData = dragDataForHandle(handle);
+            if (!dragData) return;
+            pointerDragCandidate = {
+                ...dragData,
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startY: event.clientY,
+                handle,
+            };
+            event.preventDefault();
+            handle.setPointerCapture?.(event.pointerId);
+        }
+
+        function handlePointerDragMove(event) {
+            if (!pointerDragCandidate || event.pointerId !== pointerDragCandidate.pointerId) return;
+            const distance = Math.hypot(event.clientX - pointerDragCandidate.startX, event.clientY - pointerDragCandidate.startY);
+            if (!pointerDragState && distance >= 6) {
+                startPointerDrag(pointerDragCandidate, event);
+            }
+            if (!pointerDragState) return;
+            event.preventDefault();
+            movePointerDragGhost(event.clientX, event.clientY);
+            scrollDuringPointerDrag(event.clientY);
+            const target = document.elementFromPoint(event.clientX, event.clientY);
+            if (dragged.type === 'folder') {
+                const placement = folderPlacementFromTarget(target, event.clientY);
+                if (placement) {
+                    showFolderPlacement(placement);
+                } else {
+                    hideFolderDropMarker();
+                }
+                return;
+            }
+            showCharacterPlacement(characterPlacementFromTarget(target, event.clientY));
+        }
+
+        async function handlePointerDragEnd(event) {
+            if (!pointerDragCandidate || event.pointerId !== pointerDragCandidate.pointerId) return;
+            try {
+                pointerDragCandidate.handle.releasePointerCapture?.(event.pointerId);
+            } catch {
+                // The pointer may already be released after a browser-level touch cancellation.
+            }
+            if (!pointerDragState) {
+                pointerDragCandidate = null;
+                return;
+            }
+            event.preventDefault();
+            const target = document.elementFromPoint(event.clientX, event.clientY);
+            if (dragged.type === 'folder') {
+                const placement = folderPlacementFromTarget(target, event.clientY);
+                if (!(await applyFolderDrop(placement))) {
+                    clearDragState();
+                    renderAll();
+                }
+                return;
+            }
+            if (!(await applyCharacterDrop(target, event.clientY))) {
+                clearDragState();
+                renderAll();
+            }
+        }
+
+        function cancelPointerDrag(event) {
+            if (!pointerDragCandidate || event.pointerId !== pointerDragCandidate.pointerId) return;
+            clearDragState();
         }
 
         async function loadCharacterProfileForCropping(file) {
@@ -568,12 +994,17 @@ function CharacterManagementScript({tree, csrfToken}: { tree: CharacterManagemen
                     method: 'POST',
                     body: JSON.stringify({ name, folderId, profileImageData }),
                 });
-                insertItemIntoFolder({ type: 'character', ...result.character }, folderId);
-                selectedFolderId = folderId || 'root';
+                const character = { ...result.character, profileImageKey: result.character.profileImageKey || '', folderId, sortOrder: characters.length };
+                characters.push(character);
+                if (folderId) {
+                    upsertFolderPlacement(folderId, character.id, folderPlacements(folderId).length);
+                    await persistFolderPlacements(folderId);
+                    selectedFolderId = folderId;
+                }
+                await persistCharacterOrder();
                 createCharacterModal.close();
                 createCharacterForm.reset();
                 resetCharacterProfileCropper();
-                await persistTree();
                 renderAll();
                 showToast(name + ' created.');
             } catch (error) {
@@ -594,10 +1025,14 @@ function CharacterManagementScript({tree, csrfToken}: { tree: CharacterManagemen
                     method: 'POST',
                     body: JSON.stringify({ name, parentFolderId }),
                 });
-                insertItemIntoFolder({ type: 'folder', ...result.folder, children: [] }, parentFolderId);
+                const nextSiblings = folderChildren(parentFolderId);
+                const folder = { ...result.folder, parentFolderId, sortOrder: nextSiblings.length };
+                folders.push(folder);
+                setFolderOrder(parentFolderId, nextSiblings.concat(folder));
+                selectedFolderId = folder.id;
+                await persistFolderTree();
                 createFolderModal.close();
                 createFolderForm.reset();
-                await persistTree();
                 renderAll();
                 showToast('Folder created.');
             } catch (error) {
@@ -607,25 +1042,72 @@ function CharacterManagementScript({tree, csrfToken}: { tree: CharacterManagemen
             }
         });
 
+        document.addEventListener('change', (event) => {
+            if (!event.target.closest('[data-folder-character-checkbox]')) return;
+            updateFolderCharacterSelectionCount();
+        });
+
         document.addEventListener('click', async (event) => {
-            const toggleButton = event.target.closest('[data-toggle-folder]');
+            const selectFolderButton = event.target.closest('[data-select-folder]');
+            const addSelectedCharactersButton = event.target.closest('[data-add-selected-characters-to-folder]');
+            const removePlacementButton = event.target.closest('[data-remove-placement]');
             const deleteCharacterButton = event.target.closest('[data-delete-character]');
             const deleteFolderButton = event.target.closest('[data-delete-folder]');
 
-            if (toggleButton) {
-                const folder = toggleButton.closest('[data-folder-sort-item]');
-                const children = folder.querySelector(':scope > [data-folder-children]');
-                const expanded = toggleButton.getAttribute('aria-expanded') === 'true';
-                children.classList.toggle('hidden', expanded);
-                toggleButton.setAttribute('aria-expanded', String(!expanded));
-                toggleButton.textContent = expanded ? '+' : '-';
+            if (selectFolderButton) {
+                selectedFolderId = selectFolderButton.closest('[data-folder-sort-item]').dataset.folderId;
+                renderAll();
+                return;
+            }
+
+            if (addSelectedCharactersButton && selectedFolderId) {
+                const selectedCharacterIds = Array.from(selectedFolderPanel.querySelectorAll('[data-folder-character-checkbox]:checked'))
+                    .map((checkbox) => checkbox.value)
+                    .filter(Boolean);
+                if (selectedCharacterIds.length === 0) {
+                    showToast('Select at least one character to add.', true);
+                    return;
+                }
+                const previousPlacements = placements.slice();
+                try {
+                    let insertIndex = folderPlacements(selectedFolderId).length;
+                    for (const characterId of selectedCharacterIds) {
+                        upsertFolderPlacement(selectedFolderId, characterId, insertIndex);
+                        insertIndex += 1;
+                    }
+                    await persistFolderPlacements(selectedFolderId);
+                    renderAll();
+                    showToast(pluralize(selectedCharacterIds.length, 'character') + ' added to folder.');
+                } catch (error) {
+                    placements = previousPlacements;
+                    renderAll();
+                    showToast(error.message, true);
+                }
+                return;
+            }
+
+            if (removePlacementButton) {
+                const item = removePlacementButton.closest('[data-placement-character-id]');
+                const folderId = item.dataset.placementFolderId;
+                const characterId = item.dataset.placementCharacterId;
+                const previousPlacements = placements.slice();
+                try {
+                    removeFolderPlacement(folderId, characterId);
+                    await persistFolderPlacements(folderId);
+                    renderAll();
+                    showToast('Character removed from folder.');
+                } catch (error) {
+                    placements = previousPlacements;
+                    renderAll();
+                    showToast(error.message, true);
+                }
                 return;
             }
 
             if (deleteCharacterButton) {
-                const item = deleteCharacterButton.closest('[data-character-sort-item]');
-                deleteTargetCharacterId = item.dataset.characterId;
-                deleteTargetCharacterName = item.querySelector('a').textContent.trim();
+                const item = deleteCharacterButton.closest('[data-profile-character-id]');
+                deleteTargetCharacterId = item.dataset.profileCharacterId;
+                deleteTargetCharacterName = characterById(deleteTargetCharacterId).name;
                 document.getElementById('delete-character-confirm-name').placeholder = deleteTargetCharacterName;
                 deleteCharacterModal.showModal();
                 return;
@@ -634,25 +1116,6 @@ function CharacterManagementScript({tree, csrfToken}: { tree: CharacterManagemen
             if (deleteFolderButton) {
                 deleteTargetFolderId = deleteFolderButton.closest('[data-folder-sort-item]').dataset.folderId;
                 deleteFolderModal.showModal();
-            }
-        });
-
-        document.addEventListener('change', async (event) => {
-            const select = event.target.closest('[data-character-folder-select]');
-            if (!select) return;
-            const location = findItemLocation('character', select.dataset.characterId);
-            const character = removeItem('character', select.dataset.characterId);
-            if (!character) return;
-            try {
-                insertItemIntoFolder(character, normalizeFolderId(select.value));
-                selectedFolderId = select.value;
-                await persistTree();
-                renderAll();
-                showToast('Character moved.');
-            } catch (error) {
-                insertItemIntoFolder(character, location ? location.parentFolderId : 'root', location ? location.index : null);
-                renderAll();
-                showToast(error.message, true);
             }
         });
 
@@ -667,7 +1130,8 @@ function CharacterManagementScript({tree, csrfToken}: { tree: CharacterManagemen
                         permanent: document.getElementById('delete-confirm-permanent').checked,
                     }),
                 });
-                removeItem('character', deleteTargetCharacterId);
+                characters = characters.filter((character) => character.id !== deleteTargetCharacterId);
+                placements = placements.filter((placement) => placement.characterId !== deleteTargetCharacterId);
                 deleteCharacterModal.close();
                 deleteCharacterForm.reset();
                 renderAll();
@@ -683,18 +1147,25 @@ function CharacterManagementScript({tree, csrfToken}: { tree: CharacterManagemen
                 return;
             }
             if (!event.target.matches('[data-confirm-delete-folder]') || !deleteTargetFolderId) return;
-            const folder = removeItem('folder', deleteTargetFolderId);
+            const folder = folderById(deleteTargetFolderId);
             if (!folder) return;
+            const previousFolders = folders.map((item) => ({ ...item }));
+            const previousPlacements = placements.slice();
             try {
                 await apiJson('/api/characters/folders/' + encodeURIComponent(deleteTargetFolderId), { method: 'DELETE' });
-                tree.push(...(folder.children || []));
-                if (selectedFolderId === deleteTargetFolderId) selectedFolderId = 'root';
-                await persistTree();
+                folders = folders.filter((item) => item.id !== deleteTargetFolderId);
+                folders.forEach((item) => {
+                    if (item.parentFolderId === deleteTargetFolderId) item.parentFolderId = null;
+                });
+                placements = placements.filter((placement) => placement.folderId !== deleteTargetFolderId);
+                if (selectedFolderId === deleteTargetFolderId) selectedFolderId = null;
+                await persistFolderTree();
                 deleteFolderModal.close();
                 renderAll();
-                showToast(folder.name + ' removed. Its contents moved to Home (unsorted).');
+                showToast(folder.name + ' removed. Characters remain in All characters.');
             } catch (error) {
-                insertItemIntoFolder(folder, 'root');
+                folders = previousFolders;
+                placements = previousPlacements;
                 renderAll();
                 showToast(error.message, true);
             }
@@ -702,122 +1173,87 @@ function CharacterManagementScript({tree, csrfToken}: { tree: CharacterManagemen
 
         document.addEventListener('dragstart', (event) => {
             const folder = event.target.closest('[data-folder-sort-item]');
-            const character = event.target.closest('[data-character-sort-item]');
+            const profileCharacter = event.target.closest('[data-profile-character-id]');
+            const placementCharacter = event.target.closest('[data-placement-character-id]');
             if (folder) {
-                draggedFolderId = folder.dataset.folderId;
+                dragged = { type: 'folder', folderId: folder.dataset.folderId };
                 folder.setAttribute('aria-grabbed', 'true');
                 event.dataTransfer.effectAllowed = 'move';
                 return;
             }
-            if (character) {
-                draggedCharacterId = character.dataset.characterId;
-                character.setAttribute('aria-grabbed', 'true');
+            if (placementCharacter) {
+                dragged = {
+                    type: 'character',
+                    source: 'folder',
+                    characterId: placementCharacter.dataset.placementCharacterId,
+                    folderId: placementCharacter.dataset.placementFolderId,
+                };
+                placementCharacter.setAttribute('aria-grabbed', 'true');
                 event.dataTransfer.effectAllowed = 'move';
+                return;
+            }
+            if (profileCharacter) {
+                dragged = { type: 'character', source: 'profile', characterId: profileCharacter.dataset.profileCharacterId };
+                profileCharacter.setAttribute('aria-grabbed', 'true');
+                event.dataTransfer.effectAllowed = 'copyMove';
             }
         });
 
-        document.addEventListener('dragend', () => {
-            document.querySelectorAll('[aria-grabbed="true"]').forEach((item) => item.removeAttribute('aria-grabbed'));
-            draggedFolderId = null;
-            draggedCharacterId = null;
-            document.querySelectorAll('.drag-over').forEach((dropzone) => dropzone.classList.remove('drag-over'));
-            clearFolderDropState();
-        });
+        document.addEventListener('dragend', clearDragState);
 
         document.addEventListener('dragover', (event) => {
-            const characterDropzone = event.target.closest('[data-character-dropzone]');
-            if (draggedFolderId) {
+            if (!dragged) return;
+            if (dragged.type === 'folder') {
                 const placement = folderPlacementFromEvent(event);
                 if (!placement) {
-                    clearFolderDropState();
+                    hideFolderDropMarker();
                     return;
                 }
                 event.preventDefault();
                 showFolderPlacement(placement);
                 return;
             }
-            if (draggedCharacterId && characterDropzone) {
+
+            const characterPlacement = characterPlacementFromTarget(event.target, event.clientY);
+            if (characterPlacement) {
                 event.preventDefault();
-                characterDropzone.classList.add('drag-over');
+                showCharacterPlacement(characterPlacement);
+            } else {
+                hideCharacterDropMarker();
             }
         });
 
         document.addEventListener('dragleave', (event) => {
-            const dropzone = event.target.closest('[data-character-dropzone]');
-            if (dropzone) dropzone.classList.remove('drag-over');
+            const dropzone = event.target.closest('[data-profile-dropzone], [data-placement-dropzone]');
+            const nextTarget = event.relatedTarget;
+            const isStillInside = nextTarget && nextTarget.nodeType && dropzone && dropzone.contains(nextTarget);
+            if (dropzone && !isStillInside) {
+                dropzone.classList.remove('drag-over');
+                if (characterDropMarker.parentElement === dropzone) hideCharacterDropMarker();
+            }
         });
 
         document.addEventListener('drop', async (event) => {
-            const characterDropzone = event.target.closest('[data-character-dropzone]');
+            if (!dragged) return;
 
-            if (draggedFolderId) {
+            if (dragged.type === 'folder') {
                 const placement = folderPlacementFromEvent(event);
                 if (!placement) return;
                 event.preventDefault();
-                const parentFolderId = placement.type === 'nest'
-                    ? placement.folderId
-                    : normalizeFolderId(placement.container.dataset.parentFolderId);
-                const originalLocation = findItemLocation('folder', draggedFolderId);
-                const beforeFolderId = placement.type === 'sort' && placement.beforeElement
-                    ? placement.beforeElement.dataset.folderId
-                    : null;
-                if (beforeFolderId === draggedFolderId) {
-                    clearFolderDropState();
-                    renderAll();
-                    return;
-                }
-                const folder = removeItem('folder', draggedFolderId);
-                if (!folder) return;
-                if (folder.id === parentFolderId || isDescendantFolder(folder, parentFolderId)) {
-                    insertItemIntoFolder(folder, originalLocation ? originalLocation.parentFolderId : 'root', originalLocation ? originalLocation.index : null);
-                    clearFolderDropState();
-                    renderAll();
-                    showToast('A folder cannot be moved inside itself.', true);
-                    return;
-                }
-                try {
-                    let index = null;
-                    if (placement.type === 'sort' && beforeFolderId) {
-                        const children = findChildren(parentFolderId);
-                        index = children ? children.findIndex((item) => item.type === 'folder' && item.id === beforeFolderId) : null;
-                        if (index === -1) index = null;
-                    }
-                    insertItemIntoFolder(folder, parentFolderId, index);
-                    await persistTree();
-                    clearFolderDropState();
-                    renderAll();
-                    showToast(placement.type === 'nest' ? 'Folder moved.' : 'Folder order saved.');
-                } catch (error) {
-                    insertItemIntoFolder(folder, originalLocation ? originalLocation.parentFolderId : 'root', originalLocation ? originalLocation.index : null);
-                    clearFolderDropState();
-                    renderAll();
-                    showToast(error.message, true);
-                }
+                await applyFolderDrop(placement);
                 return;
             }
 
-            if (draggedCharacterId && characterDropzone) {
+            if (closestElement(event.target, '[data-profile-dropzone], [data-placement-dropzone]')) {
                 event.preventDefault();
-                const targetFolderId = normalizeFolderId(characterDropzone.dataset.characterFolderId);
-                const originalLocation = findItemLocation('character', draggedCharacterId);
-                const character = removeItem('character', draggedCharacterId);
-                if (!character) return;
-                try {
-                    const index = indexFromPointer(characterDropzone, event.clientY, '[data-character-sort-item]');
-                    const targetChildren = findChildren(targetFolderId) || tree;
-                    const folderOffset = targetChildren.filter((item) => item.type === 'folder').length;
-                    insertItemIntoFolder(character, targetFolderId, folderOffset + index);
-                    selectedFolderId = characterDropzone.dataset.characterFolderId;
-                    await persistTree();
-                    renderAll();
-                    showToast('Character order saved.');
-                } catch (error) {
-                    insertItemIntoFolder(character, originalLocation ? originalLocation.parentFolderId : 'root', originalLocation ? originalLocation.index : null);
-                    renderAll();
-                    showToast(error.message, true);
-                }
+                await applyCharacterDrop(event.target, event.clientY);
             }
         });
+
+        document.addEventListener('pointerdown', beginPointerDragCandidate);
+        window.addEventListener('pointermove', handlePointerDragMove, { passive: false });
+        window.addEventListener('pointerup', handlePointerDragEnd);
+        window.addEventListener('pointercancel', cancelPointerDrag);
 
         document.querySelectorAll('[data-close-create-character-modal], [data-close-create-folder-modal], [data-close-delete-character-modal]').forEach((button) => {
             button.addEventListener('click', () => button.closest('dialog').close());
@@ -846,13 +1282,18 @@ export function CharacterManagementPage({
     currentUser,
     folders,
     characters,
+                                            placements,
+                                            uploadedImageCount,
     mediaBaseUrl,
 }: CharacterManagementPageProps) {
-    const charactersWithUrls = characters.map((character) => ({
-        ...character,
-        profileImageUrl: characterProfileImageUrl(mediaBaseUrl, currentUser.id, character.id, character.profileImageKey),
-    }))
-    const tree = buildTree(folders, charactersWithUrls)
+    const charactersWithUrls = characters
+        .slice()
+        .sort(compareOrderedNames)
+        .map((character) => ({
+            ...character,
+            profileImageUrl: characterProfileImageUrl(mediaBaseUrl, currentUser.id, character.id, character.profileImageKey),
+        }))
+    const folderTree = buildFolderTree(folders)
 
     return (
         <BaseLayout
@@ -862,46 +1303,96 @@ export function CharacterManagementPage({
             title="Character Management | MyOC"
         >
             <Navbar currentUser={currentUser} mediaBaseUrl={mediaBaseUrl}/>
-            <main class="container mx-auto max-w-6xl px-3 py-6 sm:px-0">
-                <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-                    <div>
-                        <h1 class="text-4xl font-bold sm:text-5xl">Characters</h1>
-                        <p class="mt-2 text-sm text-base-content/70">Manage folder structure separately from character placement and order.</p>
-                    </div>
-                    <div class="flex flex-wrap gap-2 sm:justify-end">
-                        <button class="btn btn-secondary" id="create-folder-button" type="button">New Folder</button>
-                        <button class="btn btn-primary" id="create-character-button" type="button">New Character</button>
-                    </div>
-                </div>
-
-                <div class="grid gap-6 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.25fr)]">
-                    <section class="rounded-box border border-base-300 bg-base-200 p-4">
-                        <div class="mb-4 flex items-start justify-between gap-3">
-                            <div>
-                                <h2 class="text-2xl font-bold">Folder Structure</h2>
-                                <p class="mt-1 text-sm text-base-content/70">Drop on a folder to nest it, or use the white line to reorder siblings.</p>
-                            </div>
-                            <span class="whitespace-nowrap text-sm text-base-content/70" id="folder-count">{formatCount(countFolders(tree), 'folder')}</span>
+            <main class="management-shell min-h-screen px-3 py-6 sm:px-5">
+                <section
+                    class="mx-auto mb-5 max-w-7xl overflow-hidden rounded-[2rem] border border-base-300 bg-base-100/90 p-5 shadow-sm sm:p-7">
+                    <div class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+                        <div class="max-w-3xl">
+                            <h1 class="mt-2 text-4xl font-black leading-none sm:text-6xl">Character Studio.</h1>
+                            <p class="mt-4 max-w-2xl text-base text-base-content/70">
+                                Create, delete, and sort characters and folders.
+                            </p>
                         </div>
-                        <div class="tree-panel rounded-box border border-base-300 bg-base-100 p-3">
-                            <div class="tree-row flex items-center gap-3 rounded-xl bg-base-200/65 px-3 py-2">
-                                <span aria-hidden="true" class="w-4 text-base-content/40">/</span>
-                                <span class="tree-label min-w-0 flex-1 font-bold">Home (unsorted)</span>
-                                <span class="text-xs text-base-content/60">Fixed</span>
+                    </div>
+                    <div class="mt-6 grid gap-3 sm:grid-cols-3">
+                        <div class="rounded-box bg-base-200 p-4">
+                            <p class="text-xs uppercase tracking-[0.2em] text-base-content/55">Characters</p>
+                            <p class="mt-1 text-2xl font-black"
+                               id="character-count">{formatCount(characters.length, 'character')}</p>
+                        </div>
+                        <div class="rounded-box bg-base-200 p-4">
+                            <p class="text-xs uppercase tracking-[0.2em] text-base-content/55">Folders</p>
+                            <p class="mt-1 text-2xl font-black"
+                               id="folder-count">{formatCount(folders.length, 'folder')}</p>
+                        </div>
+                        <div class="rounded-box bg-base-200 p-4">
+                            <p class="text-xs uppercase tracking-[0.2em] text-base-content/55">Images Uploaded</p>
+                            <p class="mt-1 text-2xl font-black">{formatCount(uploadedImageCount, 'image')}</p>
+                        </div>
+                    </div>
+                </section>
+
+                <div
+                    class="mx-auto grid max-w-7xl gap-5 xl:grid-cols-[minmax(22rem,1.1fr)_minmax(17rem,0.8fr)_minmax(22rem,1fr)]">
+                    <section class="card border border-base-300 bg-base-100/95 shadow-sm">
+                        <div class="card-body gap-4 p-4 sm:p-5">
+                            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                    <h2 class="card-title text-2xl">All Characters</h2>
+                                    <p class="text-sm text-base-content/65">Create and delete characters, and change
+                                        their sort-order for your main profile (outside of folders).</p>
+                                </div>
+                                <button class="btn btn-primary" id="create-character-button" type="button">New
+                                    Character
+                                </button>
                             </div>
-                            <div class="tree-children mt-2" id="folder-tree-root"></div>
+                            <div class="profile-dropzone space-y-2 rounded-box bg-base-200/65 p-2" data-profile-dropzone
+                                 id="profile-character-list"></div>
                         </div>
                     </section>
 
-                    <section class="rounded-box border border-base-300 bg-base-200 p-4">
-                        <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                            <div>
-                                <h2 class="text-2xl font-bold">Characters</h2>
-                                <p class="mt-1 text-sm text-base-content/70">All characters stay visible. Change folder placement from each character row.</p>
+                    <section class="card border border-base-300 bg-base-100/95 shadow-sm">
+                        <div class="card-body gap-4 p-4 sm:p-5">
+                            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                    <h2 class="card-title text-2xl">Folders</h2>
+                                    <p class="text-sm text-base-content/65">Create, delete, sort, and nest folders.
+                                        Select a folder to display its contents.</p>
+                                </div>
+                                <button class="btn" id="create-folder-button" type="button">New Folder</button>
                             </div>
-                            <span class="whitespace-nowrap text-sm text-base-content/70" id="character-count">{formatCount(countCharacters(tree), 'character')}</span>
+                            <div class="rounded-box border border-base-300 bg-base-200/55 p-3">
+                                <div class="mb-2 flex items-center gap-2 rounded-box bg-base-100 px-3 py-2 font-bold">
+                                    <span aria-hidden="true" class="text-base-content/45">/</span>
+                                    <span class="min-w-0 flex-1 truncate">All characters</span>
+                                    <span class="badge badge-ghost badge-sm">fixed</span>
+                                </div>
+                                <div id="folder-tree-root">
+                                    {folderTree.length > 0 ? null : (
+                                        <div
+                                            class="rounded-box border border-dashed border-base-300 bg-base-100 p-4 text-sm text-base-content/65">
+                                            No folders yet.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
                         </div>
-                        <div class="space-y-3" id="character-list"></div>
+                    </section>
+
+                    <section class="card border border-base-300 bg-base-100/95 shadow-sm">
+                        <div class="card-body gap-4 p-4 sm:p-5">
+                            <div>
+                                <h2 class="mb-2 text-2xl font-black text-base-content">Inside Folder</h2>
+                                <p class="text-sm text-base-content/65">Select a folder, then add and order characters
+                                    inside it.</p>
+                            </div>
+                            <div id="selected-folder-panel">
+                                <div
+                                    class="rounded-box border border-dashed border-base-300 bg-base-100 p-8 text-center text-base-content/65">
+                                    Select or create a folder to manage its character order.
+                                </div>
+                            </div>
+                        </div>
                     </section>
                 </div>
             </main>
@@ -914,16 +1405,16 @@ export function CharacterManagementPage({
                     <h2 class="text-xl font-bold">Create Character</h2>
                     <form class="mt-5 space-y-4" id="create-character-form">
                         <fieldset class="fieldset">
-                            <label class="fieldset-label" for="new-character-name">Character Name</label>
-                            <input class="input input-bordered w-full" id="new-character-name" maxLength={80}
+                            <legend class="fieldset-legend">Character Name</legend>
+                            <input class="input w-full" id="new-character-name" maxLength={80}
                                    pattern={CHARACTER_NAME_INPUT_PATTERN} required
                                    title={CHARACTER_NAME_INPUT_TITLE}
                                    type="text"/>
                         </fieldset>
                         <fieldset class="fieldset">
-                            <label class="fieldset-label" for="new-character-profile-image">Profile Image</label>
+                            <legend class="fieldset-legend">Profile Image</legend>
                             <input accept="image/*" class="file-input w-full" id="new-character-profile-image" required type="file"/>
-                            <p class="text-xs text-base-content/60">You'll be able to crop the image before uploading.</p>
+                            <p class="label">You'll be able to crop the image before uploading.</p>
                         </fieldset>
                         <div class="hidden rounded-box border border-base-300 bg-base-100 p-3" data-character-profile-cropper>
                             <div class="max-h-[40dvh] overflow-hidden rounded-box bg-base-300 sm:max-h-[22rem]">
@@ -934,10 +1425,11 @@ export function CharacterManagementPage({
                             <p class="mt-2 text-xs text-base-content/60">Drag to choose the square profile crop.</p>
                         </div>
                         <fieldset class="fieldset">
-                            <label class="fieldset-label" for="new-character-folder">Folder</label>
-                            <select class="select select-bordered w-full" id="new-character-folder">
-                                <option value="root">Home (unsorted)</option>
+                            <legend class="fieldset-legend">Initial Folder</legend>
+                            <select class="select w-full" id="new-character-folder">
+                                <option value="root">All characters only</option>
                             </select>
+                            <p class="label">You can add the character to more folders later.</p>
                         </fieldset>
                         <div class="modal-action">
                             <button class="btn btn-ghost" data-close-create-character-modal type="button">Cancel</button>
@@ -956,21 +1448,21 @@ export function CharacterManagementPage({
                     <h2 class="text-xl font-bold">Create Folder</h2>
                     <form class="mt-5 space-y-4" id="create-folder-form">
                         <fieldset class="fieldset">
-                            <label class="fieldset-label" for="new-folder-name">Folder Name</label>
-                            <input class="input input-bordered w-full" id="new-folder-name" maxLength={80}
+                            <legend class="fieldset-legend">Folder Name</legend>
+                            <input class="input w-full" id="new-folder-name" maxLength={80}
                                    pattern="[A-Za-z0-9][A-Za-z0-9 _'.()-]*" required
                                    title="Use letters, numbers, spaces, apostrophes, hyphens, underscores, periods, and parentheses. Start with a letter or number."
                                    type="text"/>
                         </fieldset>
                         <fieldset class="fieldset">
-                            <label class="fieldset-label" for="new-folder-parent">Parent Folder</label>
-                            <select class="select select-bordered w-full" id="new-folder-parent">
-                                <option value="root">Home (unsorted)</option>
+                            <legend class="fieldset-legend">Parent Folder</legend>
+                            <select class="select w-full" id="new-folder-parent">
+                                <option value="root">All characters</option>
                             </select>
                         </fieldset>
                         <div class="modal-action">
                             <button class="btn btn-ghost" data-close-create-folder-modal type="button">Cancel</button>
-                            <button class="btn btn-primary" type="submit">Create Folder</button>
+                            <button class="btn" type="submit">Create Folder</button>
                         </div>
                     </form>
                 </div>
@@ -984,16 +1476,18 @@ export function CharacterManagementPage({
                     </form>
                     <h2 class="text-xl font-bold">Delete Character</h2>
                     <p class="mt-3 text-sm text-base-content/80">
-                        This removes the character from your account. Type the character name and confirm permanent deletion to continue.
+                        This removes the character from your account, all folders, and its gallery. Type the character
+                        name and confirm permanent deletion to continue.
                     </p>
                     <form class="mt-5 space-y-4" id="delete-character-form">
                         <fieldset class="fieldset">
-                            <label class="fieldset-label" for="delete-character-confirm-name">Character Name</label>
-                            <input autocomplete="off" class="input input-bordered w-full" id="delete-character-confirm-name" required type="text"/>
+                            <legend class="fieldset-legend">Character Name</legend>
+                            <input autocomplete="off" class="input w-full" id="delete-character-confirm-name" required
+                                   type="text"/>
                         </fieldset>
                         <label class="label cursor-pointer justify-start gap-3">
                             <input class="checkbox checkbox-error" id="delete-confirm-permanent" type="checkbox"/>
-                            <span class="label-text">I understand this cannot be undone.</span>
+                            <span>I understand this cannot be undone.</span>
                         </label>
                         <div class="modal-action">
                             <button class="btn btn-ghost" data-close-delete-character-modal type="button">Cancel</button>
@@ -1010,7 +1504,8 @@ export function CharacterManagementPage({
                         <button aria-label="Close delete folder dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button>
                     </form>
                     <h2 class="text-xl font-bold">Remove Folder</h2>
-                    <p class="mt-3 text-sm text-base-content/80">Characters and nested folders inside this folder will move to Home (unsorted).</p>
+                    <p class="mt-3 text-sm text-base-content/80">Nested folders move to All characters. Character
+                        placements in this folder are removed, but characters are not deleted.</p>
                     <div class="modal-action">
                         <button class="btn btn-ghost" data-cancel-delete-folder type="button">Cancel</button>
                         <button class="btn btn-error" data-confirm-delete-folder type="button">Remove Folder</button>
@@ -1019,9 +1514,14 @@ export function CharacterManagementPage({
                 <form class="modal-backdrop" method="dialog"><button>close</button></form>
             </dialog>
 
-            <div aria-live="polite" class="toast toast-end z-[9999]" id="toast-region"></div>
+            <div aria-live="polite" class="toast toast-end z-9999" id="toast-region"></div>
             <script src="/vendor/cropperjs/cropper.min.js"></script>
-            <CharacterManagementScript csrfToken={currentUser.csrfToken} tree={tree}/>
+            <CharacterManagementScript
+                characters={charactersWithUrls}
+                csrfToken={currentUser.csrfToken}
+                folders={folders}
+                placements={placements}
+            />
         </BaseLayout>
     )
 }

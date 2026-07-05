@@ -43,7 +43,13 @@ export function createMockDb(options: MockDbOptions = {}): {
                 return statement
             }),
         })),
-        batch: vi.fn(async () => []),
+        batch: vi.fn(async () => {
+            if (options.runError) {
+                throw options.runError
+            }
+
+            return []
+        }),
     }
 
     return {

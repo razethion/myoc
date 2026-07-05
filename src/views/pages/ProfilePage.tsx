@@ -2,6 +2,7 @@ import type {CurrentUser} from '../../lib/auth/session'
 import {characterProfileImageUrl, profilePhotoUrl} from '../../lib/media/url'
 import {FIXED_SOCIAL_LINKS, type SocialPlatform, type UserSocialLink} from '../../lib/socialLinks'
 import type {
+    CharacterFolderPlacement,
     CharacterManagementCharacter,
     CharacterManagementFolder,
 } from './CharacterManagementPage'
@@ -22,6 +23,7 @@ type ProfilePageProps = {
     socialLinks: UserSocialLink[]
     folders: CharacterManagementFolder[]
     characters: CharacterManagementCharacter[]
+    placements: CharacterFolderPlacement[]
     currentFolder?: CharacterManagementFolder | null
     folderPath?: CharacterManagementFolder[]
     mediaBaseUrl: string
@@ -240,6 +242,7 @@ export function ProfilePage({
     socialLinks,
     folders,
     characters,
+                                placements,
     currentFolder = null,
     folderPath = [],
     mediaBaseUrl,
@@ -248,8 +251,13 @@ export function ProfilePage({
 }: ProfilePageProps) {
     const profileImageUrl = profileImageFor(profileUser, mediaBaseUrl)
     const childFolders = folders.filter((folder) => folder.parentFolderId === (currentFolder?.id ?? null))
+    const characterById = new Map(characters.map((character) => [character.id, character]))
     const visibleCharacters = currentFolder
-        ? characters.filter((character) => character.folderId === currentFolder.id)
+        ? placements
+            .filter((placement) => placement.folderId === currentFolder.id)
+            .sort((left, right) => left.sortOrder - right.sortOrder)
+            .map((placement) => characterById.get(placement.characterId))
+            .filter((character): character is CharacterManagementCharacter => Boolean(character))
         : characters
     const canEdit = currentUser?.id === profileUser.id
     const visibleSocialLinks = socialLinks.filter((link) => link.url)

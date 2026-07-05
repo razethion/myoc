@@ -52,6 +52,14 @@ type SortTreeRequest = {
     items?: unknown
 }
 
+type SortCharacterOrderRequest = {
+    characterIds?: unknown
+}
+
+type SaveFolderPlacementsRequest = {
+    characterIds?: unknown
+}
+
 type UpdateCharacterRequest = {
     name?: unknown
     description?: unknown
@@ -266,6 +274,166 @@ type CompletedGalleryPreview = {
 
 export const characterRoutes = new Hono<{ Bindings: Bindings }>()
 
+characterRoutes.post('/folders/tree', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return c.json({error: 'Authentication required'}, 401)
+    }
+
+    let body: SortTreeRequest
+
+    try {
+        body = await c.req.json<SortTreeRequest>()
+    } catch {
+        return c.json({error: 'Invalid JSON body'}, 400)
+    }
+
+    if (!Array.isArray(body.items)) {
+        return c.json({error: 'Folder tree items are required'}, 400)
+    }
+
+    const flattened = flattenTreeItems(body.items)
+
+    if ('error' in flattened) {
+        return c.json({error: flattened.error}, 400)
+    }
+
+    if (flattened.items.some((item) => item.type !== 'folder')) {
+        return c.json({error: 'Folder tree may contain only folders'}, 400)
+    }
+
+    const folderIds = flattened.items.map((item) => item.id)
+    const ownedFolderIds = await getOwnedFolderIds(c.env.DB, currentUser.id, folderIds)
+
+    for (const folderId of folderIds) {
+        if (!ownedFolderIds.has(folderId)) {
+            return c.json({error: 'Folder tree contains folders that do not belong to the current user'}, 400)
+        }
+    }
+
+    const now = toSqlTimestamp(new Date())
+    const statements = flattened.items.map((item) => c.env.DB.prepare(
+        `UPDATE character_folders
+         SET parent_folder_id = ?,
+             sort_order       = ?,
+             updated_at       = ?
+         WHERE id = ?
+           AND user_id = ?`,
+    ).bind(item.parentFolderId, item.sortOrder, now, item.id, currentUser.id))
+
+    if (statements.length > 0) {
+        await c.env.DB.batch(statements)
+    }
+
+    return c.json({ok: true})
+})
+
+characterRoutes.post('/order', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return c.json({error: 'Authentication required'}, 401)
+    }
+
+    let body: SortCharacterOrderRequest
+
+    try {
+        body = await c.req.json<SortCharacterOrderRequest>()
+    } catch {
+        return c.json({error: 'Invalid JSON body'}, 400)
+    }
+
+    const orderedIds = normalizeOrderedIds(body.characterIds, 'Character order')
+
+    if ('error' in orderedIds) {
+        return c.json({error: orderedIds.error}, 400)
+    }
+
+    const ownedCharacterIds = await getOwnedCharacterIds(c.env.DB, currentUser.id, orderedIds.ids)
+
+    for (const characterId of orderedIds.ids) {
+        if (!ownedCharacterIds.has(characterId)) {
+            return c.json({error: 'Character order contains characters that do not belong to the current user'}, 400)
+        }
+    }
+
+    const now = toSqlTimestamp(new Date())
+    const statements = orderedIds.ids.map((characterId, index) => c.env.DB.prepare(
+        `UPDATE characters
+         SET sort_order = ?,
+             updated_at = ?
+         WHERE id = ?
+           AND user_id = ?`,
+    ).bind(index, now, characterId, currentUser.id))
+
+    if (statements.length > 0) {
+        await c.env.DB.batch(statements)
+    }
+
+    return c.json({ok: true})
+})
+
+characterRoutes.put('/folders/:id/placements', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return c.json({error: 'Authentication required'}, 401)
+    }
+
+    const folderIdResult = normalizeFolderId(c.req.param('id'))
+
+    if ('error' in folderIdResult || !folderIdResult.folderId) {
+        return c.json({error: 'Folder must be a valid folder id'}, 400)
+    }
+
+    if (!(await folderExists(c.env.DB, currentUser.id, folderIdResult.folderId))) {
+        return c.json({error: 'Folder not found'}, 404)
+    }
+
+    let body: SaveFolderPlacementsRequest
+
+    try {
+        body = await c.req.json<SaveFolderPlacementsRequest>()
+    } catch {
+        return c.json({error: 'Invalid JSON body'}, 400)
+    }
+
+    const orderedIds = normalizeOrderedIds(body.characterIds, 'Folder placements')
+
+    if ('error' in orderedIds) {
+        return c.json({error: orderedIds.error}, 400)
+    }
+
+    const ownedCharacterIds = await getOwnedCharacterIds(c.env.DB, currentUser.id, orderedIds.ids)
+
+    for (const characterId of orderedIds.ids) {
+        if (!ownedCharacterIds.has(characterId)) {
+            return c.json({error: 'Folder placements contain characters that do not belong to the current user'}, 400)
+        }
+    }
+
+    const now = toSqlTimestamp(new Date())
+    const statements: D1PreparedStatement[] = [
+        c.env.DB.prepare(
+            `DELETE FROM character_folder_placements
+             WHERE user_id = ?
+               AND folder_id = ?`,
+        ).bind(currentUser.id, folderIdResult.folderId),
+    ]
+
+    for (let index = 0; index < orderedIds.ids.length; index += 1) {
+        statements.push(c.env.DB.prepare(
+            `INSERT INTO character_folder_placements (user_id, folder_id, character_id, sort_order, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+        ).bind(currentUser.id, folderIdResult.folderId, orderedIds.ids[index], index, now, now))
+    }
+
+    await c.env.DB.batch(statements)
+
+    return c.json({ok: true})
+})
+
 characterRoutes.post('/tree', async (c) => {
     const currentUser = await getCurrentUser(c)
 
@@ -412,6 +580,12 @@ characterRoutes.delete('/folders/:id', async (c) => {
 
     await c.env.DB.batch([
         c.env.DB.prepare(
+            `DELETE
+             FROM character_folder_placements
+             WHERE user_id = ?
+               AND folder_id = ?`,
+        ).bind(currentUser.id, folder.id),
+        c.env.DB.prepare(
             `UPDATE character_folders
              SET parent_folder_id = NULL,
                  updated_at = ?
@@ -498,22 +672,40 @@ characterRoutes.post('/', async (c) => {
     }
 
     try {
-        await c.env.DB.prepare(
-            `INSERT INTO characters (id, user_id, name, profile_image_key, folder_id, sort_order, created_at,
-                                     updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-            .bind(
-                character.id,
-                character.user_id,
-                character.name,
-                character.profile_image_key,
-                character.folder_id,
-                character.sort_order,
-                character.created_at,
-                character.updated_at,
+        const statements: D1PreparedStatement[] = [
+            c.env.DB.prepare(
+                `INSERT INTO characters (id, user_id, name, profile_image_key, folder_id, sort_order, created_at,
+                                         updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
             )
-            .run()
+                .bind(
+                    character.id,
+                    character.user_id,
+                    character.name,
+                    character.profile_image_key,
+                    character.folder_id,
+                    character.sort_order,
+                    character.created_at,
+                    character.updated_at,
+                ),
+        ]
+
+        if (folderResult.folderId) {
+            statements.push(c.env.DB.prepare(
+                `INSERT OR IGNORE INTO character_folder_placements (user_id, folder_id, character_id, sort_order, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+            )
+                .bind(
+                    character.user_id,
+                    folderResult.folderId,
+                    character.id,
+                    0,
+                    character.created_at,
+                    character.updated_at,
+                ))
+        }
+
+        await c.env.DB.batch(statements)
     } catch (error) {
         if (profileImageKey) {
             await c.env.MEDIA_BUCKET.delete(profileImageObjectKey)
@@ -1536,6 +1728,7 @@ function toPublicCharacter(baseUrl: string, character: CharacterRecord) {
             ? characterProfileImageUrl(baseUrl, character.user_id, character.id, character.profile_image_key)
             : null,
         folderId: character.folder_id,
+        sortOrder: character.sort_order,
         description: character.description ?? '',
         createdAt: character.created_at,
         updatedAt: character.updated_at,
@@ -1698,6 +1891,7 @@ function toPublicFolder(folder: CharacterFolderRecord) {
         id: folder.id,
         name: folder.name,
         parentFolderId: folder.parent_folder_id,
+        sortOrder: folder.sort_order,
         createdAt: folder.created_at,
         updatedAt: folder.updated_at,
     }
@@ -2683,6 +2877,36 @@ function flattenTreeItems(
     }
 
     return {items: flattened}
+}
+
+function normalizeOrderedIds(value: unknown, label: string): { ids: string[] } | { error: string } {
+    if (!Array.isArray(value)) {
+        return {error: `${label} must be an array`}
+    }
+
+    if (value.length > TREE_MAX_ITEMS) {
+        return {error: `${label} contains too many items`}
+    }
+
+    const ids: string[] = []
+    const seen = new Set<string>()
+
+    for (const rawId of value) {
+        const id = normalizeOptionalText(rawId)
+
+        if (!id || !isValidTreeId(id)) {
+            return {error: `${label} contains an invalid character id`}
+        }
+
+        if (seen.has(id)) {
+            return {error: `${label} contains duplicate characters`}
+        }
+
+        seen.add(id)
+        ids.push(id)
+    }
+
+    return {ids}
 }
 
 async function validateTreeOwnership(
