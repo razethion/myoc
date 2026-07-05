@@ -83,6 +83,28 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
                                 </li>
                                 <li class="menu-title"><span>Updates</span></li>
                                 <li><a href="/whats-new">What's New</a></li>
+                                <li class="my-1">
+                                    <hr class="border-base-300"/>
+                                </li>
+                                <li class="menu-title"><span>Help</span></li>
+                                <li>
+                                    <a
+                                        href="https://github.com/razethion/myoc/issues"
+                                        rel="noreferrer"
+                                        target="_blank"
+                                    >
+                                        Report issue
+                                    </a>
+                                </li>
+                                <li>
+                                    <a
+                                        href="https://github.com/razethion/myoc/discussions"
+                                        rel="noreferrer"
+                                        target="_blank"
+                                    >
+                                        Ask a question
+                                    </a>
+                                </li>
                                 {currentUser.role === 'admin' && (
                                     <>
                                         <li class="my-1">
