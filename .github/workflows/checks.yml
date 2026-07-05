@@ -1,4 +1,4 @@
-name: Checks and Deploy
+name: Cloudflare Deploy
 
 on:
   push:
@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   check-and-deploy:
-    name: Check and Deploy
+    name: Deploy Changes
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest
 
@@ -235,7 +235,7 @@ jobs:
             }
 
   cleanup-preview-db:
-    name: Cleanup Preview
+    name: Dev branch deployment cleanup
     if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
 
