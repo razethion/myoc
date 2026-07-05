@@ -1,3 +1,5 @@
+// noinspection JSUnresolvedReference
+
 import {mkdir, readFile, readdir, rm, writeFile} from 'node:fs/promises'
 import {existsSync, readFileSync} from 'node:fs'
 import {dirname, resolve} from 'node:path'
@@ -43,7 +45,7 @@ const config = {
     r2Endpoint: process.env.R2_ENDPOINT || '',
     r2AccessKeyId: process.env.R2_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID || '',
     r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY || '',
-    r2Region: process.env.R2_REGION || process.env.AWS_REGION || 'auto',
+    r2Region: process.env.R2_REGION || 'auto',
 }
 
 const dryRun = args.has('--dry-run')
@@ -556,11 +558,14 @@ async function deleteR2S3Objects(bucket, keys) {
 async function r2S3Request({method, bucket, key = '', query = {}, headers = {}, body = ''}) {
     const endpoint = r2S3Endpoint()
     const url = new URL(`${endpoint}/${encodeS3Path(bucket)}${key ? `/${encodeS3Path(key)}` : ''}`)
+    const queryEntries = []
     for (const [name, value] of Object.entries(query)) {
-        url.searchParams.set(name, value)
+        if (value === undefined) continue
+        queryEntries.push([name, String(value)])
     }
+    url.search = canonicalQueryString(queryEntries)
 
-    const signedHeaders = signR2S3Request({method, url, headers, body})
+    const signedHeaders = signR2S3Request({method, url, queryEntries, headers, body})
     const response = await fetch(url, {
         method,
         headers: signedHeaders,
@@ -575,7 +580,7 @@ async function r2S3Request({method, bucket, key = '', query = {}, headers = {}, 
     return response
 }
 
-function signR2S3Request({method, url, headers, body}) {
+function signR2S3Request({method, url, queryEntries, headers, body}) {
     const now = new Date()
     const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '')
     const dateStamp = amzDate.slice(0, 8)
@@ -592,7 +597,7 @@ function signR2S3Request({method, url, headers, body}) {
     const canonicalRequest = [
         method,
         url.pathname,
-        canonicalQueryString(url.searchParams),
+        canonicalQueryString(queryEntries),
         canonicalHeaders.map(([name, value]) => `${name}:${value}\n`).join(''),
         signedHeaderNames,
         payloadHash,
@@ -616,8 +621,8 @@ function signR2S3Request({method, url, headers, body}) {
     return requestHeaders
 }
 
-function canonicalQueryString(searchParams) {
-    return [...searchParams.entries()]
+function canonicalQueryString(entries) {
+    return entries
         .sort(([leftName, leftValue], [rightName, rightValue]) => (
             leftName === rightName ? leftValue.localeCompare(rightValue) : leftName.localeCompare(rightName)
         ))
