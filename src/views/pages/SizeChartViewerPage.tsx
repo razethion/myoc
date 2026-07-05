@@ -15,6 +15,7 @@ function SizeChartViewerScript() {
 const INCHES_PER_METER = 39.37007874015748;
 const LABEL_GUTTER = 70;
 const CHART_PAD = 18;
+const MODEL_TOP_PADDING = 25;
 const MIN_DRAWABLE_WIDTH = 140;
 const MAX_LAYER = 99;
 const ALPHA_HIT_THRESHOLD = 24;
@@ -212,7 +213,8 @@ function ensureAlphaMask(character) {
         status: 'loading',
         width: 0,
         height: 0,
-        alpha: null
+        alpha: null,
+        opaqueBounds: null
     };
     alphaMasks.set(character.id, mask);
 
@@ -236,16 +238,46 @@ function ensureAlphaMask(character) {
             mask.width = width;
             mask.height = height;
             mask.alpha = alpha;
+            mask.opaqueBounds = findOpaqueBounds(alpha, width, height);
+            requestChartRender();
         } catch (error) {
             mask.status = 'failed';
             mask.error = error;
+            requestChartRender();
         }
     };
     image.onerror = () => {
         mask.status = 'failed';
+        requestChartRender();
     };
     image.src = character.image.url;
     return mask;
+}
+
+function findOpaqueBounds(alpha, width, height) {
+    let top = height;
+    let left = width;
+    let right = -1;
+    let bottom = -1;
+    for (let index = 0; index < alpha.length; index += 1) {
+        if (alpha[index] <= ALPHA_HIT_THRESHOLD) continue;
+        const y = Math.floor(index / width);
+        const x = index - y * width;
+        top = Math.min(top, y);
+        left = Math.min(left, x);
+        right = Math.max(right, x);
+        bottom = Math.max(bottom, y);
+    }
+    if (right < 0 || bottom < 0) {
+        return null;
+    }
+    return { top, left, right, bottom };
+}
+
+function requestChartRender() {
+    window.requestAnimationFrame(() => {
+        renderChart();
+    });
 }
 
 function isOpaqueImagePixel(item, imageX, imageY) {
@@ -283,6 +315,28 @@ function chartHitTest(clientX, clientY) {
 function roundChartMaxMeters(maxMeters) {
     const maxFeet = maxMeters * INCHES_PER_METER / 12;
     return Math.max(60 / INCHES_PER_METER, Math.ceil(maxFeet) * 12 / INCHES_PER_METER);
+}
+
+function opaqueTopPixel(character) {
+    const mask = ensureAlphaMask(character);
+    if (mask.status === 'ready' && mask.opaqueBounds && mask.height > 0) {
+        return (mask.opaqueBounds.top / mask.height) * character.image.naturalHeight;
+    }
+    if (mask.status === 'failed') {
+        return 0;
+    }
+    return (character.calibration.headYPercent / 100) * character.image.naturalHeight;
+}
+
+function effectiveOpaqueTopMeters(character) {
+    const footPixel = (character.calibration.footYPercent / 100) * character.image.naturalHeight;
+    const topPixel = Math.min(opaqueTopPixel(character), footPixel);
+    return Math.max(character.heightMeters, (footPixel - topPixel) * character.heightMeters / measuredPixels(character));
+}
+
+function chartMaxForTopPadding(topMeters, plotHeight, chartHeight) {
+    const availableHeight = Math.max(1, chartHeight - CHART_PAD - MODEL_TOP_PADDING);
+    return (topMeters * plotHeight) / availableHeight;
 }
 
 function loadExportImage(character) {
@@ -516,7 +570,8 @@ function renderRoster() {
 }
 
 function chartLayout() {
-    const plotHeight = Math.max(120, (els.chartPlot.clientHeight || 640) - CHART_PAD * 2);
+    const chartHeight = Math.max(120 + CHART_PAD * 2, els.chartPlot.clientHeight || 640);
+    const plotHeight = Math.max(120, chartHeight - CHART_PAD * 2);
     const contentWidth = Math.max(1, els.chartPlot.clientWidth || 900);
     const drawableLeft = LABEL_GUTTER;
     const drawableRight = Math.max(drawableLeft + MIN_DRAWABLE_WIDTH, contentWidth - CHART_PAD);
@@ -526,7 +581,10 @@ function chartLayout() {
         const widthMeters = (character.image.naturalWidth * character.heightMeters) / measuredPixels(character);
         return Math.max(requiredMax, (plotHeight * widthMeters) / usableWidth);
     }, 0);
-    const chartMax = roundChartMaxMeters(Math.max(60 / INCHES_PER_METER, widthRequiredMax, ...state.characters.map((character) => character.heightMeters)));
+    const topRequiredMax = state.characters.reduce((requiredMax, character) => (
+        Math.max(requiredMax, chartMaxForTopPadding(effectiveOpaqueTopMeters(character), plotHeight, chartHeight))
+    ), 0);
+    const chartMax = roundChartMaxMeters(Math.max(60 / INCHES_PER_METER, widthRequiredMax, topRequiredMax, ...state.characters.map((character) => character.heightMeters)));
     const pxPerMeter = plotHeight / chartMax;
     const items = state.characters.map((character) => {
         const scale = (character.heightMeters * pxPerMeter) / measuredPixels(character);

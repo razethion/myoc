@@ -59,6 +59,8 @@ const INCHES_PER_METER = 39.37007874015748;
 const VIRTUAL_FOOT_MAX_PCT = 180;
 const VIRTUAL_FOOT_START_PCT = 118;
 const CHART_FRAME_PAD = 18;
+const MODEL_TOP_PADDING = 25;
+const ALPHA_OPAQUE_THRESHOLD = 24;
 
 const initialChart = character.heightChart || null;
 const state = {
@@ -70,6 +72,13 @@ const state = {
     previewSrc: initialChart && initialChart.image ? initialChart.image.url : '',
     pendingFile: null,
     objectUrl: ''
+};
+const alphaBounds = {
+    src: '',
+    status: 'idle',
+    width: 0,
+    height: 0,
+    bounds: null
 };
 
 const els = {
@@ -153,6 +162,88 @@ function gridLines(maxMeters) {
     return lines;
 }
 
+function findOpaqueBounds(alpha, width, height) {
+    let top = height;
+    let left = width;
+    let right = -1;
+    let bottom = -1;
+    for (let index = 0; index < alpha.length; index += 1) {
+        if (alpha[index] <= ALPHA_OPAQUE_THRESHOLD) continue;
+        const y = Math.floor(index / width);
+        const x = index - y * width;
+        top = Math.min(top, y);
+        left = Math.min(left, x);
+        right = Math.max(right, x);
+        bottom = Math.max(bottom, y);
+    }
+    if (right < 0 || bottom < 0) {
+        return null;
+    }
+    return { top, left, right, bottom };
+}
+
+function requestChartRender() {
+    window.requestAnimationFrame(() => {
+        renderChart();
+    });
+}
+
+function markAlphaBoundsFailed(error) {
+    alphaBounds.status = 'failed';
+    if (error) {
+        alphaBounds.error = error;
+    }
+    requestChartRender();
+}
+
+function ensureImageAlphaBounds() {
+    if (!state.image || !state.previewSrc) return null;
+    if (alphaBounds.src === state.previewSrc && alphaBounds.status !== 'idle') return alphaBounds;
+
+    const src = state.previewSrc;
+    alphaBounds.src = src;
+    alphaBounds.status = 'loading';
+    alphaBounds.width = 0;
+    alphaBounds.height = 0;
+    alphaBounds.bounds = null;
+
+    const image = new Image();
+    image.onload = () => {
+        if (alphaBounds.src !== src || state.previewSrc !== src || !state.image) return;
+        const width = image.naturalWidth || state.image.naturalWidth || 1;
+        const height = image.naturalHeight || state.image.naturalHeight || 1;
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        if (!context) {
+            markAlphaBoundsFailed();
+            return;
+        }
+        canvas.width = width;
+        canvas.height = height;
+        try {
+            context.drawImage(image, 0, 0, width, height);
+            const rgba = context.getImageData(0, 0, width, height).data;
+            const alpha = new Uint8Array(width * height);
+            for (let sourceIndex = 3, targetIndex = 0; sourceIndex < rgba.length; sourceIndex += 4, targetIndex += 1) {
+                alpha[targetIndex] = rgba[sourceIndex];
+            }
+            alphaBounds.status = 'ready';
+            alphaBounds.width = width;
+            alphaBounds.height = height;
+            alphaBounds.bounds = findOpaqueBounds(alpha, width, height);
+            requestChartRender();
+        } catch (error) {
+            markAlphaBoundsFailed(error);
+        }
+    };
+    image.onerror = () => {
+        if (alphaBounds.src !== src || state.previewSrc !== src) return;
+        markAlphaBoundsFailed();
+    };
+    image.src = src;
+    return alphaBounds;
+}
+
 function calibrationSpace() {
     return state.croppedFeet ? VIRTUAL_FOOT_MAX_PCT : 100;
 }
@@ -193,10 +284,39 @@ function setCalibration(marker, valuePct) {
     }
 }
 
-function maxMeters() {
-    if (!state.image) return 2;
-    const maxFeet = state.heightMeters * INCHES_PER_METER / 12;
+function roundChartMaxMeters(maxMeters) {
+    const maxFeet = maxMeters * INCHES_PER_METER / 12;
     return Math.max(2, Math.ceil(maxFeet) * 12 / INCHES_PER_METER);
+}
+
+function opaqueTopPixel() {
+    if (!state.image) return 0;
+    const bounds = ensureImageAlphaBounds();
+    if (bounds && bounds.status === 'ready' && bounds.bounds && bounds.height > 0) {
+        return (bounds.bounds.top / bounds.height) * state.image.naturalHeight;
+    }
+    if (bounds && bounds.status === 'failed') {
+        return 0;
+    }
+    return (state.topPct / 100) * state.image.naturalHeight;
+}
+
+function effectiveOpaqueTopMeters() {
+    if (!state.image) return state.heightMeters;
+    const footPixel = (state.bottomPct / 100) * state.image.naturalHeight;
+    const topPixel = Math.min(opaqueTopPixel(), footPixel);
+    return Math.max(state.heightMeters, (footPixel - topPixel) * state.heightMeters / measuredPixels());
+}
+
+function chartMaxForTopPadding(topMeters, plotHeight, chartHeight) {
+    const availableHeight = Math.max(1, chartHeight - CHART_FRAME_PAD - MODEL_TOP_PADDING);
+    return (topMeters * plotHeight) / availableHeight;
+}
+
+function maxMeters(plotHeight, chartHeight) {
+    if (!state.image) return 2;
+    const topRequiredMax = chartMaxForTopPadding(effectiveOpaqueTopMeters(), plotHeight, chartHeight);
+    return roundChartMaxMeters(Math.max(state.heightMeters, topRequiredMax));
 }
 
 function renderChart() {
@@ -211,8 +331,9 @@ function renderChart() {
 
     if (els.calibrationPanel) els.calibrationPanel.classList.remove('hidden');
 
-    const plotHeight = Math.max(120, (els.chartPlot.clientHeight || 620) - CHART_FRAME_PAD * 2);
-    const chartMax = maxMeters();
+    const chartHeight = Math.max(120 + CHART_FRAME_PAD * 2, els.chartPlot.clientHeight || 620);
+    const plotHeight = Math.max(120, chartHeight - CHART_FRAME_PAD * 2);
+    const chartMax = maxMeters(plotHeight, chartHeight);
     const pxPerMeter = plotHeight / chartMax;
     const scale = (state.heightMeters * pxPerMeter) / measuredPixels();
     const imageWidth = Math.max(24, state.image.naturalWidth * scale);
