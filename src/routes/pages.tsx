@@ -27,6 +27,7 @@ import {
 import {
     CharacterManagementPage,
     type CharacterManagementCharacter,
+    type CharacterFolderPlacement,
     type CharacterManagementFolder,
 } from '../views/pages/CharacterManagementPage'
 import {
@@ -75,6 +76,24 @@ const HOME_PAGE_DISCOVER_CACHE_KEY = 'home:discover:v2'
 const HOME_PAGE_GALLERY_CACHE_KEY = 'home:gallery:v1'
 const HOME_PAGE_CACHE_TTL_SECONDS = 600
 const HOME_PAGE_GALLERY_CACHE_TTL_SECONDS = 60 * 60 * 24
+const HOME_PAGE_HEIGHT_CHART_TARGETS = [
+    {
+        name: 'ivo',
+        image: {
+            naturalHeight: 720,
+            naturalWidth: 357,
+            url: '/assets/home-height-ivo.webp',
+        },
+    },
+    {
+        name: 'luxor',
+        image: {
+            naturalHeight: 720,
+            naturalWidth: 387,
+            url: '/assets/home-height-luxor.webp',
+        },
+    },
+] as const
 const D1_SAFE_VARIABLES_PER_QUERY = 90
 
 function getRandomLetter(): string {
@@ -88,7 +107,7 @@ pageRoutes.get('/', async (c) => {
         getCachedHomePageStats(c.env.CACHE, c.env.DB),
         getCachedHomePageDiscoverCharacters(c.env.CACHE, c.env.DB),
         getCachedHomePageGalleryImages(c.env.CACHE, c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL),
-        getHomePageHeightChartCharacters(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL),
+        getHomePageHeightChartCharacters(c.env.DB),
     ])
 
     return c.html(
@@ -357,9 +376,11 @@ pageRoutes.get('/characters', async (c) => {
         return c.redirect('/login')
     }
 
-    const [folders, characters] = await Promise.all([
+    const [folders, characters, placements, uploadedImageCount] = await Promise.all([
         getCharacterFolders(c.env.DB, currentUser.id),
         getCharacters(c.env.DB, currentUser.id),
+        getCharacterFolderPlacements(c.env.DB, currentUser.id),
+        getUploadedImageCount(c.env.DB, currentUser.id),
     ])
 
     return c.html(
@@ -368,6 +389,8 @@ pageRoutes.get('/characters', async (c) => {
             currentUser={currentUser}
             folders={folders}
             mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+            placements={placements}
+            uploadedImageCount={uploadedImageCount}
         />,
     )
 })
@@ -1614,10 +1637,7 @@ type HomePageHeightChartJson = {
     }
 }
 
-async function getHomePageHeightChartCharacters(
-    db: D1Database,
-    mediaBaseUrl: string,
-): Promise<HomePageHeightChartCharacter[]> {
+async function getHomePageHeightChartCharacters(db: D1Database): Promise<HomePageHeightChartCharacter[]> {
     const result = await db.prepare(
         `SELECT characters.id,
                 characters.name,
@@ -1642,11 +1662,11 @@ async function getHomePageHeightChartCharacters(
     const selected: HomePageHeightChartCharacter[] = []
     const selectedIds = new Set<string>()
 
-    for (const targetName of ['ivo', 'luxor']) {
+    for (const target of HOME_PAGE_HEIGHT_CHART_TARGETS) {
         const candidate = rows
             .map((row) => ({
                 row,
-                score: targetNameScore(row.name, targetName),
+                score: targetNameScore(row.name, target.name),
                 chart: parseHomePageHeightChartJson(row.height_chart_json),
             }))
             .filter((item): item is typeof item & {
@@ -1666,17 +1686,7 @@ async function getHomePageHeightChartCharacters(
             name: candidate.row.name,
             ownerUsername: candidate.row.username,
             heightMeters: candidate.chart.height.meters,
-            image: {
-                naturalHeight: candidate.chart.image.naturalHeight,
-                naturalWidth: candidate.chart.image.naturalWidth,
-                url: characterHeightChartImageUrl(
-                    mediaBaseUrl,
-                    candidate.row.user_id,
-                    candidate.row.id,
-                    candidate.chart.image.key,
-                    candidate.chart.image.contentType,
-                ),
-            },
+            image: target.image,
             calibration: candidate.chart.calibration,
         })
     }
@@ -2001,10 +2011,11 @@ async function renderProfilePage(c: PageRouteContext, username: string, rawPath 
         return c.redirect(`${canonicalPath}${requestUrl.search}`, 301)
     }
 
-    const [socialLinks, folders, characters, homeStats] = await Promise.all([
+    const [socialLinks, folders, characters, placements, homeStats] = await Promise.all([
         getUserSocialLinks(c.env.DB, profileUser.id),
         getCharacterFolders(c.env.DB, profileUser.id),
         getCharacters(c.env.DB, profileUser.id),
+        getCharacterFolderPlacements(c.env.DB, profileUser.id),
         getCachedHomePageStats(c.env.CACHE, c.env.DB),
     ])
     const folderPath = pathSegments.length > 0 ? findFolderPath(folders, pathSegments) : []
@@ -2024,6 +2035,7 @@ async function renderProfilePage(c: PageRouteContext, username: string, rawPath 
             folders={folders}
             mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
             metaDescriptionFallback={homePageDescription(homeStats)}
+            placements={placements}
             profileUser={profileUser}
             siteUrl={new URL(c.req.url).origin}
             socialLinks={socialLinks}
@@ -2201,7 +2213,7 @@ async function getCharacters(
         `SELECT id, name, profile_image_key, folder_id, sort_order
          FROM characters
          WHERE user_id = ?
-         ORDER BY folder_id, sort_order, name`,
+         ORDER BY sort_order, name`,
     )
         .bind(userId)
         .all<{
@@ -2220,6 +2232,53 @@ async function getCharacters(
         folderId: character.folder_id,
         sortOrder: character.sort_order,
     }))
+}
+
+async function getCharacterFolderPlacements(
+    db: D1Database,
+    userId: string,
+): Promise<CharacterFolderPlacement[]> {
+    const result = await db.prepare(
+        `SELECT placement.folder_id,
+                placement.character_id,
+                placement.sort_order
+         FROM character_folder_placements placement
+                  INNER JOIN character_folders folder
+                             ON folder.id = placement.folder_id
+                                 AND folder.user_id = placement.user_id
+                  INNER JOIN characters character
+                             ON character.id = placement.character_id
+                                 AND character.user_id = placement.user_id
+         WHERE placement.user_id = ?
+         ORDER BY placement.folder_id, placement.sort_order, character.name`,
+    )
+        .bind(userId)
+        .all<{
+            folder_id: string
+            character_id: string
+            sort_order: number
+        }>()
+
+    return (result.results ?? []).map((placement) => ({
+        folderId: placement.folder_id,
+        characterId: placement.character_id,
+        sortOrder: placement.sort_order,
+    }))
+}
+
+async function getUploadedImageCount(db: D1Database, userId: string): Promise<number> {
+    const row = await db.prepare(
+        `SELECT COALESCE(SUM(
+                                 CASE WHEN sfw_image_key IS NOT NULL THEN 1 ELSE 0 END +
+                                 CASE WHEN nsfw_image_key IS NOT NULL THEN 1 ELSE 0 END
+                         ), 0) AS uploaded_image_count
+         FROM character_media
+         WHERE user_id = ?`,
+    )
+        .bind(userId)
+        .first<{ uploaded_image_count: number | null }>()
+
+    return Number(row?.uploaded_image_count ?? 0)
 }
 
 async function getCharacterSettingsCharacter(

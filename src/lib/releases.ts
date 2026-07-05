@@ -9,6 +9,18 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
     {
+        version: '2026.07.05.01',
+        releasedOn: 'July 5, 2026',
+        title: 'Character Studio Improvements',
+        summary: 'Made it easier than ever to manage characters.',
+        changes: [
+            'Cleaned up the character studio page with a fresh new layout.',
+            'Added the ability to order how characters display on your profile.',
+            'Improved character-to-folder assignments.',
+            'Fixed bugs.',
+        ],
+    },
+    {
         version: '2026.07.02.01',
         releasedOn: 'July 2, 2026',
         title: 'Improved gallery editor',

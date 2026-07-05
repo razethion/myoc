@@ -23,6 +23,7 @@ function createProfilePageDb(options: {
     socialLinks?: unknown[]
     folders?: unknown[]
     characters?: unknown[]
+    placements?: unknown[]
     characterSettings?: unknown
     characterMedia?: unknown[]
     galleryTabs?: unknown[]
@@ -34,6 +35,7 @@ function createProfilePageDb(options: {
     userCount?: number
     characterCount?: number
     mediaCount?: number
+    uploadedImageCount?: number
     discoverCharacters?: unknown[]
     homeGalleryImages?: unknown[]
     homeHeightChartCharacters?: unknown[]
@@ -53,6 +55,10 @@ function createProfilePageDb(options: {
 
         if (sql.includes('COUNT(*) AS count') && sql.includes('FROM character_media')) {
             return {count: options.mediaCount ?? 0}
+        }
+
+        if (sql.includes('uploaded_image_count') && sql.includes('FROM character_media')) {
+            return {uploaded_image_count: options.uploadedImageCount ?? options.mediaCount ?? 0}
         }
 
         if (sql.includes('COUNT(*) AS count') && sql.includes('FROM users')) {
@@ -128,6 +134,10 @@ function createProfilePageDb(options: {
 
         if (sql.includes('FROM user_social_links')) {
             return {results: options.socialLinks ?? []}
+        }
+
+        if (sql.includes('FROM character_folder_placements')) {
+            return {results: options.placements ?? []}
         }
 
         if (sql.includes('FROM character_folders')) {
@@ -488,8 +498,8 @@ describe('public page redirects', () => {
         expect(html).toContain('How do you stack up?')
         expect(html).toContain('data-home-chart-x-pct="33"')
         expect(html).toContain('data-home-chart-x-pct="67"')
-        expect(html).toContain('https://m.myoc.art/characters/user-razeth/character-ivo/height-chart/ivo-chart-key.png')
-        expect(html).toContain('https://m.myoc.art/characters/user-razeth/character-luxor/height-chart/luxor-chart-key.webp')
+        expect(html).toContain('/assets/home-height-ivo.webp')
+        expect(html).toContain('/assets/home-height-luxor.webp')
         expect(html).toContain('home-size-chart-grid-line')
         expect(html).toContain('home-size-chart-plot.is-visible .home-size-chart-character.is-positioned')
         expect(html).toContain('transition: opacity 480ms ease, transform 680ms cubic-bezier')
@@ -1632,6 +1642,7 @@ describe('GET /characters', () => {
     it('renders a valid character name pattern for creating characters', async () => {
         const response = await getAppPath('/characters', createProfilePageDb({
             currentUser: createCurrentUserRecord('demo'),
+            uploadedImageCount: 12,
         }), {
             cookie: 'myoc_session=session-token',
         })
@@ -1639,6 +1650,8 @@ describe('GET /characters', () => {
 
         expect(response.status).toBe(200)
         expect(html).toContain('Character Management | MyOC')
+        expect(html).toContain('Images Uploaded')
+        expect(html).toContain('12 images')
         expectPatternAllowsReportedCharacterNames(html, 'new-character-name')
     })
 })
@@ -2405,6 +2418,13 @@ describe('GET /u/:username', () => {
                     sort_order: 0,
                 },
             ],
+            placements: [
+                {
+                    folder_id: 'folder-1',
+                    character_id: 'character-1',
+                    sort_order: 0,
+                },
+            ],
         })
 
         const response = await getProfile('demo', db)
@@ -2472,6 +2492,13 @@ describe('GET /u/:username', () => {
                     name: 'ROOT',
                     profile_image_key: 'root-character-image-key',
                     folder_id: null,
+                    sort_order: 0,
+                },
+            ],
+            placements: [
+                {
+                    folder_id: 'folder-1',
+                    character_id: 'character-1',
                     sort_order: 0,
                 },
             ],
