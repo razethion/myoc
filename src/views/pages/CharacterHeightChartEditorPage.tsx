@@ -18,6 +18,7 @@ export type CharacterHeightChartEditorData = {
         headYPercent: number
         footYPercent: number
         footIsVirtual: boolean
+        nameTagXPercent: number
     }
 }
 
@@ -69,6 +70,7 @@ const state = {
     topPct: initialChart ? initialChart.calibration.headYPercent : 5,
     bottomPct: initialChart ? initialChart.calibration.footYPercent : 95,
     croppedFeet: initialChart ? initialChart.calibration.footIsVirtual : false,
+    nameTagXPct: initialChart ? initialChart.calibration.nameTagXPercent : 50,
     previewSrc: initialChart && initialChart.image ? initialChart.image.url : '',
     pendingFile: null,
     objectUrl: ''
@@ -284,6 +286,10 @@ function setCalibration(marker, valuePct) {
     }
 }
 
+function setNameTagX(valuePct) {
+    state.nameTagXPct = clamp(valuePct, 0, 100);
+}
+
 function roundChartMaxMeters(maxMeters) {
     const maxFeet = maxMeters * INCHES_PER_METER / 12;
     return Math.max(2, Math.ceil(maxFeet) * 12 / INCHES_PER_METER);
@@ -375,10 +381,15 @@ function renderCalibration() {
         '<img alt="' + escapeHtml(character.name) + ' calibration" class="height-chart-calibration-image" src="' + escapeHtml(state.previewSrc) + '" style="display:block;height:' + imageHeight + '%;left:' + (state.croppedFeet ? 38 : 50) + '%;max-width:' + (state.croppedFeet ? 58 : 100) + '%;object-fit:contain;position:absolute;top:0;transform:translateX(-50%);width:auto;z-index:1">',
         '<div class="height-chart-cal-line" data-marker="top" style="top:' + top + '%"><span>Head</span><b aria-hidden="true"></b></div>',
         '<div class="height-chart-cal-line" data-marker="bottom" style="top:' + bottom + '%"><span>' + footLabel + '</span><b aria-hidden="true"></b></div>',
+        '<div class="height-chart-name-tag-line" data-marker="nametag"><span>Nametag</span><b aria-hidden="true"></b></div>',
         '</div>'
     ].join('');
 
     updateCalibrationUi();
+    const image = els.calibrationFrame.querySelector('.height-chart-calibration-image');
+    if (image && !image.complete) {
+        image.addEventListener('load', updateCalibrationUi, { once: true });
+    }
 }
 
 function updateCalibrationUi() {
@@ -394,6 +405,7 @@ function updateCalibrationUi() {
     const image = els.calibrationFrame.querySelector('.height-chart-calibration-image');
     const topLine = els.calibrationFrame.querySelector('[data-marker="top"]');
     const bottomLine = els.calibrationFrame.querySelector('[data-marker="bottom"]');
+    const nameTagLine = els.calibrationFrame.querySelector('[data-marker="nametag"]');
 
     els.calibrationFrame.classList.toggle('is-cropped', state.croppedFeet);
     if (stage) {
@@ -416,13 +428,31 @@ function updateCalibrationUi() {
         const label = bottomLine.querySelector('span');
         if (label) label.textContent = footLabel;
     }
+    if (nameTagLine) {
+        const frameRect = els.calibrationFrame.getBoundingClientRect();
+        const imageRect = image ? image.getBoundingClientRect() : null;
+        const visibleTop = imageRect && imageRect.height > 0
+            ? clamp(imageRect.top - frameRect.top, 0, frameRect.height)
+            : 0;
+        const visibleBottom = imageRect && imageRect.height > 0
+            ? clamp(imageRect.bottom - frameRect.top, 0, frameRect.height)
+            : frameRect.height;
+        const left = imageRect && imageRect.width > 0
+            ? imageRect.left - frameRect.left + (state.nameTagXPct / 100) * imageRect.width
+            : (state.nameTagXPct / 100) * frameRect.width;
+        nameTagLine.style.left = clamp(left, 0, frameRect.width) + 'px';
+        nameTagLine.style.top = visibleTop + 'px';
+        nameTagLine.style.height = Math.max(0, visibleBottom - visibleTop) + 'px';
+    }
     document.getElementById('head-marker-value').textContent = Math.round(state.topPct) + '%';
     document.getElementById('foot-marker-label').textContent = footLabel;
     document.getElementById('foot-marker-value').textContent = Math.round(state.bottomPct) + '%';
+    document.getElementById('nametag-marker-value').textContent = Math.round(state.nameTagXPct) + '%';
     document.getElementById('head-marker').value = String(state.topPct);
     const footRange = document.getElementById('foot-marker');
     footRange.max = String(state.croppedFeet ? VIRTUAL_FOOT_MAX_PCT : 100);
     footRange.value = String(state.bottomPct);
+    document.getElementById('nametag-marker').value = String(state.nameTagXPct);
 }
 
 function renderAll() {
@@ -457,6 +487,7 @@ async function loadImageFile(file) {
     };
     state.topPct = 5;
     state.bottomPct = state.croppedFeet ? VIRTUAL_FOOT_START_PCT : 95;
+    state.nameTagXPct = 50;
 }
 
 async function apiSave() {
@@ -471,7 +502,8 @@ async function apiSave() {
         calibration: {
             headYPercent: state.topPct,
             footYPercent: state.bottomPct,
-            footIsVirtual: state.croppedFeet
+            footIsVirtual: state.croppedFeet,
+            nameTagXPercent: state.nameTagXPct
         }
     };
     const form = new FormData();
@@ -552,6 +584,9 @@ document.addEventListener('input', (event) => {
         setCalibration(event.target.dataset.heightMarker, Number(event.target.value));
         renderChart();
         updateCalibrationUi();
+    } else if (event.target.matches('[data-nametag-marker]')) {
+        setNameTagX(Number(event.target.value));
+        updateCalibrationUi();
     }
 });
 
@@ -575,10 +610,17 @@ document.addEventListener('pointerdown', (event) => {
 
     event.preventDefault();
     const moveMarker = (moveEvent) => {
-        const rect = frame.getBoundingClientRect();
-        const pct = ((moveEvent.clientY - rect.top) / Math.max(1, rect.height)) * calibrationSpace();
-        setCalibration(marker.dataset.marker, pct);
-        renderChart();
+        if (marker.dataset.marker === 'nametag') {
+            const image = frame.querySelector('.height-chart-calibration-image');
+            const rect = image ? image.getBoundingClientRect() : frame.getBoundingClientRect();
+            const pct = ((moveEvent.clientX - rect.left) / Math.max(1, rect.width)) * 100;
+            setNameTagX(pct);
+        } else {
+            const rect = frame.getBoundingClientRect();
+            const pct = ((moveEvent.clientY - rect.top) / Math.max(1, rect.height)) * calibrationSpace();
+            setCalibration(marker.dataset.marker, pct);
+            renderChart();
+        }
         updateCalibrationUi();
     };
 
@@ -619,7 +661,10 @@ els.saveButton.addEventListener('click', async () => {
     }
 });
 
-window.addEventListener('resize', renderChart);
+window.addEventListener('resize', () => {
+    renderChart();
+    updateCalibrationUi();
+});
 renderAll();
 `,
         }}/>
@@ -659,6 +704,10 @@ export function CharacterHeightChartEditorPage({
                     .height-chart-cal-line::before { background: currentColor; border: 2px solid #000; border-radius: 999px; box-shadow: 0 0 0 2px rgb(255 255 255 / 0.8); content: ""; height: 1.1rem; left: 50%; position: absolute; top: -0.55rem; transform: translateX(-50%); width: 1.1rem; }
                     .height-chart-cal-line b { background: rgb(0 0 0 / 0.001); cursor: ns-resize; display: block; height: 3.25rem; left: 0; position: absolute; right: 0; top: -1.625rem; }
                     .height-chart-cal-line span { background: rgb(0 0 0 / 0.82); color: white; font-size: 0.72rem; font-weight: 900; left: 0.5rem; padding: 0.12rem 0.35rem; position: absolute; text-transform: uppercase; top: -1.55rem; }
+                    .height-chart-name-tag-line { border-left: 2px solid var(--color-secondary); color: var(--color-secondary); cursor: ew-resize; position: absolute; touch-action: none; width: 0; z-index: 3; }
+                    .height-chart-name-tag-line::before { background: currentColor; border: 2px solid #000; border-radius: 999px; box-shadow: 0 0 0 2px rgb(255 255 255 / 0.8); content: ""; height: 1.1rem; left: -0.55rem; position: absolute; top: 50%; transform: translateY(-50%); width: 1.1rem; }
+                    .height-chart-name-tag-line b { background: rgb(0 0 0 / 0.001); bottom: 0; cursor: ew-resize; display: block; left: -1.625rem; position: absolute; top: 0; width: 3.25rem; }
+                    .height-chart-name-tag-line span { background: rgb(0 0 0 / 0.82); color: white; font-size: 0.72rem; font-weight: 900; left: 0.35rem; padding: 0.12rem 0.35rem; position: absolute; text-transform: uppercase; top: 0.5rem; }
                     @media (max-width: 900px) { .height-chart-shell { grid-template-columns: 1fr; } }
                 `}</style>
                 <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -741,6 +790,13 @@ export function CharacterHeightChartEditorPage({
                                             id="foot-marker-value"></output></span>
                                         <input class="range range-error range-sm" data-height-marker="bottom"
                                                id="foot-marker" max="100" min="0" step="0.1" type="range"/>
+                                    </label>
+                                    <label class="grid gap-1">
+                                        <span
+                                            class="flex justify-between text-xs font-black uppercase tracking-wide text-base-content/60"><span>Nametag</span><output
+                                            id="nametag-marker-value"></output></span>
+                                        <input class="range range-secondary range-sm" data-nametag-marker
+                                               id="nametag-marker" max="100" min="0" step="0.1" type="range"/>
                                     </label>
                                 </div>
                             </section>

@@ -156,6 +156,7 @@ type CharacterHeightChartJson = {
         headYPercent: number
         footYPercent: number
         footIsVirtual: boolean
+        nameTagXPercent: number
     }
 }
 
@@ -3103,8 +3104,9 @@ function parseCharacterHeightChartJson(value: string | null | undefined): Charac
         const meters = Number(parsed.height.meters)
         const headYPercent = Number(parsed.calibration.headYPercent)
         const footYPercent = Number(parsed.calibration.footYPercent)
+        const nameTagXPercent = Number(parsed.calibration.nameTagXPercent ?? 50)
 
-        if (!Number.isFinite(meters) || !Number.isFinite(headYPercent) || !Number.isFinite(footYPercent)) {
+        if (!Number.isFinite(meters) || !Number.isFinite(headYPercent) || !Number.isFinite(footYPercent) || !Number.isFinite(nameTagXPercent)) {
             return null
         }
 
@@ -3125,6 +3127,7 @@ function parseCharacterHeightChartJson(value: string | null | undefined): Charac
                 headYPercent,
                 footYPercent,
                 footIsVirtual: Boolean(parsed.calibration.footIsVirtual),
+                nameTagXPercent,
             },
         }
     } catch {
@@ -3163,6 +3166,7 @@ function normalizeHeightChartJson(
     const maxFootPercent = footIsVirtual ? HEIGHT_CHART_MAX_FOOT_PERCENT : 100
     const headYPercent = Number(body.calibration.headYPercent)
     const footYPercent = Number(body.calibration.footYPercent)
+    const nameTagXPercent = Number(body.calibration.nameTagXPercent ?? 50)
 
     if (!Number.isFinite(headYPercent) || headYPercent < 0 || headYPercent > 100) {
         return {error: 'Head marker must be between 0 and 100 percent'}
@@ -3174,6 +3178,10 @@ function normalizeHeightChartJson(
 
     if (footYPercent - headYPercent < 2) {
         return {error: 'Foot marker must be below the head marker'}
+    }
+
+    if (!Number.isFinite(nameTagXPercent) || nameTagXPercent < 0 || nameTagXPercent > 100) {
+        return {error: 'Nametag marker must be between 0 and 100 percent'}
     }
 
     let image: CharacterHeightChartJson['image'] = null
@@ -3200,6 +3208,7 @@ function normalizeHeightChartJson(
                 headYPercent: Number(headYPercent.toFixed(2)),
                 footYPercent: Number(footYPercent.toFixed(2)),
                 footIsVirtual,
+                nameTagXPercent: Number(nameTagXPercent.toFixed(2)),
             },
         },
     }

@@ -14,13 +14,19 @@ function SizeChartViewerScript() {
             __html: `
 const INCHES_PER_METER = 39.37007874015748;
 const LABEL_GUTTER = 70;
+const LABEL_GAP = 8;
+const LABEL_CONNECTOR_HEIGHT = 18;
+const LABEL_ROW_HEIGHT = 56;
 const CHART_PAD = 18;
 const MODEL_TOP_PADDING = 25;
+const EXPORT_SCALE = 2;
+const EXPORT_LABEL_HEIGHT = 34;
 const MIN_DRAWABLE_WIDTH = 140;
 const MAX_LAYER = 99;
 const ALPHA_HIT_THRESHOLD = 24;
 const alphaMasks = new Map();
 const exportImages = new Map();
+let labelMeasureContext = null;
 let currentChartLayout = null;
 const state = {
     query: '',
@@ -55,6 +61,23 @@ function formatHeight(meters) {
     return Math.floor(inches / 12) + ' ft ' + (inches % 12) + ' in';
 }
 
+function measureLabelText(text, font) {
+    if (!labelMeasureContext) {
+        labelMeasureContext = document.createElement('canvas').getContext('2d');
+    }
+    if (!labelMeasureContext) {
+        return String(text).length * 7;
+    }
+    labelMeasureContext.font = font;
+    return labelMeasureContext.measureText(String(text)).width;
+}
+
+function labelWidthFor(character) {
+    const nameWidth = measureLabelText(character.name, '800 13px Trebuchet MS, Verdana, sans-serif');
+    const heightWidth = measureLabelText(formatHeight(character.heightMeters), '800 12px Trebuchet MS, Verdana, sans-serif');
+    return Math.ceil(clamp(Math.max(nameWidth, heightWidth) + 24, 54, 132));
+}
+
 function characterXPct(character) {
     const xPct = Number(character.xPct);
     return clamp(Number.isFinite(xPct) ? xPct : 50, 0, 100);
@@ -63,6 +86,11 @@ function characterXPct(character) {
 function characterLayer(character) {
     const layer = Number(character.layer);
     return clamp(Number.isFinite(layer) ? Math.round(layer) : 1, 1, MAX_LAYER);
+}
+
+function nameTagXPct(character) {
+    const xPct = Number(character.calibration.nameTagXPercent);
+    return clamp(Number.isFinite(xPct) ? xPct : 50, 0, 100);
 }
 
 function selectedCharacter() {
@@ -339,6 +367,24 @@ function chartMaxForTopPadding(topMeters, plotHeight, chartHeight) {
     return (topMeters * plotHeight) / availableHeight;
 }
 
+function assignLabelRows(items) {
+    const rowRightEdges = [];
+    items
+        .map((item, index) => ({ item, index }))
+        .sort((a, b) => a.item.labelLeft - b.item.labelLeft || a.index - b.index)
+        .forEach(({ item }) => {
+            let row = rowRightEdges.findIndex((rightEdge) => item.labelLeft >= rightEdge + LABEL_GAP);
+            if (row === -1) {
+                row = rowRightEdges.length;
+                rowRightEdges.push(0);
+            }
+            item.labelRow = row;
+            item.labelTop = row * LABEL_ROW_HEIGHT + LABEL_CONNECTOR_HEIGHT;
+            rowRightEdges[row] = item.labelLeft + item.labelWidth;
+        });
+    return Math.max(1, rowRightEdges.length);
+}
+
 function loadExportImage(character) {
     const existing = exportImages.get(character.id);
     if (existing) return existing;
@@ -414,6 +460,56 @@ function drawExportVirtualFoot(context, item, height) {
     context.setLineDash([]);
 }
 
+function drawRoundedRect(context, x, y, width, height, radius) {
+    const safeRadius = Math.min(radius, width / 2, height / 2);
+    context.beginPath();
+    context.moveTo(x + safeRadius, y);
+    context.lineTo(x + width - safeRadius, y);
+    context.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
+    context.lineTo(x + width, y + height - safeRadius);
+    context.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height);
+    context.lineTo(x + safeRadius, y + height);
+    context.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
+    context.lineTo(x, y + safeRadius);
+    context.quadraticCurveTo(x, y, x + safeRadius, y);
+    context.closePath();
+}
+
+function drawExportLabels(context, layout, width, chartHeight) {
+    const labelHeight = layout.labelRows * LABEL_ROW_HEIGHT;
+    context.fillStyle = '#111';
+    context.fillRect(0, chartHeight, width, labelHeight);
+    layout.items
+        .map((item, index) => ({ item, index }))
+        .sort((a, b) => a.item.layer - b.item.layer || a.index - b.index)
+        .forEach(({ item }) => {
+            const anchorX = item.labelLeft + item.labelAnchorX;
+            const labelY = chartHeight + item.labelTop;
+            context.strokeStyle = 'rgba(255, 255, 255, 0.46)';
+            context.lineWidth = 1;
+            context.beginPath();
+            context.moveTo(anchorX + 0.5, chartHeight);
+            context.lineTo(anchorX + 0.5, labelY);
+            context.stroke();
+
+            drawRoundedRect(context, item.labelLeft, labelY, item.labelWidth, EXPORT_LABEL_HEIGHT, 4);
+            context.fillStyle = 'rgba(0, 0, 0, 0.68)';
+            context.fill();
+            context.strokeStyle = 'rgba(255, 255, 255, 0.26)';
+            context.stroke();
+
+            context.textAlign = 'center';
+            context.textBaseline = 'middle';
+            context.fillStyle = '#fff';
+            context.font = '800 13px Trebuchet MS, Verdana, sans-serif';
+            context.fillText(item.character.name, item.labelLeft + item.labelWidth / 2, labelY + 11, item.labelWidth - 12);
+            context.fillStyle = 'rgba(255, 255, 255, 0.62)';
+            context.font = '800 12px Trebuchet MS, Verdana, sans-serif';
+            context.fillText(formatHeight(item.character.heightMeters), item.labelLeft + item.labelWidth / 2, labelY + 24, item.labelWidth - 12);
+        });
+    context.textAlign = 'start';
+}
+
 function drawExportWatermark(context, width, height) {
     const label = 'myoc.art';
     context.font = '800 13px Trebuchet MS, Verdana, sans-serif';
@@ -454,8 +550,10 @@ async function exportSizeChartPng() {
     try {
         const layout = chartLayout();
         const width = Math.max(320, Math.round(els.chartPlot.clientWidth || 900));
-        const height = Math.max(320, Math.round(els.chartPlot.clientHeight || 640));
-        const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+        const chartHeight = Math.max(320, Math.round(els.chartPlot.clientHeight || 640));
+        const labelHeight = layout.labelRows * LABEL_ROW_HEIGHT;
+        const height = chartHeight + labelHeight;
+        const dpr = EXPORT_SCALE;
         const canvas = document.createElement('canvas');
         canvas.width = Math.round(width * dpr);
         canvas.height = Math.round(height * dpr);
@@ -464,16 +562,16 @@ async function exportSizeChartPng() {
         context.scale(dpr, dpr);
         context.imageSmoothingEnabled = true;
         context.imageSmoothingQuality = 'high';
-        drawExportBackground(context, width, height);
-        drawExportGrid(context, layout, width, height);
+        drawExportBackground(context, width, chartHeight);
+        drawExportGrid(context, layout, width, chartHeight);
         const orderedItems = layout.items
             .map((item, index) => ({ item, index }))
             .sort((a, b) => a.item.layer - b.item.layer || a.index - b.index)
             .map((entry) => entry.item);
         for (const item of orderedItems) {
             const image = await loadExportImage(item.character);
-            drawExportVirtualFoot(context, item, height);
-            const imageY = height - CHART_PAD - item.imageBottomOffset - item.imageHeight;
+            drawExportVirtualFoot(context, item, chartHeight);
+            const imageY = chartHeight - CHART_PAD - item.imageBottomOffset - item.imageHeight;
             if (item.character.flipped) {
                 context.save();
                 context.translate(item.left + item.imageWidth / 2, 0);
@@ -484,7 +582,8 @@ async function exportSizeChartPng() {
                 context.drawImage(image, item.left, imageY, item.imageWidth, item.imageHeight);
             }
         }
-        drawExportWatermark(context, width, height);
+        drawExportWatermark(context, width, chartHeight);
+        drawExportLabels(context, layout, width, chartHeight);
         downloadCanvasPng(canvas);
     } catch (error) {
         window.alert(error instanceof Error ? error.message : 'Could not export the chart.');
@@ -593,7 +692,10 @@ function chartLayout() {
         const imageBottomOffset = (((character.calibration.footYPercent / 100) * character.image.naturalHeight) - character.image.naturalHeight) * scale;
         const maxLeft = Math.max(drawableLeft, drawableRight - imageWidth);
         const left = drawableLeft + (characterXPct(character) / 100) * Math.max(0, maxLeft - drawableLeft);
-        const labelWidth = Math.min(132, Math.max(86, imageWidth));
+        const labelWidth = labelWidthFor(character);
+        const labelAnchorRatio = character.flipped ? 1 - nameTagXPct(character) / 100 : nameTagXPct(character) / 100;
+        const labelAnchor = left + imageWidth * labelAnchorRatio;
+        const labelLeft = clamp(labelAnchor - labelWidth / 2, drawableLeft, Math.max(drawableLeft, drawableRight - labelWidth));
         return {
             character,
             imageWidth,
@@ -601,12 +703,15 @@ function chartLayout() {
             imageBottomOffset,
             virtualFootGap: Math.max(0, imageBottomOffset),
             left,
-            labelLeft: clamp(left + imageWidth / 2 - labelWidth / 2, drawableLeft, Math.max(drawableLeft, drawableRight - labelWidth)),
+            labelAnchorX: clamp(labelAnchor - labelLeft, 0, labelWidth),
+            labelLeft,
+            labelTop: 0,
             labelWidth,
             layer: characterLayer(character),
         };
     });
-    return { items, chartMax, pxPerMeter };
+    const labelRows = assignLabelRows(items);
+    return { items, chartMax, labelRows, pxPerMeter };
 }
 
 function renderChart() {
@@ -614,6 +719,7 @@ function renderChart() {
     if (state.characters.length === 0) {
         currentChartLayout = null;
         els.chartPlot.innerHTML = '<div class="size-chart-empty">Add characters to build a size chart</div>';
+        els.chartLabels.style.height = '';
         els.chartLabels.innerHTML = '';
         if (els.chartStatus) els.chartStatus.textContent = '0 characters';
         if (els.exportButton) els.exportButton.disabled = true;
@@ -635,10 +741,13 @@ function renderChart() {
             '<img alt="' + escapeHtml(item.character.name) + '" src="' + escapeHtml(item.character.image.url) + '" style="width:' + item.imageWidth + 'px;height:' + item.imageHeight + 'px;bottom:' + item.imageBottomOffset + 'px;transform:' + (item.character.flipped ? 'scaleX(-1)' : 'none') + '">' +
             '</button>';
     }).join('');
-    const labelsHtml = layout.items.map((item) => (
-        '<button class="size-chart-label" data-select-character="' + escapeHtml(item.character.id) + '" style="left:' + item.labelLeft + 'px;width:' + item.labelWidth + 'px;z-index:' + item.layer + '" type="button"><strong>' + escapeHtml(item.character.name) + '</strong><span>' + escapeHtml(formatHeight(item.character.heightMeters)) + '</span></button>'
-    )).join('');
+    const labelsHtml = layout.items.map((item) => {
+        const anchorLeft = item.labelLeft + item.labelAnchorX;
+        return '<div aria-hidden="true" class="size-chart-label-connector" style="height:' + item.labelTop + 'px;left:' + anchorLeft + 'px;z-index:' + item.layer + '"></div>' +
+            '<div class="size-chart-label" data-select-character="' + escapeHtml(item.character.id) + '" role="button" style="left:' + item.labelLeft + 'px;top:' + item.labelTop + 'px;width:' + item.labelWidth + 'px;z-index:' + item.layer + '" tabindex="0"><strong>' + escapeHtml(item.character.name) + '</strong><span>' + escapeHtml(formatHeight(item.character.heightMeters)) + '</span></div>';
+    }).join('');
     els.chartPlot.innerHTML = gridHtml + characterHtml;
+    els.chartLabels.style.height = (layout.labelRows * LABEL_ROW_HEIGHT) + 'px';
     els.chartLabels.innerHTML = labelsHtml;
     if (els.chartStatus) els.chartStatus.textContent = state.characters.length + ' ' + (state.characters.length === 1 ? 'character' : 'characters');
     if (els.exportButton) els.exportButton.disabled = false;
@@ -801,6 +910,14 @@ document.addEventListener('click', (event) => {
     }
 });
 
+document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    const label = event.target.closest('.size-chart-label[data-select-character]');
+    if (!label) return;
+    event.preventDefault();
+    setSelected(label.dataset.selectCharacter);
+});
+
 if (els.exportButton) {
     els.exportButton.addEventListener('click', () => {
         void exportSizeChartPng();
@@ -885,11 +1002,13 @@ export function SizeChartViewerPage({currentUser, guestInitial, mediaBaseUrl}: S
                     .size-chart-character img { max-width: none; object-fit: contain; pointer-events: none; position: absolute; user-select: none; }
                     .size-chart-virtual-foot { background: linear-gradient(180deg, rgb(255 255 255 / 0.08), transparent); border-left: 1px dashed rgb(255 255 255 / 0.32); border-right: 1px dashed rgb(255 255 255 / 0.32); bottom: 0; left: 50%; opacity: 0.72; pointer-events: none; position: absolute; transform: translateX(-50%); width: min(2.4rem, 44%); }
                     .size-chart-empty { align-items: center; color: rgb(255 255 255 / 0.58); display: flex; font-size: 1.1rem; font-weight: 800; height: 100%; justify-content: center; padding: 1rem; text-align: center; text-transform: uppercase; }
-                    .size-chart-label-row { min-height: 4rem; position: relative; }
-                    .size-chart-label { appearance: none; background: transparent; border: 0; color: inherit; cursor: pointer; display: grid; gap: 0.2rem; justify-items: center; padding: 0.55rem 0.3rem; position: absolute; text-align: center; }
+                    .size-chart-label-row { min-height: 3.5rem; overflow: hidden; position: relative; }
+                    .size-chart-label-connector { background: rgb(255 255 255 / 0.46); pointer-events: none; position: absolute; top: 0; transform: translateX(-50%); width: 1px; }
+                    .size-chart-label { appearance: none; background: rgb(0 0 0 / 0.68); border: 1px solid rgb(255 255 255 / 0.26); border-radius: var(--radius-field, 0.25rem); color: inherit; cursor: pointer; display: grid; gap: 0.05rem; justify-items: center; padding: 0.28rem 0.45rem 0.32rem; position: absolute; text-align: center; top: 0; }
+                    .size-chart-label:hover, .size-chart-label:focus-visible { border-color: var(--color-primary); outline: none; }
                     .size-chart-label strong, .size-chart-label span { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-                    .size-chart-label strong { font-size: 0.86rem; }
-                    .size-chart-label span { color: rgb(255 255 255 / 0.62); font-size: 0.75rem; font-weight: 800; }
+                    .size-chart-label strong { font-size: 0.82rem; line-height: 1.05; }
+                    .size-chart-label span { color: rgb(255 255 255 / 0.62); font-size: 0.72rem; font-weight: 800; line-height: 1.05; }
                     .size-chart-side { display: grid; gap: 1rem; }
                     .size-chart-results, .size-chart-roster { display: grid; gap: 0.5rem; max-height: 22rem; overflow: auto; }
                     .size-chart-result, .size-chart-roster-item { align-items: center; background: var(--color-base-100); border: 1px solid var(--color-base-300); border-radius: var(--radius-field, 0.25rem); color: inherit; display: grid; gap: 0.65rem; grid-template-columns: 3rem minmax(0, 1fr) auto auto; min-height: 4rem; padding: 0.5rem; text-align: left; }

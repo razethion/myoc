@@ -1634,6 +1634,7 @@ type HomePageHeightChartJson = {
         headYPercent: number
         footYPercent: number
         footIsVirtual: boolean
+        nameTagXPercent: number
     }
 }
 
@@ -1763,6 +1764,7 @@ function parseHomePageHeightChartJson(value: string | null | undefined): HomePag
     const meters = Number(height.meters)
     const headYPercent = Number(calibration.headYPercent)
     const footYPercent = Number(calibration.footYPercent)
+    const nameTagXPercent = Number(calibration.nameTagXPercent ?? 50)
     const naturalWidth = Number(image.naturalWidth)
     const naturalHeight = Number(image.naturalHeight)
     const key = typeof image.key === 'string' ? image.key : ''
@@ -1773,6 +1775,7 @@ function parseHomePageHeightChartJson(value: string | null | undefined): HomePag
         || meters <= 0
         || !Number.isFinite(headYPercent)
         || !Number.isFinite(footYPercent)
+        || !Number.isFinite(nameTagXPercent)
         || !Number.isFinite(naturalWidth)
         || naturalWidth <= 0
         || !Number.isFinite(naturalHeight)
@@ -1797,6 +1800,7 @@ function parseHomePageHeightChartJson(value: string | null | undefined): HomePag
             headYPercent,
             footYPercent,
             footIsVirtual: Boolean(calibration.footIsVirtual),
+            nameTagXPercent,
         },
     }
 }
@@ -2377,8 +2381,9 @@ function parseCharacterHeightChartEditorData(
     const meters = Number(height.meters)
     const headYPercent = Number(calibration.headYPercent)
     const footYPercent = Number(calibration.footYPercent)
+    const nameTagXPercent = Number(calibration.nameTagXPercent ?? 50)
 
-    if (!Number.isFinite(meters) || !Number.isFinite(headYPercent) || !Number.isFinite(footYPercent)) {
+    if (!Number.isFinite(meters) || !Number.isFinite(headYPercent) || !Number.isFinite(footYPercent) || !Number.isFinite(nameTagXPercent)) {
         return null
     }
 
@@ -2405,6 +2410,7 @@ function parseCharacterHeightChartEditorData(
             headYPercent,
             footYPercent,
             footIsVirtual: Boolean(calibration.footIsVirtual),
+            nameTagXPercent,
         },
     }
 }
