@@ -1,202 +1,90 @@
+![MyOC banner: Easily share character art without losing quality. No fuss.](./public/assets/myocbanner.webp)
+
 # MyOC
 
-[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
-[![Hono](https://img.shields.io/badge/Hono-4.x-E36002)](https://hono.dev/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-6.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4.x-38B2AC?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
-[![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue)](./LICENSE.md)
+**High-resolution character galleries without the social-network sprawl.**
 
-MyOC is a high-resolution gallery for original character media. It is built for artists, character owners, and communities that need a clean way to store, organize, and share character artwork without compressing the work into low-quality previews or burying it under unrelated social features.
+[![Runs on Cloudflare Workers](https://img.shields.io/badge/Runs_on-Cloudflare_Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
 
-MyOC focuses on:
+[Features](#features) |
+[Quickstart](#quickstart) |
+[Contributing](./CONTRIBUTING.md) |
+[Security](./SECURITY.md) |
+[License](./LICENSE.md)
 
-- Original-quality character artwork and reference image presentation.
-- Simple organization by users, characters, folders, layouts, and variants.
-- Clear browsing and search for characters, artists, tags, and media.
-- Content preferences that keep users in control of what they see.
-- Character ownership and transfer workflows that keep media organization intact.
-- A fast edge-hosted application built on Cloudflare Workers.
+MyOC is a simple webapp for hosting, organizing, and sharing original character media. It is built for character owners,
+artists, and communities that want clean character references, full-resolution media, searchable public profiles, and
+useful gallery tools without turning the product into a feed-driven social network.
 
-## Stack
+## Principles
 
-| Area             | Technology                    |
-|------------------|-------------------------------|
-| Runtime          | Cloudflare Workers            |
-| Server framework | Hono                          |
-| Views            | Hono JSX                      |
-| Language         | TypeScript                    |
-| Styling          | Tailwind CSS 4, DaisyUI       |
-| Database         | Cloudflare D1                 |
-| Media storage    | Cloudflare R2                 |
-| Testing          | Vitest                        |
-| Tooling          | Wrangler, npm, GitHub Actions |
+- Keep character galleries fast, readable, and easy to maintain.
+- Preserve media quality wherever practical.
+- Prefer shared, consistent profile layouts over custom CSS per profile.
+- Add tools only when they support character browsing or gallery management.
+- Keep operations simple enough to run reliably on Cloudflare.
 
-## Getting Started
+## Features
 
-### Prerequisites
+- Character profiles with folders, profile images, descriptions, social links, and ordered character lists.
+- Gallery editing with tabs, rows, custom ordering, full-width rows, and original media storage.
+- Media previews, admin image approval, and report handling.
+- User and character search with direct links to public pages.
+- Character height calibration, shareable size charts, and site-wide size comparison.
+- Toyhou.se migration flow for importing characters and gallery images.
+- Versioned release notes shown to signed-in users.
 
-- Node.js 22 or newer.
-- npm.
-- A Cloudflare account for D1 and deployment.
-- Wrangler authentication for Cloudflare operations.
+## Quickstart
 
-### Install Dependencies
+Requirements: Node.js 22 or newer, npm, and Wrangler access for Cloudflare-backed development tasks.
 
 ```sh
 npm install
-```
-
-### Start the Local Worker
-
-```sh
+cp .dev.vars.example .dev.vars
+npm run db:prepare:local
 npm run dev
 ```
 
-This builds the CSS bundle and starts the app with Wrangler.
+Seeded local accounts use `password123`; the `demo` user is available after loading development seed data.
 
-### Run Checks
-
-```sh
-npm run check
-npm run build
-```
-
-`npm run check` runs TypeScript typechecking and the Vitest test suite once. Use `npm run test` while actively working on tests; it starts Vitest in watch mode.
-
-## Configuration
-
-Worker configuration lives in [`wrangler.jsonc`](./wrangler.jsonc).
-
-The app expects:
-
-- A Cloudflare D1 database bound as `DB`.
-- A Cloudflare R2 bucket bound as `MEDIA_BUCKET`.
-- A media public base URL bound as `MEDIA_PUBLIC_BASE_URL`.
-
-For a new environment, create a D1 database and update `wrangler.jsonc` with the generated database ID:
-
-```sh
-npx wrangler d1 create myoc-db
-```
-
-The production R2 bucket is `myoc` and is served from `https://m.myoc.art`. Local development and pull request preview
-Workers use `myoc-dev`, served from `https://m.dev.myoc.art`.
-
-The R2 binding is marked `remote: true` so local `wrangler dev` uploads files into the real `myoc-dev` bucket instead of
-Wrangler's local R2 simulator. This is required because the browser loads media directly from the public R2 custom
-domain, not through the Worker.
-
-For local development, copy [`.dev.vars.example`](./.dev.vars.example) to `.dev.vars` if it does not already exist.
-`.dev.vars` is ignored by Git and should keep local-only values.
-
-Apply migrations locally:
-
-```sh
-npm run db:migrate:local
-```
-
-Apply fake development seed data locally:
-
-```sh
-npm run db:seed:local
-```
-
-Prepare a local database from migrations and seed data:
-
-```sh
-npm run db:prepare:local
-```
-
-Apply migrations to Cloudflare:
-
-```sh
-npx wrangler d1 migrations apply myoc-db --remote
-```
-
-When Worker bindings change, regenerate Cloudflare runtime types:
-
-```sh
-npm run cf-typegen
-```
-
-`npm run typecheck` runs this automatically before TypeScript, so normal checks use the current `wrangler.jsonc`
-bindings.
-
-## Deployment
-
-Checks, pull request previews, and production deployment are handled by GitHub Actions in [`.github/workflows/checks.yml`](./.github/workflows/checks.yml). The workflow installs dependencies, runs checks, builds the CSS bundle, and only then calls Cloudflare.
-
-The workflow behavior is:
-
-- Pull requests run typechecking, Vitest, and the CSS build.
-- Same-repository pull requests create or reuse a per-PR D1 database named `myoc-pr-<number>`.
-- Same-repository pull request previews bind media storage to the shared `myoc-dev` R2 bucket.
-- Pull request preview databases receive migrations and fake seed data from [`seeds/development.sql`](./seeds/development.sql).
-- Same-repository pull requests deploy a per-PR Worker named `myoc-pr-<number>` on `workers.dev`, bound to that per-PR D1 database after checks pass.
-- Successful same-repository pull request previews get a bot comment with the live `workers.dev` URL.
-- Closing a same-repository pull request deletes its `myoc-pr-<number>` D1 database and preview Worker.
-- Fork pull requests run checks only because Cloudflare secrets are not exposed to forked code.
-- Pushes to `master`, including merged pull requests, run checks, build, apply production D1 migrations, and then deploy with `wrangler deploy --minify`.
-
-The repository must define these GitHub Actions secrets:
-
-- `CLOUDFLARE_API_TOKEN`
-- `CLOUDFLARE_ACCOUNT_ID`
-
-Manual deployment is still available when needed:
-
-```sh
-npm run deploy
-```
-
-The local deploy command runs checks, builds the CSS bundle, then runs Wrangler deployment with minification enabled.
-
-## Scripts
-
-| Command                    | Description                                                   |
-|----------------------------|---------------------------------------------------------------|
-| `npm run build`            | Compiles `src/styles/app.css` into minified `public/app.css`. |
-| `npm run dev`              | Builds CSS, then starts `wrangler dev`.                       |
-| `npm run typecheck`        | Runs TypeScript without emitting files.                       |
-| `npm run test`             | Runs Vitest in watch mode.                                    |
-| `npm run check`            | Runs TypeScript typechecking and the Vitest test suite once.  |
-| `npm run db:migrate:local` | Applies D1 migrations to the local database.                  |
-| `npm run db:seed:local`    | Applies fake development seed data to the local database.     |
-| `npm run db:prepare:local` | Applies local migrations and fake seed data.                  |
-| `npm run deploy`           | Runs checks, builds CSS, then deploys the Worker.             |
-| `npm run cf-typegen`       | Generates `worker-configuration.d.ts` from `wrangler.jsonc`.  |
-
-## Contributing
-Contributions are welcome, but they must be made under the project Contributor License Agreement.
-
-By opening a pull request, you agree that:
-
-- You have read and accepted [`CLA.md`](./CLA.md).
-- You have the right to submit the contribution.
-- Your contribution may be licensed and relicensed by the project under the terms described in the CLA.
-- Your contribution does not knowingly include code, assets, or other material that violates a third party's rights.
-
-Before submitting a pull request, run:
+Before opening a pull request, run:
 
 ```sh
 npm run check
 npm run build
 ```
 
-GitHub Actions runs the same checks automatically on pull requests and pushes to `master`. Cloudflare preview uploads and production deployments only happen after those checks and the build pass.
+## Common Commands
 
-Keep pull requests focused. If a change affects Cloudflare bindings, update `wrangler.jsonc` and run:
+| Command                    | Purpose                                                               |
+|----------------------------|-----------------------------------------------------------------------|
+| `npm run dev`              | Generate Cloudflare types, build assets, and start local development. |
+| `npm run check`            | Run type generation, TypeScript checks, and tests once.               |
+| `npm run build`            | Build public assets.                                                  |
+| `npm run db:prepare:local` | Apply local migrations and seed data.                                 |
+| `npm run deploy`           | Run checks, build assets, and deploy.                                 |
 
-```sh
-npm run cf-typegen
-```
+## Repository Guide
 
-Commit the generated `worker-configuration.d.ts` with binding changes.
+| Path                         | Purpose                                                         |
+|------------------------------|-----------------------------------------------------------------|
+| [`src/routes`](./src/routes) | Page and API route handlers.                                    |
+| [`src/views`](./src/views)   | Server-rendered layouts, components, and pages.                 |
+| [`src/lib`](./src/lib)       | Auth, media, search, admin, gallery, and shared business logic. |
+| [`migrations`](./migrations) | D1 schema history.                                              |
+| [`scripts`](./scripts)       | Local utility scripts.                                          |
+| [`.github`](./.github)       | Issue templates and CI/deployment workflows.                    |
+
+## Project Documents
+
+- [Contributing](./CONTRIBUTING.md)
+- [Code of Conduct](./CODE_OF_CONDUCT.md)
+- [Support](./SUPPORT.md)
+- [Security](./SECURITY.md)
+- [Contributor License Agreement](./CLA.md)
+- [License](./LICENSE.md)
 
 ## License
 
-MyOC is licensed under the Business Source License 1.1. See [`LICENSE.md`](./LICENSE.md).
-
-The license permits source access, copying, modification, redistribution, and non-production use, with the additional use grant described in the license file. On the Change Date, the licensed work converts to the Apache License 2.0.
-
-This project is source-available, not open source, until the applicable Change Date.
+MyOC is licensed under the Business Source License 1.1. It is source-available, not open source, until the Change Date
+described in [`LICENSE.md`](./LICENSE.md).
