@@ -1,18 +1,41 @@
-# Business Source License 1.1
+# MyOC License
+
+This file contains the license terms for MyOC.
+
+## Human-Readable Summary
+
+This summary is not a license and does not override the binding terms below.
+
+| Field          | Value                                                               |
+|----------------|---------------------------------------------------------------------|
+| License        | Business Source License 1.1                                         |
+| Licensor       | Razeth                                                              |
+| Licensed Work  | MyOC                                                                |
+| Copyright      | Copyright (c) 2026 Razeth                                           |
+| Change Date    | Four years after the specific version is first publicly distributed |
+| Change License | Apache License, Version 2.0                                         |
+
+You may use MyOC for personal, educational, evaluation, development, testing, and non-commercial production purposes.
+You may not use MyOC to provide a commercial hosted, managed, software-as-a-service, or substantially similar offering
+to third parties without a separate commercial license from the Licensor.
+
+On a version's Change Date, that version of the Licensed Work changes to the Apache License, Version 2.0, as described
+below.
+
+For alternate licensing, contact the repository owner.
+
+## Business Source License 1.1 Terms
 
 Licensor: Razeth
 
-Licensed Work: MyOC. The Licensed Work is copyright © 2026 Razeth.
+Licensed Work: MyOC. The Licensed Work is copyright (c) 2026 Razeth.
 
 Additional Use Grant: You may use the Licensed Work for personal, educational, evaluation, development, testing, and non-commercial production purposes. You may not use the Licensed Work to provide a commercial hosted, managed, software-as-a-service, or substantially similar offering to third parties without a separate commercial license from the Licensor.
 
-Change Date: 2030-06-10
+Change Date: For each version of the Licensed Work, the fourth anniversary of the date that version is first publicly
+distributed.
 
 Change License: Apache License, Version 2.0
-
-For information about alternative licensing, contact the repository owner.
-
-## Terms
 
 The Licensor hereby grants you the right to copy, modify, create derivative works, redistribute, and make non-production use of the Licensed Work. The Licensor may make an Additional Use Grant, above, permitting limited production use.
 
@@ -20,7 +43,9 @@ Effective on the Change Date, or the fourth anniversary of the first publicly av
 
 If your use of the Licensed Work does not comply with the requirements currently in effect as described in this License, you must purchase a commercial license from the Licensor, its affiliated entities, or authorized resellers, or you must refrain from using the Licensed Work.
 
-All copies of the original and modified Licensed Work, and derivative works of the Licensed Work, are subject to this License. This License applies separately for each version of the Licensed Work and the Change Date may vary for each version of the Licensed Work released by Licensor.
+All copies of the original and modified Licensed Work, and derivative works of the Licensed Work, are subject to this
+License. This License applies separately for each version of the Licensed Work, and the Change Date may vary for each
+version of the Licensed Work released by Licensor.
 
 You must conspicuously display this License on each original or modified copy of the Licensed Work. If you receive the Licensed Work in original or modified form from a third party, the terms and conditions set forth in this License apply to your use of that work.
 

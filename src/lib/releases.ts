@@ -9,6 +9,17 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
     {
+        version: '2026.07.06.01',
+        releasedOn: 'July 6, 2026',
+        title: 'Various improvements',
+        summary: 'Bugfixes, new features, and more.',
+        changes: [
+            'Fixed a bug where some characters had their heads cut-off by the size-chart feature.',
+            'Added the option to specify where the character\'s nameplate should display below them.',
+            'Added the option to set images on folders, and rename folders.',
+        ],
+    },
+    {
         version: '2026.07.05.01',
         releasedOn: 'July 5, 2026',
         title: 'Character Studio Improvements',

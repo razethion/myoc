@@ -18,6 +18,13 @@ describe('parseManagedR2MediaKey', () => {
             profileImageKey: 'profile-1',
         })
 
+        expect(parseManagedR2MediaKey('characters/user-1/folders/folder-1/image/image-1.webp')).toMatchObject({
+            kind: 'characterFolderImage',
+            userId: 'user-1',
+            folderId: 'folder-1',
+            folderImageKey: 'image-1',
+        })
+
         expect(parseManagedR2MediaKey('characters/user-1/character-1/media/media-1/nsfw/image-1.gif')).toMatchObject({
             kind: 'characterMedia',
             userId: 'user-1',
@@ -81,6 +88,8 @@ describe('cleanupStaleR2Media', () => {
                 null,
                 {found: 1},
                 null,
+                {found: 1},
+                null,
             ],
         })
 
@@ -96,17 +105,19 @@ describe('cleanupStaleR2Media', () => {
         await bucket.put('characters/alice/blair/media/media-2/nsfw/orphan.gif', 'stale')
         await bucket.put('characters/alice/blair/profile/profile.webp', 'referenced')
         await bucket.put('characters/alice/blair/profile/stale.webp', 'stale')
+        await bucket.put('characters/alice/folders/main/image/image.webp', 'referenced')
+        await bucket.put('characters/alice/folders/main/image/stale.webp', 'stale')
         await bucket.put('characters/alice/blair/scratch/stale.webp', 'unknown')
 
         const summary = await cleanupStaleR2Media({DB: db, MEDIA_BUCKET: bucket}, new Date('2026-06-26T12:00:00Z'))
 
         expect(summary).toMatchObject({
-            scanned: 13,
-            recognized: 11,
+            scanned: 15,
+            recognized: 13,
             skippedUnknown: 2,
             skippedRecent: 0,
-            keptReferenced: 6,
-            deleted: 5,
+            keptReferenced: 7,
+            deleted: 6,
             errors: 0,
             stoppedAtDeleteLimit: false,
         })
@@ -115,6 +126,7 @@ describe('cleanupStaleR2Media', () => {
         expect(bucket.delete).toHaveBeenCalledWith('characters/alice/blair/media/media-2/nsfw/preview/orphan.webp')
         expect(bucket.delete).toHaveBeenCalledWith('characters/alice/blair/media/media-2/nsfw/orphan.gif')
         expect(bucket.delete).toHaveBeenCalledWith('characters/alice/blair/profile/stale.webp')
+        expect(bucket.delete).toHaveBeenCalledWith('characters/alice/folders/main/image/stale.webp')
         expect(await bucket.head('users/alice/profile/current.webp')).not.toBeNull()
         expect(await bucket.head('users/alice/profile/old.png')).not.toBeNull()
         expect(await bucket.head('users/alice/profile/old.webp')).toBeNull()
@@ -123,6 +135,8 @@ describe('cleanupStaleR2Media', () => {
         expect(await bucket.head('characters/alice/blair/media/media-2/nsfw/blur/orphan.webp')).toBeNull()
         expect(await bucket.head('characters/alice/blair/media/media-2/nsfw/preview/orphan.webp')).toBeNull()
         expect(await bucket.head('characters/alice/blair/media/media-2/nsfw/orphan.gif')).toBeNull()
+        expect(await bucket.head('characters/alice/folders/main/image/image.webp')).not.toBeNull()
+        expect(await bucket.head('characters/alice/folders/main/image/stale.webp')).toBeNull()
         expect(await bucket.head('characters/alice/blair/scratch/stale.webp')).not.toBeNull()
     })
 

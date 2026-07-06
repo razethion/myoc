@@ -50,6 +50,8 @@ type FolderResponse = {
         id: string
         name: string
         parentFolderId: string | null
+        folderImageKey: string | null
+        folderImageUrl: string | null
         createdAt: string
         updatedAt: string
     }
@@ -87,6 +89,23 @@ function expectStoredCharacterProfileImage(mediaBucket: R2Bucket, character: Cha
     )
     expect(mediaBucket.put).toHaveBeenCalledWith(
         `characters/current-user/${character.id}/profile/${character.profileImageKey}.webp`,
+        expect.any(Uint8Array),
+        {
+            httpMetadata: {
+                cacheControl: 'public, max-age=31536000, immutable',
+                contentType: 'image/webp',
+            },
+        },
+    )
+}
+
+function expectStoredFolderImage(mediaBucket: R2Bucket, folder: FolderResponse['folder']): void {
+    expect(folder.folderImageKey).toMatch(new RegExp(`^${uuidPattern}$`))
+    expect(folder.folderImageUrl).toBe(
+        `${mediaPublicBaseUrl}/characters/current-user/folders/${folder.id}/image/${folder.folderImageKey}.webp`,
+    )
+    expect(mediaBucket.put).toHaveBeenCalledWith(
+        `characters/current-user/folders/${folder.id}/image/${folder.folderImageKey}.webp`,
         expect.any(Uint8Array),
         {
             httpMetadata: {
@@ -279,6 +298,19 @@ async function postProfileImage(
     return apiRoutes.request(`https://example.com/characters/${characterId}/profile-image`, {
         method: 'POST',
         body,
+        headers: createRequestHeaders(body, options),
+    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
+}
+
+async function patchFolder(
+    folderId: string,
+    body: unknown,
+    db: D1Database,
+    options: CharacterRequestOptions = {},
+): Promise<Response> {
+    return apiRoutes.request(`https://example.com/characters/folders/${folderId}`, {
+        method: 'PATCH',
+        body: typeof body === 'string' ? body : JSON.stringify(body),
         headers: createRequestHeaders(body, options),
     }, requestEnv(db, options.mediaBucket, options.imagesBinding))
 }
@@ -854,10 +886,35 @@ describe('POST /characters/folders', () => {
             currentUserRecord.id,
             'Main Characters',
             null,
+            null,
             0,
             body.folder.createdAt,
             body.folder.updatedAt,
         ])
+    })
+
+    it('creates a folder with a cropped image', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postFolder({
+            name: ' Main Characters ',
+            parentFolderId: 'root',
+            folderImageData: createWebpDataUrl(512, 512),
+        }, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(201)
+
+        const body = await response.json() as FolderResponse
+        expectStoredFolderImage(mediaBucket, body.folder)
+        expect(boundStatements[1]?.binds[4]).toBe(body.folder.folderImageKey)
     })
 
     it('creates a nested folder', async () => {
@@ -884,6 +941,105 @@ describe('POST /characters/folders', () => {
         expect(boundStatements[1]?.binds).toEqual(['main', currentUserRecord.id])
         expect(boundStatements[2]?.sql).toContain(['INSERT INTO', 'character_folders'].join(' '))
         expect(boundStatements[2]?.binds[3]).toBe('main')
+    })
+})
+
+describe('PATCH /characters/folders/:id', () => {
+    it('returns 401 when the user is not logged in', async () => {
+        const {db} = createMockDb()
+
+        const response = await patchFolder('folder-id', {
+            name: 'Renamed Folder',
+        }, db)
+
+        expect(response.status).toBe(401)
+        expect(await response.json()).toEqual({
+            error: 'Authentication required',
+        })
+    })
+
+    it('returns 403 when a logged-in request is missing CSRF protection', async () => {
+        const {db} = createMockDb()
+
+        const response = await patchFolder('folder-id', {
+            name: 'Renamed Folder',
+        }, db, {
+            sessionToken: 'session-token',
+        })
+
+        expect(response.status).toBe(403)
+        expect(await response.json()).toEqual({
+            error: 'Invalid CSRF token',
+        })
+        expect(db.prepare).not.toHaveBeenCalled()
+    })
+
+    it('returns 404 when the folder does not belong to the current user', async () => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, null],
+        })
+
+        const response = await patchFolder('missing-folder', {
+            name: 'Renamed Folder',
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(404)
+        expect(await response.json()).toEqual({
+            error: 'Folder not found',
+        })
+    })
+
+    it('returns 400 when the folder name is invalid', async () => {
+        const sessionToken = 'session-token'
+        const folder = createFolderRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, folder],
+        })
+
+        const response = await patchFolder(folder.id, {
+            name: 'Bad/Name',
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Folder name may contain only letters, numbers, spaces, apostrophes, hyphens, underscores, periods, and parentheses, and must start with a letter or number',
+        })
+    })
+
+    it('renames a folder', async () => {
+        const sessionToken = 'session-token'
+        const folder = createFolderRecord({
+            folder_image_key: 'folder-image-id',
+        })
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, folder],
+        })
+
+        const response = await patchFolder(folder.id, {
+            name: ' Renamed Folder ',
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+
+        const body = await response.json() as FolderResponse
+        expect(body.folder.id).toBe(folder.id)
+        expect(body.folder.name).toBe('Renamed Folder')
+        expect(body.folder.folderImageKey).toBe('folder-image-id')
+        expect(body.folder.folderImageUrl).toBe(`${mediaPublicBaseUrl}/characters/current-user/folders/${folder.id}/image/folder-image-id.webp`)
+        expect(boundStatements[2]?.sql).toContain('UPDATE character_folders')
+        expect(boundStatements[2]?.binds[0]).toBe('Renamed Folder')
+        expect(boundStatements[2]?.binds[2]).toBe(folder.id)
+        expect(boundStatements[2]?.binds[3]).toBe(currentUserRecord.id)
     })
 })
 
@@ -2894,6 +3050,8 @@ function createFolderRecord(overrides: Partial<{
     user_id: string
     name: string
     parent_folder_id: string | null
+    folder_image_key: string | null
+    sort_order: number
     created_at: string
     updated_at: string
 }> = {}) {
@@ -2902,6 +3060,8 @@ function createFolderRecord(overrides: Partial<{
         user_id: currentUserRecord.id,
         name: 'Main Characters',
         parent_folder_id: null,
+        folder_image_key: null,
+        sort_order: 0,
         created_at: '2026-06-11 12:00:00',
         updated_at: '2026-06-11 12:00:00',
         ...overrides,

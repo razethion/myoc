@@ -1,5 +1,5 @@
 import type {CurrentUser} from '../../lib/auth/session'
-import {characterProfileImageUrl} from '../../lib/media/url'
+import {characterFolderImageUrl, characterProfileImageUrl} from '../../lib/media/url'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 import {PROFILE_CROPPER_BROWSER_HELPERS} from '../profileCropperScript'
@@ -8,6 +8,8 @@ export type CharacterManagementFolder = {
     id: string
     name: string
     parentFolderId: string | null
+    folderImageKey: string | null
+    folderImageUrl: string | null
     sortOrder: number
 }
 
@@ -161,11 +163,17 @@ function CharacterManagementStyles() {
                 overscroll-behavior: contain;
                 padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
             }
-            #create-character-modal [data-character-profile-cropper] cropper-canvas { height: 40dvh; }
+            [data-character-profile-cropper] cropper-canvas,
+            [data-new-folder-image-cropper] cropper-canvas,
+            [data-edit-folder-image-cropper] cropper-canvas {
+                display: block;
+                height: min(62dvh, 34rem) !important;
+                min-height: 24rem;
+                width: 100%;
+            }
             @media (min-width: 640px) {
                 #create-character-modal { align-items: center; padding: 1rem; }
                 #create-character-modal .modal-box { max-height: calc(100dvh - 2rem); }
-                #create-character-modal [data-character-profile-cropper] cropper-canvas { height: 22rem; }
             }
             .toast-message { animation: toast-fade 2600ms ease forwards; }
             @keyframes toast-fade {
@@ -201,8 +209,12 @@ function CharacterManagementScript({
         let deleteTargetCharacterId = null;
         let deleteTargetCharacterName = '';
         let deleteTargetFolderId = null;
+        let editTargetFolderId = null;
+        let editFolderRemoveImage = false;
         let characterProfileCropperInstance = null;
         let characterProfileObjectUrl = null;
+        const editFolderImageCropState = { cropper: null, objectUrl: null };
+        const newFolderImageCropState = { cropper: null, objectUrl: null };
         let currentFolderNestRow = null;
         let currentFolderSortKey = '';
         let currentCharacterSortKey = '';
@@ -224,6 +236,8 @@ function CharacterManagementScript({
         const createCharacterForm = document.getElementById('create-character-form');
         const createFolderModal = document.getElementById('create-folder-modal');
         const createFolderForm = document.getElementById('create-folder-form');
+        const editFolderModal = document.getElementById('edit-folder-modal');
+        const editFolderForm = document.getElementById('edit-folder-form');
         const deleteCharacterModal = document.getElementById('delete-character-modal');
         const deleteCharacterForm = document.getElementById('delete-character-form');
         const deleteFolderModal = document.getElementById('delete-folder-modal');
@@ -231,6 +245,15 @@ function CharacterManagementScript({
         const characterProfileInput = document.getElementById('new-character-profile-image');
         const characterProfileCropper = document.querySelector('[data-character-profile-cropper]');
         const characterProfileCropImage = document.querySelector('[data-character-profile-crop-image]');
+        const editFolderImageInput = document.getElementById('edit-folder-image');
+        const editFolderImageCropper = document.querySelector('[data-edit-folder-image-cropper]');
+        const editFolderImageCropImage = document.querySelector('[data-edit-folder-image-crop-image]');
+        const editFolderCurrentImage = document.querySelector('[data-edit-folder-current-image]');
+        const editFolderCurrentImageFrame = document.querySelector('[data-edit-folder-current-image-frame]');
+        const editFolderRemoveImageButton = document.querySelector('[data-remove-edit-folder-image]');
+        const newFolderImageInput = document.getElementById('new-folder-image');
+        const newFolderImageCropper = document.querySelector('[data-new-folder-image-cropper]');
+        const newFolderImageCropImage = document.querySelector('[data-new-folder-image-crop-image]');
 
         function escapeHtml(value) {
             return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -261,6 +284,19 @@ function CharacterManagementScript({
             return folders
                 .filter((folder) => folder.parentFolderId === normalizedParent)
                 .sort(compareOrderedNames);
+        }
+
+        function folderThumbnailHtml(folder, sizeClass) {
+            if (folder.folderImageUrl) {
+                return '<img alt="" class="' + sizeClass + ' rounded-box object-cover" src="' + escapeHtml(folder.folderImageUrl) + '">';
+            }
+
+            return '<span aria-hidden="true" class="' + sizeClass + ' inline-flex items-center justify-center rounded-box bg-base-300 text-base-content/55">' +
+                '<svg class="h-2/3 w-2/3" fill="none" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">' +
+                '<path d="M18 54c0-12 10-22 22-22h38c8 0 15 4 19 11l8 13h55c12 0 22 10 22 22v76c0 12-10 22-22 22H40c-12 0-22-10-22-22V54Z" stroke="currentColor" stroke-linejoin="round" stroke-width="12"/>' +
+                '<path d="M22 84h156" opacity="0.45" stroke="currentColor" stroke-linecap="round" stroke-width="8"/>' +
+                '</svg>' +
+                '</span>';
         }
 
         function folderOptions() {
@@ -322,6 +358,7 @@ function CharacterManagementScript({
             return '<article class="management-item" data-folder-id="' + escapeHtml(folder.id) + '" data-folder-sort-item draggable="true">' +
                 '<div class="folder-row flex items-center gap-2 rounded-box px-3 py-2 transition-colors' + selectedClass + '" data-folder-drop-target>' +
                 '<span aria-hidden="true" class="drag-handle text-base-content/55" data-drag-handle>☰</span>' +
+                folderThumbnailHtml(folder, 'h-9 w-9 shrink-0') +
                 '<button aria-label="Select ' + escapeHtml(folder.name) + '" class="min-w-0 flex-1 truncate text-left font-semibold" data-select-folder type="button">' + escapeHtml(folder.name) + '</button>' +
                 '<span class="badge badge-ghost badge-sm">' + folderPlacements(folder.id).length + '</span>' +
                 '<button aria-label="Delete ' + escapeHtml(folder.name) + ' folder" class="btn btn-ghost btn-xs btn-square" data-delete-folder type="button">x</button>' +
@@ -365,10 +402,16 @@ function CharacterManagementScript({
                 '</li>').join('');
 
             selectedFolderPanel.innerHTML = '<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">' +
+                '<div class="flex min-w-0 gap-3">' +
+                folderThumbnailHtml(folder, 'h-20 w-20 shrink-0') +
                 '<div class="min-w-0">' +
                 '<p class="text-xs font-semibold uppercase tracking-[0.24em] text-base-content/50">Selected folder</p>' +
                 '<h2 class="truncate text-2xl font-black">' + escapeHtml(folder.name) + '</h2>' +
                 '<p class="mt-1 text-sm text-base-content/65">This order is only for this folder. Characters can also live in other folders.</p>' +
+                '<div class="mt-3 flex flex-wrap gap-2">' +
+                '<button class="btn btn-sm" data-edit-folder type="button">Edit folder</button>' +
+                '</div>' +
+                '</div>' +
                 '</div>' +
                 '<span class="badge badge-ghost whitespace-nowrap">' + placedCharacters.length + ' OCs</span>' +
                 '</div>' +
@@ -957,6 +1000,154 @@ function CharacterManagementScript({
             characterProfileCropper.classList.add('hidden');
         }
 
+        function folderImageCropContext(kind) {
+            if (kind === 'new') {
+                return {
+                    state: newFolderImageCropState,
+                    input: newFolderImageInput,
+                    panel: newFolderImageCropper,
+                    image: newFolderImageCropImage,
+                };
+            }
+
+            return {
+                state: editFolderImageCropState,
+                input: editFolderImageInput,
+                panel: editFolderImageCropper,
+                image: editFolderImageCropImage,
+            };
+        }
+
+        async function loadFolderImageForCropping(kind, file) {
+            if (kind === 'edit' && (!editTargetFolderId || !folderById(editTargetFolderId))) throw new Error('Select a folder first.');
+            if (!file || !file.type.startsWith('image/')) throw new Error('Choose an image file.');
+            if (typeof Cropper === 'undefined') throw new Error('Folder image editor could not load. Refresh and try again.');
+            const context = folderImageCropContext(kind);
+            resetFolderImageCropper(kind, false);
+            context.state.objectUrl = URL.createObjectURL(file);
+            context.image.src = context.state.objectUrl;
+            context.panel.classList.remove('hidden');
+            context.state.cropper = createProfileCropper(context.image);
+            await initializeProfileCropper(context.state.cropper);
+        }
+
+        async function createCroppedFolderImageCanvas(kind) {
+            const context = folderImageCropContext(kind);
+            if (!context.state.cropper) throw new Error('Choose a folder image first.');
+            return await createProfileCropCanvas(context.state.cropper);
+        }
+
+        async function createCroppedFolderImageDataUrl(kind) {
+            const canvas = await createCroppedFolderImageCanvas(kind);
+            return canvas.toDataURL('image/webp', 0.9);
+        }
+
+        async function createCroppedFolderImageBlob(kind) {
+            const canvas = await createCroppedFolderImageCanvas(kind);
+            return await new Promise((resolve, reject) => {
+                canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Could not prepare folder image.')), 'image/webp', 0.9);
+            });
+        }
+
+        function resetFolderImageCropper(kind, clearInput = true) {
+            const context = folderImageCropContext(kind);
+            if (context.state.cropper) {
+                context.state.cropper.destroy();
+                context.state.cropper = null;
+            }
+            if (context.state.objectUrl) {
+                URL.revokeObjectURL(context.state.objectUrl);
+                context.state.objectUrl = null;
+            }
+            context.image.removeAttribute('src');
+            context.panel.classList.add('hidden');
+            if (clearInput) context.input.value = '';
+        }
+
+        async function uploadEditFolderImage(folder) {
+            const blob = await createCroppedFolderImageBlob('edit');
+            const form = new FormData();
+            form.append('folderImage', blob, 'folder.webp');
+            const response = await fetch('/api/characters/folders/' + encodeURIComponent(folder.id) + '/image', {
+                method: 'POST',
+                headers: {
+                    'x-csrf-token': csrfToken,
+                },
+                body: form,
+            });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(body.error || 'Folder image could not be saved.');
+            folder.folderImageKey = body.folderImageKey || null;
+            folder.folderImageUrl = body.folderImageUrl || null;
+        }
+
+        async function removeFolderImage(folder) {
+            if (!folder || !folder.folderImageKey) return;
+            const response = await fetch('/api/characters/folders/' + encodeURIComponent(folder.id) + '/image', {
+                method: 'DELETE',
+                headers: {
+                    'x-csrf-token': csrfToken,
+                },
+            });
+            if (!response.ok) {
+                const body = await response.json().catch(() => ({}));
+                throw new Error(body.error || 'Folder image could not be removed.');
+            }
+            folder.folderImageKey = null;
+            folder.folderImageUrl = null;
+        }
+
+        function updateEditFolderCurrentImage(folder) {
+            if (folder && folder.folderImageUrl && !editFolderRemoveImage) {
+                editFolderCurrentImage.src = folder.folderImageUrl;
+                editFolderCurrentImageFrame.classList.remove('hidden');
+                editFolderRemoveImageButton.disabled = false;
+                return;
+            }
+
+            editFolderCurrentImage.removeAttribute('src');
+            editFolderCurrentImageFrame.classList.add('hidden');
+            editFolderRemoveImageButton.disabled = true;
+        }
+
+        function openEditFolderModal(folder) {
+            editTargetFolderId = folder.id;
+            editFolderRemoveImage = false;
+            editFolderForm.reset();
+            resetFolderImageCropper('edit');
+            document.getElementById('edit-folder-name').value = folder.name;
+            updateEditFolderCurrentImage(folder);
+            editFolderModal.showModal();
+            document.getElementById('edit-folder-name').focus();
+        }
+
+        async function saveEditFolder() {
+            const folder = editTargetFolderId ? folderById(editTargetFolderId) : null;
+            if (!folder) throw new Error('Select a folder first.');
+
+            const name = document.getElementById('edit-folder-name').value.trim();
+            const result = await apiJson('/api/characters/folders/' + encodeURIComponent(folder.id), {
+                method: 'PATCH',
+                body: JSON.stringify({ name }),
+            });
+
+            folder.name = result.folder.name;
+            folder.sortOrder = result.folder.sortOrder;
+
+            if (editFolderImageCropState.cropper) {
+                await uploadEditFolderImage(folder);
+            } else if (editFolderRemoveImage) {
+                await removeFolderImage(folder);
+            }
+
+            resetFolderImageCropper('edit');
+            editTargetFolderId = null;
+            editFolderRemoveImage = false;
+            editFolderModal.close();
+            renderAll();
+            showToast('Folder updated.');
+        }
+
         document.getElementById('create-character-button').addEventListener('click', () => {
             renderFolderControls();
             createCharacterModal.showModal();
@@ -965,6 +1156,8 @@ function CharacterManagementScript({
 
         document.getElementById('create-folder-button').addEventListener('click', () => {
             renderFolderControls();
+            createFolderForm.reset();
+            resetFolderImageCropper('new');
             createFolderModal.showModal();
             document.getElementById('new-folder-name').focus();
         });
@@ -980,6 +1173,59 @@ function CharacterManagementScript({
                 showToast(error.message || 'Could not prepare profile image.', true);
                 characterProfileInput.value = '';
             }
+        });
+
+        editFolderImageInput.addEventListener('change', async () => {
+            const file = editFolderImageInput.files && editFolderImageInput.files[0];
+            if (!file) return;
+            try {
+                editFolderRemoveImage = false;
+                await loadFolderImageForCropping('edit', file);
+                editFolderCurrentImageFrame.classList.add('hidden');
+            } catch (error) {
+                resetFolderImageCropper('edit');
+                showToast(error.message || 'Could not prepare folder image.', true);
+            }
+        });
+
+        document.querySelector('[data-cancel-edit-folder-image-crop]').addEventListener('click', () => {
+            const folder = editTargetFolderId ? folderById(editTargetFolderId) : null;
+            resetFolderImageCropper('edit');
+            updateEditFolderCurrentImage(folder);
+        });
+
+        editFolderRemoveImageButton.addEventListener('click', () => {
+            editFolderRemoveImage = true;
+            resetFolderImageCropper('edit');
+            updateEditFolderCurrentImage(null);
+        });
+
+        editFolderForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const button = editFolderForm.querySelector('[type="submit"]');
+            button.disabled = true;
+            try {
+                await saveEditFolder();
+            } catch (error) {
+                showToast(error.message, true);
+            } finally {
+                button.disabled = false;
+            }
+        });
+
+        newFolderImageInput.addEventListener('change', async () => {
+            const file = newFolderImageInput.files && newFolderImageInput.files[0];
+            if (!file) return;
+            try {
+                await loadFolderImageForCropping('new', file);
+            } catch (error) {
+                resetFolderImageCropper('new');
+                showToast(error.message || 'Could not prepare folder image.', true);
+            }
+        });
+
+        document.querySelector('[data-cancel-new-folder-image-crop]').addEventListener('click', () => {
+            resetFolderImageCropper('new');
         });
 
         createCharacterForm.addEventListener('submit', async (event) => {
@@ -1021,9 +1267,12 @@ function CharacterManagementScript({
             try {
                 const name = document.getElementById('new-folder-name').value.trim();
                 const parentFolderId = normalizeFolderId(document.getElementById('new-folder-parent').value);
+                const folderImageData = newFolderImageCropState.cropper
+                    ? await createCroppedFolderImageDataUrl('new')
+                    : null;
                 const result = await apiJson('/api/characters/folders', {
                     method: 'POST',
-                    body: JSON.stringify({ name, parentFolderId }),
+                    body: JSON.stringify({ name, parentFolderId, folderImageData }),
                 });
                 const nextSiblings = folderChildren(parentFolderId);
                 const folder = { ...result.folder, parentFolderId, sortOrder: nextSiblings.length };
@@ -1033,6 +1282,7 @@ function CharacterManagementScript({
                 await persistFolderTree();
                 createFolderModal.close();
                 createFolderForm.reset();
+                resetFolderImageCropper('new');
                 renderAll();
                 showToast('Folder created.');
             } catch (error) {
@@ -1053,6 +1303,7 @@ function CharacterManagementScript({
             const removePlacementButton = event.target.closest('[data-remove-placement]');
             const deleteCharacterButton = event.target.closest('[data-delete-character]');
             const deleteFolderButton = event.target.closest('[data-delete-folder]');
+            const editFolderButton = event.target.closest('[data-edit-folder]');
 
             if (selectFolderButton) {
                 selectedFolderId = selectFolderButton.closest('[data-folder-sort-item]').dataset.folderId;
@@ -1110,6 +1361,12 @@ function CharacterManagementScript({
                 deleteTargetCharacterName = characterById(deleteTargetCharacterId).name;
                 document.getElementById('delete-character-confirm-name').placeholder = deleteTargetCharacterName;
                 deleteCharacterModal.showModal();
+                return;
+            }
+
+            if (editFolderButton && selectedFolderId) {
+                const folder = folderById(selectedFolderId);
+                if (folder) openEditFolderModal(folder);
                 return;
             }
 
@@ -1255,13 +1512,24 @@ function CharacterManagementScript({
         window.addEventListener('pointerup', handlePointerDragEnd);
         window.addEventListener('pointercancel', cancelPointerDrag);
 
-        document.querySelectorAll('[data-close-create-character-modal], [data-close-create-folder-modal], [data-close-delete-character-modal]').forEach((button) => {
+        document.querySelectorAll('[data-close-create-character-modal], [data-close-create-folder-modal], [data-close-edit-folder-modal], [data-close-delete-character-modal]').forEach((button) => {
             button.addEventListener('click', () => button.closest('dialog').close());
         });
 
         createCharacterModal.addEventListener('close', () => {
             createCharacterForm.reset();
             resetCharacterProfileCropper();
+        });
+        createFolderModal.addEventListener('close', () => {
+            createFolderForm.reset();
+            resetFolderImageCropper('new');
+        });
+        editFolderModal.addEventListener('close', () => {
+            editFolderForm.reset();
+            resetFolderImageCropper('edit');
+            editTargetFolderId = null;
+            editFolderRemoveImage = false;
+            updateEditFolderCurrentImage(null);
         });
         deleteCharacterModal.addEventListener('close', () => {
             deleteCharacterForm.reset();
@@ -1286,6 +1554,12 @@ export function CharacterManagementPage({
                                             uploadedImageCount,
     mediaBaseUrl,
 }: CharacterManagementPageProps) {
+    const foldersWithUrls = folders.map((folder) => ({
+        ...folder,
+        folderImageUrl: folder.folderImageKey
+            ? characterFolderImageUrl(mediaBaseUrl, currentUser.id, folder.id, folder.folderImageKey)
+            : null,
+    }))
     const charactersWithUrls = characters
         .slice()
         .sort(compareOrderedNames)
@@ -1293,7 +1567,7 @@ export function CharacterManagementPage({
             ...character,
             profileImageUrl: characterProfileImageUrl(mediaBaseUrl, currentUser.id, character.id, character.profileImageKey),
         }))
-    const folderTree = buildFolderTree(folders)
+    const folderTree = buildFolderTree(foldersWithUrls)
 
     return (
         <BaseLayout
@@ -1398,7 +1672,7 @@ export function CharacterManagementPage({
             </main>
 
             <dialog class="modal" id="create-character-modal">
-                <div class="modal-box">
+                <div class="modal-box w-11/12 max-w-3xl">
                     <form method="dialog">
                         <button aria-label="Close create character dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button>
                     </form>
@@ -1417,9 +1691,9 @@ export function CharacterManagementPage({
                             <p class="label">You'll be able to crop the image before uploading.</p>
                         </fieldset>
                         <div class="hidden rounded-box border border-base-300 bg-base-100 p-3" data-character-profile-cropper>
-                            <div class="max-h-[40dvh] overflow-hidden rounded-box bg-base-300 sm:max-h-[22rem]">
+                            <div class="h-[min(62dvh,34rem)] min-h-96 overflow-hidden rounded-box bg-base-300">
                                 <img alt="Crop character profile image"
-                                     class="block max-h-[40dvh] w-full object-contain sm:max-h-[22rem]"
+                                     class="block h-full w-full object-contain"
                                      data-character-profile-crop-image/>
                             </div>
                             <p class="mt-2 text-xs text-base-content/60">Drag to choose the square profile crop.</p>
@@ -1441,7 +1715,7 @@ export function CharacterManagementPage({
             </dialog>
 
             <dialog class="modal" id="create-folder-modal">
-                <div class="modal-box">
+                <div class="modal-box w-11/12 max-w-3xl">
                     <form method="dialog">
                         <button aria-label="Close create folder dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button>
                     </form>
@@ -1460,6 +1734,25 @@ export function CharacterManagementPage({
                                 <option value="root">All characters</option>
                             </select>
                         </fieldset>
+                        <fieldset class="fieldset">
+                            <legend class="fieldset-legend">Folder Image</legend>
+                            <input accept="image/*" class="file-input w-full" id="new-folder-image" type="file"/>
+                            <p class="label">Optional. You'll be able to crop the image before creating the folder.</p>
+                        </fieldset>
+                        <div class="hidden rounded-box border border-base-300 bg-base-100 p-3"
+                             data-new-folder-image-cropper>
+                            <div class="h-[min(62dvh,34rem)] min-h-96 overflow-hidden rounded-box bg-base-300">
+                                <img alt="Crop new folder image"
+                                     class="block h-full w-full object-contain"
+                                     data-new-folder-image-crop-image/>
+                            </div>
+                            <div class="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                <p class="text-xs text-base-content/60">Drag to choose the square folder crop.</p>
+                                <button class="btn btn-ghost btn-sm" data-cancel-new-folder-image-crop
+                                        type="button">Remove image
+                                </button>
+                            </div>
+                        </div>
                         <div class="modal-action">
                             <button class="btn btn-ghost" data-close-create-folder-modal type="button">Cancel</button>
                             <button class="btn" type="submit">Create Folder</button>
@@ -1467,6 +1760,63 @@ export function CharacterManagementPage({
                     </form>
                 </div>
                 <form class="modal-backdrop" method="dialog"><button>close</button></form>
+            </dialog>
+
+            <dialog class="modal" id="edit-folder-modal">
+                <div class="modal-box w-11/12 max-w-3xl">
+                    <form method="dialog">
+                        <button aria-label="Close edit folder dialog"
+                                class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x
+                        </button>
+                    </form>
+                    <h2 class="text-xl font-bold">Edit Folder</h2>
+                    <form class="mt-5 space-y-4" id="edit-folder-form">
+                        <fieldset class="fieldset">
+                            <legend class="fieldset-legend">Folder Name</legend>
+                            <input class="input w-full" id="edit-folder-name" maxLength={80}
+                                   pattern="[A-Za-z0-9][A-Za-z0-9 _'.()-]*" required
+                                   title="Use letters, numbers, spaces, apostrophes, hyphens, underscores, periods, and parentheses. Start with a letter or number."
+                                   type="text"/>
+                        </fieldset>
+                        <div class="hidden rounded-box border border-base-300 bg-base-200/65 p-3"
+                             data-edit-folder-current-image-frame>
+                            <p class="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-base-content/55">Current
+                                image</p>
+                            <img alt="" class="h-24 w-24 rounded-box object-cover" data-edit-folder-current-image/>
+                        </div>
+                        <fieldset class="fieldset">
+                            <legend class="fieldset-legend">Folder Image</legend>
+                            <input accept="image/*" class="file-input w-full" id="edit-folder-image" type="file"/>
+                            <p class="label">Choose a new image to crop, or remove the current image.</p>
+                        </fieldset>
+                        <div class="hidden rounded-box border border-base-300 bg-base-100 p-3"
+                             data-edit-folder-image-cropper>
+                            <div class="h-[min(62dvh,34rem)] min-h-96 overflow-hidden rounded-box bg-base-300">
+                                <img alt="Crop folder image"
+                                     class="block h-full w-full object-contain"
+                                     data-edit-folder-image-crop-image/>
+                            </div>
+                            <div class="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                <p class="text-xs text-base-content/60">Drag to choose the square folder crop.</p>
+                                <button class="btn btn-ghost btn-sm" data-cancel-edit-folder-image-crop
+                                        type="button">Cancel image change
+                                </button>
+                            </div>
+                        </div>
+                        <div
+                            class="modal-action flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <button class="btn btn-ghost" data-remove-edit-folder-image type="button">Remove image
+                            </button>
+                            <div class="flex justify-end gap-2">
+                                <button class="btn btn-ghost" data-close-edit-folder-modal type="button">Cancel</button>
+                                <button class="btn btn-primary" type="submit">Save Folder</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <form class="modal-backdrop" method="dialog">
+                    <button>close</button>
+                </form>
             </dialog>
 
             <dialog class="modal" id="delete-character-modal">
@@ -1519,7 +1869,7 @@ export function CharacterManagementPage({
             <CharacterManagementScript
                 characters={charactersWithUrls}
                 csrfToken={currentUser.csrfToken}
-                folders={folders}
+                folders={foldersWithUrls}
                 placements={placements}
             />
         </BaseLayout>

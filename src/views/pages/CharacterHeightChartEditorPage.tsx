@@ -18,6 +18,7 @@ export type CharacterHeightChartEditorData = {
         headYPercent: number
         footYPercent: number
         footIsVirtual: boolean
+        nameTagXPercent: number
     }
 }
 
@@ -59,6 +60,8 @@ const INCHES_PER_METER = 39.37007874015748;
 const VIRTUAL_FOOT_MAX_PCT = 180;
 const VIRTUAL_FOOT_START_PCT = 118;
 const CHART_FRAME_PAD = 18;
+const MODEL_TOP_PADDING = 25;
+const ALPHA_OPAQUE_THRESHOLD = 24;
 
 const initialChart = character.heightChart || null;
 const state = {
@@ -67,9 +70,17 @@ const state = {
     topPct: initialChart ? initialChart.calibration.headYPercent : 5,
     bottomPct: initialChart ? initialChart.calibration.footYPercent : 95,
     croppedFeet: initialChart ? initialChart.calibration.footIsVirtual : false,
+    nameTagXPct: initialChart ? initialChart.calibration.nameTagXPercent : 50,
     previewSrc: initialChart && initialChart.image ? initialChart.image.url : '',
     pendingFile: null,
     objectUrl: ''
+};
+const alphaBounds = {
+    src: '',
+    status: 'idle',
+    width: 0,
+    height: 0,
+    bounds: null
 };
 
 const els = {
@@ -153,6 +164,88 @@ function gridLines(maxMeters) {
     return lines;
 }
 
+function findOpaqueBounds(alpha, width, height) {
+    let top = height;
+    let left = width;
+    let right = -1;
+    let bottom = -1;
+    for (let index = 0; index < alpha.length; index += 1) {
+        if (alpha[index] <= ALPHA_OPAQUE_THRESHOLD) continue;
+        const y = Math.floor(index / width);
+        const x = index - y * width;
+        top = Math.min(top, y);
+        left = Math.min(left, x);
+        right = Math.max(right, x);
+        bottom = Math.max(bottom, y);
+    }
+    if (right < 0 || bottom < 0) {
+        return null;
+    }
+    return { top, left, right, bottom };
+}
+
+function requestChartRender() {
+    window.requestAnimationFrame(() => {
+        renderChart();
+    });
+}
+
+function markAlphaBoundsFailed(error) {
+    alphaBounds.status = 'failed';
+    if (error) {
+        alphaBounds.error = error;
+    }
+    requestChartRender();
+}
+
+function ensureImageAlphaBounds() {
+    if (!state.image || !state.previewSrc) return null;
+    if (alphaBounds.src === state.previewSrc && alphaBounds.status !== 'idle') return alphaBounds;
+
+    const src = state.previewSrc;
+    alphaBounds.src = src;
+    alphaBounds.status = 'loading';
+    alphaBounds.width = 0;
+    alphaBounds.height = 0;
+    alphaBounds.bounds = null;
+
+    const image = new Image();
+    image.onload = () => {
+        if (alphaBounds.src !== src || state.previewSrc !== src || !state.image) return;
+        const width = image.naturalWidth || state.image.naturalWidth || 1;
+        const height = image.naturalHeight || state.image.naturalHeight || 1;
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        if (!context) {
+            markAlphaBoundsFailed();
+            return;
+        }
+        canvas.width = width;
+        canvas.height = height;
+        try {
+            context.drawImage(image, 0, 0, width, height);
+            const rgba = context.getImageData(0, 0, width, height).data;
+            const alpha = new Uint8Array(width * height);
+            for (let sourceIndex = 3, targetIndex = 0; sourceIndex < rgba.length; sourceIndex += 4, targetIndex += 1) {
+                alpha[targetIndex] = rgba[sourceIndex];
+            }
+            alphaBounds.status = 'ready';
+            alphaBounds.width = width;
+            alphaBounds.height = height;
+            alphaBounds.bounds = findOpaqueBounds(alpha, width, height);
+            requestChartRender();
+        } catch (error) {
+            markAlphaBoundsFailed(error);
+        }
+    };
+    image.onerror = () => {
+        if (alphaBounds.src !== src || state.previewSrc !== src) return;
+        markAlphaBoundsFailed();
+    };
+    image.src = src;
+    return alphaBounds;
+}
+
 function calibrationSpace() {
     return state.croppedFeet ? VIRTUAL_FOOT_MAX_PCT : 100;
 }
@@ -193,10 +286,43 @@ function setCalibration(marker, valuePct) {
     }
 }
 
-function maxMeters() {
-    if (!state.image) return 2;
-    const maxFeet = state.heightMeters * INCHES_PER_METER / 12;
+function setNameTagX(valuePct) {
+    state.nameTagXPct = clamp(valuePct, 0, 100);
+}
+
+function roundChartMaxMeters(maxMeters) {
+    const maxFeet = maxMeters * INCHES_PER_METER / 12;
     return Math.max(2, Math.ceil(maxFeet) * 12 / INCHES_PER_METER);
+}
+
+function opaqueTopPixel() {
+    if (!state.image) return 0;
+    const bounds = ensureImageAlphaBounds();
+    if (bounds && bounds.status === 'ready' && bounds.bounds && bounds.height > 0) {
+        return (bounds.bounds.top / bounds.height) * state.image.naturalHeight;
+    }
+    if (bounds && bounds.status === 'failed') {
+        return 0;
+    }
+    return (state.topPct / 100) * state.image.naturalHeight;
+}
+
+function effectiveOpaqueTopMeters() {
+    if (!state.image) return state.heightMeters;
+    const footPixel = (state.bottomPct / 100) * state.image.naturalHeight;
+    const topPixel = Math.min(opaqueTopPixel(), footPixel);
+    return Math.max(state.heightMeters, (footPixel - topPixel) * state.heightMeters / measuredPixels());
+}
+
+function chartMaxForTopPadding(topMeters, plotHeight, chartHeight) {
+    const availableHeight = Math.max(1, chartHeight - CHART_FRAME_PAD - MODEL_TOP_PADDING);
+    return (topMeters * plotHeight) / availableHeight;
+}
+
+function maxMeters(plotHeight, chartHeight) {
+    if (!state.image) return 2;
+    const topRequiredMax = chartMaxForTopPadding(effectiveOpaqueTopMeters(), plotHeight, chartHeight);
+    return roundChartMaxMeters(Math.max(state.heightMeters, topRequiredMax));
 }
 
 function renderChart() {
@@ -211,8 +337,9 @@ function renderChart() {
 
     if (els.calibrationPanel) els.calibrationPanel.classList.remove('hidden');
 
-    const plotHeight = Math.max(120, (els.chartPlot.clientHeight || 620) - CHART_FRAME_PAD * 2);
-    const chartMax = maxMeters();
+    const chartHeight = Math.max(120 + CHART_FRAME_PAD * 2, els.chartPlot.clientHeight || 620);
+    const plotHeight = Math.max(120, chartHeight - CHART_FRAME_PAD * 2);
+    const chartMax = maxMeters(plotHeight, chartHeight);
     const pxPerMeter = plotHeight / chartMax;
     const scale = (state.heightMeters * pxPerMeter) / measuredPixels();
     const imageWidth = Math.max(24, state.image.naturalWidth * scale);
@@ -254,10 +381,15 @@ function renderCalibration() {
         '<img alt="' + escapeHtml(character.name) + ' calibration" class="height-chart-calibration-image" src="' + escapeHtml(state.previewSrc) + '" style="display:block;height:' + imageHeight + '%;left:' + (state.croppedFeet ? 38 : 50) + '%;max-width:' + (state.croppedFeet ? 58 : 100) + '%;object-fit:contain;position:absolute;top:0;transform:translateX(-50%);width:auto;z-index:1">',
         '<div class="height-chart-cal-line" data-marker="top" style="top:' + top + '%"><span>Head</span><b aria-hidden="true"></b></div>',
         '<div class="height-chart-cal-line" data-marker="bottom" style="top:' + bottom + '%"><span>' + footLabel + '</span><b aria-hidden="true"></b></div>',
+        '<div class="height-chart-name-tag-line" data-marker="nametag"><span>Nametag</span><b aria-hidden="true"></b></div>',
         '</div>'
     ].join('');
 
     updateCalibrationUi();
+    const image = els.calibrationFrame.querySelector('.height-chart-calibration-image');
+    if (image && !image.complete) {
+        image.addEventListener('load', updateCalibrationUi, { once: true });
+    }
 }
 
 function updateCalibrationUi() {
@@ -273,6 +405,7 @@ function updateCalibrationUi() {
     const image = els.calibrationFrame.querySelector('.height-chart-calibration-image');
     const topLine = els.calibrationFrame.querySelector('[data-marker="top"]');
     const bottomLine = els.calibrationFrame.querySelector('[data-marker="bottom"]');
+    const nameTagLine = els.calibrationFrame.querySelector('[data-marker="nametag"]');
 
     els.calibrationFrame.classList.toggle('is-cropped', state.croppedFeet);
     if (stage) {
@@ -295,13 +428,31 @@ function updateCalibrationUi() {
         const label = bottomLine.querySelector('span');
         if (label) label.textContent = footLabel;
     }
+    if (nameTagLine) {
+        const frameRect = els.calibrationFrame.getBoundingClientRect();
+        const imageRect = image ? image.getBoundingClientRect() : null;
+        const visibleTop = imageRect && imageRect.height > 0
+            ? clamp(imageRect.top - frameRect.top, 0, frameRect.height)
+            : 0;
+        const visibleBottom = imageRect && imageRect.height > 0
+            ? clamp(imageRect.bottom - frameRect.top, 0, frameRect.height)
+            : frameRect.height;
+        const left = imageRect && imageRect.width > 0
+            ? imageRect.left - frameRect.left + (state.nameTagXPct / 100) * imageRect.width
+            : (state.nameTagXPct / 100) * frameRect.width;
+        nameTagLine.style.left = clamp(left, 0, frameRect.width) + 'px';
+        nameTagLine.style.top = visibleTop + 'px';
+        nameTagLine.style.height = Math.max(0, visibleBottom - visibleTop) + 'px';
+    }
     document.getElementById('head-marker-value').textContent = Math.round(state.topPct) + '%';
     document.getElementById('foot-marker-label').textContent = footLabel;
     document.getElementById('foot-marker-value').textContent = Math.round(state.bottomPct) + '%';
+    document.getElementById('nametag-marker-value').textContent = Math.round(state.nameTagXPct) + '%';
     document.getElementById('head-marker').value = String(state.topPct);
     const footRange = document.getElementById('foot-marker');
     footRange.max = String(state.croppedFeet ? VIRTUAL_FOOT_MAX_PCT : 100);
     footRange.value = String(state.bottomPct);
+    document.getElementById('nametag-marker').value = String(state.nameTagXPct);
 }
 
 function renderAll() {
@@ -336,6 +487,7 @@ async function loadImageFile(file) {
     };
     state.topPct = 5;
     state.bottomPct = state.croppedFeet ? VIRTUAL_FOOT_START_PCT : 95;
+    state.nameTagXPct = 50;
 }
 
 async function apiSave() {
@@ -350,7 +502,8 @@ async function apiSave() {
         calibration: {
             headYPercent: state.topPct,
             footYPercent: state.bottomPct,
-            footIsVirtual: state.croppedFeet
+            footIsVirtual: state.croppedFeet,
+            nameTagXPercent: state.nameTagXPct
         }
     };
     const form = new FormData();
@@ -431,6 +584,9 @@ document.addEventListener('input', (event) => {
         setCalibration(event.target.dataset.heightMarker, Number(event.target.value));
         renderChart();
         updateCalibrationUi();
+    } else if (event.target.matches('[data-nametag-marker]')) {
+        setNameTagX(Number(event.target.value));
+        updateCalibrationUi();
     }
 });
 
@@ -454,10 +610,17 @@ document.addEventListener('pointerdown', (event) => {
 
     event.preventDefault();
     const moveMarker = (moveEvent) => {
-        const rect = frame.getBoundingClientRect();
-        const pct = ((moveEvent.clientY - rect.top) / Math.max(1, rect.height)) * calibrationSpace();
-        setCalibration(marker.dataset.marker, pct);
-        renderChart();
+        if (marker.dataset.marker === 'nametag') {
+            const image = frame.querySelector('.height-chart-calibration-image');
+            const rect = image ? image.getBoundingClientRect() : frame.getBoundingClientRect();
+            const pct = ((moveEvent.clientX - rect.left) / Math.max(1, rect.width)) * 100;
+            setNameTagX(pct);
+        } else {
+            const rect = frame.getBoundingClientRect();
+            const pct = ((moveEvent.clientY - rect.top) / Math.max(1, rect.height)) * calibrationSpace();
+            setCalibration(marker.dataset.marker, pct);
+            renderChart();
+        }
         updateCalibrationUi();
     };
 
@@ -498,7 +661,10 @@ els.saveButton.addEventListener('click', async () => {
     }
 });
 
-window.addEventListener('resize', renderChart);
+window.addEventListener('resize', () => {
+    renderChart();
+    updateCalibrationUi();
+});
 renderAll();
 `,
         }}/>
@@ -538,6 +704,10 @@ export function CharacterHeightChartEditorPage({
                     .height-chart-cal-line::before { background: currentColor; border: 2px solid #000; border-radius: 999px; box-shadow: 0 0 0 2px rgb(255 255 255 / 0.8); content: ""; height: 1.1rem; left: 50%; position: absolute; top: -0.55rem; transform: translateX(-50%); width: 1.1rem; }
                     .height-chart-cal-line b { background: rgb(0 0 0 / 0.001); cursor: ns-resize; display: block; height: 3.25rem; left: 0; position: absolute; right: 0; top: -1.625rem; }
                     .height-chart-cal-line span { background: rgb(0 0 0 / 0.82); color: white; font-size: 0.72rem; font-weight: 900; left: 0.5rem; padding: 0.12rem 0.35rem; position: absolute; text-transform: uppercase; top: -1.55rem; }
+                    .height-chart-name-tag-line { border-left: 2px solid var(--color-secondary); color: var(--color-secondary); cursor: ew-resize; position: absolute; touch-action: none; width: 0; z-index: 3; }
+                    .height-chart-name-tag-line::before { background: currentColor; border: 2px solid #000; border-radius: 999px; box-shadow: 0 0 0 2px rgb(255 255 255 / 0.8); content: ""; height: 1.1rem; left: -0.55rem; position: absolute; top: 50%; transform: translateY(-50%); width: 1.1rem; }
+                    .height-chart-name-tag-line b { background: rgb(0 0 0 / 0.001); bottom: 0; cursor: ew-resize; display: block; left: -1.625rem; position: absolute; top: 0; width: 3.25rem; }
+                    .height-chart-name-tag-line span { background: rgb(0 0 0 / 0.82); color: white; font-size: 0.72rem; font-weight: 900; left: 0.35rem; padding: 0.12rem 0.35rem; position: absolute; text-transform: uppercase; top: 0.5rem; }
                     @media (max-width: 900px) { .height-chart-shell { grid-template-columns: 1fr; } }
                 `}</style>
                 <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -620,6 +790,13 @@ export function CharacterHeightChartEditorPage({
                                             id="foot-marker-value"></output></span>
                                         <input class="range range-error range-sm" data-height-marker="bottom"
                                                id="foot-marker" max="100" min="0" step="0.1" type="range"/>
+                                    </label>
+                                    <label class="grid gap-1">
+                                        <span
+                                            class="flex justify-between text-xs font-black uppercase tracking-wide text-base-content/60"><span>Nametag</span><output
+                                            id="nametag-marker-value"></output></span>
+                                        <input class="range range-secondary range-sm" data-nametag-marker
+                                               id="nametag-marker" max="100" min="0" step="0.1" type="range"/>
                                     </label>
                                 </div>
                             </section>
