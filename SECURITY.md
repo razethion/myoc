@@ -1,7 +1,33 @@
-## We take any security issues found in our code seriously.
+# Security Policy
 
-Should you find a security issue in the MyOC programming code, please submit a report here: https://github.com/razethion/myoc/security or email r@zeth.pw in advance before publishing it. This way we can prepare a fix and release the fix together with your announcement. You will be also given credit in our security announcement.
+Do not open a public issue for a vulnerability.
 
-Should you have suggestion on improving MyOC to make it more secure, please report that to our issue tracker. Existing improvement suggestions can be found by hardening label.
+## Reporting
 
-Please note that any support requests sent to this address will not be answered; you should use the standard support methods mentioned on the support page.
+Report vulnerabilities through GitHub Security Advisories:
+
+https://github.com/razethion/myoc/security
+
+If that is not practical, email:
+
+r@zeth.pw
+
+Include:
+
+- A clear description of the issue.
+- Steps to reproduce or a minimal proof of concept.
+- The affected route, feature, API, or configuration.
+- The likely impact.
+- Relevant logs, screenshots, request IDs, or environment details.
+
+## Scope
+
+Security-sensitive areas include authentication, authorization, sessions, CSRF protection, media upload, R2 object
+handling, D1 queries, admin actions, Worker configuration, and dependency vulnerabilities that affect deployed behavior.
+
+## Disclosure
+
+Please give the project time to investigate and prepare a fix before publishing details. If the report is valid, credit
+can be included in the security announcement unless you request otherwise.
+
+Security contact channels are only for vulnerabilities. For general help, use [SUPPORT.md](./SUPPORT.md).

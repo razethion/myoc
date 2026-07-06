@@ -34,6 +34,7 @@ type SizeChartJson = {
         headYPercent: number
         footYPercent: number
         footIsVirtual: boolean
+        nameTagXPercent: number
     }
 }
 
@@ -280,11 +281,12 @@ function parseSizeChartJson(value: string | null | undefined): SizeChartJson | n
         const meters = Number(height.meters)
         const headYPercent = Number(calibration.headYPercent)
         const footYPercent = Number(calibration.footYPercent)
+        const nameTagXPercent = Number(calibration.nameTagXPercent ?? 50)
         const naturalWidth = Number(image.naturalWidth)
         const naturalHeight = Number(image.naturalHeight)
         const key = typeof image.key === 'string' ? image.key : ''
 
-        if (!key || !Number.isFinite(meters) || !Number.isFinite(headYPercent) || !Number.isFinite(footYPercent) || !Number.isFinite(naturalWidth) || !Number.isFinite(naturalHeight)) {
+        if (!key || !Number.isFinite(meters) || !Number.isFinite(headYPercent) || !Number.isFinite(footYPercent) || !Number.isFinite(nameTagXPercent) || !Number.isFinite(naturalWidth) || !Number.isFinite(naturalHeight)) {
             return null
         }
 
@@ -303,6 +305,7 @@ function parseSizeChartJson(value: string | null | undefined): SizeChartJson | n
                 headYPercent,
                 footYPercent,
                 footIsVirtual: Boolean(calibration.footIsVirtual),
+                nameTagXPercent,
             },
         }
     } catch {

@@ -29,6 +29,13 @@ type ManagedR2MediaKey =
     profileImageKey: string
 }
     | {
+    kind: 'characterFolderImage'
+    key: string
+    userId: string
+    folderId: string
+    folderImageKey: string
+}
+    | {
     kind: 'characterMedia'
     key: string
     userId: string
@@ -187,6 +194,25 @@ export function parseManagedR2MediaKey(key: string): ManagedR2MediaKey | null {
         }
     }
 
+    if (parts.length === 6 && parts[0] === 'characters' && parts[2] === 'folders' && parts[4] === 'image') {
+        const [folderImageKey, extension] = splitFileName(parts[5])
+
+        if (
+            isSafeSegment(parts[1])
+            && isSafeSegment(parts[3])
+            && isSafeSegment(folderImageKey)
+            && extension === 'webp'
+        ) {
+            return {
+                kind: 'characterFolderImage',
+                key,
+                userId: parts[1],
+                folderId: parts[3],
+                folderImageKey,
+            }
+        }
+    }
+
     if (parts.length === 7 && parts[0] === 'characters' && parts[3] === 'media') {
         const [imageKey, extension] = splitFileName(parts[6])
         const contentType = contentTypeForExtension(extension)
@@ -305,6 +331,20 @@ async function isManagedR2MediaKeyReferenced(db: D1Database, parsed: ManagedR2Me
                  LIMIT 1`,
             )
                 .bind(parsed.userId, parsed.characterId, parsed.profileImageKey)
+                .first()
+            return Boolean(row)
+        }
+
+        case 'characterFolderImage': {
+            const row = await db.prepare(
+                `SELECT 1
+                 FROM character_folders
+                 WHERE user_id = ?
+                   AND id = ?
+                   AND folder_image_key = ?
+                 LIMIT 1`,
+            )
+                .bind(parsed.userId, parsed.folderId, parsed.folderImageKey)
                 .first()
             return Boolean(row)
         }
