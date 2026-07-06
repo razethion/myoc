@@ -3448,7 +3448,7 @@ async function getOwnedCharacter(db: D1Database, userId: string, characterId: st
         `SELECT id,
                 user_id,
                 name,
-                folder_image_key,
+                profile_image_key,
                 folder_id,
                 sort_order,
                 description,

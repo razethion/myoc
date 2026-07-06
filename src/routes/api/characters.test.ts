@@ -302,6 +302,19 @@ async function postProfileImage(
     }, requestEnv(db, options.mediaBucket, options.imagesBinding))
 }
 
+async function putHeightChart(
+    characterId: string,
+    body: FormData,
+    db: D1Database,
+    options: CharacterRequestOptions = {},
+): Promise<Response> {
+    return apiRoutes.request(`https://example.com/characters/${characterId}/height-chart`, {
+        method: 'PUT',
+        body,
+        headers: createRequestHeaders(body, options),
+    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
+}
+
 async function patchFolder(
     folderId: string,
     body: unknown,
@@ -1603,6 +1616,132 @@ describe('POST /characters/:id/profile-image', () => {
             error: 'Character profile image must be a WebP image',
         })
         expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+})
+
+describe('PUT /characters/:id/height-chart', () => {
+    it('uses the character profile image column when loading the owned character', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+        const form = new FormData()
+        form.set('heightChartJson', JSON.stringify({
+            version: 1,
+            height: {
+                meters: 1.82,
+            },
+            image: null,
+            calibration: {
+                headYPercent: 5,
+                footYPercent: 95,
+                footIsVirtual: false,
+                nameTagXPercent: 50,
+            },
+        }))
+
+        const response = await putHeightChart(character.id, form, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        expect(boundStatements[1]?.sql).toContain('profile_image_key')
+        expect(boundStatements[1]?.sql).not.toContain('folder_image_key')
+    })
+
+    it('saves normalized height chart data and stores the uploaded image', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+        const form = new FormData()
+        form.set('heightChartJson', JSON.stringify({
+            version: 1,
+            height: {
+                meters: 1.8288,
+            },
+            image: null,
+            calibration: {
+                headYPercent: 4.567,
+                footYPercent: 94.321,
+                footIsVirtual: false,
+                nameTagXPercent: 52.345,
+            },
+        }))
+        form.set('heightChartImage', createPngFile(320, 640))
+
+        const response = await putHeightChart(character.id, form, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+
+        const body = await response.json() as {
+            heightChart: {
+                height: {
+                    meters: number
+                }
+                image: {
+                    key: string
+                    contentType: string
+                    naturalWidth: number
+                    naturalHeight: number
+                    url: string
+                }
+                calibration: {
+                    headYPercent: number
+                    footYPercent: number
+                    nameTagXPercent: number
+                }
+            }
+        }
+
+        expect(body.heightChart.height.meters).toBe(1.8288)
+        expect(body.heightChart.image.key).toMatch(new RegExp(`^${uuidPattern}$`))
+        expect(body.heightChart.image.contentType).toBe('image/png')
+        expect(body.heightChart.image.naturalWidth).toBe(320)
+        expect(body.heightChart.image.naturalHeight).toBe(640)
+        expect(body.heightChart.image.url).toBe(`${mediaPublicBaseUrl}/characters/current-user/character-id/height-chart/${body.heightChart.image.key}.png`)
+        expect(body.heightChart.calibration.headYPercent).toBe(4.57)
+        expect(body.heightChart.calibration.footYPercent).toBe(94.32)
+        expect(body.heightChart.calibration.nameTagXPercent).toBe(52.34)
+        expect(mediaBucket.put).toHaveBeenCalledWith(
+            `characters/current-user/character-id/height-chart/${body.heightChart.image.key}.png`,
+            expect.any(Uint8Array),
+            {
+                httpMetadata: {
+                    cacheControl: 'public, max-age=31536000, immutable',
+                    contentType: 'image/png',
+                },
+            },
+        )
+        expect(boundStatements[2]?.sql).toContain('UPDATE characters')
+        expect(JSON.parse(boundStatements[2]?.binds[0] as string)).toEqual({
+            version: 1,
+            height: {
+                meters: 1.8288,
+            },
+            image: {
+                key: body.heightChart.image.key,
+                contentType: 'image/png',
+                naturalWidth: 320,
+                naturalHeight: 640,
+            },
+            calibration: {
+                headYPercent: 4.57,
+                footYPercent: 94.32,
+                footIsVirtual: false,
+                nameTagXPercent: 52.34,
+            },
+        })
+        expect(boundStatements[2]?.binds[2]).toBe(character.id)
+        expect(boundStatements[2]?.binds[3]).toBe(currentUserRecord.id)
     })
 })
 
