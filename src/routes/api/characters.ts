@@ -11,6 +11,8 @@ import {
     characterMediaNsfwBlurImageUrl,
     characterMediaPreviewImageObjectKey,
     characterMediaPreviewImageUrl,
+    characterFolderImageObjectKey,
+    characterFolderImageUrl,
     characterProfileImageObjectKey,
     characterProfileImageUrl,
 } from '../../lib/media/url'
@@ -37,8 +39,15 @@ type CreateFolderRequest = {
     name?: unknown
     parentFolderId?: unknown
     parentId?: unknown
+    folderImageData?: unknown
+    folderImage?: unknown
     'new-folder-name'?: unknown
     'new-folder-parent'?: unknown
+}
+
+type UpdateFolderRequest = {
+    name?: unknown
+    'edit-folder-name'?: unknown
 }
 
 type DeleteCharacterRequest = {
@@ -204,6 +213,7 @@ type CharacterFolderRecord = {
     user_id: string
     name: string
     parent_folder_id: string | null
+    folder_image_key: string | null
     sort_order: number
     created_at: string
     updated_at: string
@@ -527,33 +537,215 @@ characterRoutes.post('/folders', async (c) => {
         return c.json({error: 'Parent folder not found'}, 404)
     }
 
+    const folderImageResult = parsed.folderImage
+        ? await validateProfileImage(parsed.folderImage, 'Folder image')
+        : null
+
+    if (folderImageResult && 'error' in folderImageResult) {
+        return c.json({error: folderImageResult.error}, folderImageResult.status)
+    }
+
     const now = toSqlTimestamp(new Date())
+    const folderId = crypto.randomUUID()
+    const folderImageKey = folderImageResult ? crypto.randomUUID() : null
     const folder: CharacterFolderRecord = {
-        id: crypto.randomUUID(),
+        id: folderId,
         user_id: currentUser.id,
         name: nameResult.name,
         parent_folder_id: parentResult.folderId,
+        folder_image_key: folderImageKey,
         sort_order: 0,
         created_at: now,
         updated_at: now,
     }
 
-    await c.env.DB.prepare(
-        `INSERT INTO character_folders (id, user_id, name, parent_folder_id, sort_order, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    )
-        .bind(
-            folder.id,
-            folder.user_id,
-            folder.name,
-            folder.parent_folder_id,
-            folder.sort_order,
-            folder.created_at,
-            folder.updated_at,
+    const uploadedObjectKey = folderImageResult && folderImageKey
+        ? characterFolderImageObjectKey(currentUser.id, folder.id, folderImageKey)
+        : null
+
+    if (folderImageResult && uploadedObjectKey) {
+        await c.env.MEDIA_BUCKET.put(uploadedObjectKey, folderImageResult.bytes, {
+            httpMetadata: {
+                cacheControl: 'public, max-age=31536000, immutable',
+                contentType: folderImageResult.contentType,
+            },
+        })
+    }
+
+    try {
+        await c.env.DB.prepare(
+            `INSERT INTO character_folders (id, user_id, name, parent_folder_id, folder_image_key, sort_order,
+                                            created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
+            .bind(
+                folder.id,
+                folder.user_id,
+                folder.name,
+                folder.parent_folder_id,
+                folder.folder_image_key,
+                folder.sort_order,
+                folder.created_at,
+                folder.updated_at,
+            )
+            .run()
+    } catch (error) {
+        if (uploadedObjectKey) {
+            await c.env.MEDIA_BUCKET.delete(uploadedObjectKey)
+        }
+        throw error
+    }
+
+    return c.json({folder: toPublicFolder(c.env.MEDIA_PUBLIC_BASE_URL, folder)}, 201)
+})
+
+characterRoutes.patch('/folders/:id', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return c.json({error: 'Authentication required'}, 401)
+    }
+
+    const folder = await getOwnedFolder(c.env.DB, currentUser.id, c.req.param('id') ?? '')
+
+    if (!folder) {
+        return c.json({error: 'Folder not found'}, 404)
+    }
+
+    let body: UpdateFolderRequest
+
+    try {
+        body = await c.req.json<UpdateFolderRequest>()
+    } catch {
+        return c.json({error: 'Invalid JSON body'}, 400)
+    }
+
+    const nameResult = normalizeFolderName(body.name ?? body['edit-folder-name'])
+
+    if ('error' in nameResult) {
+        return c.json({error: nameResult.error}, 400)
+    }
+
+    const updatedAt = toSqlTimestamp(new Date())
+    const updatedFolder = {
+        ...folder,
+        name: nameResult.name,
+        updated_at: updatedAt,
+    }
+
+    await c.env.DB.prepare(
+        `UPDATE character_folders
+         SET name = ?,
+             updated_at = ?
+         WHERE id = ?
+           AND user_id = ?`,
+    )
+        .bind(updatedFolder.name, updatedFolder.updated_at, folder.id, currentUser.id)
         .run()
 
-    return c.json({folder: toPublicFolder(folder)}, 201)
+    return c.json({folder: toPublicFolder(c.env.MEDIA_PUBLIC_BASE_URL, updatedFolder)})
+})
+
+characterRoutes.post('/folders/:id/image', async (c) => {
+    const contentLength = Number(c.req.header('content-length') ?? 0)
+
+    if (contentLength > PROFILE_IMAGE_MAX_REQUEST_BYTES) {
+        return c.json({error: 'Folder image upload is too large'}, 413)
+    }
+
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return c.json({error: 'Authentication required'}, 401)
+    }
+
+    const contentType = c.req.header('content-type') ?? ''
+
+    if (!contentType.includes('multipart/form-data')) {
+        return c.json({error: 'Multipart form data is required'}, 400)
+    }
+
+    const form = await c.req.formData()
+    const folder = await getOwnedFolder(c.env.DB, currentUser.id, c.req.param('id') ?? '')
+
+    if (!folder) {
+        return c.json({error: 'Folder not found'}, 404)
+    }
+
+    const file = form.get('folderImage') ?? form.get('folder-image')
+    const folderImageResult = await validateProfileImage(file instanceof File ? file : null, 'Folder image')
+
+    if ('error' in folderImageResult) {
+        return c.json({error: folderImageResult.error}, folderImageResult.status)
+    }
+
+    const folderImageKey = crypto.randomUUID()
+    const folderImageObjectKey = characterFolderImageObjectKey(currentUser.id, folder.id, folderImageKey)
+
+    await c.env.MEDIA_BUCKET.put(folderImageObjectKey, folderImageResult.bytes, {
+        httpMetadata: {
+            cacheControl: 'public, max-age=31536000, immutable',
+            contentType: folderImageResult.contentType,
+        },
+    })
+
+    try {
+        await c.env.DB.prepare(
+            `UPDATE character_folders
+             SET folder_image_key = ?,
+                 updated_at = ?
+             WHERE id = ?
+               AND user_id = ?`,
+        )
+            .bind(folderImageKey, toSqlTimestamp(new Date()), folder.id, currentUser.id)
+            .run()
+    } catch (error) {
+        await c.env.MEDIA_BUCKET.delete(folderImageObjectKey)
+        throw error
+    }
+
+    if (folder.folder_image_key) {
+        await deleteR2Objects(c.env.MEDIA_BUCKET, [
+            characterFolderImageObjectKey(currentUser.id, folder.id, folder.folder_image_key),
+        ])
+    }
+
+    return c.json({
+        folderImageKey,
+        folderImageUrl: characterFolderImageUrl(c.env.MEDIA_PUBLIC_BASE_URL, currentUser.id, folder.id, folderImageKey),
+    })
+})
+
+characterRoutes.delete('/folders/:id/image', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return c.json({error: 'Authentication required'}, 401)
+    }
+
+    const folder = await getOwnedFolder(c.env.DB, currentUser.id, c.req.param('id') ?? '')
+
+    if (!folder) {
+        return c.json({error: 'Folder not found'}, 404)
+    }
+
+    await c.env.DB.prepare(
+        `UPDATE character_folders
+         SET folder_image_key = NULL,
+             updated_at = ?
+         WHERE id = ?
+           AND user_id = ?`,
+    )
+        .bind(toSqlTimestamp(new Date()), folder.id, currentUser.id)
+        .run()
+
+    if (folder.folder_image_key) {
+        await deleteR2Objects(c.env.MEDIA_BUCKET, [
+            characterFolderImageObjectKey(currentUser.id, folder.id, folder.folder_image_key),
+        ])
+    }
+
+    return c.body(null, 204)
 })
 
 characterRoutes.delete('/folders/:id', async (c) => {
@@ -563,15 +755,7 @@ characterRoutes.delete('/folders/:id', async (c) => {
         return c.json({error: 'Authentication required'}, 401)
     }
 
-    const folder = await c.env.DB.prepare(
-        `SELECT id, user_id, name, parent_folder_id, sort_order, created_at, updated_at
-         FROM character_folders
-         WHERE id = ?
-           AND user_id = ?
-         LIMIT 1`,
-    )
-        .bind(c.req.param('id'), currentUser.id)
-        .first<CharacterFolderRecord>()
+    const folder = await getOwnedFolder(c.env.DB, currentUser.id, c.req.param('id') ?? '')
 
     if (!folder) {
         return c.json({error: 'Folder not found'}, 404)
@@ -606,6 +790,12 @@ characterRoutes.delete('/folders/:id', async (c) => {
                AND user_id = ?`,
         ).bind(folder.id, currentUser.id),
     ])
+
+    if (folder.folder_image_key) {
+        await deleteR2Objects(c.env.MEDIA_BUCKET, [
+            characterFolderImageObjectKey(currentUser.id, folder.id, folder.folder_image_key),
+        ])
+    }
 
     return c.body(null, 204)
 })
@@ -1887,11 +2077,15 @@ async function updateCharacterMediaRecord(
         .run()
 }
 
-function toPublicFolder(folder: CharacterFolderRecord) {
+function toPublicFolder(baseUrl: string, folder: CharacterFolderRecord) {
     return {
         id: folder.id,
         name: folder.name,
         parentFolderId: folder.parent_folder_id,
+        folderImageKey: folder.folder_image_key,
+        folderImageUrl: folder.folder_image_key
+            ? characterFolderImageUrl(baseUrl, folder.user_id, folder.id, folder.folder_image_key)
+            : null,
         sortOrder: folder.sort_order,
         createdAt: folder.created_at,
         updatedAt: folder.updated_at,
@@ -2491,6 +2685,7 @@ async function parseCreateCharacterRequest(c: CharacterRouteContext): Promise<{
 async function parseCreateFolderRequest(req: CharacterRouteContext['req']): Promise<{
     name: unknown
     parentFolderId: unknown
+    folderImage: JsonProfileImage | null
 } | {
     error: string
 }> {
@@ -2503,6 +2698,7 @@ async function parseCreateFolderRequest(req: CharacterRouteContext['req']): Prom
             return {
                 name: body.name ?? body['new-folder-name'],
                 parentFolderId: body.parentFolderId ?? body.parentId ?? body['new-folder-parent'],
+                folderImage: readJsonImage(body.folderImageData ?? body.folderImage),
             }
         } catch {
             return {error: 'Invalid JSON body'}
@@ -2515,6 +2711,7 @@ async function parseCreateFolderRequest(req: CharacterRouteContext['req']): Prom
         return {
             name: form.get('name') ?? form.get('new-folder-name'),
             parentFolderId: form.get('parentFolderId') ?? form.get('parentId') ?? form.get('new-folder-parent'),
+            folderImage: null,
         }
     }
 
@@ -3074,9 +3271,11 @@ async function characterHasMediaCapacity(
     return Number(row?.count ?? 0) < GALLERY_MAX_MEDIA_PER_CHARACTER
 }
 
-function readJsonProfileImage(body: CreateCharacterRequest): JsonProfileImage | null {
-    const value = body.profileImageData ?? body.profileImage
+function readJsonProfileImage(body: { profileImageData?: unknown; profileImage?: unknown }): JsonProfileImage | null {
+    return readJsonImage(body.profileImageData ?? body.profileImage)
+}
 
+function readJsonImage(value: unknown): JsonProfileImage | null {
     if (typeof value === 'string') {
         return {data: value}
     }
@@ -3232,12 +3431,24 @@ async function folderExists(db: D1Database, userId: string, folderId: string): P
     return Boolean(folder)
 }
 
+async function getOwnedFolder(db: D1Database, userId: string, folderId: string): Promise<CharacterFolderRecord | null> {
+    return await db.prepare(
+        `SELECT id, user_id, name, parent_folder_id, folder_image_key, sort_order, created_at, updated_at
+         FROM character_folders
+         WHERE id = ?
+           AND user_id = ?
+         LIMIT 1`,
+    )
+        .bind(folderId, userId)
+        .first<CharacterFolderRecord>()
+}
+
 async function getOwnedCharacter(db: D1Database, userId: string, characterId: string): Promise<CharacterRecord | null> {
     return await db.prepare(
         `SELECT id,
                 user_id,
                 name,
-                profile_image_key,
+                folder_image_key,
                 folder_id,
                 sort_order,
                 description,
@@ -3525,7 +3736,7 @@ async function deleteR2Objects(bucket: R2Bucket, objectKeys: string[]): Promise<
     }
 }
 
-async function validateProfileImage(file: File | JsonProfileImage | null): Promise<{
+async function validateProfileImage(file: File | JsonProfileImage | null, label = 'Character profile image'): Promise<{
     contentType: string
     bytes: Uint8Array
 } | {
@@ -3533,7 +3744,7 @@ async function validateProfileImage(file: File | JsonProfileImage | null): Promi
     status: 400 | 413
 }> {
     if (!file || (file instanceof File && file.size === 0)) {
-        return {error: 'Character profile image is required', status: 400}
+        return {error: `${label} is required`, status: 400}
     }
 
     const profileImage = file instanceof File
@@ -3544,7 +3755,7 @@ async function validateProfileImage(file: File | JsonProfileImage | null): Promi
         return profileImage
     }
 
-    const validation = validateProfileImagePayload(profileImage, 'Character profile image')
+    const validation = validateProfileImagePayload(profileImage, label)
 
     if ('error' in validation) {
         return validation

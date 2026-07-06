@@ -1,5 +1,5 @@
 import type {CurrentUser} from '../../lib/auth/session'
-import {characterProfileImageUrl, profilePhotoUrl} from '../../lib/media/url'
+import {characterFolderImageUrl, characterProfileImageUrl, profilePhotoUrl} from '../../lib/media/url'
 import {FIXED_SOCIAL_LINKS, type SocialPlatform, type UserSocialLink} from '../../lib/socialLinks'
 import type {
     CharacterFolderPlacement,
@@ -56,6 +56,25 @@ function FolderIcon() {
             <path d="M22 84h156" opacity="0.28" stroke="#ffffff" stroke-linecap="round" stroke-width="2"/>
         </svg>
     )
+}
+
+function FolderCover({folder, mediaBaseUrl, userId}: {
+    folder: CharacterManagementFolder
+    mediaBaseUrl: string
+    userId: string
+}) {
+    if (folder.folderImageKey) {
+        return (
+            <img
+                alt=""
+                aria-hidden="true"
+                class="absolute inset-0 z-10 h-full w-full object-cover transition group-hover:brightness-110"
+                src={characterFolderImageUrl(mediaBaseUrl, userId, folder.id, folder.folderImageKey)}
+            />
+        )
+    }
+
+    return <FolderIcon/>
 }
 
 function SocialIcon({platform}: { platform: SocialPlatform }) {
@@ -357,7 +376,8 @@ export function ProfilePage({
                                 <figure>
                                     <div class="relative aspect-square w-full overflow-hidden rounded bg-base-200 p-6 transition group-hover:bg-base-300">
                                         <div aria-hidden="true" class="pointer-events-none absolute inset-0 bg-white/0 transition group-hover:bg-white/10"></div>
-                                        <FolderIcon/>
+                                        <FolderCover folder={folder} mediaBaseUrl={mediaBaseUrl}
+                                                     userId={profileUser.id}/>
                                     </div>
                                     <figcaption class="mt-2 text-center font-bold">{folder.name}</figcaption>
                                 </figure>

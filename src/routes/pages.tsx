@@ -55,9 +55,9 @@ import {WhatsNewPage} from '../views/pages/WhatsNewPage'
 import {searchAll} from '../lib/search'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import {
+    characterHeightChartImageUrl,
     characterMediaImageUrl,
     characterMediaPreviewImageUrl,
-    characterHeightChartImageUrl,
     characterProfileImageObjectKey,
 } from '../lib/media/url'
 import {validateProfileImagePayload} from '../lib/media/profileImage'
@@ -2188,7 +2188,7 @@ async function getUserSocialLinks(db: D1Database, userId: string): Promise<UserS
 
 async function getCharacterFolders(db: D1Database, userId: string): Promise<CharacterManagementFolder[]> {
     const result = await db.prepare(
-        `SELECT id, name, parent_folder_id, sort_order
+        `SELECT id, name, parent_folder_id, folder_image_key, sort_order
          FROM character_folders
          WHERE user_id = ?
          ORDER BY parent_folder_id, sort_order, name`,
@@ -2198,6 +2198,7 @@ async function getCharacterFolders(db: D1Database, userId: string): Promise<Char
             id: string
             name: string
             parent_folder_id: string | null
+            folder_image_key: string | null
             sort_order: number
         }>()
 
@@ -2205,6 +2206,8 @@ async function getCharacterFolders(db: D1Database, userId: string): Promise<Char
         id: folder.id,
         name: folder.name,
         parentFolderId: folder.parent_folder_id,
+        folderImageKey: folder.folder_image_key,
+        folderImageUrl: null,
         sortOrder: folder.sort_order,
     }))
 }

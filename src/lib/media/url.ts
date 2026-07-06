@@ -30,6 +30,23 @@ export function characterProfileImageUrl(
     return mediaUrlForKey(baseUrl, characterProfileImageObjectKey(userId, characterId, profileImageKey))
 }
 
+export function characterFolderImageObjectKey(
+    userId: string,
+    folderId: string,
+    folderImageKey: string,
+): string {
+    return `characters/${userId}/folders/${folderId}/image/${folderImageKey}.webp`
+}
+
+export function characterFolderImageUrl(
+    baseUrl: string,
+    userId: string,
+    folderId: string,
+    folderImageKey: string,
+): string {
+    return mediaUrlForKey(baseUrl, characterFolderImageObjectKey(userId, folderId, folderImageKey))
+}
+
 export function characterMediaImageObjectKey(
     userId: string,
     characterId: string,
