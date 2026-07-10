@@ -1215,8 +1215,9 @@ async function stageToyhouseImportedCharacter(
     staged.uploadedKeys.push(profileObjectKey)
 
     staged.statements.push(db.prepare(
-        `INSERT INTO characters (id, user_id, name, profile_image_key, folder_id, sort_order, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO characters (id, size_chart_id, user_id, name, profile_image_key, folder_id, sort_order, created_at,
+                                 updated_at)
+         VALUES (?, randomblob(6), ?, ?, ?, ?, ?, ?, ?)`,
     )
         .bind(characterId, userId, character.name, profileImageKey, null, 0, now, now))
     staged.createdCharacters += 1
