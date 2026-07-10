@@ -106,6 +106,7 @@ INSERT OR IGNORE INTO character_folders (
 
 INSERT OR IGNORE INTO characters (
     id,
+    size_chart_id,
     user_id,
     name,
     profile_image_key,
@@ -116,6 +117,7 @@ INSERT OR IGNORE INTO characters (
 ) VALUES
     (
         'seed-character-demo-vyn',
+        X'000000000101',
         'seed-user-demo',
         'VYN',
         '11111111-1111-4111-8111-111111111111',
@@ -126,6 +128,7 @@ INSERT OR IGNORE INTO characters (
     ),
     (
         'seed-character-demo-ren',
+        X'000000000102',
         'seed-user-demo',
         'REN',
         '22222222-2222-4222-8222-222222222222',
@@ -136,6 +139,7 @@ INSERT OR IGNORE INTO characters (
     ),
     (
         'seed-character-demo-razeth',
+        X'000000000103',
         'seed-user-demo',
         'RAZETH',
         '33333333-3333-4333-8333-333333333333',
@@ -146,6 +150,7 @@ INSERT OR IGNORE INTO characters (
     ),
     (
         'seed-character-demo-lazarus',
+        X'000000000104',
         'seed-user-demo',
         'LAZARUS',
         '44444444-4444-4444-8444-444444444444',
@@ -156,6 +161,7 @@ INSERT OR IGNORE INTO characters (
     ),
     (
         'seed-character-demo-ivo',
+        X'000000000105',
         'seed-user-demo',
         'IVO',
         '55555555-5555-4555-8555-555555555555',
@@ -166,6 +172,7 @@ INSERT OR IGNORE INTO characters (
     ),
     (
         'seed-character-demo-kitty',
+        X'000000000106',
         'seed-user-demo',
         'KITTY',
         '66666666-6666-4666-8666-666666666666',
@@ -176,6 +183,7 @@ INSERT OR IGNORE INTO characters (
     ),
     (
         'seed-character-artist-mara',
+        X'000000000107',
         'seed-user-artist',
         'Mara',
         '77777777-7777-4777-8777-777777777777',
@@ -186,6 +194,7 @@ INSERT OR IGNORE INTO characters (
     ),
     (
         'seed-character-collector-orbit',
+        X'000000000108',
         'seed-user-collector',
         'Orbit',
         '88888888-8888-4888-8888-888888888888',

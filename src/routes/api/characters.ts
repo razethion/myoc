@@ -865,9 +865,10 @@ characterRoutes.post('/', async (c) => {
     try {
         const statements: D1PreparedStatement[] = [
             c.env.DB.prepare(
-                `INSERT INTO characters (id, user_id, name, profile_image_key, folder_id, sort_order, created_at,
+                `INSERT INTO characters (id, size_chart_id, user_id, name, profile_image_key, folder_id, sort_order,
+                                         created_at,
                                          updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                 VALUES (?, randomblob(6), ?, ?, ?, ?, ?, ?, ?)`,
             )
                 .bind(
                     character.id,
@@ -902,7 +903,7 @@ characterRoutes.post('/', async (c) => {
             await c.env.MEDIA_BUCKET.delete(profileImageObjectKey)
         }
 
-        if (isUniqueConstraintError(error)) {
+        if (isDuplicateCharacterNameError(error)) {
             return c.json({error: DUPLICATE_CHARACTER_NAME_ERROR}, 409)
         }
 
@@ -959,7 +960,7 @@ characterRoutes.patch('/:id', async (c) => {
             .bind(nameResult.name, descriptionResult.description, now, character.id, currentUser.id)
             .run()
     } catch (error) {
-        if (isUniqueConstraintError(error)) {
+        if (isDuplicateCharacterNameError(error)) {
             return c.json({error: DUPLICATE_CHARACTER_NAME_ERROR}, 409)
         }
 
@@ -3815,8 +3816,18 @@ function normalizeOptionalText(value: unknown): string | null {
     return typeof value === 'string' ? value.trim() : null
 }
 
-function isUniqueConstraintError(error: unknown): boolean {
-    return error instanceof Error && error.message.toLowerCase().includes('unique')
+function isDuplicateCharacterNameError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+        return false
+    }
+
+    const message = error.message.toLowerCase()
+
+    return message.includes('unique')
+        && (
+            message.includes('idx_characters_user_name_unique')
+            || (message.includes('characters.user_id') && message.includes('characters.name'))
+        )
 }
 
 function normalizeMediaRating(value: unknown): 'sfw' | 'nsfw' | null {

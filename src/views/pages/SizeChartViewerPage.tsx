@@ -24,6 +24,11 @@ const EXPORT_LABEL_HEIGHT = 34;
 const MIN_DRAWABLE_WIDTH = 140;
 const MAX_LAYER = 99;
 const ALPHA_HIT_THRESHOLD = 24;
+const PACKED_LAYOUT_VERSION = 2;
+const PACKED_LAYOUT_PREFIX = 'p.';
+const PACKED_LAYOUT_HEADER_BYTES = 3;
+const PACKED_LAYOUT_RECORD_BYTES = 8;
+const URL_SYNC_DEBOUNCE_MS = 200;
 const alphaMasks = new Map();
 const exportImages = new Map();
 let labelMeasureContext = null;
@@ -34,7 +39,10 @@ const state = {
     characters: [],
     selectedId: '',
     searchTimer: 0,
-    isRestoringLayout: false
+    restoreError: '',
+    isRestoringLayout: false,
+    hasIncomingLayoutUrl: new URLSearchParams(window.location.search).has('layout'),
+    layoutUrlSyncTimer: 0
 };
 
 const els = {
@@ -123,8 +131,7 @@ function normalizeLayoutNumber(value, fallback, min, max) {
     return Number.isFinite(number) ? clamp(number, min, max) : fallback;
 }
 
-function encodeLayoutValue(layout) {
-    const bytes = new TextEncoder().encode(JSON.stringify(layout));
+function encodeBase64Url(bytes) {
     let binary = '';
     bytes.forEach((byte) => {
         binary += String.fromCharCode(byte);
@@ -135,7 +142,7 @@ function encodeLayoutValue(layout) {
         .replace(/=+$/g, '');
 }
 
-function decodeLayoutValue(value) {
+function decodeBase64Url(value) {
     const normalized = value.split('-').join('+').split('_').join('/');
     const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
     const binary = atob(padded);
@@ -143,7 +150,107 @@ function decodeLayoutValue(value) {
     for (let index = 0; index < binary.length; index += 1) {
         bytes[index] = binary.charCodeAt(index);
     }
-    return new TextDecoder().decode(bytes);
+    return bytes;
+}
+
+function isSizeChartId(value) {
+    return typeof value === 'string' && /^[0-9a-f]{12}$/i.test(value);
+}
+
+function sizeChartIdToBytes(value, bytes, offset) {
+    for (let index = 0; index < 6; index += 1) {
+        bytes[offset + index] = parseInt(value.slice(index * 2, index * 2 + 2), 16);
+    }
+}
+
+function bytesToSizeChartId(bytes, offset) {
+    let value = '';
+    for (let index = 0; index < 6; index += 1) {
+        value += bytes[offset + index].toString(16).padStart(2, '0');
+    }
+    return value;
+}
+
+function encodePackedLayoutValue() {
+    if (state.characters.length > 30 || state.characters.some((character) => !isSizeChartId(character.sizeChartId))) {
+        return null;
+    }
+
+    const bytes = new Uint8Array(PACKED_LAYOUT_HEADER_BYTES + state.characters.length * PACKED_LAYOUT_RECORD_BYTES);
+    const selectedIndex = state.characters.findIndex((character) => character.id === state.selectedId);
+    bytes[0] = PACKED_LAYOUT_VERSION;
+    bytes[1] = state.characters.length;
+    bytes[2] = selectedIndex >= 0 ? selectedIndex + 1 : 0;
+
+    state.characters.forEach((character, index) => {
+        const offset = PACKED_LAYOUT_HEADER_BYTES + index * PACKED_LAYOUT_RECORD_BYTES;
+        sizeChartIdToBytes(character.sizeChartId, bytes, offset);
+        bytes[offset + 6] = Math.round(characterXPct(character));
+        bytes[offset + 7] = (character.flipped ? 128 : 0) | characterLayer(character);
+    });
+
+    return PACKED_LAYOUT_PREFIX + encodeBase64Url(bytes);
+}
+
+function parsePackedLayoutBytes(bytes) {
+    if (
+        bytes.length < PACKED_LAYOUT_HEADER_BYTES
+        || bytes[0] !== PACKED_LAYOUT_VERSION
+        || bytes[1] > 30
+        || bytes.length !== PACKED_LAYOUT_HEADER_BYTES + bytes[1] * PACKED_LAYOUT_RECORD_BYTES
+    ) {
+        return null;
+    }
+
+    const characters = [];
+
+    for (let index = 0; index < bytes[1]; index += 1) {
+        const offset = PACKED_LAYOUT_HEADER_BYTES + index * PACKED_LAYOUT_RECORD_BYTES;
+        const layerFlags = bytes[offset + 7];
+        const layer = layerFlags & 127;
+
+        characters.push({
+            lookupId: bytesToSizeChartId(bytes, offset),
+            xPct: normalizeLayoutNumber(bytes[offset + 6], 50, 0, 100),
+            flipped: Boolean(layerFlags & 128),
+            layer: normalizeLayoutNumber(layer, 1, 1, MAX_LAYER)
+        });
+    }
+
+    const selectedPosition = bytes[2] - 1;
+
+    return {
+        selectedLookupId: selectedPosition >= 0 && selectedPosition < characters.length
+            ? characters[selectedPosition].lookupId
+            : '',
+        characters
+    };
+}
+
+function parseLegacyLayoutBytes(bytes) {
+    const parsed = JSON.parse(new TextDecoder().decode(bytes));
+
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.characters)) {
+        return null;
+    }
+
+    const characters = parsed.characters
+        .map((character) => {
+            if (!character || typeof character !== 'object' || typeof character.id !== 'string') return null;
+            return {
+                lookupId: character.id,
+                xPct: normalizeLayoutNumber(character.xPct, 50, 0, 100),
+                flipped: Boolean(character.flipped),
+                layer: normalizeLayoutNumber(character.layer, 1, 1, MAX_LAYER)
+            };
+        })
+        .filter(Boolean)
+        .slice(0, 30);
+
+    return {
+        selectedLookupId: typeof parsed.selectedId === 'string' ? parsed.selectedId : '',
+        characters
+    };
 }
 
 function parseLayoutFromUrl() {
@@ -151,55 +258,54 @@ function parseLayoutFromUrl() {
     const rawLayout = params.get('layout');
     if (rawLayout) {
         try {
-            const parsed = JSON.parse(decodeLayoutValue(rawLayout));
-            if (parsed && typeof parsed === 'object' && Array.isArray(parsed.characters)) {
-                const characters = parsed.characters
-                    .map((character) => {
-                        if (!character || typeof character !== 'object' || typeof character.id !== 'string') return null;
-                        return {
-                            id: character.id,
-                            xPct: normalizeLayoutNumber(character.xPct, 50, 0, 100),
-                            flipped: Boolean(character.flipped),
-                            layer: normalizeLayoutNumber(character.layer, 1, 1, MAX_LAYER)
-                        };
-                    })
-                    .filter(Boolean)
-                    .slice(0, 30);
-                return {
-                    selectedId: typeof parsed.selectedId === 'string' ? parsed.selectedId : '',
-                    characters
-                };
+            if (rawLayout.startsWith(PACKED_LAYOUT_PREFIX)) {
+                return parsePackedLayoutBytes(decodeBase64Url(rawLayout.slice(PACKED_LAYOUT_PREFIX.length)));
             }
+
+            return parseLegacyLayoutBytes(decodeBase64Url(rawLayout));
         } catch {}
     }
 
     return null;
 }
 
-function layoutPayload() {
-    return {
-        version: 1,
-        selectedId: state.selectedId,
-        characters: state.characters.map((character) => ({
-            id: character.id,
-            xPct: Math.round(characterXPct(character)),
-            flipped: Boolean(character.flipped),
-            layer: characterLayer(character)
-        }))
-    };
-}
-
-function syncLayoutUrl() {
-    if (state.isRestoringLayout) return;
+function nextLayoutUrl() {
+    if (state.isRestoringLayout) return '';
     const url = new URL(window.location.href);
     url.searchParams.delete('characters');
     url.searchParams.delete('character');
     if (state.characters.length === 0) {
+        if (state.hasIncomingLayoutUrl) return '';
         url.searchParams.delete('layout');
     } else {
-        url.searchParams.set('layout', encodeLayoutValue(layoutPayload()));
+        state.hasIncomingLayoutUrl = false;
+        const packedLayout = encodePackedLayoutValue();
+        if (!packedLayout) return '';
+        url.searchParams.set('layout', packedLayout);
     }
-    window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+    return url.pathname + url.search + url.hash;
+}
+
+function syncLayoutUrl() {
+    if (state.layoutUrlSyncTimer) {
+        window.clearTimeout(state.layoutUrlSyncTimer);
+        state.layoutUrlSyncTimer = 0;
+    }
+
+    const nextUrl = nextLayoutUrl();
+    if (!nextUrl || nextUrl === window.location.pathname + window.location.search + window.location.hash) return;
+    window.history.replaceState(null, '', nextUrl);
+}
+
+function scheduleLayoutUrlSync() {
+    if (state.isRestoringLayout) return;
+    if (state.layoutUrlSyncTimer) {
+        window.clearTimeout(state.layoutUrlSyncTimer);
+    }
+    state.layoutUrlSyncTimer = window.setTimeout(() => {
+        state.layoutUrlSyncTimer = 0;
+        syncLayoutUrl();
+    }, URL_SYNC_DEBOUNCE_MS);
 }
 
 function niceStep(rawStep, candidates) {
@@ -628,6 +734,10 @@ function renderPlacementControls() {
 
 function renderSearchResults() {
     if (!els.searchResults) return;
+    if (state.restoreError) {
+        els.searchResults.innerHTML = '<div class="alert alert-error">' + escapeHtml(state.restoreError) + '</div>';
+        return;
+    }
     if (!state.query) {
         els.searchResults.innerHTML = '<div class="size-chart-muted">Search for a character to add.</div>';
         return;
@@ -791,6 +901,7 @@ function moveCharacterLayer(id, direction) {
 function createChartCharacter(item, placement) {
     return {
         id: item.id,
+        sizeChartId: item.sizeChartId,
         name: item.name,
         ownerUsername: item.ownerUsername,
         profileImageUrl: item.profileImageUrl,
@@ -829,19 +940,29 @@ async function restoreLayoutFromUrl() {
 
     state.isRestoringLayout = true;
     try {
-        const placements = new Map(layout.characters.map((character) => [character.id, character]));
-        const ids = layout.characters.map((character) => character.id);
-        const items = await fetchCharactersByIds(ids);
-        const itemsById = new Map(items.map((item) => [item.id, item]));
-        state.characters = [];
-        ids.forEach((id) => {
-            const item = itemsById.get(id);
-            if (!item || !item.hasSizeChart || !item.heightChart?.image) return;
-            state.characters.push(createChartCharacter(item, placements.get(id)));
+        const placements = new Map(layout.characters.map((character) => [character.lookupId, character]));
+        const lookupIds = layout.characters.map((character) => character.lookupId);
+        const items = await fetchCharactersByIds(lookupIds);
+        const itemsById = new Map();
+        items.forEach((item) => {
+            itemsById.set(item.id, item);
+            if (item.sizeChartId) {
+                itemsById.set(item.sizeChartId, item);
+            }
         });
-        state.selectedId = state.characters.some((character) => character.id === layout.selectedId)
-            ? layout.selectedId
+        state.characters = [];
+        lookupIds.forEach((lookupId) => {
+            const item = itemsById.get(lookupId);
+            if (!item || !item.hasSizeChart || !item.heightChart?.image) return;
+            state.characters.push(createChartCharacter(item, placements.get(lookupId)));
+        });
+        const selectedItem = layout.selectedLookupId ? itemsById.get(layout.selectedLookupId) : null;
+        state.selectedId = selectedItem && state.characters.some((character) => character.id === selectedItem.id)
+            ? selectedItem.id
             : '';
+        if (state.characters.length === 0) {
+            state.restoreError = 'Could not load any characters from this shared size chart.';
+        }
     } finally {
         state.isRestoringLayout = false;
     }
@@ -849,6 +970,7 @@ async function restoreLayoutFromUrl() {
 
 async function searchCharacters(query) {
     state.query = query.trim();
+    state.restoreError = '';
     if (!state.query) {
         state.searchItems = [];
         renderSearchResults();
@@ -957,7 +1079,7 @@ document.addEventListener('input', (event) => {
         if (output) output.textContent = Math.round(character.xPct) + '%';
         renderChart();
         renderRoster();
-        syncLayoutUrl();
+        scheduleLayoutUrlSync();
     }
 });
 
@@ -973,9 +1095,7 @@ document.addEventListener('change', (event) => {
 window.addEventListener('resize', renderChart);
 void restoreLayoutFromUrl()
     .catch((error) => {
-        if (els.searchResults) {
-            els.searchResults.innerHTML = '<div class="alert alert-error">' + escapeHtml(error.message || 'Could not load shared size chart.') + '</div>';
-        }
+        state.restoreError = error.message || 'Could not load shared size chart.';
     })
     .finally(() => {
         renderAll();

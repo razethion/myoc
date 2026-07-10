@@ -12,6 +12,7 @@ export const searchRoutes = new Hono<{ Bindings: Bindings }>()
 
 type SizeChartCharacterSearchRow = {
     id: string
+    size_chart_id: string
     name: string
     user_id: string
     username: string
@@ -37,6 +38,9 @@ type SizeChartJson = {
         nameTagXPercent: number
     }
 }
+
+const SIZE_CHART_ID_SELECT_SQL = 'lower(hex(characters.size_chart_id)) AS size_chart_id'
+const SIZE_CHART_ID_LOOKUP_SQL = 'lower(hex(characters.size_chart_id))'
 
 searchRoutes.get('/', async (c) => {
     const type = c.req.query('type')
@@ -78,6 +82,7 @@ searchRoutes.get('/size-chart-characters', async (c) => {
     const bindings = terms.flatMap((term) => [term.contains, term.contains])
     const result = await c.env.DB.prepare(
         `SELECT characters.id,
+                ${SIZE_CHART_ID_SELECT_SQL},
                 characters.name,
                 characters.user_id,
                 characters.profile_image_key,
@@ -128,8 +133,19 @@ searchRoutes.get('/size-chart-characters/by-id', async (c) => {
         return c.json({items: []})
     }
 
+    const sizeChartIds = ids
+        .filter(isSizeChartId)
+        .map((id) => id.toLowerCase())
+    const where = [
+        `characters.id IN (${ids.map(() => '?').join(', ')})`,
+        ...(sizeChartIds.length > 0
+            ? [`${SIZE_CHART_ID_LOOKUP_SQL} IN (${sizeChartIds.map(() => '?').join(', ')})`]
+            : []),
+    ].join(' OR ')
+
     const result = await c.env.DB.prepare(
         `SELECT characters.id,
+                ${SIZE_CHART_ID_SELECT_SQL},
                 characters.name,
                 characters.user_id,
                 characters.profile_image_key,
@@ -137,16 +153,20 @@ searchRoutes.get('/size-chart-characters/by-id', async (c) => {
                 users.username
          FROM characters
                   INNER JOIN users ON users.id = characters.user_id
-         WHERE characters.id IN (${ids.map(() => '?').join(', ')})
+         WHERE ${where}
          LIMIT 30`,
     )
-        .bind(...ids)
+        .bind(...ids, ...sizeChartIds)
         .all<SizeChartCharacterSearchRow>()
 
-    const itemsById = new Map((result.results ?? []).map((row) => [
-        row.id,
-        toSizeChartCharacterSearchResult(row, c.env.MEDIA_PUBLIC_BASE_URL),
-    ]))
+    const itemsById = new Map<string, ReturnType<typeof toSizeChartCharacterSearchResult>>()
+
+    for (const row of result.results ?? []) {
+        const item = toSizeChartCharacterSearchResult(row, c.env.MEDIA_PUBLIC_BASE_URL)
+        itemsById.set(row.id, item)
+
+        itemsById.set(row.size_chart_id, item)
+    }
 
     return c.json({
         items: ids
@@ -217,7 +237,8 @@ function normalizeSizeChartIds(value: string | null | undefined): string[] {
     const ids: string[] = []
 
     for (const id of value.split(',')) {
-        const normalized = id.trim()
+        const trimmed = id.trim()
+        const normalized = isSizeChartId(trimmed) ? trimmed.toLowerCase() : trimmed
 
         if (!normalized || normalized.length > 64 || seen.has(normalized)) {
             continue
@@ -234,12 +255,17 @@ function normalizeSizeChartIds(value: string | null | undefined): string[] {
     return ids
 }
 
+function isSizeChartId(value: string): boolean {
+    return /^[0-9a-f]{12}$/i.test(value)
+}
+
 function toSizeChartCharacterSearchResult(row: SizeChartCharacterSearchRow, mediaBaseUrl: string) {
     const heightChart = parseSizeChartJson(row.height_chart_json)
     const hasSizeChart = Boolean(heightChart?.image)
 
     return {
         id: row.id,
+        sizeChartId: row.size_chart_id,
         name: row.name,
         ownerId: row.user_id,
         ownerUsername: row.username,
