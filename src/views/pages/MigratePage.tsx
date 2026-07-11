@@ -1440,13 +1440,13 @@ function ToyhouseImportDialog({
                     </div>
                     <div class="modal-action">
                         <form method="dialog">
-                            <button class="btn btn-ghost">Cancel</button>
+                            <button class="btn btn-ghost" type="submit">Cancel</button>
                         </form>
                         <a class="btn btn-secondary" href={toyhouseFolderUrl}>I Bookmarked It</a>
                     </div>
                 </div>
                 <form class="modal-backdrop" method="dialog">
-                    <button>close</button>
+                    <button type="submit">close</button>
                 </form>
             </dialog>
             <ToyhouseImportDialogScript/>

@@ -1279,7 +1279,7 @@ export function CharacterPage({
                     </div>
                 </div>
                 <form class="modal-backdrop" method="dialog">
-                    <button>close</button>
+                    <button type="submit">close</button>
                 </form>
             </dialog>
 

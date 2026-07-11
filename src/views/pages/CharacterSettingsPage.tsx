@@ -1823,7 +1823,11 @@ function UploadDialog() {
     return (
         <dialog class="modal" id="upload-image-modal">
             <div class="modal-box">
-                <form method="dialog"><button aria-label="Close upload dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button></form>
+                <form method="dialog">
+                    <button aria-label="Close upload dialog"
+                            class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                    </button>
+                </form>
                 <h2 class="text-xl font-bold">Upload Image</h2>
                 <form class="mt-5 space-y-4" id="upload-image-form">
                     <p class="text-sm text-base-content/70">PNG, JPG, WebP, GIF, and AVIF images are accepted. Files are
@@ -1850,7 +1854,9 @@ function UploadDialog() {
                     </div>
                 </form>
             </div>
-            <form class="modal-backdrop" method="dialog"><button>close</button></form>
+            <form class="modal-backdrop" method="dialog">
+                <button type="submit">close</button>
+            </form>
         </dialog>
     )
 }
@@ -1859,7 +1865,11 @@ function BulkUploadDialog() {
     return (
         <dialog class="modal" id="bulk-upload-modal">
             <div class="modal-box max-w-3xl">
-                <form method="dialog"><button aria-label="Close bulk upload dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button></form>
+                <form method="dialog">
+                    <button aria-label="Close bulk upload dialog"
+                            class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                    </button>
+                </form>
                 <h2 class="text-xl font-bold">Bulk Upload</h2>
                 <form class="mt-5 space-y-4" id="bulk-upload-form">
                     <fieldset class="fieldset">
@@ -1905,25 +1915,37 @@ function GalleryTagDialogs() {
         <>
             <dialog class="modal" id="gallery-tag-modal">
                 <div class="modal-box">
-                    <form method="dialog"><button aria-label="Close tag dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button></form>
+                    <form method="dialog">
+                        <button aria-label="Close tag dialog"
+                                class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                        </button>
+                    </form>
                     <h2 class="text-xl font-bold">Add Gallery Tab</h2>
                     <form class="mt-5 space-y-4" id="gallery-tag-form">
                         <fieldset class="fieldset"><label class="fieldset-label" for="gallery-tag-name">Tab Name</label><input class="input input-bordered w-full" id="gallery-tag-name" maxLength={32} required type="text"/></fieldset>
                         <div class="modal-action"><button class="btn btn-ghost" data-close-gallery-tag-modal type="button">Cancel</button><button class="btn btn-primary" type="submit">Add Tab</button></div>
                     </form>
                 </div>
-                <form class="modal-backdrop" method="dialog"><button>close</button></form>
+                <form class="modal-backdrop" method="dialog">
+                    <button type="submit">close</button>
+                </form>
             </dialog>
             <dialog class="modal" id="rename-gallery-tag-modal">
                 <div class="modal-box">
-                    <form method="dialog"><button aria-label="Close rename tab dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button></form>
+                    <form method="dialog">
+                        <button aria-label="Close rename tab dialog"
+                                class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                        </button>
+                    </form>
                     <h2 class="text-xl font-bold">Rename Gallery Tab</h2>
                     <form class="mt-5 space-y-4" id="rename-gallery-tag-form">
                         <fieldset class="fieldset"><label class="fieldset-label" for="rename-gallery-tag-name">Tab Name</label><input class="input input-bordered w-full" id="rename-gallery-tag-name" maxLength={32} required type="text"/></fieldset>
                         <div class="modal-action"><button class="btn btn-ghost" data-close-rename-gallery-tag-modal type="button">Cancel</button><button class="btn btn-primary" type="submit">Rename Tab</button></div>
                     </form>
                 </div>
-                <form class="modal-backdrop" method="dialog"><button>close</button></form>
+                <form class="modal-backdrop" method="dialog">
+                    <button type="submit">close</button>
+                </form>
             </dialog>
             <dialog class="modal" id="delete-gallery-tag-modal">
                 <div class="modal-box">
@@ -1932,7 +1954,9 @@ function GalleryTagDialogs() {
                         Media.</p>
                     <div class="modal-action"><button class="btn btn-ghost" data-cancel-delete-gallery-tag type="button">Cancel</button><button class="btn btn-error" data-confirm-delete-gallery-tag type="button">Delete Tab</button></div>
                 </div>
-                <form class="modal-backdrop" method="dialog"><button>close</button></form>
+                <form class="modal-backdrop" method="dialog">
+                    <button type="submit">close</button>
+                </form>
             </dialog>
         </>
     )
@@ -1948,11 +1972,17 @@ function MediaDialogs({characterName}: { characterName: string }) {
                         entirely.</p>
                     <div class="modal-action"><button class="btn btn-ghost" data-cancel-delete-media type="button">Cancel</button><button class="btn btn-error" data-confirm-delete-media type="button">Delete Media</button></div>
                 </div>
-                <form class="modal-backdrop" method="dialog"><button>close</button></form>
+                <form class="modal-backdrop" method="dialog">
+                    <button type="submit">close</button>
+                </form>
             </dialog>
             <dialog class="modal" id="edit-image-artist-modal">
                 <div class="modal-box">
-                    <form method="dialog"><button aria-label="Close artist dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button></form>
+                    <form method="dialog">
+                        <button aria-label="Close artist dialog"
+                                class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                        </button>
+                    </form>
                     <h2 class="text-xl font-bold">Edit Image</h2>
                     <form class="mt-5 space-y-4" id="edit-image-artist-form">
                         <p class="text-sm text-base-content/70">PNG, JPG, WebP, GIF, and AVIF replacements are accepted.
@@ -1978,7 +2008,9 @@ function MediaDialogs({characterName}: { characterName: string }) {
                         <div class="modal-action"><button class="btn btn-ghost" data-close-edit-artist-modal type="button">Cancel</button><button class="btn btn-primary" type="submit">Save Image</button></div>
                     </form>
                 </div>
-                <form class="modal-backdrop" method="dialog"><button>close</button></form>
+                <form class="modal-backdrop" method="dialog">
+                    <button type="submit">close</button>
+                </form>
             </dialog>
             <input hidden readOnly value={characterName}/>
         </>
@@ -1989,7 +2021,11 @@ function DeleteCharacterDialog({characterName}: { characterName: string }) {
     return (
         <dialog class="modal" id="delete-character-modal">
             <div class="modal-box">
-                <form method="dialog"><button aria-label="Close delete dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button></form>
+                <form method="dialog">
+                    <button aria-label="Close delete dialog"
+                            class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                    </button>
+                </form>
                 <h2 class="text-xl font-bold">Delete Character</h2>
                 <p class="mt-3 text-sm text-base-content/80">This will permanently delete this character and its gallery. Type the character name to continue.</p>
                 <form class="mt-5 space-y-4" id="delete-character-form">
@@ -2003,7 +2039,9 @@ function DeleteCharacterDialog({characterName}: { characterName: string }) {
                     <div class="modal-action"><button class="btn btn-ghost" data-close-delete-modal type="button">Cancel</button><button class="btn btn-error" disabled id="confirm-delete-character" type="submit">Delete Character</button></div>
                 </form>
             </div>
-            <form class="modal-backdrop" method="dialog"><button>close</button></form>
+            <form class="modal-backdrop" method="dialog">
+                <button type="submit">close</button>
+            </form>
         </dialog>
     )
 }
