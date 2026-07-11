@@ -18,7 +18,7 @@ function UserResultCard({user}: { user: SearchUserResult }) {
     return (
         <a class="group flex items-center gap-3 rounded border border-base-300 bg-base-200 p-3 transition hover:border-primary hover:bg-base-300"
            href={user.profileUrl}>
-            <img alt={`${user.username} profile photo`} class="h-16 w-16 rounded object-cover"
+            <img alt={`${user.username} avatar`} class="h-16 w-16 rounded object-cover"
                  src={user.profilePhotoUrl}/>
             <div class="min-w-0 flex-1">
                 <h3 class="truncate text-lg font-bold leading-tight">{user.username}</h3>
@@ -205,7 +205,8 @@ export function SearchPage({currentUser, guestInitial, mediaBaseUrl, results}: S
 
                     <form action="/search" class="mt-5 flex flex-col gap-3 sm:flex-row" method="get">
                         <label class="input input-bordered flex-1">
-                            <svg class="h-4 w-4 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                            <svg aria-hidden="true" class="h-4 w-4 opacity-60" fill="none" stroke="currentColor"
+                                 viewBox="0 0 24 24"
                                  xmlns="http://www.w3.org/2000/svg">
                                 <path d="M21 21l-4.35-4.35M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14z"
                                       stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>

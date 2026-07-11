@@ -389,7 +389,12 @@ export function generateRecoveryPhrase(): string {
     crypto.getRandomValues(bytes)
 
     for (const value of bytes) {
-        words.push(wordlist[value % wordlist.length])
+        const word = wordlist[value % wordlist.length]
+        if (!word) {
+            throw new Error('Recovery wordlist is empty.')
+        }
+
+        words.push(word)
     }
 
     return words.join('-')

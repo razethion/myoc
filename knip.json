@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/knip/schema.json",
+  "entry": [
+    "scripts/*.mjs",
+    "src/styles/app.css"
+  ],
+  "project": [
+    "src/**/*.{ts,tsx,css}",
+    "scripts/*.mjs"
+  ],
+  "ignoreDependencies": [
+    "@simplewebauthn/browser",
+    "cropperjs"
+  ],
+  "ignoreExportsUsedInFile": true
+}

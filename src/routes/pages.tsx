@@ -121,7 +121,7 @@ pageRoutes.use('*', async (c, next) => {
 
 function getRandomLetter(): string {
     const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-    return letters[Math.floor(Math.random() * letters.length)]
+    return letters.charAt(Math.floor(Math.random() * letters.length))
 }
 
 pageRoutes.get('/', async (c) => {
@@ -378,7 +378,7 @@ pageRoutes.post('/migrate/import', async (c) => {
 pageRoutes.post('/migrate/import/confirm', async (c) => {
     const currentUser = await getCurrentUser(c)
     let clientImportPlan: ToyhouseClientImportPlan | null = null
-    let importResult: ToyhouseImportResult | null = null
+    const importResult: ToyhouseImportResult | null = null
     let migrationError = ''
 
     if (!currentUser) {
@@ -648,7 +648,7 @@ async function shouldRedirectToPasskeyPrompt(db: D1Database, currentUser: Awaite
 }
 
 function safePromptReturnTo(value: string | undefined, username: string): string {
-    if (!value || !value.startsWith('/') || value.startsWith('//') || value === PASSKEY_PROMPT_PATH || value.startsWith('/api/')) {
+    if (!value?.startsWith('/') || value.startsWith('//') || value === PASSKEY_PROMPT_PATH || value.startsWith('/api/')) {
         return userProfileUrl(username)
     }
 
@@ -1112,7 +1112,11 @@ async function prepareToyhouseClientImportPlan(
         throw stagingError
     }
 
-    return clientImportPlan!
+    if (!clientImportPlan) {
+        throw new Error('Toyhou.se import plan was not created.')
+    }
+
+    return clientImportPlan
 }
 
 async function hasActiveToyhouseImportJob(db: D1Database, userId: string): Promise<boolean> {
@@ -1311,8 +1315,14 @@ function readWebpDataUrl(value: string): { contentType: string; bytes: Uint8Arra
         return {error: 'Profile image must be a WebP data URL.'}
     }
 
+    const [, contentType, encodedBytes] = match
+
+    if (!contentType || !encodedBytes) {
+        return {error: 'Profile image must be a WebP data URL.'}
+    }
+
     try {
-        const binary = atob(match[2])
+        const binary = atob(encodedBytes)
         const bytes = new Uint8Array(binary.length)
 
         for (let index = 0; index < binary.length; index += 1) {
@@ -1321,7 +1331,7 @@ function readWebpDataUrl(value: string): { contentType: string; bytes: Uint8Arra
 
         return {
             bytes,
-            contentType: match[1].toLowerCase(),
+            contentType: contentType.toLowerCase(),
         }
     } catch {
         return {error: 'Profile image could not be read.'}
@@ -1942,8 +1952,13 @@ function shuffleHomePageGalleryImages(images: HomePageGalleryImage[]): HomePageG
     for (let index = shuffled.length - 1; index > 0; index -= 1) {
         const swapIndex = Math.floor(Math.random() * (index + 1))
         const current = shuffled[index]
+        const swap = shuffled[swapIndex]
 
-        shuffled[index] = shuffled[swapIndex]
+        if (!current || !swap) {
+            continue
+        }
+
+        shuffled[index] = swap
         shuffled[swapIndex] = current
     }
 
@@ -2056,10 +2071,16 @@ async function renderProfilePage(c: PageRouteContext, username: string, rawPath 
     const pathSegments = getProfilePathSegments(rawPath)
 
     if (pathSegments.length === 1) {
-        const character = await getCharacterPageCharacter(c.env.DB, profileUser.id, pathSegments[0])
+        const characterPath = pathSegments[0]
+
+        if (!characterPath) {
+            return renderNotFoundPage(c, 'That profile does not exist or is no longer available.')
+        }
+
+        const character = await getCharacterPageCharacter(c.env.DB, profileUser.id, characterPath)
 
         if (character) {
-            if (username !== profileUser.username || pathSegments[0] !== character.name) {
+            if (username !== profileUser.username || characterPath !== character.name) {
                 const requestUrl = new URL(c.req.url)
                 return c.redirect(`${userProfileUrl(profileUser.username)}/${encodeURIComponent(character.name)}${requestUrl.search}`, 301)
             }

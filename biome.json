@@ -1,0 +1,57 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "files": {
+    "includes": [
+      "src/**",
+      "scripts/**",
+      "package.json",
+      "tsconfig.json",
+      "wrangler.jsonc",
+      "biome.json",
+      "knip.json"
+    ]
+  },
+  "formatter": {
+    "indentStyle": "space",
+    "lineEnding": "auto",
+    "lineWidth": 140
+  },
+  "javascript": {
+    "formatter": {
+      "bracketSpacing": false,
+      "indentWidth": 4,
+      "jsxQuoteStyle": "double",
+      "quoteStyle": "single",
+      "semicolons": "asNeeded",
+      "trailingCommas": "all"
+    }
+  },
+  "json": {
+    "formatter": {
+      "indentWidth": 2
+    }
+  },
+  "css": {
+    "formatter": {
+      "indentWidth": 4,
+      "quoteStyle": "single"
+    },
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "src/views/pages/adminImageApprovalsScript.ts"
+      ],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noTemplateCurlyInString": "off"
+          }
+        }
+      }
+    }
+  ]
+}

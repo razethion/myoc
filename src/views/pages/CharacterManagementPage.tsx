@@ -1674,7 +1674,9 @@ export function CharacterManagementPage({
             <dialog class="modal" id="create-character-modal">
                 <div class="modal-box w-11/12 max-w-3xl">
                     <form method="dialog">
-                        <button aria-label="Close create character dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button>
+                        <button aria-label="Close create character dialog"
+                                class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                        </button>
                     </form>
                     <h2 class="text-xl font-bold">Create Character</h2>
                     <form class="mt-5 space-y-4" id="create-character-form">
@@ -1692,7 +1694,7 @@ export function CharacterManagementPage({
                         </fieldset>
                         <div class="hidden rounded-box border border-base-300 bg-base-100 p-3" data-character-profile-cropper>
                             <div class="h-[min(62dvh,34rem)] min-h-96 overflow-hidden rounded-box bg-base-300">
-                                <img alt="Crop character profile image"
+                                <img alt="Crop character portrait"
                                      class="block h-full w-full object-contain"
                                      data-character-profile-crop-image/>
                             </div>
@@ -1711,13 +1713,17 @@ export function CharacterManagementPage({
                         </div>
                     </form>
                 </div>
-                <form class="modal-backdrop" method="dialog"><button>close</button></form>
+                <form class="modal-backdrop" method="dialog">
+                    <button type="submit">close</button>
+                </form>
             </dialog>
 
             <dialog class="modal" id="create-folder-modal">
                 <div class="modal-box w-11/12 max-w-3xl">
                     <form method="dialog">
-                        <button aria-label="Close create folder dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button>
+                        <button aria-label="Close create folder dialog"
+                                class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                        </button>
                     </form>
                     <h2 class="text-xl font-bold">Create Folder</h2>
                     <form class="mt-5 space-y-4" id="create-folder-form">
@@ -1742,7 +1748,7 @@ export function CharacterManagementPage({
                         <div class="hidden rounded-box border border-base-300 bg-base-100 p-3"
                              data-new-folder-image-cropper>
                             <div class="h-[min(62dvh,34rem)] min-h-96 overflow-hidden rounded-box bg-base-300">
-                                <img alt="Crop new folder image"
+                                <img alt="Crop new folder cover"
                                      class="block h-full w-full object-contain"
                                      data-new-folder-image-crop-image/>
                             </div>
@@ -1759,14 +1765,16 @@ export function CharacterManagementPage({
                         </div>
                     </form>
                 </div>
-                <form class="modal-backdrop" method="dialog"><button>close</button></form>
+                <form class="modal-backdrop" method="dialog">
+                    <button type="submit">close</button>
+                </form>
             </dialog>
 
             <dialog class="modal" id="edit-folder-modal">
                 <div class="modal-box w-11/12 max-w-3xl">
                     <form method="dialog">
                         <button aria-label="Close edit folder dialog"
-                                class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x
+                                class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
                         </button>
                     </form>
                     <h2 class="text-xl font-bold">Edit Folder</h2>
@@ -1792,7 +1800,7 @@ export function CharacterManagementPage({
                         <div class="hidden rounded-box border border-base-300 bg-base-100 p-3"
                              data-edit-folder-image-cropper>
                             <div class="h-[min(62dvh,34rem)] min-h-96 overflow-hidden rounded-box bg-base-300">
-                                <img alt="Crop folder image"
+                                <img alt="Crop folder cover"
                                      class="block h-full w-full object-contain"
                                      data-edit-folder-image-crop-image/>
                             </div>
@@ -1815,14 +1823,16 @@ export function CharacterManagementPage({
                     </form>
                 </div>
                 <form class="modal-backdrop" method="dialog">
-                    <button>close</button>
+                    <button type="submit">close</button>
                 </form>
             </dialog>
 
             <dialog class="modal" id="delete-character-modal">
                 <div class="modal-box">
                     <form method="dialog">
-                        <button aria-label="Close delete dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button>
+                        <button aria-label="Close delete dialog"
+                                class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                        </button>
                     </form>
                     <h2 class="text-xl font-bold">Delete Character</h2>
                     <p class="mt-3 text-sm text-base-content/80">
@@ -1845,13 +1855,17 @@ export function CharacterManagementPage({
                         </div>
                     </form>
                 </div>
-                <form class="modal-backdrop" method="dialog"><button>close</button></form>
+                <form class="modal-backdrop" method="dialog">
+                    <button type="submit">close</button>
+                </form>
             </dialog>
 
             <dialog class="modal" id="delete-folder-modal">
                 <div class="modal-box">
                     <form method="dialog">
-                        <button aria-label="Close delete folder dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button>
+                        <button aria-label="Close delete folder dialog"
+                                class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                        </button>
                     </form>
                     <h2 class="text-xl font-bold">Remove Folder</h2>
                     <p class="mt-3 text-sm text-base-content/80">Nested folders move to All characters. Character
@@ -1861,7 +1875,9 @@ export function CharacterManagementPage({
                         <button class="btn btn-error" data-confirm-delete-folder type="button">Remove Folder</button>
                     </div>
                 </div>
-                <form class="modal-backdrop" method="dialog"><button>close</button></form>
+                <form class="modal-backdrop" method="dialog">
+                    <button type="submit">close</button>
+                </form>
             </dialog>
 
             <div aria-live="polite" class="toast toast-end z-9999" id="toast-region"></div>

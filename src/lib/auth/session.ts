@@ -230,8 +230,17 @@ function timingSafeEqual(left: string, right: string): boolean {
     let mismatch = 0
 
     for (let index = 0; index < leftBytes.length; index += 1) {
-        mismatch |= leftBytes[index] ^ rightBytes[index]
+        mismatch |= byteAt(leftBytes, index) ^ byteAt(rightBytes, index)
     }
 
     return mismatch === 0
+}
+
+function byteAt(bytes: Uint8Array, offset: number): number {
+    const value = bytes[offset]
+    if (value === undefined) {
+        throw new Error(`Byte offset out of range: ${offset}`)
+    }
+
+    return value
 }

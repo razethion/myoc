@@ -139,7 +139,6 @@ export function extensionForImageContentType(contentType: string | null | undefi
             return 'webp'
         case 'image/avif':
             return 'avif'
-        case 'image/png':
         default:
             return 'png'
     }

@@ -19,7 +19,7 @@ const PUBLIC_UNSAFE_PATHS = new Set([
     '/api/users',
 ])
 
-export async function csrfProtection(c: Context<{ Bindings: Bindings }>, next: Next): Promise<Response | void> {
+export async function csrfProtection(c: Context<{ Bindings: Bindings }>, next: Next) {
     if (!UNSAFE_METHODS.has(c.req.method)) {
         return await next()
     }

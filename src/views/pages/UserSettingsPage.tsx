@@ -33,7 +33,7 @@ function formatSecurityDate(value: string | null): string {
         return 'Never'
     }
 
-    const date = new Date(value.replace(' ', 'T') + 'Z')
+    const date = new Date(`${value.replace(' ', 'T')}Z`)
 
     if (Number.isNaN(date.getTime())) {
         return value
@@ -1258,7 +1258,7 @@ export function UserSettingsPage({
                                     <div class="mt-4 hidden rounded-box border border-base-300 bg-base-100 p-4"
                                          data-profile-photo-cropper>
                                         <div class="max-h-[22rem] overflow-hidden rounded-box bg-base-300">
-                                            <img alt="Selected profile photo crop editor"
+                                            <img alt="Selected avatar crop editor"
                                                  class="block max-h-[22rem] w-full object-contain"
                                                  data-profile-photo-crop-image/>
                                         </div>
@@ -1505,7 +1505,7 @@ export function UserSettingsPage({
                         </div>
                     </div>
                     <form class="modal-backdrop" method="dialog">
-                        <button>close</button>
+                        <button type="submit">close</button>
                     </form>
                 </dialog>
             </main>

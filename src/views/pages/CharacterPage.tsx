@@ -504,6 +504,7 @@ function SettingsLink({characterId}: { characterId: string }) {
     return (
         <a aria-label="Content settings" class="btn btn-square btn-ghost absolute right-3 top-4 sm:right-0"
            href={`/edit/${encodeURIComponent(characterId)}`} title="Settings">
+            <span class="sr-only">Content settings</span>
             <svg aria-hidden="true" class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                  xmlns="http://www.w3.org/2000/svg">
                 <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.607 2.296.07 2.572-1.065Z"
@@ -1174,7 +1175,7 @@ export function CharacterPage({
                 <div class="mb-4 flex justify-center">
                     <a class="flex items-center gap-3" href={`/u/${encodeURIComponent(profileUser.username)}`}>
                         <img
-                            alt={`${profileUser.username} profile photo`}
+                            alt={`${profileUser.username} avatar`}
                             class="h-12 w-12 rounded object-cover"
                             decoding="async"
                             height="48"
@@ -1187,7 +1188,7 @@ export function CharacterPage({
                 </div>
 
                 <div class="mb-4 flex justify-center">
-                    <img alt={`${character.name} profile image`}
+                    <img alt={`${character.name} portrait`}
                          class="h-28 w-28 rounded object-cover sm:h-32 sm:w-32"
                          decoding="async"
                          height="128"
@@ -1275,11 +1276,13 @@ export function CharacterPage({
                 <div class="modal-box max-w-6xl border border-base-content/20 bg-base-200 p-0 shadow-2xl">
                     <img alt="" class="max-h-[80vh] w-full object-contain" id="lightbox-image"/>
                     <div class="space-y-2 p-4">
-                        <h2 class="text-xl font-semibold" id="lightbox-title"></h2>
+                        <h2 class="text-xl font-semibold" id="lightbox-title">
+                            <span class="sr-only">Selected gallery item</span>
+                        </h2>
                     </div>
                 </div>
                 <form class="modal-backdrop" method="dialog">
-                    <button>close</button>
+                    <button type="submit">close</button>
                 </form>
             </dialog>
 

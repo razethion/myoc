@@ -32,11 +32,11 @@ export function getWebpDimensions(bytes: Uint8Array): WebpDimensions | null {
             }
         }
 
-        if (chunkType === VP8L && chunkSize >= 5 && bytes[dataOffset] === 0x2f) {
-            const b1 = bytes[dataOffset + 1]
-            const b2 = bytes[dataOffset + 2]
-            const b3 = bytes[dataOffset + 3]
-            const b4 = bytes[dataOffset + 4]
+        if (chunkType === VP8L && chunkSize >= 5 && byteAt(bytes, dataOffset) === 0x2f) {
+            const b1 = byteAt(bytes, dataOffset + 1)
+            const b2 = byteAt(bytes, dataOffset + 2)
+            const b3 = byteAt(bytes, dataOffset + 3)
+            const b4 = byteAt(bytes, dataOffset + 4)
 
             return {
                 width: 1 + (((b2 & 0x3f) << 8) | b1),
@@ -44,7 +44,13 @@ export function getWebpDimensions(bytes: Uint8Array): WebpDimensions | null {
             }
         }
 
-        if (chunkType === VP8 && chunkSize >= 10 && bytes[dataOffset + 3] === 0x9d && bytes[dataOffset + 4] === 0x01 && bytes[dataOffset + 5] === 0x2a) {
+        if (
+            chunkType === VP8
+            && chunkSize >= 10
+            && byteAt(bytes, dataOffset + 3) === 0x9d
+            && byteAt(bytes, dataOffset + 4) === 0x01
+            && byteAt(bytes, dataOffset + 5) === 0x2a
+        ) {
             return {
                 width: readUint16Le(bytes, dataOffset + 6) & 0x3fff,
                 height: readUint16Le(bytes, dataOffset + 8) & 0x3fff,
@@ -62,13 +68,22 @@ function readAscii(bytes: Uint8Array, offset: number, length: number): string {
 }
 
 function readUint16Le(bytes: Uint8Array, offset: number): number {
-    return bytes[offset] | (bytes[offset + 1] << 8)
+    return byteAt(bytes, offset) | (byteAt(bytes, offset + 1) << 8)
 }
 
 function readUint24Le(bytes: Uint8Array, offset: number): number {
-    return bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16)
+    return byteAt(bytes, offset) | (byteAt(bytes, offset + 1) << 8) | (byteAt(bytes, offset + 2) << 16)
 }
 
 function readUint32Le(bytes: Uint8Array, offset: number): number {
-    return bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24)
+    return byteAt(bytes, offset) | (byteAt(bytes, offset + 1) << 8) | (byteAt(bytes, offset + 2) << 16) | (byteAt(bytes, offset + 3) << 24)
+}
+
+function byteAt(bytes: Uint8Array, offset: number): number {
+    const value = bytes[offset]
+    if (value === undefined) {
+        throw new Error(`WebP byte offset out of range: ${offset}`)
+    }
+
+    return value
 }

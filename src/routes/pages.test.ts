@@ -226,16 +226,17 @@ function createCurrentUserRecord(username = 'demo', overrides: Record<string, un
 
 function expectPatternAllowsReportedCharacterNames(html: string, inputId: string): void {
     const match = new RegExp(`id="${inputId}"[^>]*pattern="([^"]+)"`).exec(html)
-    const pattern = match?.[1]
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
+    const rawPattern = match?.[1]
 
-    expect(pattern).toBeTruthy()
+    expect(rawPattern).toBeTruthy()
 
-    if (!pattern) {
+    if (!rawPattern) {
         throw new Error(`Pattern attribute was not rendered for ${inputId}`)
     }
 
+    const pattern = rawPattern
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
     const regex = new RegExp(`^(?:${pattern})$`, 'v')
 
     expect(regex.test('DRD-5548 "Ivo"')).toBe(true)
@@ -984,7 +985,7 @@ describe('GET /migrate', () => {
         vi.stubGlobal('fetch', fetchMock)
 
         const response = await getAppPath(
-            '/migrate/toyhouse-image?url=' + encodeURIComponent('https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485'),
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485')}`,
             createProfilePageDb({
                 currentUser: createCurrentUserRecord('demo'),
             }),
@@ -1006,7 +1007,7 @@ describe('GET /migrate', () => {
         vi.stubGlobal('fetch', fetchMock)
 
         const response = await getAppPath(
-            '/migrate/toyhouse-image?url=' + encodeURIComponent('https://example.com/image.png'),
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://example.com/image.png')}`,
             createProfilePageDb({
                 currentUser: createCurrentUserRecord('demo'),
             }),

@@ -163,75 +163,84 @@ export function parseManagedR2MediaKey(key: string): ManagedR2MediaKey | null {
     const parts = key.split('/')
 
     if (parts.length === 4 && parts[0] === 'users' && parts[2] === 'profile') {
-        const [profilePhotoKey, extension] = splitFileName(parts[3])
+        const userId = pathPart(parts, 1)
+        const [profilePhotoKey, extension] = splitFileName(pathPart(parts, 3))
 
-        if (isSafeSegment(parts[1]) && isSafeSegment(profilePhotoKey) && extension === 'webp') {
+        if (isSafeSegment(userId) && isSafeSegment(profilePhotoKey) && extension === 'webp') {
             return {
                 kind: 'userProfile',
                 key,
-                userId: parts[1],
+                userId,
                 profilePhotoKey,
             }
         }
     }
 
     if (parts.length === 5 && parts[0] === 'characters' && parts[3] === 'profile') {
-        const [profileImageKey, extension] = splitFileName(parts[4])
+        const userId = pathPart(parts, 1)
+        const characterId = pathPart(parts, 2)
+        const [profileImageKey, extension] = splitFileName(pathPart(parts, 4))
 
         if (
-            isSafeSegment(parts[1])
-            && isSafeSegment(parts[2])
+            isSafeSegment(userId)
+            && isSafeSegment(characterId)
             && isSafeSegment(profileImageKey)
             && extension === 'webp'
         ) {
             return {
                 kind: 'characterProfile',
                 key,
-                userId: parts[1],
-                characterId: parts[2],
+                userId,
+                characterId,
                 profileImageKey,
             }
         }
     }
 
     if (parts.length === 6 && parts[0] === 'characters' && parts[2] === 'folders' && parts[4] === 'image') {
-        const [folderImageKey, extension] = splitFileName(parts[5])
+        const userId = pathPart(parts, 1)
+        const folderId = pathPart(parts, 3)
+        const [folderImageKey, extension] = splitFileName(pathPart(parts, 5))
 
         if (
-            isSafeSegment(parts[1])
-            && isSafeSegment(parts[3])
+            isSafeSegment(userId)
+            && isSafeSegment(folderId)
             && isSafeSegment(folderImageKey)
             && extension === 'webp'
         ) {
             return {
                 kind: 'characterFolderImage',
                 key,
-                userId: parts[1],
-                folderId: parts[3],
+                userId,
+                folderId,
                 folderImageKey,
             }
         }
     }
 
     if (parts.length === 7 && parts[0] === 'characters' && parts[3] === 'media') {
-        const [imageKey, extension] = splitFileName(parts[6])
+        const userId = pathPart(parts, 1)
+        const characterId = pathPart(parts, 2)
+        const mediaId = pathPart(parts, 4)
+        const rating = pathPart(parts, 5)
+        const [imageKey, extension] = splitFileName(pathPart(parts, 6))
         const contentType = contentTypeForExtension(extension)
 
         if (
-            isSafeSegment(parts[1])
-            && isSafeSegment(parts[2])
-            && isSafeSegment(parts[4])
-            && (parts[5] === 'sfw' || parts[5] === 'nsfw')
+            isSafeSegment(userId)
+            && isSafeSegment(characterId)
+            && isSafeSegment(mediaId)
+            && (rating === 'sfw' || rating === 'nsfw')
             && isSafeSegment(imageKey)
             && contentType
         ) {
             return {
                 kind: 'characterMedia',
                 key,
-                userId: parts[1],
-                characterId: parts[2],
-                mediaId: parts[4],
-                rating: parts[5],
+                userId,
+                characterId,
+                mediaId,
+                rating,
                 imageKey,
                 contentType,
             }
@@ -239,64 +248,73 @@ export function parseManagedR2MediaKey(key: string): ManagedR2MediaKey | null {
     }
 
     if (parts.length === 8 && parts[0] === 'characters' && parts[3] === 'media' && parts[6] === 'preview') {
-        const [imageKey, extension] = splitFileName(parts[7])
+        const userId = pathPart(parts, 1)
+        const characterId = pathPart(parts, 2)
+        const mediaId = pathPart(parts, 4)
+        const rating = pathPart(parts, 5)
+        const [imageKey, extension] = splitFileName(pathPart(parts, 7))
 
         if (
-            isSafeSegment(parts[1])
-            && isSafeSegment(parts[2])
-            && isSafeSegment(parts[4])
-            && (parts[5] === 'sfw' || parts[5] === 'nsfw')
+            isSafeSegment(userId)
+            && isSafeSegment(characterId)
+            && isSafeSegment(mediaId)
+            && (rating === 'sfw' || rating === 'nsfw')
             && isSafeSegment(imageKey)
             && extension === 'webp'
         ) {
             return {
                 kind: 'characterMediaPreview',
                 key,
-                userId: parts[1],
-                characterId: parts[2],
-                mediaId: parts[4],
-                rating: parts[5],
+                userId,
+                characterId,
+                mediaId,
+                rating,
                 imageKey,
             }
         }
     }
 
     if (parts.length === 8 && parts[0] === 'characters' && parts[3] === 'media' && parts[5] === 'nsfw' && parts[6] === 'blur') {
-        const [imageKey, extension] = splitFileName(parts[7])
+        const userId = pathPart(parts, 1)
+        const characterId = pathPart(parts, 2)
+        const mediaId = pathPart(parts, 4)
+        const [imageKey, extension] = splitFileName(pathPart(parts, 7))
 
         if (
-            isSafeSegment(parts[1])
-            && isSafeSegment(parts[2])
-            && isSafeSegment(parts[4])
+            isSafeSegment(userId)
+            && isSafeSegment(characterId)
+            && isSafeSegment(mediaId)
             && isSafeSegment(imageKey)
             && extension === 'webp'
         ) {
             return {
                 kind: 'characterMediaNsfwBlur',
                 key,
-                userId: parts[1],
-                characterId: parts[2],
-                mediaId: parts[4],
+                userId,
+                characterId,
+                mediaId,
                 imageKey,
             }
         }
     }
 
     if (parts.length === 5 && parts[0] === 'characters' && parts[3] === 'height-chart') {
-        const [imageKey, extension] = splitFileName(parts[4])
+        const userId = pathPart(parts, 1)
+        const characterId = pathPart(parts, 2)
+        const [imageKey, extension] = splitFileName(pathPart(parts, 4))
         const contentType = contentTypeForExtension(extension)
 
         if (
-            isSafeSegment(parts[1])
-            && isSafeSegment(parts[2])
+            isSafeSegment(userId)
+            && isSafeSegment(characterId)
             && isSafeSegment(imageKey)
             && contentType
         ) {
             return {
                 kind: 'characterHeightChart',
                 key,
-                userId: parts[1],
-                characterId: parts[2],
+                userId,
+                characterId,
                 imageKey,
                 contentType,
             }
@@ -449,6 +467,16 @@ function splitFileName(fileName: string): [string, string] {
     }
 
     return [fileName.slice(0, dotIndex), fileName.slice(dotIndex + 1).toLowerCase()]
+}
+
+function pathPart(parts: string[], index: number): string {
+    const part = parts[index]
+
+    if (part === undefined) {
+        throw new Error(`Missing R2 media key segment at index ${index}`)
+    }
+
+    return part
 }
 
 function contentTypeForExtension(extension: string): string | null {
