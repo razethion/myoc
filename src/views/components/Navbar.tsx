@@ -20,7 +20,7 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
     const search = (
         <form action="/search" class="w-full" method="get">
             <label class="input input-bordered w-full">
-                <svg class="h-4 w-4 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                <svg aria-hidden="true" class="h-4 w-4 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                      xmlns="http://www.w3.org/2000/svg">
                     <path d="M21 21l-4.35-4.35M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14z" stroke-linecap="round"
                           stroke-linejoin="round" stroke-width="2"/>
@@ -47,7 +47,7 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
                         <details class="dropdown dropdown-end">
                             <summary aria-label="Open account menu" class="btn btn-ghost btn-circle avatar">
                                 <div class="w-10 rounded-full">
-                                    <img alt={`${currentUser.username} profile`} data-profile-photo-image
+                                    <img alt={`${currentUser.username} avatar`} data-profile-photo-image
                                          src={avatarUrl}/>
                                 </div>
                             </summary>

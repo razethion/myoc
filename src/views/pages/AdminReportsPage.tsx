@@ -106,7 +106,7 @@ function ImageReportCard({csrfToken, report}: { csrfToken: string; report: Admin
                             </p>
                             <div class="modal-action">
                                 <form method="dialog">
-                                    <button class="btn btn-ghost">Cancel</button>
+                                    <button class="btn btn-ghost" type="submit">Cancel</button>
                                 </form>
                                 <form
                                     action={`/api/admin/reports/images/${encodeURIComponent(report.mediaId)}/${report.rating}/${item.action}`}

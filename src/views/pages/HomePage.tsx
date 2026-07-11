@@ -451,7 +451,9 @@ function HomePageMotionStyles() {
 }
 
 function niceStep(rawStep: number, candidates: number[]): number {
-    return candidates.find((candidate) => candidate >= rawStep) ?? candidates[candidates.length - 1]
+    const fallback = candidates[candidates.length - 1]
+
+    return candidates.find((candidate) => candidate >= rawStep) ?? fallback ?? rawStep
 }
 
 function gridStep(maxMeters: number): number {
@@ -767,7 +769,7 @@ function DiscoverGalleriesSection({
                                 </figure>
                                 <div class="flex min-w-0 items-center gap-2 p-3 sm:gap-4 sm:p-5">
                                     <img
-                                        alt={`${character.name} profile image`}
+                                        alt={`${character.name} portrait`}
                                         class="h-10 w-10 shrink-0 rounded-lg bg-base-300 object-cover sm:h-14 sm:w-14"
                                         decoding="async"
                                         loading="lazy"
@@ -1142,6 +1144,7 @@ function HeroGridBackdrop() {
             class="pointer-events-none absolute inset-0 z-0 overflow-hidden"
         >
             <svg
+                aria-hidden="true"
                 class="home-hero-grid absolute -inset-16 h-[calc(100%+8rem)] w-[calc(100%+8rem)]"
                 preserveAspectRatio="none"
             >

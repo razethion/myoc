@@ -2598,7 +2598,7 @@ async function putMediaPreviewImage(
 }
 
 async function putNsfwBlurImage(
-    images: ImagesBinding,
+    images: ImagesBinding | undefined,
     bucket: R2Bucket,
     userId: string,
     characterId: string,
@@ -2606,6 +2606,10 @@ async function putNsfwBlurImage(
     preview: ParsedPreviewImage,
     uploadedKeys: string[],
 ): Promise<string> {
+    if (!images) {
+        throw new Error('Cloudflare Images binding is not configured.')
+    }
+
     const imageKey = crypto.randomUUID()
     const objectKey = characterMediaNsfwBlurImageObjectKey(userId, characterId, mediaId, imageKey)
     const result = await images
@@ -3791,8 +3795,14 @@ function readProfileImageDataUrl(value: string): {
         return {error: 'Character profile image must be a base64 data URL', status: 400}
     }
 
+    const [, contentType, encodedBytes] = match
+
+    if (!contentType || !encodedBytes) {
+        return {error: 'Character profile image must be a base64 data URL', status: 400}
+    }
+
     try {
-        const binary = atob(match[2])
+        const binary = atob(encodedBytes)
         const bytes = new Uint8Array(binary.length)
 
         for (let index = 0; index < binary.length; index += 1) {
@@ -3800,7 +3810,7 @@ function readProfileImageDataUrl(value: string): {
         }
 
         return {
-            contentType: match[1].toLowerCase(),
+            contentType: contentType.toLowerCase(),
             bytes,
         }
     } catch {
@@ -4014,31 +4024,31 @@ function readGifDimensions(bytes: Uint8Array): { width: number; height: number }
     }
 
     return {
-        width: bytes[6] | (bytes[7] << 8),
-        height: bytes[8] | (bytes[9] << 8),
+        width: byteAt(bytes, 6) | (byteAt(bytes, 7) << 8),
+        height: byteAt(bytes, 8) | (byteAt(bytes, 9) << 8),
     }
 }
 
 function readJpegDimensions(bytes: Uint8Array): { width: number; height: number } | null {
-    if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) {
+    if (bytes.length < 4 || byteAt(bytes, 0) !== 0xff || byteAt(bytes, 1) !== 0xd8) {
         return null
     }
 
     let offset = 2
 
     while (offset + 9 < bytes.length) {
-        if (bytes[offset] !== 0xff) {
+        if (byteAt(bytes, offset) !== 0xff) {
             return null
         }
 
-        const marker = bytes[offset + 1]
+        const marker = byteAt(bytes, offset + 1)
         offset += 2
 
         if (marker === 0xd9 || marker === 0xda) {
             return null
         }
 
-        const length = (bytes[offset] << 8) | bytes[offset + 1]
+        const length = (byteAt(bytes, offset) << 8) | byteAt(bytes, offset + 1)
 
         if (length < 2 || offset + length > bytes.length) {
             return null
@@ -4051,8 +4061,8 @@ function readJpegDimensions(bytes: Uint8Array): { width: number; height: number 
             || (marker >= 0xcd && marker <= 0xcf)
         ) {
             return {
-                height: (bytes[offset + 3] << 8) | bytes[offset + 4],
-                width: (bytes[offset + 5] << 8) | bytes[offset + 6],
+                height: (byteAt(bytes, offset + 3) << 8) | byteAt(bytes, offset + 4),
+                width: (byteAt(bytes, offset + 5) << 8) | byteAt(bytes, offset + 6),
             }
         }
 
@@ -4139,7 +4149,7 @@ function readAscii(bytes: Uint8Array, offset: number, length: number): string {
     let value = ''
 
     for (let index = 0; index < length; index += 1) {
-        value += String.fromCharCode(bytes[offset + index])
+        value += String.fromCharCode(byteAt(bytes, offset + index))
     }
 
     return value
@@ -4147,11 +4157,21 @@ function readAscii(bytes: Uint8Array, offset: number, length: number): string {
 
 function readUint32Be(bytes: Uint8Array, offset: number): number {
     return (
-        (bytes[offset] * 0x1000000)
-        + ((bytes[offset + 1] << 16) >>> 0)
-        + ((bytes[offset + 2] << 8) >>> 0)
-        + bytes[offset + 3]
+        (byteAt(bytes, offset) * 0x1000000)
+        + ((byteAt(bytes, offset + 1) << 16) >>> 0)
+        + ((byteAt(bytes, offset + 2) << 8) >>> 0)
+        + byteAt(bytes, offset + 3)
     )
+}
+
+function byteAt(bytes: Uint8Array, offset: number): number {
+    const value = bytes[offset]
+
+    if (value === undefined) {
+        throw new Error(`Image byte offset out of range: ${offset}`)
+    }
+
+    return value
 }
 
 async function completeChunkedGalleryUpload(
