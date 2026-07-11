@@ -1,4 +1,5 @@
 import type {CurrentUser} from '../../lib/auth/session'
+import type {PasskeySummary, SessionSummary} from '../../lib/auth/passkeys'
 import {profilePhotoUrl} from '../../lib/media/url'
 import {
     createSettingsSocialLinks,
@@ -12,6 +13,8 @@ import {PROFILE_CROPPER_BROWSER_HELPERS} from '../profileCropperScript'
 
 type UserSettingsPageProps = {
     currentUser: CurrentUser
+    passkeys?: PasskeySummary[]
+    sessions?: SessionSummary[]
     socialLinks?: UserSocialLink[]
     mediaBaseUrl: string
 }
@@ -23,6 +26,50 @@ function avatarUrlFor(user: CurrentUser, mediaBaseUrl: string): string {
 
     const letter = user.username.trim().charAt(0).toUpperCase() || 'U'
     return `https://ui-avatars.com/api/?name=${encodeURIComponent(letter)}&background=ccc&color=000`
+}
+
+function formatSecurityDate(value: string | null): string {
+    if (!value) {
+        return 'Never'
+    }
+
+    const date = new Date(value.replace(' ', 'T') + 'Z')
+
+    if (Number.isNaN(date.getTime())) {
+        return value
+    }
+
+    return date.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+    })
+}
+
+function formatPasskeyTransports(transports: string[]): string {
+    if (transports.length === 0) {
+        return 'Passkey'
+    }
+
+    return transports.map((transport) => {
+        if (transport === 'internal') {
+            return 'This device'
+        }
+
+        if (transport === 'hybrid') {
+            return 'Phone or tablet'
+        }
+
+        if (transport === 'usb') {
+            return 'USB key'
+        }
+
+        if (transport === 'nfc') {
+            return 'NFC key'
+        }
+
+        return transport
+    }).join(', ')
 }
 
 function SocialIcon({platform}: { platform: FixedSocialPlatform | 'custom' }) {
@@ -98,6 +145,12 @@ function SocialIcon({platform}: { platform: FixedSocialPlatform | 'custom' }) {
 
 function UserSettingsPageScript() {
     const script = `
+        if (window.location.hostname === '127.0.0.1' || window.location.hostname === '::1') {
+            const localhostUrl = new URL(window.location.href);
+            localhostUrl.hostname = 'localhost';
+            window.location.replace(localhostUrl.toString());
+        }
+
         const settingsForm = document.querySelector('[data-settings-form]');
         const settingsAlert = document.querySelector('[data-settings-alert]');
         const settingsAlertMessage = document.querySelector('[data-settings-alert-message]');
@@ -107,8 +160,38 @@ function UserSettingsPageScript() {
         const profilePhotoCropper = document.querySelector('[data-profile-photo-cropper]');
         const profilePhotoCropImage = document.querySelector('[data-profile-photo-crop-image]');
         const profilePhotoImages = document.querySelectorAll('[data-profile-photo-image]');
+        const securitySection = document.querySelector('[data-security-section]');
+        const passwordFieldset = document.querySelector('[data-password-fieldset]');
+        const passwordInput = document.querySelector('[data-password-input]');
+        const passkeyList = document.querySelector('[data-passkey-list]');
+        const passkeyCountText = document.querySelector('[data-passkey-count-text]');
+        const noPasskeysMessage = document.querySelector('[data-no-passkeys-message]');
+        const addPasskeyButton = document.querySelector('[data-add-passkey-button]');
+        const passkeySetupModal = document.querySelector('[data-passkey-setup-modal]');
+        const passkeySetupStepPanels = document.querySelectorAll('[data-passkey-setup-step]');
+        const passkeySetupCreateButton = document.querySelector('[data-passkey-setup-create-button]');
+        const passkeySetupPhraseText = document.querySelector('[data-passkey-setup-phrase]');
+        const passkeySetupSavedButton = document.querySelector('[data-passkey-setup-saved-button]');
+        const passkeySetupConfirmInput = document.querySelector('[data-passkey-setup-confirm-input]');
+        const passkeySetupConfirmButton = document.querySelector('[data-passkey-setup-confirm-button]');
+        const passkeySetupDoneButton = document.querySelector('[data-passkey-setup-done-button]');
+        const passkeyNameInput = document.querySelector('[data-passkey-name]');
+        const regenerateRecoveryButton = document.querySelector('[data-regenerate-recovery-button]');
+        const completeSecureAccountButton = document.querySelector('[data-complete-secure-account-button]');
+        const revokeOtherSessionsButton = document.querySelector('[data-revoke-other-sessions-button]');
+        const recoveryModal = document.querySelector('[data-recovery-modal]');
+        const recoveryPhraseText = document.querySelector('[data-recovery-phrase]');
+        const recoverySavedButton = document.querySelector('[data-recovery-saved-button]');
+        const recoveryConfirmPanel = document.querySelector('[data-recovery-confirm-panel]');
+        const recoveryConfirmInput = document.querySelector('[data-recovery-confirm-input]');
+        const recoveryConfirmButton = document.querySelector('[data-recovery-confirm-button]');
+        const lastPasskeyRemovedModal = document.querySelector('[data-last-passkey-removed-modal]');
+        const lastPasskeyCreateButton = document.querySelector('[data-last-passkey-create-button]');
+        const lastPasskeyPasswordButton = document.querySelector('[data-last-passkey-password-button]');
         let profilePhotoCropperInstance = null;
         let profilePhotoObjectUrl = null;
+        let passkeySetupCompleted = false;
+        let pendingLastPasskeyRemoval = null;
         ${PROFILE_CROPPER_BROWSER_HELPERS}
 
         function showSettingsAlert(message, isSuccess = false) {
@@ -123,6 +206,164 @@ function UserSettingsPageScript() {
             settingsAlert.classList.add('invisible');
             settingsAlertMessage.textContent = '';
             settingsAlert.classList.remove('alert-error', 'alert-success');
+        }
+
+        function csrfToken() {
+            return securitySection?.dataset.csrfToken || settingsForm?.querySelector('input[name="csrfToken"]')?.value || '';
+        }
+
+        async function postSecurityJson(url, body = {}) {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    accept: 'application/json',
+                    'content-type': 'application/json',
+                    'x-csrf-token': csrfToken(),
+                },
+                body: JSON.stringify(body),
+            });
+            const responseBody = await response.json().catch(() => ({}));
+
+            if (!response.ok) {
+                throw new Error(responseBody.error || 'Security settings could not be updated.');
+            }
+
+            return responseBody;
+        }
+
+        async function deleteSecurityJson(url) {
+            const response = await fetch(url, {
+                method: 'DELETE',
+                headers: {
+                    accept: 'application/json',
+                    'x-csrf-token': csrfToken(),
+                },
+            });
+            const responseBody = await response.json().catch(() => ({}));
+
+            if (!response.ok) {
+                throw new Error(responseBody.error || 'Security settings could not be updated.');
+            }
+
+            return responseBody;
+        }
+
+        function setButtonWorking(button, isWorking, label) {
+            if (!button) {
+                return () => {};
+            }
+
+            const originalLabel = button.textContent;
+            button.disabled = isWorking;
+
+            if (label) {
+                button.textContent = label;
+            }
+
+            return () => {
+                button.disabled = false;
+                button.textContent = originalLabel;
+            };
+        }
+
+        function openRecoveryModal(phrase) {
+            if (!recoveryModal || !recoveryPhraseText) {
+                return;
+            }
+
+            recoveryPhraseText.textContent = phrase;
+
+            if (recoveryConfirmPanel) {
+                recoveryConfirmPanel.hidden = true;
+            }
+
+            if (recoveryConfirmInput) {
+                recoveryConfirmInput.value = '';
+            }
+
+            recoveryModal.showModal();
+        }
+
+        function setPasskeySetupStep(step) {
+            for (const panel of passkeySetupStepPanels) {
+                panel.hidden = panel.dataset.passkeySetupStep !== step;
+            }
+        }
+
+        function openPasskeySetupModal() {
+            if (!passkeySetupModal) {
+                return;
+            }
+
+            if (passkeyNameInput) {
+                passkeyNameInput.value = '';
+            }
+
+            if (passkeySetupConfirmInput) {
+                passkeySetupConfirmInput.value = '';
+            }
+
+            if (passkeySetupPhraseText) {
+                passkeySetupPhraseText.textContent = '';
+            }
+
+            setPasskeySetupStep('passkey');
+            passkeySetupModal.showModal();
+            passkeyNameInput?.focus();
+        }
+
+        function passkeyCount() {
+            return Number.parseInt(securitySection?.dataset.passkeyCount || '0', 10) || 0;
+        }
+
+        function updatePasskeyCount(count) {
+            if (securitySection) {
+                securitySection.dataset.passkeyCount = String(count);
+            }
+
+            if (passkeyCountText) {
+                passkeyCountText.textContent = String(count);
+            }
+
+            if (passkeyList) {
+                passkeyList.hidden = count === 0;
+            }
+
+            if (noPasskeysMessage) {
+                noPasskeysMessage.hidden = count !== 0;
+            }
+        }
+
+        function revealPasswordField() {
+            if (!passwordFieldset || !passwordInput) {
+                return;
+            }
+
+            passwordFieldset.hidden = false;
+            passwordInput.focus();
+            passwordFieldset.scrollIntoView({ block: 'center' });
+        }
+
+        function openLastPasskeyPrompt() {
+            if (lastPasskeyRemovedModal) {
+                lastPasskeyRemovedModal.showModal();
+                return;
+            }
+
+            revealPasswordField();
+        }
+
+        async function removePendingLastPasskey() {
+            if (!pendingLastPasskeyRemoval?.id) {
+                return false;
+            }
+
+            const pendingRemoval = pendingLastPasskeyRemoval;
+            await deleteSecurityJson('/api/security/passkeys/' + encodeURIComponent(pendingRemoval.id));
+            pendingRemoval.item?.remove();
+            updatePasskeyCount(Math.max(0, passkeyCount() - 1));
+            pendingLastPasskeyRemoval = null;
+            return true;
         }
 
         function clearCustomValidity(form) {
@@ -381,6 +622,246 @@ function UserSettingsPageScript() {
             });
         }
 
+        if (addPasskeyButton) {
+            addPasskeyButton.addEventListener('click', () => {
+                clearSettingsAlert();
+                openPasskeySetupModal();
+            });
+        }
+
+        if (passkeySetupModal && securitySection?.dataset.forcePasskeySetup === 'true') {
+            passkeySetupModal.addEventListener('close', () => {
+                if (!passkeySetupCompleted) {
+                    requestAnimationFrame(() => openPasskeySetupModal());
+                }
+            });
+
+            requestAnimationFrame(() => openPasskeySetupModal());
+        }
+
+        if (passkeySetupCreateButton) {
+            passkeySetupCreateButton.addEventListener('click', async () => {
+                clearSettingsAlert();
+
+                if (!window.SimpleWebAuthnBrowser?.startRegistration) {
+                    showSettingsAlert('Passkeys could not load. Refresh and try again.');
+                    return;
+                }
+
+                const resetButton = setButtonWorking(passkeySetupCreateButton, true, 'Creating...');
+
+                try {
+                    const optionsBody = await postSecurityJson('/api/security/passkeys/options');
+                    const credential = await window.SimpleWebAuthnBrowser.startRegistration({
+                        optionsJSON: optionsBody.options,
+                    });
+                    await postSecurityJson('/api/security/passkeys/verify', {
+                        challengeId: optionsBody.challengeId,
+                        credential,
+                        name: passkeyNameInput?.value || '',
+                    });
+                    const recoveryBody = await postSecurityJson('/api/security/recovery/regenerate');
+                    passkeySetupPhraseText.textContent = recoveryBody.recoveryPhrase;
+                    setPasskeySetupStep('recovery');
+                } catch (error) {
+                    showSettingsAlert(error instanceof Error ? error.message : 'Passkey could not be added.');
+                } finally {
+                    resetButton();
+                }
+            });
+        }
+
+        if (passkeySetupSavedButton) {
+            passkeySetupSavedButton.addEventListener('click', () => {
+                setPasskeySetupStep('confirm');
+                passkeySetupConfirmInput?.focus();
+            });
+        }
+
+        if (passkeySetupConfirmButton) {
+            passkeySetupConfirmButton.addEventListener('click', async () => {
+                clearSettingsAlert();
+                const resetButton = setButtonWorking(passkeySetupConfirmButton, true, 'Securing...');
+
+                try {
+                    await postSecurityJson('/api/security/recovery/confirm', {
+                        recoveryPhrase: passkeySetupConfirmInput?.value || '',
+                    });
+                    await postSecurityJson('/api/security/complete');
+                    setPasskeySetupStep('done');
+                } catch (error) {
+                    showSettingsAlert(error instanceof Error ? error.message : 'Account could not be secured.');
+                } finally {
+                    resetButton();
+                }
+            });
+        }
+
+        if (passkeySetupDoneButton) {
+            passkeySetupDoneButton.addEventListener('click', () => {
+                passkeySetupCompleted = true;
+                window.location.reload();
+            });
+        }
+
+        if (lastPasskeyCreateButton) {
+            lastPasskeyCreateButton.addEventListener('click', () => {
+                lastPasskeyRemovedModal?.close();
+                openPasskeySetupModal();
+            });
+        }
+
+        if (lastPasskeyPasswordButton) {
+            lastPasskeyPasswordButton.addEventListener('click', () => {
+                lastPasskeyRemovedModal?.close();
+                revealPasswordField();
+                showSettingsAlert(pendingLastPasskeyRemoval
+                    ? 'Enter a password, then save changes to remove this passkey.'
+                    : 'Enter a password, then save changes.', true);
+            });
+        }
+
+        for (const button of document.querySelectorAll('[data-remove-passkey-button]')) {
+            button.addEventListener('click', async () => {
+                clearSettingsAlert();
+
+                if (!window.confirm('Remove this passkey?')) {
+                    return;
+                }
+
+                const resetButton = setButtonWorking(button, true, 'Removing...');
+
+                try {
+                    const wasLastPasskey = passkeyCount() <= 1;
+                    const passkeyItem = button.closest('[data-passkey-item]');
+
+                    await deleteSecurityJson('/api/security/passkeys/' + encodeURIComponent(button.dataset.passkeyId || ''));
+                    passkeyItem?.remove();
+                    updatePasskeyCount(Math.max(0, passkeyCount() - 1));
+                    showSettingsAlert('Passkey removed.', true);
+
+                    if (wasLastPasskey) {
+                        openLastPasskeyPrompt();
+                        return;
+                    }
+
+                    window.location.reload();
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : 'Passkey could not be removed.';
+
+                    if (message === 'Add another passkey before removing this one') {
+                        pendingLastPasskeyRemoval = {
+                            id: button.dataset.passkeyId || '',
+                            item: button.closest('[data-passkey-item]'),
+                        };
+                        showSettingsAlert('Set a password, save changes, and this passkey will be removed.', true);
+                        openLastPasskeyPrompt();
+                    } else {
+                        showSettingsAlert(message);
+                    }
+                } finally {
+                    resetButton();
+                }
+            });
+        }
+
+        if (regenerateRecoveryButton) {
+            regenerateRecoveryButton.addEventListener('click', async () => {
+                clearSettingsAlert();
+                const resetButton = setButtonWorking(regenerateRecoveryButton, true, 'Generating...');
+
+                try {
+                    const body = await postSecurityJson('/api/security/recovery/regenerate');
+                    openRecoveryModal(body.recoveryPhrase);
+                } catch (error) {
+                    showSettingsAlert(error instanceof Error ? error.message : 'Recovery phrase could not be generated.');
+                } finally {
+                    resetButton();
+                }
+            });
+        }
+
+        if (recoverySavedButton) {
+            recoverySavedButton.addEventListener('click', () => {
+                if (recoveryConfirmPanel) {
+                    recoveryConfirmPanel.hidden = false;
+                }
+
+                recoveryConfirmInput?.focus();
+            });
+        }
+
+        if (recoveryConfirmButton) {
+            recoveryConfirmButton.addEventListener('click', async () => {
+                clearSettingsAlert();
+                const resetButton = setButtonWorking(recoveryConfirmButton, true, 'Confirming...');
+
+                try {
+                    await postSecurityJson('/api/security/recovery/confirm', {
+                        recoveryPhrase: recoveryConfirmInput?.value || '',
+                    });
+                    recoveryModal?.close();
+                    showSettingsAlert('Recovery phrase confirmed.', true);
+                    window.location.reload();
+                } catch (error) {
+                    showSettingsAlert(error instanceof Error ? error.message : 'Recovery phrase could not be confirmed.');
+                } finally {
+                    resetButton();
+                }
+            });
+        }
+
+        if (completeSecureAccountButton) {
+            completeSecureAccountButton.addEventListener('click', async () => {
+                clearSettingsAlert();
+                const resetButton = setButtonWorking(completeSecureAccountButton, true, 'Completing...');
+
+                try {
+                    await postSecurityJson('/api/security/complete');
+                    showSettingsAlert('Account security updated.', true);
+                    window.location.reload();
+                } catch (error) {
+                    showSettingsAlert(error instanceof Error ? error.message : 'Account security could not be completed.');
+                } finally {
+                    resetButton();
+                }
+            });
+        }
+
+        if (revokeOtherSessionsButton) {
+            revokeOtherSessionsButton.addEventListener('click', async () => {
+                clearSettingsAlert();
+                const resetButton = setButtonWorking(revokeOtherSessionsButton, true, 'Revoking...');
+
+                try {
+                    await postSecurityJson('/api/security/sessions/revoke-others');
+                    showSettingsAlert('Other sessions revoked.', true);
+                    window.location.reload();
+                } catch (error) {
+                    showSettingsAlert(error instanceof Error ? error.message : 'Sessions could not be revoked.');
+                } finally {
+                    resetButton();
+                }
+            });
+        }
+
+        for (const button of document.querySelectorAll('[data-revoke-session-button]')) {
+            button.addEventListener('click', async () => {
+                clearSettingsAlert();
+                const resetButton = setButtonWorking(button, true, 'Revoking...');
+
+                try {
+                    await postSecurityJson('/api/security/sessions/' + encodeURIComponent(button.dataset.sessionId || '') + '/revoke');
+                    showSettingsAlert('Session revoked.', true);
+                    window.location.reload();
+                } catch (error) {
+                    showSettingsAlert(error instanceof Error ? error.message : 'Session could not be revoked.');
+                } finally {
+                    resetButton();
+                }
+            });
+        }
+
         if (settingsForm) {
             prepareOptionalSocialInputs(settingsForm);
 
@@ -396,6 +877,12 @@ function UserSettingsPageScript() {
             settingsForm.addEventListener('submit', async (event) => {
                 event.preventDefault();
                 if (!validateSettingsForm(settingsForm)) {
+                    return;
+                }
+
+                if (pendingLastPasskeyRemoval && !passwordInput?.value.trim()) {
+                    revealPasswordField();
+                    showSettingsAlert('Enter a password before removing your last passkey.');
                     return;
                 }
 
@@ -421,6 +908,22 @@ function UserSettingsPageScript() {
                         return;
                     }
 
+                    if (pendingLastPasskeyRemoval) {
+                        try {
+                            const removedPasskey = await removePendingLastPasskey();
+
+                            if (removedPasskey) {
+                                showSettingsAlert('Password saved and passkey removed.', true);
+                                window.location.reload();
+                                return;
+                            }
+                        } catch (error) {
+                            const message = error instanceof Error ? error.message : 'Passkey could not be removed.';
+                            showSettingsAlert('Password saved, but passkey could not be removed: ' + message);
+                            return;
+                        }
+                    }
+
                     showSettingsAlert('Settings saved.', true);
                 } catch {
                     showSettingsAlert('Could not reach the server. Try again.');
@@ -437,8 +940,17 @@ function UserSettingsPageScript() {
     )
 }
 
-export function UserSettingsPage({currentUser, socialLinks = [], mediaBaseUrl}: UserSettingsPageProps) {
+export function UserSettingsPage({
+                                     currentUser,
+                                     passkeys = [],
+                                     sessions = [],
+                                     socialLinks = [],
+                                     mediaBaseUrl,
+                                 }: UserSettingsPageProps) {
     const socialValues = createSettingsSocialLinks(socialLinks)
+    const hasPasskeys = passkeys.length > 0
+    const recoveryPhraseConfirmed = currentUser.recoveryPhraseConfirmed === true
+    const secureAccountRequired = currentUser.secureAccountRequired === true
 
     return (
         <BaseLayout
@@ -458,14 +970,20 @@ export function UserSettingsPage({currentUser, socialLinks = [], mediaBaseUrl}: 
                 <form action="/api/users/me" class="space-y-8" data-settings-form method="post">
                     <input name="csrfToken" type="hidden" value={currentUser.csrfToken}/>
 
-                    <section class="space-y-5">
+                    <section
+                        class="space-y-5"
+                        data-csrf-token={currentUser.csrfToken}
+                        data-force-passkey-setup={secureAccountRequired ? 'true' : 'false'}
+                        data-passkey-count={passkeys.length}
+                        data-security-section
+                    >
                         <div>
-                            <h2 class="text-2xl font-bold">Profile</h2>
-                            <p class="text-sm text-base-content/70">These details appear above your character
-                                folders.</p>
+                            <h2 class="text-2xl font-bold">Account Login</h2>
+                            <p class="text-sm text-base-content/70">Manage email, sign-in methods, recovery, and active
+                                sessions.</p>
                         </div>
 
-                        <div class="grid gap-3 sm:grid-cols-2">
+                        <div class={hasPasskeys ? 'grid gap-3' : 'grid gap-3 sm:grid-cols-2'}>
                             <fieldset class="fieldset">
                                 <label class="fieldset-label" for="email">Email</label>
                                 <input
@@ -479,11 +997,12 @@ export function UserSettingsPage({currentUser, socialLinks = [], mediaBaseUrl}: 
                                 />
                             </fieldset>
 
-                            <fieldset class="fieldset">
+                            <fieldset class="fieldset" data-password-fieldset hidden={hasPasskeys}>
                                 <label class="fieldset-label" for="password">Password</label>
                                 <input
                                     autocomplete="new-password"
                                     class="input input-bordered w-full"
+                                    data-password-input
                                     id="password"
                                     minLength={8}
                                     name="password"
@@ -494,6 +1013,166 @@ export function UserSettingsPage({currentUser, socialLinks = [], mediaBaseUrl}: 
                                     <span class="label-text-alt">Leave blank to keep your current password.</span>
                                 </div>
                             </fieldset>
+                        </div>
+
+                        {secureAccountRequired ? (
+                            <div class="alert alert-warning">
+                                <div>
+                                    <p class="font-bold">Secure your account</p>
+                                    <p class="text-sm">
+                                        Add a fresh passkey, review active sessions, revoke anything unfamiliar, then
+                                        regenerate and confirm a recovery phrase.
+                                    </p>
+                                </div>
+                            </div>
+                        ) : null}
+
+                        {!hasPasskeys ? (
+                            <div class="alert alert-info">
+                                <div>
+                                    <p class="font-bold">Create a passkey</p>
+                                    <p class="text-sm">Passkeys are the preferred sign-in method for MyOC accounts!</p>
+                                </div>
+                            </div>
+                        ) : null}
+
+                        <div class="rounded-box border border-base-300 bg-base-200 p-4">
+                            <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <h3 class="text-xl font-bold">Passkey Setup</h3>
+                                    <p class="mt-1 text-sm text-base-content/70">
+                                        Create a passkey, save a recovery phrase, and remove password sign-in.
+                                    </p>
+                                </div>
+                                <button class="btn btn-primary" data-add-passkey-button type="button">Add Passkey
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="rounded-box border border-base-300 bg-base-200 p-4">
+                            <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <h3 class="text-xl font-bold">Passkeys</h3>
+                                    <p class="text-sm text-base-content/70">
+                                        <span data-passkey-count-text>{passkeys.length}</span> registered
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div class="mt-4 space-y-3" data-passkey-list hidden={!hasPasskeys}>
+                                {passkeys.map((passkey) => (
+                                    <div class="rounded-box border border-base-300 bg-base-100 p-3" data-passkey-item>
+                                        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                            <div class="min-w-0">
+                                                <div class="flex flex-wrap items-center gap-2">
+                                                    <p class="font-semibold">{passkey.name}</p>
+                                                    {passkey.backedUp ? (
+                                                        <span class="badge badge-success badge-sm">Synced</span>
+                                                    ) : (
+                                                        <span class="badge badge-neutral badge-sm">Single device</span>
+                                                    )}
+                                                </div>
+                                                <p class="mt-1 text-sm text-base-content/70">
+                                                    {formatPasskeyTransports(passkey.transports)} ·
+                                                    Added {formatSecurityDate(passkey.createdAt)} · Last
+                                                    used {formatSecurityDate(passkey.lastUsedAt)}
+                                                </p>
+                                            </div>
+                                            <button
+                                                class="btn btn-ghost btn-sm"
+                                                data-passkey-id={passkey.id}
+                                                data-remove-passkey-button
+                                                type="button"
+                                            >
+                                                Remove
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            <p class="mt-4 text-sm text-base-content/70" data-no-passkeys-message hidden={hasPasskeys}>
+                                No passkeys registered.
+                            </p>
+                        </div>
+
+                        <div class="rounded-box border border-base-300 bg-base-200 p-4">
+                            <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <h3 class="text-xl font-bold">Recovery Phrase</h3>
+                                    <p class="mt-1 text-sm text-base-content/70">
+                                        Status: {recoveryPhraseConfirmed ? 'Confirmed' : 'Needs confirmation'}
+                                    </p>
+                                </div>
+                                <button class="btn btn-secondary" data-regenerate-recovery-button type="button">
+                                    Regenerate Phrase
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="rounded-box border border-base-300 bg-base-200 p-4">
+                            <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <h3 class="text-xl font-bold">Sessions</h3>
+                                    <p class="mt-1 text-sm text-base-content/70">{sessions.length} active</p>
+                                </div>
+                                <button class="btn btn-secondary" data-revoke-other-sessions-button type="button">
+                                    Revoke Other Sessions
+                                </button>
+                            </div>
+
+                            {sessions.length > 0 ? (
+                                <div class="mt-4 overflow-x-auto">
+                                    <table class="table table-sm">
+                                        <thead>
+                                        <tr>
+                                            <th>Session</th>
+                                            <th>Created</th>
+                                            <th>Expires</th>
+                                            <th></th>
+                                        </tr>
+                                        </thead>
+                                        <tbody>
+                                        {sessions.map((session) => (
+                                            <tr>
+                                                <td>{session.isCurrent ? 'Current' : 'Active'}</td>
+                                                <td>{formatSecurityDate(session.createdAt)}</td>
+                                                <td>{formatSecurityDate(session.expiresAt)}</td>
+                                                <td class="text-right">
+                                                    {session.isCurrent ? (
+                                                        <span class="badge badge-primary badge-sm">This session</span>
+                                                    ) : (
+                                                        <button
+                                                            class="btn btn-ghost btn-xs"
+                                                            data-revoke-session-button
+                                                            data-session-id={session.id}
+                                                            type="button"
+                                                        >
+                                                            Revoke
+                                                        </button>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ) : null}
+                        </div>
+
+                        {secureAccountRequired ? (
+                            <div class="flex justify-end">
+                                <button class="btn btn-primary" data-complete-secure-account-button type="button">
+                                    Complete Security Review
+                                </button>
+                            </div>
+                        ) : null}
+                    </section>
+
+                    <section class="space-y-5">
+                        <div>
+                            <h2 class="text-2xl font-bold">Profile</h2>
+                            <p class="text-sm text-base-content/70">These details appear above your character
+                                folders.</p>
                         </div>
 
                         <fieldset class="fieldset">
@@ -689,9 +1368,150 @@ export function UserSettingsPage({currentUser, socialLinks = [], mediaBaseUrl}: 
                         </div>
                     </div>
                 </form>
+
+                <dialog class="modal" data-passkey-setup-modal>
+                    <div class="modal-box">
+                        <div data-passkey-setup-step="passkey">
+                            <h3 class="text-xl font-bold">Create Passkey</h3>
+                            <p class="mt-2 text-sm text-base-content/70">
+                                This will create a passkey, then replace password sign-in with a recovery phrase.
+                            </p>
+                            <fieldset class="fieldset mt-4">
+                                <label class="fieldset-label" for="modalPasskeyName">Passkey name</label>
+                                <input
+                                    autocomplete="off"
+                                    class="input input-bordered w-full"
+                                    data-passkey-name
+                                    id="modalPasskeyName"
+                                    maxLength={40}
+                                    placeholder="Laptop, phone, security key"
+                                    type="text"
+                                />
+                            </fieldset>
+                            <div class="modal-action">
+                                {secureAccountRequired ? null : (
+                                    <form method="dialog">
+                                        <button class="btn btn-ghost" type="submit">Cancel</button>
+                                    </form>
+                                )}
+                                <button class="btn btn-primary" data-passkey-setup-create-button type="button">
+                                    Create Passkey
+                                </button>
+                            </div>
+                        </div>
+
+                        <div data-passkey-setup-step="recovery" hidden>
+                            <h3 class="text-xl font-bold">Save Recovery Phrase</h3>
+                            <p class="mt-2 text-sm text-base-content/70">
+                                Save this phrase before continuing. It replaces password recovery for this account.
+                            </p>
+                            <div class="mt-4 rounded-box border border-base-300 bg-base-200 p-4">
+                                <code class="block break-words text-lg font-bold" data-passkey-setup-phrase></code>
+                            </div>
+                            <div class="modal-action">
+                                <button class="btn btn-primary" data-passkey-setup-saved-button type="button">
+                                    Saved
+                                </button>
+                            </div>
+                        </div>
+
+                        <div data-passkey-setup-step="confirm" hidden>
+                            <h3 class="text-xl font-bold">Confirm Recovery Phrase</h3>
+                            <p class="mt-2 text-sm text-base-content/70">
+                                Enter the phrase to confirm it is saved. Password sign-in will be removed after this
+                                step.
+                            </p>
+                            <fieldset class="fieldset mt-4">
+                                <label class="fieldset-label" for="passkeySetupRecoveryConfirm">Recovery phrase</label>
+                                <input
+                                    autocomplete="off"
+                                    class="input input-bordered w-full"
+                                    data-passkey-setup-confirm-input
+                                    id="passkeySetupRecoveryConfirm"
+                                    type="text"
+                                />
+                            </fieldset>
+                            <div class="modal-action">
+                                <button class="btn btn-primary" data-passkey-setup-confirm-button type="button">
+                                    Confirm and Remove Password
+                                </button>
+                            </div>
+                        </div>
+
+                        <div data-passkey-setup-step="done" hidden>
+                            <h3 class="text-xl font-bold">Account Secured</h3>
+                            <p class="mt-2 text-sm text-base-content/70">
+                                Your passkey is ready, your recovery phrase is confirmed, and password sign-in has been
+                                removed.
+                            </p>
+                            <div class="modal-action">
+                                <button class="btn btn-primary" data-passkey-setup-done-button type="button">Done
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </dialog>
+
+                <dialog class="modal" data-last-passkey-removed-modal>
+                    <div class="modal-box">
+                        <h3 class="text-xl font-bold">Keep A Sign-In Method</h3>
+                        <p class="mt-2 text-sm text-base-content/70">
+                            Choose another way to access this account.
+                        </p>
+                        <div class="modal-action">
+                            <button class="btn btn-ghost" data-last-passkey-password-button type="button">
+                                Set Password
+                            </button>
+                            <button class="btn btn-primary" data-last-passkey-create-button type="button">
+                                Create Passkey
+                            </button>
+                        </div>
+                    </div>
+                </dialog>
+
+                <dialog class="modal" data-recovery-modal>
+                    <div class="modal-box">
+                        <h3 class="text-xl font-bold">Recovery Phrase</h3>
+                        <p class="mt-2 text-sm text-base-content/70">
+                            Save this phrase before continuing.
+                        </p>
+                        <div class="mt-4 rounded-box border border-base-300 bg-base-200 p-4">
+                            <code class="block break-words text-lg font-bold" data-recovery-phrase></code>
+                        </div>
+
+                        <div class="modal-action">
+                            <form method="dialog">
+                                <button class="btn btn-ghost" type="submit">Close</button>
+                            </form>
+                            <button class="btn btn-primary" data-recovery-saved-button type="button">Saved</button>
+                        </div>
+
+                        <div class="mt-4" data-recovery-confirm-panel hidden>
+                            <fieldset class="fieldset">
+                                <label class="fieldset-label" for="recoveryPhraseConfirm">Enter recovery phrase</label>
+                                <input
+                                    autocomplete="off"
+                                    class="input input-bordered w-full"
+                                    data-recovery-confirm-input
+                                    id="recoveryPhraseConfirm"
+                                    type="text"
+                                />
+                            </fieldset>
+                            <div class="mt-3 flex justify-end">
+                                <button class="btn btn-primary" data-recovery-confirm-button type="button">Confirm
+                                    Phrase
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <form class="modal-backdrop" method="dialog">
+                        <button>close</button>
+                    </form>
+                </dialog>
             </main>
 
             <script src="/vendor/cropperjs/cropper.min.js"></script>
+            <script src="/vendor/simplewebauthn/index.umd.min.js"></script>
             <UserSettingsPageScript/>
         </BaseLayout>
     )

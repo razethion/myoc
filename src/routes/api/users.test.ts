@@ -78,6 +78,29 @@ async function postCurrentUserReleaseView(
     });
 }
 
+async function postPasskeyPromptResponse(
+    body: unknown,
+    db: D1Database,
+    options: UserRequestOptions = {},
+): Promise<Response> {
+    const mediaBucket = createMockR2Bucket()
+    const headers = createRequestHeaders(body, options)
+
+    if (body instanceof FormData) {
+        headers.accept = 'text/html'
+    }
+
+    return apiRoutes.request('https://example.com/users/me/passkey-prompt-response', {
+        method: 'POST',
+        body: body instanceof FormData ? body : JSON.stringify(body),
+        headers,
+    }, {
+        DB: db,
+        MEDIA_BUCKET: mediaBucket,
+        MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+    });
+}
+
 async function postProfilePhoto(
     db: D1Database,
     mediaBucket: R2Bucket,
@@ -564,6 +587,81 @@ describe('POST /users/me/release-view', () => {
         expect(boundStatements[1]?.sql).toContain('UPDATE users')
         expect(boundStatements[1]?.sql).toContain('last_seen_version')
         expect(boundStatements[1]?.binds).toEqual([APP_VERSION, currentUserRecord.id])
+    })
+})
+
+describe('POST /users/me/passkey-prompt-response', () => {
+    it('returns 401 when the user is not logged in', async () => {
+        const {db} = createMockDb()
+
+        const response = await postPasskeyPromptResponse({choice: 'later'}, db)
+
+        expect(response.status).toBe(401)
+        expect(await response.json()).toEqual({
+            error: 'Authentication required',
+        })
+    })
+
+    it('stores the prompt response and returns the setup redirect', async () => {
+        const sessionToken = 'session-token'
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postPasskeyPromptResponse({
+            choice: 'setup',
+            returnTo: '/search?q=demo',
+        }, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            ok: true,
+            choice: 'setup',
+            redirectTo: '/settings',
+        })
+        expect(boundStatements[1]?.sql).toContain('UPDATE users')
+        expect(boundStatements[1]?.sql).toContain('passkey_prompt_seen_at')
+        expect(boundStatements[1]?.binds).toHaveLength(2)
+        expect(boundStatements[1]?.binds[1]).toBe(currentUserRecord.id)
+    })
+
+    it('redirects browser form submissions back to a safe local path', async () => {
+        const sessionToken = 'session-token'
+        const form = new FormData()
+        form.set('csrfToken', await createCsrfToken(sessionToken))
+        form.set('choice', 'later')
+        form.set('returnTo', '/search?q=demo')
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postPasskeyPromptResponse(form, db, {
+            sessionToken,
+        })
+
+        expect(response.status).toBe(302)
+        expect(response.headers.get('location')).toBe('/search?q=demo')
+    })
+
+    it('rejects unsafe return paths for browser form submissions', async () => {
+        const sessionToken = 'session-token'
+        const form = new FormData()
+        form.set('csrfToken', await createCsrfToken(sessionToken))
+        form.set('choice', 'later')
+        form.set('returnTo', '//evil.example')
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postPasskeyPromptResponse(form, db, {
+            sessionToken,
+        })
+
+        expect(response.status).toBe(302)
+        expect(response.headers.get('location')).toBe('/u/olduser')
     })
 })
 

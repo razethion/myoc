@@ -21,6 +21,9 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
+    "@scure/bip39": "^2.2.0",
+    "@simplewebauthn/browser": "^13.3.0",
+    "@simplewebauthn/server": "^13.3.2",
     "bcryptjs": "^3.0.3",
     "cropperjs": "^2.1.1",
     "hono": "^4.12.28"

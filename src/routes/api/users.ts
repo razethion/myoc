@@ -39,6 +39,8 @@ type UpdateUserRequest = {
     [key: string]: unknown
 }
 
+type PasskeyPromptChoice = 'setup' | 'later'
+
 const PASSWORD_HASH_ROUNDS = 10
 const BIO_MAX_LENGTH = 255
 export const userRoutes = new Hono<{ Bindings: Bindings }>()
@@ -61,6 +63,37 @@ userRoutes.post('/me/release-view', async (c) => {
     return c.json({
         ok: true,
         version: APP_VERSION,
+    })
+})
+
+userRoutes.post('/me/passkey-prompt-response', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return c.json({error: 'Authentication required'}, 401)
+    }
+
+    const body = await parsePasskeyPromptResponse(c.req.raw)
+    const choice = body.choice === 'setup' ? 'setup' : 'later'
+    const returnTo = safeLocalRedirectPath(body.returnTo) ?? `/u/${encodeURIComponent(currentUser.username)}`
+    const redirectTo = choice === 'setup' ? '/settings' : returnTo
+
+    await c.env.DB.prepare(
+        `UPDATE users
+         SET passkey_prompt_seen_at = ?
+         WHERE id = ?`,
+    )
+        .bind(toSqlTimestamp(new Date()), currentUser.id)
+        .run()
+
+    if (c.req.header('accept')?.includes('text/html')) {
+        return c.redirect(redirectTo)
+    }
+
+    return c.json({
+        ok: true,
+        choice,
+        redirectTo,
     })
 })
 
@@ -325,6 +358,43 @@ function isValidUsername(username: string): boolean {
 
 function isUniqueConstraintError(error: unknown): boolean {
     return error instanceof Error && error.message.toLowerCase().includes('unique')
+}
+
+async function parsePasskeyPromptResponse(req: Request): Promise<{
+    choice: PasskeyPromptChoice
+    returnTo: string | null
+}> {
+    const contentType = req.headers.get('content-type') ?? ''
+
+    if (contentType.includes('application/json')) {
+        const body = await req.json().catch(() => ({})) as { choice?: unknown; returnTo?: unknown }
+
+        return {
+            choice: body.choice === 'setup' ? 'setup' : 'later',
+            returnTo: typeof body.returnTo === 'string' ? body.returnTo : null,
+        }
+    }
+
+    const form = await req.formData()
+    const choice = form.get('choice')
+    const returnTo = form.get('returnTo')
+
+    return {
+        choice: choice === 'setup' ? 'setup' : 'later',
+        returnTo: typeof returnTo === 'string' ? returnTo : null,
+    }
+}
+
+function safeLocalRedirectPath(value: string | null): string | null {
+    if (!value || !value.startsWith('/') || value.startsWith('//')) {
+        return null
+    }
+
+    if (value.startsWith('/api/') || value === '/passkey-setup') {
+        return null
+    }
+
+    return value
 }
 
 function normalizeOptionalText(value: unknown): string | null {
