@@ -5,20 +5,16 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "npm run vendor:assets && tailwindcss -i ./src/styles/app.css -o ./public/app.css --minify",
-    "vendor:assets": "node scripts/copy-vendor-assets.mjs",
-    "dev": "npm run cf-typegen && npm run build && wrangler dev",
-    "typecheck": "npm run cf-typegen && tsc --noEmit",
+    "dev": "wrangler types && npm run build && wrangler dev",
+    "build": "node scripts/copy-vendor-assets.mjs && tailwindcss -i ./src/styles/app.css -o ./public/app.css --minify",
+    "typecheck": "wrangler types && tsc --noEmit",
+    "lint": "biome lint .",
+    "deadcode": "knip",
     "test": "vitest",
     "check": "npm run typecheck && vitest run",
-    "db:migrate:local": "wrangler d1 migrations apply myoc-db --local",
-    "db:seed:local": "wrangler d1 execute myoc-db --local --file seeds/development.sql",
-    "db:prepare:local": "npm run db:migrate:local && npm run db:seed:local",
+    "db:prepare:local": "wrangler d1 migrations apply myoc-db --local && wrangler d1 execute myoc-db --local --file seeds/development.sql",
     "env:clone:prod-to-dev": "node scripts/clone-prod-to-dev.mjs",
-    "env:clone:prod-to-dev:s3:dry-run": "npm run env:clone:prod-to-dev -- --dry-run --r2-mode=s3",
-    "env:clone:prod-to-dev:s3:yes": "npm run env:clone:prod-to-dev -- --yes --r2-mode=s3",
-    "deploy": "npm run check && npm run build && wrangler deploy --minify",
-    "cf-typegen": "wrangler types"
+    "deploy": "npm run check && npm run build && wrangler deploy --minify"
   },
   "dependencies": {
     "@scure/bip39": "^2.2.0",
@@ -29,8 +25,10 @@
     "hono": "^4.12.28"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.3",
     "@tailwindcss/cli": "^4.3.2",
     "daisyui": "^5.6.14",
+    "knip": "^6.26.0",
     "tailwindcss": "^4.3.2",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10",
