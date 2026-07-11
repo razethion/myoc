@@ -11,7 +11,31 @@
       "knip.json"
     ]
   },
+  "formatter": {
+    "indentStyle": "space",
+    "lineEnding": "auto",
+    "lineWidth": 140
+  },
+  "javascript": {
+    "formatter": {
+      "bracketSpacing": false,
+      "indentWidth": 4,
+      "jsxQuoteStyle": "double",
+      "quoteStyle": "single",
+      "semicolons": "asNeeded",
+      "trailingCommas": "all"
+    }
+  },
+  "json": {
+    "formatter": {
+      "indentWidth": 2
+    }
+  },
   "css": {
+    "formatter": {
+      "indentWidth": 4,
+      "quoteStyle": "single"
+    },
     "parser": {
       "tailwindDirectives": true
     }

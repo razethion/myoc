@@ -9,6 +9,7 @@
     "build": "node scripts/copy-vendor-assets.mjs && tailwindcss -i ./src/styles/app.css -o ./public/app.css --minify",
     "typecheck": "wrangler types && tsc --noEmit",
     "lint": "biome lint .",
+    "format": "biome format .",
     "deadcode": "knip",
     "test": "vitest",
     "check": "npm run typecheck && vitest run",
