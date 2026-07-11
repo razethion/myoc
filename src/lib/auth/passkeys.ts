@@ -71,13 +71,11 @@ const RECOVERY_WORD_COUNT = 4
 const RECOVERY_HASH_ROUNDS = 10
 const PASSWORD_UNSET_PREFIX = 'passkey-only:'
 
-export function getWebAuthnRelyingParty(c: Context<{ Bindings: Bindings }>): { rpID: string; origin: string } {
+export function getWebAuthnRelyingParty(c: Context<{Bindings: Bindings}>): {rpID: string; origin: string} {
     const url = new URL(c.req.url)
     const isLoopbackIp = url.hostname === '127.0.0.1' || url.hostname === '::1'
     const rpID = isLoopbackIp ? 'localhost' : url.hostname
-    const host = isLoopbackIp
-        ? `localhost${url.port ? `:${url.port}` : ''}`
-        : url.host
+    const host = isLoopbackIp ? `localhost${url.port ? `:${url.port}` : ''}` : url.host
 
     return {
         rpID,
@@ -86,8 +84,8 @@ export function getWebAuthnRelyingParty(c: Context<{ Bindings: Bindings }>): { r
 }
 
 export async function createPasskeyRegistrationOptions(
-    c: Context<{ Bindings: Bindings }>,
-    user: { id: string; username: string; email: string; webauthn_user_id?: string | null },
+    c: Context<{Bindings: Bindings}>,
+    user: {id: string; username: string; email: string; webauthn_user_id?: string | null},
 ): Promise<PasskeyRegistrationOptions> {
     const {rpID} = getWebAuthnRelyingParty(c)
     const webAuthnUserId = user.webauthn_user_id ?? createBase64UrlToken(32)
@@ -123,9 +121,9 @@ export async function createPasskeyRegistrationOptions(
 }
 
 export async function createNewAccountPasskeyRegistrationOptions(
-    c: Context<{ Bindings: Bindings }>,
-    user: { email: string; username: string },
-): Promise<PasskeyRegistrationOptions & { userId: string; webAuthnUserId: string }> {
+    c: Context<{Bindings: Bindings}>,
+    user: {email: string; username: string},
+): Promise<PasskeyRegistrationOptions & {userId: string; webAuthnUserId: string}> {
     const {rpID} = getWebAuthnRelyingParty(c)
     const userId = crypto.randomUUID()
     const webAuthnUserId = createBase64UrlToken(32)
@@ -156,8 +154,8 @@ export async function createNewAccountPasskeyRegistrationOptions(
 }
 
 export async function createPasskeyAuthenticationOptions(
-    c: Context<{ Bindings: Bindings }>,
-    user?: { id: string } | null,
+    c: Context<{Bindings: Bindings}>,
+    user?: {id: string} | null,
 ): Promise<PasskeyAuthenticationOptions> {
     const {rpID} = getWebAuthnRelyingParty(c)
     const passkeys = user ? await listUserPasskeys(c.env.DB, user.id) : []
@@ -165,9 +163,9 @@ export async function createPasskeyAuthenticationOptions(
         rpID,
         allowCredentials: user
             ? passkeys.map((passkey) => ({
-                id: passkey.credential_id,
-                transports: parseTransports(passkey.transports),
-            }))
+                  id: passkey.credential_id,
+                  transports: parseTransports(passkey.transports),
+              }))
             : undefined,
         userVerification: 'required',
     })
@@ -199,19 +197,22 @@ export async function storeWebAuthnChallenge(
 
     await db.batch([
         db.prepare('DELETE FROM webauthn_challenges WHERE expires_at <= ?').bind(toSqlTimestamp(now)),
-        db.prepare(
-            `INSERT INTO webauthn_challenges (id, user_id, email, username, webauthn_user_id, ceremony, challenge, expires_at)
+        db
+            .prepare(
+                `INSERT INTO webauthn_challenges (id, user_id, email, username, webauthn_user_id, ceremony, challenge,
+                                                  expires_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(
-            challengeId,
-            options.userId ?? null,
-            options.email ?? null,
-            options.username ?? null,
-            options.webAuthnUserId ?? null,
-            options.ceremony,
-            options.challenge,
-            toSqlTimestamp(expiresAt),
-        ),
+            )
+            .bind(
+                challengeId,
+                options.userId ?? null,
+                options.email ?? null,
+                options.username ?? null,
+                options.webAuthnUserId ?? null,
+                options.ceremony,
+                options.challenge,
+                toSqlTimestamp(expiresAt),
+            ),
     ])
 
     return challengeId
@@ -223,8 +224,9 @@ export async function getWebAuthnChallenge(
     ceremony: 'registration' | 'authentication',
     now = new Date(),
 ): Promise<WebAuthnChallengeRecord | null> {
-    return await db.prepare(
-        `SELECT id,
+    return await db
+        .prepare(
+            `SELECT id,
                 user_id,
                 email,
                 username,
@@ -237,14 +239,15 @@ export async function getWebAuthnChallenge(
            AND ceremony = ?
            AND expires_at > ?
          LIMIT 1`,
-    )
+        )
         .bind(challengeId, ceremony, toSqlTimestamp(now))
         .first<WebAuthnChallengeRecord>()
 }
 
 export async function listUserPasskeys(db: D1Database, userId: string): Promise<PasskeyRecord[]> {
-    const result = await db.prepare(
-        `SELECT id,
+    const result = await db
+        .prepare(
+            `SELECT id,
                 user_id,
                 credential_id,
                 public_key,
@@ -259,7 +262,7 @@ export async function listUserPasskeys(db: D1Database, userId: string): Promise<
          FROM user_passkeys
          WHERE user_id = ?
          ORDER BY created_at DESC`,
-    )
+        )
         .bind(userId)
         .all<PasskeyRecord>()
 
@@ -267,8 +270,9 @@ export async function listUserPasskeys(db: D1Database, userId: string): Promise<
 }
 
 export async function getPasskeyByCredentialId(db: D1Database, credentialId: string): Promise<PasskeyRecord | null> {
-    return await db.prepare(
-        `SELECT id,
+    return await db
+        .prepare(
+            `SELECT id,
                 user_id,
                 credential_id,
                 public_key,
@@ -283,14 +287,15 @@ export async function getPasskeyByCredentialId(db: D1Database, credentialId: str
          FROM user_passkeys
          WHERE credential_id = ?
          LIMIT 1`,
-    )
+        )
         .bind(credentialId)
         .first<PasskeyRecord>()
 }
 
 export async function getUserPasskeyById(db: D1Database, userId: string, passkeyId: string): Promise<PasskeyRecord | null> {
-    return await db.prepare(
-        `SELECT id,
+    return await db
+        .prepare(
+            `SELECT id,
                 user_id,
                 credential_id,
                 public_key,
@@ -306,7 +311,7 @@ export async function getUserPasskeyById(db: D1Database, userId: string, passkey
          WHERE user_id = ?
            AND id = ?
          LIMIT 1`,
-    )
+        )
         .bind(userId, passkeyId)
         .first<PasskeyRecord>()
 }
@@ -333,15 +338,16 @@ export function toPasskeySummary(passkey: PasskeyRecord): PasskeySummary {
 }
 
 export async function listUserSessions(db: D1Database, user: CurrentUser): Promise<SessionSummary[]> {
-    const result = await db.prepare(
-        `SELECT id,
+    const result = await db
+        .prepare(
+            `SELECT id,
                 created_at,
                 expires_at
          FROM sessions
          WHERE user_id = ?
            AND expires_at > ?
          ORDER BY created_at DESC`,
-    )
+        )
         .bind(user.id, toSqlTimestamp(new Date()))
         .all<{
             id: string
@@ -366,7 +372,8 @@ export function parseTransports(value: string | null | undefined): Authenticator
         return undefined
     }
 
-    return value.split(',')
+    return value
+        .split(',')
         .map((transport) => transport.trim())
         .filter(Boolean) as AuthenticatorTransportFuture[]
 }
@@ -409,7 +416,11 @@ export async function verifyRecoveryPhrase(phrase: string, phraseHash: string): 
 }
 
 export function normalizeRecoveryPhrase(phrase: string): string {
-    return phrase.trim().toLowerCase().replace(/[\s_]+/g, '-').replace(/-+/g, '-')
+    return phrase
+        .trim()
+        .toLowerCase()
+        .replace(/[\s_]+/g, '-')
+        .replace(/-+/g, '-')
 }
 
 export function createBase64UrlToken(byteLength: number): string {
@@ -425,10 +436,7 @@ export function bytesToBase64Url(bytes: Uint8Array): Base64URLString {
         binary += String.fromCharCode(byte)
     }
 
-    return btoa(binary)
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/g, '')
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
 }
 
 export function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> {

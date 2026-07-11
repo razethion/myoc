@@ -45,11 +45,11 @@ export function getWebpDimensions(bytes: Uint8Array): WebpDimensions | null {
         }
 
         if (
-            chunkType === VP8
-            && chunkSize >= 10
-            && byteAt(bytes, dataOffset + 3) === 0x9d
-            && byteAt(bytes, dataOffset + 4) === 0x01
-            && byteAt(bytes, dataOffset + 5) === 0x2a
+            chunkType === VP8 &&
+            chunkSize >= 10 &&
+            byteAt(bytes, dataOffset + 3) === 0x9d &&
+            byteAt(bytes, dataOffset + 4) === 0x01 &&
+            byteAt(bytes, dataOffset + 5) === 0x2a
         ) {
             return {
                 width: readUint16Le(bytes, dataOffset + 6) & 0x3fff,

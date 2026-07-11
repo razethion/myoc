@@ -51,8 +51,8 @@ export function NotFoundPage({
     message = 'The page you are looking for does not exist or has been moved.',
 }: NotFoundPageProps) {
     return (
-        <BaseLayout head={<NotFoundStyles/>} title="404 | MyOC">
-            <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl}/>
+        <BaseLayout head={<NotFoundStyles />} title="404 | MyOC">
+            <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl} />
             <main class="not-found-field flex min-h-[calc(100vh-4rem)] items-center px-4 py-16 sm:px-6 lg:px-8">
                 <section class="mx-auto grid w-full max-w-6xl items-center gap-10 lg:grid-cols-[0.9fr_1.1fr]">
                     <div>
@@ -60,11 +60,17 @@ export function NotFoundPage({
                         <h1 class="not-found-code mt-4 text-8xl font-black leading-none sm:text-9xl">404</h1>
                         <p class="mt-6 max-w-xl text-lg leading-8 text-base-content/75">{message}</p>
                         <div class="mt-8 flex flex-col gap-3 sm:flex-row">
-                            <a class="btn btn-primary" href="/">Go Home</a>
+                            <a class="btn btn-primary" href="/">
+                                Go Home
+                            </a>
                             {currentUser ? (
-                                <a class="btn btn-outline" href="/characters">Manage Characters</a>
+                                <a class="btn btn-outline" href="/characters">
+                                    Manage Characters
+                                </a>
                             ) : (
-                                <a class="btn btn-outline" href="/login">Log In</a>
+                                <a class="btn btn-outline" href="/login">
+                                    Log In
+                                </a>
                             )}
                         </div>
                     </div>

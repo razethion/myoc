@@ -17,38 +17,40 @@ type QueryResult = {
     results: unknown[]
 }
 
-function createProfilePageDb(options: {
-    profileUser?: unknown
-    currentUser?: unknown
-    socialLinks?: unknown[]
-    folders?: unknown[]
-    characters?: unknown[]
-    placements?: unknown[]
-    characterSettings?: unknown
-    characterMedia?: unknown[]
-    galleryTabs?: unknown[]
-    galleryRows?: unknown[]
-    searchUsers?: unknown[]
-    searchUserCount?: number
-    searchCharacters?: unknown[]
-    searchCharacterCount?: number
-    userCount?: number
-    characterCount?: number
-    mediaCount?: number
-    uploadedImageCount?: number
-    discoverCharacters?: unknown[]
-    homeGalleryImages?: unknown[]
-    homeHeightChartCharacters?: unknown[]
-    activeToyhouseImportJob?: unknown
-    activeToyhouseImportItems?: unknown[]
-    toyhouseImportItemsError?: Error
-    imageApprovalItem?: unknown
-    imageApprovalQueue?: unknown[]
-    imageApprovalCount?: number
-    imageApprovalHistory?: unknown[]
-    adminReports?: unknown[]
-    userPasskeys?: unknown[]
-} = {}): D1Database {
+function createProfilePageDb(
+    options: {
+        profileUser?: unknown
+        currentUser?: unknown
+        socialLinks?: unknown[]
+        folders?: unknown[]
+        characters?: unknown[]
+        placements?: unknown[]
+        characterSettings?: unknown
+        characterMedia?: unknown[]
+        galleryTabs?: unknown[]
+        galleryRows?: unknown[]
+        searchUsers?: unknown[]
+        searchUserCount?: number
+        searchCharacters?: unknown[]
+        searchCharacterCount?: number
+        userCount?: number
+        characterCount?: number
+        mediaCount?: number
+        uploadedImageCount?: number
+        discoverCharacters?: unknown[]
+        homeGalleryImages?: unknown[]
+        homeHeightChartCharacters?: unknown[]
+        activeToyhouseImportJob?: unknown
+        activeToyhouseImportItems?: unknown[]
+        toyhouseImportItemsError?: Error
+        imageApprovalItem?: unknown
+        imageApprovalQueue?: unknown[]
+        imageApprovalCount?: number
+        imageApprovalHistory?: unknown[]
+        adminReports?: unknown[]
+        userPasskeys?: unknown[]
+    } = {},
+): D1Database {
     const firstForSql = async (sql: string) => {
         if (sql.includes('sfw_image_key IS NOT NULL') && sql.includes('nsfw_image_key IS NOT NULL') && sql.includes('AS count')) {
             return {count: options.imageApprovalCount ?? options.imageApprovalQueue?.length ?? 0}
@@ -187,12 +189,16 @@ async function getProfile(username: string, db: D1Database): Promise<Response> {
 }
 
 async function getProfilePath(path: string, db: D1Database): Promise<Response> {
-    return pageRoutes.request(`https://example.com${path}`, {}, {
-        CACHE: createMockKVNamespace(),
-        DB: db,
-        MEDIA_BUCKET: createMockR2Bucket(),
-        MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
-    });
+    return pageRoutes.request(
+        `https://example.com${path}`,
+        {},
+        {
+            CACHE: createMockKVNamespace(),
+            DB: db,
+            MEDIA_BUCKET: createMockR2Bucket(),
+            MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+        },
+    )
 }
 
 async function getAppPath(
@@ -201,12 +207,16 @@ async function getAppPath(
     headers: Record<string, string> = {},
     cache = createMockKVNamespace(),
 ): Promise<Response> {
-    return app.request(`https://example.com${path}`, {headers}, {
-        CACHE: cache,
-        DB: db,
-        MEDIA_BUCKET: createMockR2Bucket(),
-        MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
-    });
+    return app.request(
+        `https://example.com${path}`,
+        {headers},
+        {
+            CACHE: cache,
+            DB: db,
+            MEDIA_BUCKET: createMockR2Bucket(),
+            MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+        },
+    )
 }
 
 function createCurrentUserRecord(username = 'demo', overrides: Record<string, unknown> = {}) {
@@ -234,9 +244,7 @@ function expectPatternAllowsReportedCharacterNames(html: string, inputId: string
         throw new Error(`Pattern attribute was not rendered for ${inputId}`)
     }
 
-    const pattern = rawPattern
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
+    const pattern = rawPattern.replace(/&quot;/g, '"').replace(/&#39;/g, "'")
     const regex = new RegExp(`^(?:${pattern})$`, 'v')
 
     expect(regex.test('DRD-5548 "Ivo"')).toBe(true)
@@ -246,14 +254,18 @@ function expectPatternAllowsReportedCharacterNames(html: string, inputId: string
 
 describe('public page redirects', () => {
     it('renders home for logged-in users', async () => {
-        const response = await getAppPath('/', createProfilePageDb({
-            currentUser: createCurrentUserRecord('demo'),
-            userCount: 24,
-            characterCount: 128,
-            mediaCount: 4096,
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        const response = await getAppPath(
+            '/',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+                userCount: 24,
+                characterCount: 128,
+                mediaCount: 4096,
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -317,7 +329,11 @@ describe('public page redirects', () => {
         })
         const response = await getAppPath('/', db)
         const html = await response.text()
-        const preparedSql = (db.prepare as unknown as { mock: { calls: [string][] } }).mock.calls
+        const preparedSql = (
+            db.prepare as unknown as {
+                mock: {calls: [string][]}
+            }
+        ).mock.calls
             .map(([sql]) => sql)
             .join('\n')
 
@@ -348,7 +364,7 @@ describe('public page redirects', () => {
         expect(html).not.toContain('}, index * 65)')
         expect(html).not.toContain('function preloadGalleryImages()')
         expect(html).not.toContain("window.addEventListener('load', schedulePreload, {once: true})")
-        expect(html).toContain("window.requestAnimationFrame(function ()")
+        expect(html).toContain('window.requestAnimationFrame(function ()')
         expect(html).not.toContain("rootMargin: '0px', threshold: 0.01")
         expect(html).toContain('border-color: transparent')
         expect(html).toContain('contain: layout paint')
@@ -396,11 +412,15 @@ describe('public page redirects', () => {
         expect(html).not.toContain('skeleton absolute')
         expect(html).toContain('style="aspect-ratio:320 / 480"')
         expect(html).toContain('href="/u/demo_owner/Quartz%20Dragon"')
-        expect(html).toContain('data-src="https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview/preview-thumb-key.webp"')
+        expect(html).toContain(
+            'data-src="https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview/preview-thumb-key.webp"',
+        )
         expect(html).toContain('data-fallback-src="https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/full-key.png"')
         expect(html).toContain('alt="Quartz Dragon gallery art by Demo Artist"')
         expect(html).toContain('href="/u/second_owner/Wide%20Lynx"')
-        expect(html).toContain('data-src="https://m.myoc.art/characters/owner-2/character-2/media/media-2/sfw/preview/second-preview-thumb-key.webp"')
+        expect(html).toContain(
+            'data-src="https://m.myoc.art/characters/owner-2/character-2/media/media-2/sfw/preview/second-preview-thumb-key.webp"',
+        )
         expect(html.indexOf('second-preview-thumb-key.webp')).toBeLessThan(html.indexOf('preview-thumb-key.webp'))
         expect(html).toContain('width="320"')
         expect(html).toContain('height="480"')
@@ -438,7 +458,7 @@ describe('public page redirects', () => {
         })
         const cache = createMockKVNamespace()
         const response = await getAppPath('/', db, {}, cache)
-        const cachePutCalls = (cache.put as unknown as { mock: { calls: unknown[][] } }).mock.calls
+        const cachePutCalls = (cache.put as unknown as {mock: {calls: unknown[][]}}).mock.calls
         const galleryCachePut = cachePutCalls.find(([key]) => key === 'home:gallery:v1')
 
         expect(response.status).toBe(200)
@@ -501,7 +521,11 @@ describe('public page redirects', () => {
         })
         const response = await getAppPath('/', db)
         const html = await response.text()
-        const preparedSql = (db.prepare as unknown as { mock: { calls: [string][] } }).mock.calls
+        const preparedSql = (
+            db.prepare as unknown as {
+                mock: {calls: [string][]}
+            }
+        ).mock.calls
             .map(([sql]) => sql)
             .join('\n')
 
@@ -517,8 +541,8 @@ describe('public page redirects', () => {
         expect(html).toContain('transition: opacity 480ms ease, transform 680ms cubic-bezier')
         expect(html).toContain('--home-chart-enter-delay:0ms')
         expect(html).toContain('--home-chart-enter-delay:110ms')
-        expect(html).toContain("var revealObserver = new IntersectionObserver(function (entries)")
-        expect(html).toContain("revealPlot(entry.target)")
+        expect(html).toContain('var revealObserver = new IntersectionObserver(function (entries)')
+        expect(html).toContain('revealPlot(entry.target)')
         expect(html).not.toContain('2 characters')
         expect(preparedSql).toContain('lower(users.username) = ?')
         expect(preparedSql).toContain('characters.height_chart_json <>')
@@ -575,7 +599,11 @@ describe('public page redirects', () => {
         })
         const response = await getAppPath('/', db)
         const html = await response.text()
-        const preparedSql = (db.prepare as unknown as { mock: { calls: [string][] } }).mock.calls
+        const preparedSql = (
+            db.prepare as unknown as {
+                mock: {calls: [string][]}
+            }
+        ).mock.calls
             .map(([sql]) => sql)
             .join('\n')
 
@@ -591,7 +619,9 @@ describe('public page redirects', () => {
         expect(html).toContain('https://m.myoc.art/characters/owner-1/character-1/profile/profile-key.webp')
         expect(preparedSql).toContain('eligible_characters')
         expect(preparedSql).toContain('HAVING COUNT(approved_sfw_media.id) >= 5')
-        expect(preparedSql.replace(/\s+/g, ' ')).toContain('SUM(CASE WHEN approved_sfw_media.sfw_homepage_allowed = 1 THEN 1 ELSE 0 END) >= 1')
+        expect(preparedSql.replace(/\s+/g, ' ')).toContain(
+            'SUM(CASE WHEN approved_sfw_media.sfw_homepage_allowed = 1 THEN 1 ELSE 0 END) >= 1',
+        )
         expect(preparedSql).toContain('sfw_preview_image_key IS NOT NULL')
         expect(preparedSql).toContain("sfw_review_status = 'approved'")
         expect(preparedSql).toContain('sfw_homepage_allowed = 1')
@@ -625,7 +655,8 @@ describe('public page redirects', () => {
                     {
                         id: 'cached-gallery-media',
                         alt: 'Cached gallery art by Cache Artist',
-                        fallbackSrc: 'https://m.myoc.art/characters/cached-owner/cached-character/media/cached-gallery-media/sfw/cached-full-key.png',
+                        fallbackSrc:
+                            'https://m.myoc.art/characters/cached-owner/cached-character/media/cached-gallery-media/sfw/cached-full-key.png',
                         height: 320,
                         href: '/u/cached_user/Cached%20Quartz',
                         src: 'https://m.myoc.art/characters/cached-owner/cached-character/media/cached-gallery-media/sfw/preview/cached-gallery-preview-key.webp',
@@ -643,10 +674,14 @@ describe('public page redirects', () => {
         expect(html).toContain('56')
         expect(html).toContain('Cached Quartz')
         expect(html).toContain('42 images')
-        expect(html).toContain('https://m.myoc.art/characters/cached-owner/cached-character/media/cached-media/sfw/preview/cached-preview-thumb-key.webp')
+        expect(html).toContain(
+            'https://m.myoc.art/characters/cached-owner/cached-character/media/cached-media/sfw/preview/cached-preview-thumb-key.webp',
+        )
         expect(html).toContain('https://m.myoc.art/characters/cached-owner/cached-character/profile/cached-profile-key.webp')
         expect(html).toContain('href="/u/cached_user/Cached%20Quartz"')
-        expect(html).toContain('data-src="https://m.myoc.art/characters/cached-owner/cached-character/media/cached-gallery-media/sfw/preview/cached-gallery-preview-key.webp"')
+        expect(html).toContain(
+            'data-src="https://m.myoc.art/characters/cached-owner/cached-character/media/cached-gallery-media/sfw/preview/cached-gallery-preview-key.webp"',
+        )
         expect(db.prepare).toHaveBeenCalledTimes(1)
     })
 
@@ -668,27 +703,35 @@ describe('public page redirects', () => {
     })
 
     it('redirects logged-in users without passkeys to the one-time passkey prompt', async () => {
-        const response = await getAppPath('/search?q=demo', createProfilePageDb({
-            currentUser: createCurrentUserRecord('demo', {
-                passkey_prompt_seen_at: null,
+        const response = await getAppPath(
+            '/search?q=demo',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo', {
+                    passkey_prompt_seen_at: null,
+                }),
             }),
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
 
         expect(response.status).toBe(302)
         expect(response.headers.get('location')).toBe('/passkey-setup?returnTo=%2Fsearch%3Fq%3Ddemo')
     })
 
     it('does not redirect users who already have passkeys', async () => {
-        const response = await getAppPath('/search?q=demo', createProfilePageDb({
-            currentUser: createCurrentUserRecord('demo', {
-                passkey_prompt_seen_at: null,
+        const response = await getAppPath(
+            '/search?q=demo',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo', {
+                    passkey_prompt_seen_at: null,
+                }),
+                userPasskeys: [{id: 'passkey-1'}],
             }),
-            userPasskeys: [{id: 'passkey-1'}],
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -705,7 +748,11 @@ describe('public page redirects', () => {
             cookie: 'myoc_session=session-token',
         })
         const html = await response.text()
-        const preparedSql = (db.prepare as unknown as { mock: { calls: [string][] } }).mock.calls
+        const preparedSql = (
+            db.prepare as unknown as {
+                mock: {calls: [string][]}
+            }
+        ).mock.calls
             .map(([sql]) => sql)
             .join('\n')
 
@@ -778,7 +825,11 @@ describe('public page redirects', () => {
             cookie: 'myoc_session=session-token',
         })
         const html = await response.text()
-        const preparedSql = (db.prepare as unknown as { mock: { calls: [string][] } }).mock.calls
+        const preparedSql = (
+            db.prepare as unknown as {
+                mock: {calls: [string][]}
+            }
+        ).mock.calls
             .map(([sql]) => sql)
             .join('\n')
 
@@ -790,9 +841,12 @@ describe('public page redirects', () => {
     })
 
     it('renders SEO metadata on the home page', async () => {
-        const response = await getAppPath('/', createProfilePageDb({
-            mediaCount: 1234,
-        }))
+        const response = await getAppPath(
+            '/',
+            createProfilePageDb({
+                mediaCount: 1234,
+            }),
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -816,28 +870,31 @@ describe('public page redirects', () => {
 
 describe('GET /search', () => {
     it('renders matching users and characters from live search data', async () => {
-        const response = await getAppPath('/search?q=raz', createProfilePageDb({
-            searchUsers: [
-                {
-                    id: 'profile-user',
-                    username: 'razeth',
-                    bio: 'Character artist.',
-                    profile_photo_key: 'profile-photo-key',
-                    character_count: 2,
-                },
-            ],
-            searchUserCount: 1,
-            searchCharacters: [
-                {
-                    id: 'character-1',
-                    name: 'RAZETH',
-                    profile_image_key: 'character-image-key',
-                    user_id: 'profile-user',
-                    username: 'razeth',
-                },
-            ],
-            searchCharacterCount: 1,
-        }))
+        const response = await getAppPath(
+            '/search?q=raz',
+            createProfilePageDb({
+                searchUsers: [
+                    {
+                        id: 'profile-user',
+                        username: 'razeth',
+                        bio: 'Character artist.',
+                        profile_photo_key: 'profile-photo-key',
+                        character_count: 2,
+                    },
+                ],
+                searchUserCount: 1,
+                searchCharacters: [
+                    {
+                        id: 'character-1',
+                        name: 'RAZETH',
+                        profile_image_key: 'character-image-key',
+                        user_id: 'profile-user',
+                        username: 'razeth',
+                    },
+                ],
+                searchCharacterCount: 1,
+            }),
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -875,11 +932,15 @@ describe('GET /search', () => {
 
 describe('GET /settings', () => {
     it('links to the Toyhou.se migration page for signed-in users', async () => {
-        const response = await getAppPath('/settings', createProfilePageDb({
-            currentUser: createCurrentUserRecord('demo'),
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        const response = await getAppPath(
+            '/settings',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -891,11 +952,15 @@ describe('GET /settings', () => {
 
 describe('GET /migrate', () => {
     it('renders the Toyhou.se migration form for signed-in users', async () => {
-        const response = await getAppPath('/migrate?toyhouseUsername=demo', createProfilePageDb({
-            currentUser: createCurrentUserRecord('demo'),
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        const response = await getAppPath(
+            '/migrate?toyhouseUsername=demo',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -935,7 +1000,7 @@ describe('GET /migrate', () => {
         expect(html).toContain('discoverGalleryUrls')
         expect(html).toContain('imageLinks')
         expect(html).toContain('.sidebar-tab a[href]')
-        expect(html).toContain("url.pathname = path + &#39;/gallery&#39;")
+        expect(html).toContain('url.pathname = path + &#39;/gallery&#39;')
         expect(html).toContain('myoc-migration-progress')
         expect(html).toContain('closeSetupDialog')
         expect(html).toContain('[data-toyhouse-import-dialog][open]')
@@ -954,11 +1019,15 @@ describe('GET /migrate', () => {
     })
 
     it('renders the logged-in Toyhou.se import receiver page', async () => {
-        const response = await getAppPath('/migrate/import', createProfilePageDb({
-            currentUser: createCurrentUserRecord('demo'),
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        const response = await getAppPath(
+            '/migrate/import',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -968,7 +1037,7 @@ describe('GET /migrate', () => {
         expect(html).toContain('data-toyhouse-import-receiver-bar')
         expect(html).toContain("data.type === 'myoc:toyhouse-progress'")
         expect(html).toContain("data.type !== 'myoc:toyhouse-import'")
-        expect(html).toContain("myoc:toyhouse-import-received")
+        expect(html).toContain('myoc:toyhouse-import-received')
         expect(html).toContain("form.method = 'post'")
         expect(html).toContain("input.name = 'toyhousePayload'")
         expect(html).toContain('id="logout-form"')
@@ -977,11 +1046,14 @@ describe('GET /migrate', () => {
     })
 
     it('proxies Toyhou.se images for signed-in users', async () => {
-        const fetchMock = vi.fn(async () => new Response('image-bytes', {
-            headers: {
-                'content-type': 'image/png',
-            },
-        }))
+        const fetchMock = vi.fn(
+            async () =>
+                new Response('image-bytes', {
+                    headers: {
+                        'content-type': 'image/png',
+                    },
+                }),
+        )
         vi.stubGlobal('fetch', fetchMock)
 
         const response = await getAppPath(
@@ -1025,48 +1097,60 @@ describe('GET /migrate', () => {
     })
 
     it('redirects the migration start page to confirm when an import job is active', async () => {
-        const response = await getAppPath('/migrate', createProfilePageDb({
-            currentUser: createCurrentUserRecord('demo'),
-            activeToyhouseImportJob: {
-                id: 'toyhouse-import-job',
-                total_images: 2,
+        const response = await getAppPath(
+            '/migrate',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+                activeToyhouseImportJob: {
+                    id: 'toyhouse-import-job',
+                    total_images: 2,
+                },
+                activeToyhouseImportItems: [{id: 'toyhouse-import-item'}],
+            }),
+            {
+                cookie: 'myoc_session=session-token',
             },
-            activeToyhouseImportItems: [{id: 'toyhouse-import-item'}],
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        )
 
         expect(response.status).toBe(302)
         expect(response.headers.get('location')).toBe('/migrate/import/confirm')
     })
 
     it('redirects the Toyhou.se receiver page to confirm when an import job is active', async () => {
-        const response = await getAppPath('/migrate/import', createProfilePageDb({
-            currentUser: createCurrentUserRecord('demo'),
-            activeToyhouseImportJob: {
-                id: 'toyhouse-import-job',
-                total_images: 2,
+        const response = await getAppPath(
+            '/migrate/import',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+                activeToyhouseImportJob: {
+                    id: 'toyhouse-import-job',
+                    total_images: 2,
+                },
+                activeToyhouseImportItems: [{id: 'toyhouse-import-item'}],
+            }),
+            {
+                cookie: 'myoc_session=session-token',
             },
-            activeToyhouseImportItems: [{id: 'toyhouse-import-item'}],
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        )
 
         expect(response.status).toBe(302)
         expect(response.headers.get('location')).toBe('/migrate/import/confirm')
     })
 
     it('does not redirect the migration start page for an active import job with no remaining items', async () => {
-        const response = await getAppPath('/migrate', createProfilePageDb({
-            currentUser: createCurrentUserRecord('demo'),
-            activeToyhouseImportJob: {
-                id: 'toyhouse-import-job',
-                total_images: 2,
+        const response = await getAppPath(
+            '/migrate',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+                activeToyhouseImportJob: {
+                    id: 'toyhouse-import-job',
+                    total_images: 2,
+                },
+                activeToyhouseImportItems: [],
+            }),
+            {
+                cookie: 'myoc_session=session-token',
             },
-            activeToyhouseImportItems: [],
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -1075,39 +1159,43 @@ describe('GET /migrate', () => {
     })
 
     it('resumes an active Toyhou.se import job on the confirm page', async () => {
-        const response = await getAppPath('/migrate/import/confirm', createProfilePageDb({
-            currentUser: createCurrentUserRecord('demo'),
-            activeToyhouseImportJob: {
-                id: 'toyhouse-import-job',
-                total_images: 2,
+        const response = await getAppPath(
+            '/migrate/import/confirm',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+                activeToyhouseImportJob: {
+                    id: 'toyhouse-import-job',
+                    total_images: 2,
+                },
+                activeToyhouseImportItems: [
+                    {
+                        id: 'toyhouse-import-item-one',
+                        character_id: 'new-character',
+                        toyhouse_character_id: '9430171',
+                        toyhouse_image_url: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png',
+                        import_mode: 'create',
+                        rating: 'sfw',
+                        status: 'pending',
+                        media_id: null,
+                        name: 'Absinthe',
+                    },
+                    {
+                        id: 'toyhouse-import-item-two',
+                        character_id: 'existing-character',
+                        toyhouse_character_id: '2222222',
+                        toyhouse_image_url: 'https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_full.png',
+                        import_mode: 'existing',
+                        rating: 'nsfw',
+                        status: 'imported',
+                        media_id: 'existing-media',
+                        name: 'Brindle',
+                    },
+                ],
+            }),
+            {
+                cookie: 'myoc_session=session-token',
             },
-            activeToyhouseImportItems: [
-                {
-                    id: 'toyhouse-import-item-one',
-                    character_id: 'new-character',
-                    toyhouse_character_id: '9430171',
-                    toyhouse_image_url: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png',
-                    import_mode: 'create',
-                    rating: 'sfw',
-                    status: 'pending',
-                    media_id: null,
-                    name: 'Absinthe',
-                },
-                {
-                    id: 'toyhouse-import-item-two',
-                    character_id: 'existing-character',
-                    toyhouse_character_id: '2222222',
-                    toyhouse_image_url: 'https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_full.png',
-                    import_mode: 'existing',
-                    rating: 'nsfw',
-                    status: 'imported',
-                    media_id: 'existing-media',
-                    name: 'Brindle',
-                },
-            ],
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -1124,11 +1212,15 @@ describe('GET /migrate', () => {
     })
 
     it('redirects the confirm page back to migrate when there is no active import job', async () => {
-        const response = await getAppPath('/migrate/import/confirm', createProfilePageDb({
-            currentUser: createCurrentUserRecord('demo'),
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        const response = await getAppPath(
+            '/migrate/import/confirm',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
 
         expect(response.status).toBe(302)
         expect(response.headers.get('location')).toBe('/migrate')
@@ -1143,78 +1235,83 @@ describe('GET /migrate', () => {
 
     it('renders posted Toyhou.se bookmarklet results for the signed-in user', async () => {
         const form = new FormData()
-        form.set('toyhousePayload', JSON.stringify({
-            myocUserId: 'current-user',
-            profileUrl: 'https://toyhou.se/demo',
-            folderUrl: 'https://toyhou.se/demo/characters/folder:all',
-            pagesFetched: 2,
-            characters: [
-                {
-                    id: '9430171',
-                    images: [
-                        {
-                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png',
-                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/9430171_thumb.png',
-                        },
-                    ],
-                    imageCount: 2,
-                    name: 'Absinthe',
-                    thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485',
-                    url: 'https://toyhou.se/9430171.absinthe',
-                },
-                {
-                    id: '2222222',
-                    images: [
-                        {
-                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_full.png',
-                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/2222222_thumb.png',
-                        },
-                        {
-                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_alt.png',
-                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/2222222_alt_thumb.png',
-                        },
-                    ],
-                    imageCount: 7,
-                    name: 'Brindle',
-                    thumbnailUrl: null,
-                    url: 'https://toyhou.se/2222222.brindle',
-                },
-                {
-                    id: '3333333',
-                    images: [],
-                    imageCount: 0,
-                    name: 'Bad/Name',
-                    thumbnailUrl: null,
-                    url: 'https://toyhou.se/3333333.bad-name',
-                },
-                {
-                    id: '4444444',
-                    images: [],
-                    imageCount: 0,
-                    name: '"Ivo"',
-                    thumbnailUrl: null,
-                    url: 'https://toyhou.se/4444444.ivo',
-                },
-            ],
-        }))
-
-        const response = await app.request('https://example.com/migrate/import', {
-            body: form,
-            headers: {
-                cookie: 'myoc_session=session-token',
-            },
-            method: 'POST',
-        }, {
-            CACHE: createMockKVNamespace(),
-            DB: createProfilePageDb({
-                currentUser: createCurrentUserRecord('demo'),
+        form.set(
+            'toyhousePayload',
+            JSON.stringify({
+                myocUserId: 'current-user',
+                profileUrl: 'https://toyhou.se/demo',
+                folderUrl: 'https://toyhou.se/demo/characters/folder:all',
+                pagesFetched: 2,
                 characters: [
-                    {id: 'existing-brindle', name: 'brindle'},
+                    {
+                        id: '9430171',
+                        images: [
+                            {
+                                fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png',
+                                thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/9430171_thumb.png',
+                            },
+                        ],
+                        imageCount: 2,
+                        name: 'Absinthe',
+                        thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485',
+                        url: 'https://toyhou.se/9430171.absinthe',
+                    },
+                    {
+                        id: '2222222',
+                        images: [
+                            {
+                                fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_full.png',
+                                thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/2222222_thumb.png',
+                            },
+                            {
+                                fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_alt.png',
+                                thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/2222222_alt_thumb.png',
+                            },
+                        ],
+                        imageCount: 7,
+                        name: 'Brindle',
+                        thumbnailUrl: null,
+                        url: 'https://toyhou.se/2222222.brindle',
+                    },
+                    {
+                        id: '3333333',
+                        images: [],
+                        imageCount: 0,
+                        name: 'Bad/Name',
+                        thumbnailUrl: null,
+                        url: 'https://toyhou.se/3333333.bad-name',
+                    },
+                    {
+                        id: '4444444',
+                        images: [],
+                        imageCount: 0,
+                        name: '"Ivo"',
+                        thumbnailUrl: null,
+                        url: 'https://toyhou.se/4444444.ivo',
+                    },
                 ],
             }),
-            MEDIA_BUCKET: createMockR2Bucket(),
-            MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
-        })
+        )
+
+        const response = await app.request(
+            'https://example.com/migrate/import',
+            {
+                body: form,
+                headers: {
+                    cookie: 'myoc_session=session-token',
+                },
+                method: 'POST',
+            },
+            {
+                CACHE: createMockKVNamespace(),
+                DB: createProfilePageDb({
+                    currentUser: createCurrentUserRecord('demo'),
+                    characters: [{id: 'existing-brindle', name: 'brindle'}],
+                }),
+                MEDIA_BUCKET: createMockR2Bucket(),
+                MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+            },
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -1254,7 +1351,9 @@ describe('GET /migrate', () => {
         expect(html).toContain('Add images to existing')
         expect(html).toContain('A character named Brindle already exists. Selected images will be added to that character.')
         expect(html).not.toContain('Character name already exists on this account.')
-        expect(html).toContain('Character name may contain only letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses, and must include at least one letter or number.')
+        expect(html).toContain(
+            'Character name may contain only letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses, and must include at least one letter or number.',
+        )
         expect(html).toContain('1 image found (2 listed)')
         expect(html).toContain('2 images found (7 listed)')
         expect(html).toContain('https://toyhou.se/demo/characters/folder:all')
@@ -1334,34 +1433,40 @@ describe('GET /migrate', () => {
 
         const db = createProfilePageDb({
             currentUser: createCurrentUserRecord('demo'),
-            characters: [
-                {id: 'existing-brindle', name: 'brindle'},
-            ],
+            characters: [{id: 'existing-brindle', name: 'brindle'}],
         })
         const bucket = createMockR2Bucket()
-        const response = await app.request('https://example.com/migrate/import/confirm', {
-            body: form,
-            headers: {
-                cookie: 'myoc_session=session-token',
+        const response = await app.request(
+            'https://example.com/migrate/import/confirm',
+            {
+                body: form,
+                headers: {
+                    cookie: 'myoc_session=session-token',
+                },
+                method: 'POST',
             },
-            method: 'POST',
-        }, {
-            CACHE: createMockKVNamespace(),
-            DB: db,
-            MEDIA_BUCKET: bucket,
-            MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
-        })
+            {
+                CACHE: createMockKVNamespace(),
+                DB: db,
+                MEDIA_BUCKET: bucket,
+                MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+            },
+        )
         const html = await response.text()
-        const preparedSql = (db.prepare as unknown as { mock: { calls: [string][] } }).mock.calls
+        const preparedSql = (
+            db.prepare as unknown as {
+                mock: {calls: [string][]}
+            }
+        ).mock.calls
             .map(([sql]) => sql)
             .join('\n')
-        const putCalls = (bucket.put as unknown as {
-            mock: { calls: [string, unknown, { httpMetadata?: { contentType?: string } }?][] }
-        }).mock.calls
-        const putKeys = putCalls
-            .map(([key]) => key)
-        const putContentTypes = putCalls
-            .map(([, , options]) => options?.httpMetadata?.contentType)
+        const putCalls = (
+            bucket.put as unknown as {
+                mock: {calls: [string, unknown, {httpMetadata?: {contentType?: string}}?][]}
+            }
+        ).mock.calls
+        const putKeys = putCalls.map(([key]) => key)
+        const putContentTypes = putCalls.map(([, , options]) => options?.httpMetadata?.contentType)
 
         expect(response.status).toBe(200)
         expect(html).toContain('Uploading Toyhou.se Images')
@@ -1420,21 +1525,27 @@ describe('GET /migrate', () => {
         const db = createProfilePageDb({
             currentUser: createCurrentUserRecord('demo'),
         })
-        const response = await app.request('https://example.com/migrate/import/confirm', {
-            body: form,
-            headers: {
-                cookie: 'myoc_session=session-token',
+        const response = await app.request(
+            'https://example.com/migrate/import/confirm',
+            {
+                body: form,
+                headers: {
+                    cookie: 'myoc_session=session-token',
+                },
+                method: 'POST',
             },
-            method: 'POST',
-        }, {
-            CACHE: createMockKVNamespace(),
-            DB: db,
-            MEDIA_BUCKET: createMockR2Bucket(),
-            MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
-        })
-        const bindSizes = (db.prepare as unknown as {
-            mock: { results: { value: { bind?: { mock: { calls: unknown[][] } } } }[] }
-        }).mock.results
+            {
+                CACHE: createMockKVNamespace(),
+                DB: db,
+                MEDIA_BUCKET: createMockR2Bucket(),
+                MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+            },
+        )
+        const bindSizes = (
+            db.prepare as unknown as {
+                mock: {results: {value: {bind?: {mock: {calls: unknown[][]}}}}[]}
+            }
+        ).mock.results
             .flatMap((result) => result.value.bind?.mock.calls ?? [])
             .map((binds) => binds.length)
 
@@ -1475,18 +1586,22 @@ describe('GET /migrate', () => {
             toyhouseImportItemsError: new Error('simulated import item lookup failure'),
         })
         const bucket = createMockR2Bucket()
-        const response = await app.request('https://example.com/migrate/import/confirm', {
-            body: form,
-            headers: {
-                cookie: 'myoc_session=session-token',
+        const response = await app.request(
+            'https://example.com/migrate/import/confirm',
+            {
+                body: form,
+                headers: {
+                    cookie: 'myoc_session=session-token',
+                },
+                method: 'POST',
             },
-            method: 'POST',
-        }, {
-            CACHE: createMockKVNamespace(),
-            DB: db,
-            MEDIA_BUCKET: bucket,
-            MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
-        })
+            {
+                CACHE: createMockKVNamespace(),
+                DB: db,
+                MEDIA_BUCKET: bucket,
+                MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+            },
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -1535,18 +1650,22 @@ describe('GET /migrate', () => {
             currentUser: createCurrentUserRecord('demo'),
         })
         const bucket = createMockR2Bucket()
-        const response = await app.request('https://example.com/migrate/import/confirm', {
-            body: form,
-            headers: {
-                cookie: 'myoc_session=session-token',
+        const response = await app.request(
+            'https://example.com/migrate/import/confirm',
+            {
+                body: form,
+                headers: {
+                    cookie: 'myoc_session=session-token',
+                },
+                method: 'POST',
             },
-            method: 'POST',
-        }, {
-            CACHE: createMockKVNamespace(),
-            DB: db,
-            MEDIA_BUCKET: bucket,
-            MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
-        })
+            {
+                CACHE: createMockKVNamespace(),
+                DB: db,
+                MEDIA_BUCKET: bucket,
+                MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+            },
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -1574,13 +1693,17 @@ describe('GET /api/search', () => {
             user_id: 'profile-user',
             username: 'razeth',
         }))
-        const response = await getAppPath('/api/search?type=characters&q=character&offset=8', createProfilePageDb({
-            searchCharacters,
-            searchCharacterCount: 9,
-        }), {
-            accept: 'application/json',
-        })
-        const body = await response.json() as {
+        const response = await getAppPath(
+            '/api/search?type=characters&q=character&offset=8',
+            createProfilePageDb({
+                searchCharacters,
+                searchCharacterCount: 9,
+            }),
+            {
+                accept: 'application/json',
+            },
+        )
+        const body = (await response.json()) as {
             type: string
             query: string
             items: unknown[]
@@ -1612,42 +1735,52 @@ describe('GET /api/search', () => {
 
 describe('GET /edit/:characterId', () => {
     it('renders the character settings page from live character gallery data', async () => {
-        const response = await getAppPath('/edit/character-1', createProfilePageDb({
-            currentUser: createCurrentUserRecord('demo'),
-            characterSettings: {
-                id: 'character-1',
-                user_id: 'current-user',
-                name: 'RAZETH',
-                profile_image_key: 'profile-image-key',
-                description: 'Character description.',
+        const response = await getAppPath(
+            '/edit/character-1',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+                characterSettings: {
+                    id: 'character-1',
+                    user_id: 'current-user',
+                    name: 'RAZETH',
+                    profile_image_key: 'profile-image-key',
+                    description: 'Character description.',
+                },
+                characterMedia: [
+                    {
+                        id: 'media-1',
+                        sfw_image_key: 'sfw-image-key',
+                        nsfw_image_key: null,
+                        sfw_artist: 'Artist',
+                        nsfw_artist: '',
+                        sfw_width: 640,
+                        sfw_height: 480,
+                        nsfw_width: null,
+                        nsfw_height: null,
+                    },
+                ],
+                galleryTabs: [
+                    {
+                        id: 'tab-1',
+                        name: 'default',
+                        sort_order: 0,
+                    },
+                ],
+                galleryRows: [
+                    {
+                        row_id: 'row-1',
+                        tab_id: 'tab-1',
+                        row_sort_order: 0,
+                        force_full_width: 1,
+                        media_id: 'media-1',
+                        media_sort_order: 0,
+                    },
+                ],
+            }),
+            {
+                cookie: 'myoc_session=session-token',
             },
-            characterMedia: [{
-                id: 'media-1',
-                sfw_image_key: 'sfw-image-key',
-                nsfw_image_key: null,
-                sfw_artist: 'Artist',
-                nsfw_artist: '',
-                sfw_width: 640,
-                sfw_height: 480,
-                nsfw_width: null,
-                nsfw_height: null,
-            }],
-            galleryTabs: [{
-                id: 'tab-1',
-                name: 'default',
-                sort_order: 0,
-            }],
-            galleryRows: [{
-                row_id: 'row-1',
-                tab_id: 'tab-1',
-                row_sort_order: 0,
-                force_full_width: 1,
-                media_id: 'media-1',
-                media_sort_order: 0,
-            }],
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -1689,11 +1822,15 @@ describe('GET /edit/:characterId', () => {
     })
 
     it('does not expose the character settings page under the old characters path', async () => {
-        const response = await getAppPath('/characters/5f42998f-e37b-4135-9760-c2768ade86e1', createProfilePageDb({
-            currentUser: createCurrentUserRecord('demo'),
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        const response = await getAppPath(
+            '/characters/5f42998f-e37b-4135-9760-c2768ade86e1',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
         const html = await response.text()
 
         expect(response.status).toBe(404)
@@ -1703,12 +1840,16 @@ describe('GET /edit/:characterId', () => {
 
 describe('GET /characters', () => {
     it('renders a valid character name pattern for creating characters', async () => {
-        const response = await getAppPath('/characters', createProfilePageDb({
-            currentUser: createCurrentUserRecord('demo'),
-            uploadedImageCount: 12,
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        const response = await getAppPath(
+            '/characters',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+                uploadedImageCount: 12,
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -1719,18 +1860,22 @@ describe('GET /characters', () => {
     })
 
     it('renders pointer-based drag sorting for mobile character management', async () => {
-        const response = await getAppPath('/characters', createProfilePageDb({
-            currentUser: createCurrentUserRecord('demo'),
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        const response = await getAppPath(
+            '/characters',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
         expect(html).toContain('data-drag-handle')
         expect(html).toContain('touch-action: none')
         expect(html).toContain('character-drop-marker')
-        expect(html).toContain("placement.dropzone.insertBefore(characterDropMarker, placement.beforeElement)")
+        expect(html).toContain('placement.dropzone.insertBefore(characterDropMarker, placement.beforeElement)')
         expect(html).toContain('folderList.forEach((placement, index) =>')
         expect(html).toContain('placement.sortOrder = index')
         expect(html).toContain("document.addEventListener('pointerdown', beginPointerDragCandidate)")
@@ -1751,11 +1896,15 @@ describe('GET /admin', () => {
     })
 
     it('returns not found for logged-in users who are not admins', async () => {
-        const response = await getAppPath('/admin', createProfilePageDb({
-            currentUser: createCurrentUserRecord('demo'),
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        const response = await getAppPath(
+            '/admin',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
         const html = await response.text()
 
         expect(response.status).toBe(404)
@@ -1764,14 +1913,18 @@ describe('GET /admin', () => {
     })
 
     it('renders the admin shell for admin users', async () => {
-        const response = await getAppPath('/admin', createProfilePageDb({
-            currentUser: {
-                ...createCurrentUserRecord('admin_user'),
-                role: 'admin',
+        const response = await getAppPath(
+            '/admin',
+            createProfilePageDb({
+                currentUser: {
+                    ...createCurrentUserRecord('admin_user'),
+                    role: 'admin',
+                },
+            }),
+            {
+                cookie: 'myoc_session=session-token',
             },
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -1792,14 +1945,18 @@ describe('GET /admin', () => {
     })
 
     it('renders admin section routes with the matching section active', async () => {
-        const response = await getAppPath('/admin/moderate-users', createProfilePageDb({
-            currentUser: {
-                ...createCurrentUserRecord('admin_user'),
-                role: 'admin',
+        const response = await getAppPath(
+            '/admin/moderate-users',
+            createProfilePageDb({
+                currentUser: {
+                    ...createCurrentUserRecord('admin_user'),
+                    role: 'admin',
+                },
+            }),
+            {
+                cookie: 'myoc_session=session-token',
             },
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -1809,62 +1966,70 @@ describe('GET /admin', () => {
     })
 
     it('embeds image approval data for the image approvals page', async () => {
-        const response = await getAppPath('/admin/image-approvals', createProfilePageDb({
-            currentUser: {
-                ...createCurrentUserRecord('admin_user'),
-                role: 'admin',
+        const response = await getAppPath(
+            '/admin/image-approvals',
+            createProfilePageDb({
+                currentUser: {
+                    ...createCurrentUserRecord('admin_user'),
+                    role: 'admin',
+                },
+                imageApprovalQueue: [
+                    {
+                        id: 'media-1',
+                        username: 'uploader',
+                        character_name: 'Quartz',
+                        sfw_image_key: 'sfw-key',
+                        nsfw_image_key: null,
+                        sfw_review_status: 'pending',
+                        sfw_reviewed_at: null,
+                        nsfw_review_status: 'pending',
+                        nsfw_reviewed_at: null,
+                        created_at: '2026-06-10 12:00:00',
+                        updated_at: '2026-06-10 12:00:00',
+                    },
+                ],
+                imageApprovalItem: {
+                    id: 'media-1',
+                    user_id: 'owner-1',
+                    username: 'uploader',
+                    email: 'uploader@example.test',
+                    character_id: 'character-1',
+                    character_name: 'Quartz',
+                    sfw_image_key: 'sfw-key',
+                    nsfw_image_key: null,
+                    sfw_preview_image_key: 'sfw-preview-key',
+                    nsfw_preview_image_key: null,
+                    sfw_artist: 'Artist',
+                    nsfw_artist: '',
+                    sfw_width: 1200,
+                    sfw_height: 900,
+                    sfw_byte_size: 1024,
+                    nsfw_width: null,
+                    nsfw_height: null,
+                    nsfw_byte_size: null,
+                    sfw_review_status: 'pending',
+                    sfw_reviewed_at: null,
+                    sfw_approved_at: null,
+                    sfw_homepage_allowed: 0,
+                    nsfw_review_status: 'pending',
+                    nsfw_reviewed_at: null,
+                    nsfw_approved_at: null,
+                    created_at: '2026-06-10 12:00:00',
+                    updated_at: '2026-06-10 12:00:00',
+                },
+            }),
+            {
+                cookie: 'myoc_session=session-token',
             },
-            imageApprovalQueue: [{
-                id: 'media-1',
-                username: 'uploader',
-                character_name: 'Quartz',
-                sfw_image_key: 'sfw-key',
-                nsfw_image_key: null,
-                sfw_review_status: 'pending',
-                sfw_reviewed_at: null,
-                nsfw_review_status: 'pending',
-                nsfw_reviewed_at: null,
-                created_at: '2026-06-10 12:00:00',
-                updated_at: '2026-06-10 12:00:00',
-            }],
-            imageApprovalItem: {
-                id: 'media-1',
-                user_id: 'owner-1',
-                username: 'uploader',
-                email: 'uploader@example.test',
-                character_id: 'character-1',
-                character_name: 'Quartz',
-                sfw_image_key: 'sfw-key',
-                nsfw_image_key: null,
-                sfw_preview_image_key: 'sfw-preview-key',
-                nsfw_preview_image_key: null,
-                sfw_artist: 'Artist',
-                nsfw_artist: '',
-                sfw_width: 1200,
-                sfw_height: 900,
-                sfw_byte_size: 1024,
-                nsfw_width: null,
-                nsfw_height: null,
-                nsfw_byte_size: null,
-                sfw_review_status: 'pending',
-                sfw_reviewed_at: null,
-                sfw_approved_at: null,
-                sfw_homepage_allowed: 0,
-                nsfw_review_status: 'pending',
-                nsfw_reviewed_at: null,
-                nsfw_approved_at: null,
-                created_at: '2026-06-10 12:00:00',
-                updated_at: '2026-06-10 12:00:00',
-            },
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
         expect(html).toContain('<title>Image Approvals | Admin | MyOC</title>')
         expect(html).toContain('data-image-approvals')
-        expect(html).toContain('"imageUrl":"https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp"')
+        expect(html).toContain(
+            '"imageUrl":"https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp"',
+        )
         expect(html).toContain('"fullImageUrl":"https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/sfw-key.png"')
         expect(html).toContain('"objectKey":"characters/owner-1/character-1/media/media-1/sfw/sfw-key.png"')
         expect(html).toContain('"username":"uploader"')
@@ -1880,31 +2045,37 @@ describe('GET /admin', () => {
     })
 
     it('renders reported images on the reports page', async () => {
-        const response = await getAppPath('/admin/reports', createProfilePageDb({
-            currentUser: {
-                ...createCurrentUserRecord('admin_user'),
-                role: 'admin',
+        const response = await getAppPath(
+            '/admin/reports',
+            createProfilePageDb({
+                currentUser: {
+                    ...createCurrentUserRecord('admin_user'),
+                    role: 'admin',
+                },
+                adminReports: [
+                    {
+                        id: 'media-1',
+                        user_id: 'owner-1',
+                        username: 'uploader',
+                        character_id: 'character-1',
+                        character_name: 'Quartz',
+                        sfw_image_key: 'sfw-key',
+                        nsfw_image_key: null,
+                        sfw_preview_image_key: 'sfw-preview-key',
+                        nsfw_preview_image_key: null,
+                        sfw_review_status: 'reported',
+                        nsfw_review_status: 'pending',
+                        sfw_reviewed_at: '2026-06-10 12:00:00',
+                        nsfw_reviewed_at: null,
+                        sfw_reported_by_username: 'admin_user',
+                        nsfw_reported_by_username: null,
+                    },
+                ],
+            }),
+            {
+                cookie: 'myoc_session=session-token',
             },
-            adminReports: [{
-                id: 'media-1',
-                user_id: 'owner-1',
-                username: 'uploader',
-                character_id: 'character-1',
-                character_name: 'Quartz',
-                sfw_image_key: 'sfw-key',
-                nsfw_image_key: null,
-                sfw_preview_image_key: 'sfw-preview-key',
-                nsfw_preview_image_key: null,
-                sfw_review_status: 'reported',
-                nsfw_review_status: 'pending',
-                sfw_reviewed_at: '2026-06-10 12:00:00',
-                nsfw_reviewed_at: null,
-                sfw_reported_by_username: 'admin_user',
-                nsfw_reported_by_username: null,
-            }],
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -1921,14 +2092,18 @@ describe('GET /admin', () => {
     })
 
     it('returns not found for unknown admin sections', async () => {
-        const response = await getAppPath('/admin/unknown-section', createProfilePageDb({
-            currentUser: {
-                ...createCurrentUserRecord('admin_user'),
-                role: 'admin',
+        const response = await getAppPath(
+            '/admin/unknown-section',
+            createProfilePageDb({
+                currentUser: {
+                    ...createCurrentUserRecord('admin_user'),
+                    role: 'admin',
+                },
+            }),
+            {
+                cookie: 'myoc_session=session-token',
             },
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        )
         const html = await response.text()
 
         expect(response.status).toBe(404)
@@ -1938,114 +2113,117 @@ describe('GET /admin', () => {
 
 describe('GET /u/:username', () => {
     it('renders a public character page with safe gallery media by default', async () => {
-        const response = await getProfilePath('/u/demo/RAZETH', createProfilePageDb({
-            profileUser: {
-                id: 'profile-user',
-                username: 'demo',
-                profile_photo_key: 'profile-photo-key',
-                bio: 'Live profile bio.',
-            },
-            characterSettings: {
-                id: 'character-1',
-                user_id: 'profile-user',
-                name: 'RAZETH',
-                profile_image_key: 'character-profile-key',
-                description: 'Character page description.',
-            },
-            characterMedia: [
-                {
-                    id: 'sfw-media',
-                    sfw_image_key: 'sfw-only-key',
-                    nsfw_image_key: null,
-                    sfw_preview_image_key: 'sfw-only-preview-key',
-                    nsfw_preview_image_key: null,
-                    sfw_artist: 'SFW Artist',
-                    nsfw_artist: '',
-                    sfw_width: 640,
-                    sfw_height: 480,
-                    sfw_preview_width: 640,
-                    sfw_preview_height: 480,
-                    nsfw_width: null,
-                    nsfw_height: null,
-                    nsfw_preview_width: null,
-                    nsfw_preview_height: null,
+        const response = await getProfilePath(
+            '/u/demo/RAZETH',
+            createProfilePageDb({
+                profileUser: {
+                    id: 'profile-user',
+                    username: 'demo',
+                    profile_photo_key: 'profile-photo-key',
+                    bio: 'Live profile bio.',
                 },
-                {
-                    id: 'both-media',
-                    sfw_image_key: 'both-sfw-key',
-                    nsfw_image_key: 'both-nsfw-key',
-                    sfw_preview_image_key: 'both-sfw-preview-key',
-                    nsfw_preview_image_key: 'both-nsfw-preview-key',
-                    nsfw_blur_image_key: 'both-nsfw-blur-key',
-                    sfw_artist: 'Both SFW Artist',
-                    nsfw_artist: 'Both NSFW Artist',
-                    sfw_width: 800,
-                    sfw_height: 600,
-                    sfw_preview_width: 800,
-                    sfw_preview_height: 600,
-                    nsfw_width: 900,
-                    nsfw_height: 600,
-                    nsfw_preview_width: 900,
-                    nsfw_preview_height: 600,
+                characterSettings: {
+                    id: 'character-1',
+                    user_id: 'profile-user',
+                    name: 'RAZETH',
+                    profile_image_key: 'character-profile-key',
+                    description: 'Character page description.',
                 },
-                {
-                    id: 'nsfw-media',
-                    sfw_image_key: null,
-                    nsfw_image_key: 'nsfw-only-key',
-                    sfw_preview_image_key: null,
-                    nsfw_preview_image_key: 'nsfw-only-preview-key',
-                    nsfw_blur_image_key: 'nsfw-only-blur-key',
-                    sfw_artist: '',
-                    nsfw_artist: 'NSFW Artist',
-                    sfw_width: null,
-                    sfw_height: null,
-                    sfw_preview_width: null,
-                    sfw_preview_height: null,
-                    nsfw_width: 1200,
-                    nsfw_height: 800,
-                    nsfw_preview_width: 1200,
-                    nsfw_preview_height: 800,
-                },
-            ],
-            galleryTabs: [
-                {
-                    id: 'tab-default',
-                    name: 'default',
-                    sort_order: 0,
-                },
-                {
-                    id: 'tab-reference',
-                    name: 'references',
-                    sort_order: 1,
-                },
-            ],
-            galleryRows: [
-                {
-                    row_id: 'row-1',
-                    tab_id: 'tab-default',
-                    row_sort_order: 0,
-                    force_full_width: 0,
-                    media_id: 'sfw-media',
-                    media_sort_order: 0,
-                },
-                {
-                    row_id: 'row-2',
-                    tab_id: 'tab-default',
-                    row_sort_order: 1,
-                    force_full_width: 0,
-                    media_id: 'both-media',
-                    media_sort_order: 0,
-                },
-                {
-                    row_id: 'row-3',
-                    tab_id: 'tab-default',
-                    row_sort_order: 2,
-                    force_full_width: 1,
-                    media_id: 'nsfw-media',
-                    media_sort_order: 0,
-                },
-            ],
-        }))
+                characterMedia: [
+                    {
+                        id: 'sfw-media',
+                        sfw_image_key: 'sfw-only-key',
+                        nsfw_image_key: null,
+                        sfw_preview_image_key: 'sfw-only-preview-key',
+                        nsfw_preview_image_key: null,
+                        sfw_artist: 'SFW Artist',
+                        nsfw_artist: '',
+                        sfw_width: 640,
+                        sfw_height: 480,
+                        sfw_preview_width: 640,
+                        sfw_preview_height: 480,
+                        nsfw_width: null,
+                        nsfw_height: null,
+                        nsfw_preview_width: null,
+                        nsfw_preview_height: null,
+                    },
+                    {
+                        id: 'both-media',
+                        sfw_image_key: 'both-sfw-key',
+                        nsfw_image_key: 'both-nsfw-key',
+                        sfw_preview_image_key: 'both-sfw-preview-key',
+                        nsfw_preview_image_key: 'both-nsfw-preview-key',
+                        nsfw_blur_image_key: 'both-nsfw-blur-key',
+                        sfw_artist: 'Both SFW Artist',
+                        nsfw_artist: 'Both NSFW Artist',
+                        sfw_width: 800,
+                        sfw_height: 600,
+                        sfw_preview_width: 800,
+                        sfw_preview_height: 600,
+                        nsfw_width: 900,
+                        nsfw_height: 600,
+                        nsfw_preview_width: 900,
+                        nsfw_preview_height: 600,
+                    },
+                    {
+                        id: 'nsfw-media',
+                        sfw_image_key: null,
+                        nsfw_image_key: 'nsfw-only-key',
+                        sfw_preview_image_key: null,
+                        nsfw_preview_image_key: 'nsfw-only-preview-key',
+                        nsfw_blur_image_key: 'nsfw-only-blur-key',
+                        sfw_artist: '',
+                        nsfw_artist: 'NSFW Artist',
+                        sfw_width: null,
+                        sfw_height: null,
+                        sfw_preview_width: null,
+                        sfw_preview_height: null,
+                        nsfw_width: 1200,
+                        nsfw_height: 800,
+                        nsfw_preview_width: 1200,
+                        nsfw_preview_height: 800,
+                    },
+                ],
+                galleryTabs: [
+                    {
+                        id: 'tab-default',
+                        name: 'default',
+                        sort_order: 0,
+                    },
+                    {
+                        id: 'tab-reference',
+                        name: 'references',
+                        sort_order: 1,
+                    },
+                ],
+                galleryRows: [
+                    {
+                        row_id: 'row-1',
+                        tab_id: 'tab-default',
+                        row_sort_order: 0,
+                        force_full_width: 0,
+                        media_id: 'sfw-media',
+                        media_sort_order: 0,
+                    },
+                    {
+                        row_id: 'row-2',
+                        tab_id: 'tab-default',
+                        row_sort_order: 1,
+                        force_full_width: 0,
+                        media_id: 'both-media',
+                        media_sort_order: 0,
+                    },
+                    {
+                        row_id: 'row-3',
+                        tab_id: 'tab-default',
+                        row_sort_order: 2,
+                        force_full_width: 1,
+                        media_id: 'nsfw-media',
+                        media_sort_order: 0,
+                    },
+                ],
+            }),
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -2054,19 +2232,31 @@ describe('GET /u/:username', () => {
         expect(html).toContain('<link href="https://example.com/u/demo/RAZETH" rel="canonical"/>')
         expect(html).toContain('<meta content="RAZETH | MyOC" property="og:title"/>')
         expect(html).toContain('<meta content="Character page description." property="og:description"/>')
-        expect(html).toContain('<meta content="https://m.myoc.art/characters/profile-user/character-1/profile/character-profile-key.webp" property="og:image"/>')
+        expect(html).toContain(
+            '<meta content="https://m.myoc.art/characters/profile-user/character-1/profile/character-profile-key.webp" property="og:image"/>',
+        )
         expect(html).toContain('<meta content="image/webp" property="og:image:type"/>')
         expect(html).toContain('<meta content="RAZETH thumbnail" property="og:image:alt"/>')
         expect(html).toContain('<meta content="summary" name="twitter:card"/>')
-        expect(html).toContain('<meta content="https://m.myoc.art/characters/profile-user/character-1/profile/character-profile-key.webp" name="twitter:image"/>')
+        expect(html).toContain(
+            '<meta content="https://m.myoc.art/characters/profile-user/character-1/profile/character-profile-key.webp" name="twitter:image"/>',
+        )
         expect(html).toContain('"@type":"CreativeWork"')
         expect(html).toContain('Character page description.')
         expect(html).toContain('https://m.myoc.art/users/profile-user/profile/profile-photo-key.webp')
         expect(html).toContain('https://m.myoc.art/characters/profile-user/character-1/profile/character-profile-key.webp')
-        expect(html).toContain('src="https://m.myoc.art/characters/profile-user/character-1/media/sfw-media/sfw/preview/sfw-only-preview-key.webp"')
-        expect(html).toContain('data-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/sfw-media/sfw/sfw-only-key.png"')
-        expect(html).toContain('src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/preview/both-sfw-preview-key.webp"')
-        expect(html).toContain('data-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"')
+        expect(html).toContain(
+            'src="https://m.myoc.art/characters/profile-user/character-1/media/sfw-media/sfw/preview/sfw-only-preview-key.webp"',
+        )
+        expect(html).toContain(
+            'data-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/sfw-media/sfw/sfw-only-key.png"',
+        )
+        expect(html).toContain(
+            'src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/preview/both-sfw-preview-key.webp"',
+        )
+        expect(html).toContain(
+            'data-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"',
+        )
         expect(html).toContain('loading="lazy"')
         expect(html).toContain('decoding="async"')
         expect(html).toContain('data-gallery-image-loader')
@@ -2078,17 +2268,31 @@ describe('GET /u/:username', () => {
         expect(html).not.toContain('Loading fullres...')
         expect(html).toContain('Load 18+ media')
         expect(html).toContain('data-display-nsfw-media="false"')
-        expect(html).toContain('data-nsfw-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/both-nsfw-key.png"')
-        expect(html).toContain('data-nsfw-preview-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/preview/both-nsfw-preview-key.webp"')
+        expect(html).toContain(
+            'data-nsfw-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/both-nsfw-key.png"',
+        )
+        expect(html).toContain(
+            'data-nsfw-preview-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/preview/both-nsfw-preview-key.webp"',
+        )
         expect(html).toContain('data-nsfw-title="Both NSFW Artist"')
         expect(html.match(/class="justified-row row-force-full-width"/g)).toHaveLength(3)
-        expect(html).toContain('data-safe-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"')
+        expect(html).toContain(
+            'data-safe-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"',
+        )
         expect(html).toContain('data-title="SFW Artist"')
         expect(html).toContain('data-title="Both SFW Artist"')
-        expect(html).toContain('loading="lazy" src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/blur/nsfw-only-blur-key.webp"')
-        expect(html).not.toContain('data-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"')
-        expect(html).toContain('data-nsfw-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"')
-        expect(html).toContain('data-nsfw-preview-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/preview/nsfw-only-preview-key.webp"')
+        expect(html).toContain(
+            'loading="lazy" src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/blur/nsfw-only-blur-key.webp"',
+        )
+        expect(html).not.toContain(
+            'data-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"',
+        )
+        expect(html).toContain(
+            'data-nsfw-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"',
+        )
+        expect(html).toContain(
+            'data-nsfw-preview-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/preview/nsfw-only-preview-key.webp"',
+        )
         expect(html).toContain('class="nsfw-media-badge"')
         expect(html).toContain('<span>18+</span>')
         expect(html).toContain('data-nsfw-hidden="true"')
@@ -2101,145 +2305,168 @@ describe('GET /u/:username', () => {
     })
 
     it('redirects profile URLs to the stored username casing', async () => {
-        const response = await getProfilePath('/u/DEMO?tab=characters', createProfilePageDb({
-            profileUser: {
-                id: 'profile-user',
-                username: 'demo',
-                profile_photo_key: null,
-                bio: '',
-            },
-        }))
+        const response = await getProfilePath(
+            '/u/DEMO?tab=characters',
+            createProfilePageDb({
+                profileUser: {
+                    id: 'profile-user',
+                    username: 'demo',
+                    profile_photo_key: null,
+                    bio: '',
+                },
+            }),
+        )
 
         expect(response.status).toBe(301)
         expect(response.headers.get('location')).toBe('/u/demo?tab=characters')
     })
 
     it('renders stored blur variants as the active source when the current user disabled NSFW media', async () => {
-        const response = await getAppPath('/u/demo/RAZETH', createProfilePageDb({
-            currentUser: {
-                ...createCurrentUserRecord('viewer'),
-                display_nsfw_media: 0,
-            },
-            profileUser: {
-                id: 'profile-user',
-                username: 'demo',
-                profile_photo_key: null,
-                bio: '',
-            },
-            characterSettings: {
-                id: 'character-1',
-                user_id: 'profile-user',
-                name: 'RAZETH',
-                profile_image_key: 'character-profile-key',
-                description: '',
-            },
-            characterMedia: [
-                {
-                    id: 'nsfw-media',
-                    sfw_image_key: null,
-                    nsfw_image_key: 'nsfw-only-key',
-                    sfw_preview_image_key: null,
-                    nsfw_preview_image_key: 'nsfw-only-preview-key',
-                    nsfw_blur_image_key: 'nsfw-only-blur-key',
-                    sfw_artist: '',
-                    nsfw_artist: 'NSFW Artist',
-                    sfw_width: null,
-                    sfw_height: null,
-                    sfw_preview_width: null,
-                    sfw_preview_height: null,
-                    nsfw_width: 1200,
-                    nsfw_height: 800,
-                    nsfw_preview_width: 1200,
-                    nsfw_preview_height: 800,
+        const response = await getAppPath(
+            '/u/demo/RAZETH',
+            createProfilePageDb({
+                currentUser: {
+                    ...createCurrentUserRecord('viewer'),
+                    display_nsfw_media: 0,
                 },
-            ],
-            galleryTabs: [{
-                id: 'tab-default',
-                name: 'default',
-                sort_order: 0,
-            }],
-            galleryRows: [
-                {
-                    row_id: 'row-1',
-                    tab_id: 'tab-default',
-                    row_sort_order: 0,
-                    media_id: 'nsfw-media',
-                    media_sort_order: 0,
+                profileUser: {
+                    id: 'profile-user',
+                    username: 'demo',
+                    profile_photo_key: null,
+                    bio: '',
                 },
-            ],
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+                characterSettings: {
+                    id: 'character-1',
+                    user_id: 'profile-user',
+                    name: 'RAZETH',
+                    profile_image_key: 'character-profile-key',
+                    description: '',
+                },
+                characterMedia: [
+                    {
+                        id: 'nsfw-media',
+                        sfw_image_key: null,
+                        nsfw_image_key: 'nsfw-only-key',
+                        sfw_preview_image_key: null,
+                        nsfw_preview_image_key: 'nsfw-only-preview-key',
+                        nsfw_blur_image_key: 'nsfw-only-blur-key',
+                        sfw_artist: '',
+                        nsfw_artist: 'NSFW Artist',
+                        sfw_width: null,
+                        sfw_height: null,
+                        sfw_preview_width: null,
+                        sfw_preview_height: null,
+                        nsfw_width: 1200,
+                        nsfw_height: 800,
+                        nsfw_preview_width: 1200,
+                        nsfw_preview_height: 800,
+                    },
+                ],
+                galleryTabs: [
+                    {
+                        id: 'tab-default',
+                        name: 'default',
+                        sort_order: 0,
+                    },
+                ],
+                galleryRows: [
+                    {
+                        row_id: 'row-1',
+                        tab_id: 'tab-default',
+                        row_sort_order: 0,
+                        media_id: 'nsfw-media',
+                        media_sort_order: 0,
+                    },
+                ],
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
-        expect(html).toContain('src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/blur/nsfw-only-blur-key.webp"')
+        expect(html).toContain(
+            'src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/blur/nsfw-only-blur-key.webp"',
+        )
         expect(html).toContain('data-nsfw-hidden="true"')
         expect(html).toContain('Load 18+ media')
         expect(html).toContain('data-display-nsfw-media="false"')
         expect(html).toContain('class="nsfw-media-badge"')
         expect(html).toContain('<span>18+</span>')
-        expect(html).toContain('data-nsfw-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"')
-        expect(html).toContain('data-nsfw-preview-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/preview/nsfw-only-preview-key.webp"')
-        expect(html).not.toContain('data-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"')
+        expect(html).toContain(
+            'data-nsfw-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"',
+        )
+        expect(html).toContain(
+            'data-nsfw-preview-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/preview/nsfw-only-preview-key.webp"',
+        )
+        expect(html).not.toContain(
+            'data-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"',
+        )
     })
 
     it('keeps NSFW-only gallery media visible with a local placeholder when no blur variant exists', async () => {
-        const response = await getAppPath('/u/demo/RAZETH', createProfilePageDb({
-            currentUser: {
-                ...createCurrentUserRecord('viewer'),
-                display_nsfw_media: 0,
-            },
-            profileUser: {
-                id: 'profile-user',
-                username: 'demo',
-                profile_photo_key: null,
-                bio: '',
-            },
-            characterSettings: {
-                id: 'character-1',
-                user_id: 'profile-user',
-                name: 'RAZETH',
-                profile_image_key: 'character-profile-key',
-                description: '',
-            },
-            characterMedia: [
-                {
-                    id: 'nsfw-media',
-                    sfw_image_key: null,
-                    nsfw_image_key: 'nsfw-only-key',
-                    sfw_preview_image_key: null,
-                    nsfw_preview_image_key: 'nsfw-only-preview-key',
-                    nsfw_blur_image_key: null,
-                    sfw_artist: '',
-                    nsfw_artist: 'NSFW Artist',
-                    sfw_width: null,
-                    sfw_height: null,
-                    sfw_preview_width: null,
-                    sfw_preview_height: null,
-                    nsfw_width: 1200,
-                    nsfw_height: 800,
-                    nsfw_preview_width: 600,
-                    nsfw_preview_height: 400,
+        const response = await getAppPath(
+            '/u/demo/RAZETH',
+            createProfilePageDb({
+                currentUser: {
+                    ...createCurrentUserRecord('viewer'),
+                    display_nsfw_media: 0,
                 },
-            ],
-            galleryTabs: [{
-                id: 'tab-default',
-                name: 'default',
-                sort_order: 0,
-            }],
-            galleryRows: [
-                {
-                    row_id: 'row-1',
-                    tab_id: 'tab-default',
-                    row_sort_order: 0,
-                    media_id: 'nsfw-media',
-                    media_sort_order: 0,
+                profileUser: {
+                    id: 'profile-user',
+                    username: 'demo',
+                    profile_photo_key: null,
+                    bio: '',
                 },
-            ],
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+                characterSettings: {
+                    id: 'character-1',
+                    user_id: 'profile-user',
+                    name: 'RAZETH',
+                    profile_image_key: 'character-profile-key',
+                    description: '',
+                },
+                characterMedia: [
+                    {
+                        id: 'nsfw-media',
+                        sfw_image_key: null,
+                        nsfw_image_key: 'nsfw-only-key',
+                        sfw_preview_image_key: null,
+                        nsfw_preview_image_key: 'nsfw-only-preview-key',
+                        nsfw_blur_image_key: null,
+                        sfw_artist: '',
+                        nsfw_artist: 'NSFW Artist',
+                        sfw_width: null,
+                        sfw_height: null,
+                        sfw_preview_width: null,
+                        sfw_preview_height: null,
+                        nsfw_width: 1200,
+                        nsfw_height: 800,
+                        nsfw_preview_width: 600,
+                        nsfw_preview_height: 400,
+                    },
+                ],
+                galleryTabs: [
+                    {
+                        id: 'tab-default',
+                        name: 'default',
+                        sort_order: 0,
+                    },
+                ],
+                galleryRows: [
+                    {
+                        row_id: 'row-1',
+                        tab_id: 'tab-default',
+                        row_sort_order: 0,
+                        media_id: 'nsfw-media',
+                        media_sort_order: 0,
+                    },
+                ],
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -2247,102 +2474,115 @@ describe('GET /u/:username', () => {
         expect(html).toContain('src="data:image/svg+xml,')
         expect(html).toContain('class="nsfw-media-badge"')
         expect(html).toContain('<span>18+</span>')
-        expect(html).toContain('data-nsfw-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"')
+        expect(html).toContain(
+            'data-nsfw-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"',
+        )
         expect(html).not.toContain('src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"')
-        expect(html).not.toContain('src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/preview/nsfw-only-preview-key.webp"')
+        expect(html).not.toContain(
+            'src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/preview/nsfw-only-preview-key.webp"',
+        )
         expect(html).not.toContain('No gallery media has been added')
     })
 
     it('redirects character URLs to the stored username and character name casing', async () => {
-        const response = await getProfilePath('/u/DEMO/razeth?view=gallery', createProfilePageDb({
-            profileUser: {
-                id: 'profile-user',
-                username: 'demo',
-                profile_photo_key: null,
-                bio: '',
-            },
-            characterSettings: {
-                id: 'character-1',
-                user_id: 'profile-user',
-                name: 'RAZETH',
-                profile_image_key: 'character-profile-key',
-                description: '',
-            },
-        }))
+        const response = await getProfilePath(
+            '/u/DEMO/razeth?view=gallery',
+            createProfilePageDb({
+                profileUser: {
+                    id: 'profile-user',
+                    username: 'demo',
+                    profile_photo_key: null,
+                    bio: '',
+                },
+                characterSettings: {
+                    id: 'character-1',
+                    user_id: 'profile-user',
+                    name: 'RAZETH',
+                    profile_image_key: 'character-profile-key',
+                    description: '',
+                },
+            }),
+        )
 
         expect(response.status).toBe(301)
         expect(response.headers.get('location')).toBe('/u/demo/RAZETH?view=gallery')
     })
 
     it('renders NSFW gallery variants when the current user enabled NSFW media', async () => {
-        const response = await getAppPath('/u/demo/RAZETH', createProfilePageDb({
-            currentUser: {
-                ...createCurrentUserRecord('viewer'),
-                display_nsfw_media: 1,
+        const response = await getAppPath(
+            '/u/demo/RAZETH',
+            createProfilePageDb({
+                currentUser: {
+                    ...createCurrentUserRecord('viewer'),
+                    display_nsfw_media: 1,
+                },
+                mediaCount: 987,
+                profileUser: {
+                    id: 'profile-user',
+                    username: 'demo',
+                    profile_photo_key: null,
+                    bio: '',
+                },
+                characterSettings: {
+                    id: 'character-1',
+                    user_id: 'profile-user',
+                    name: 'RAZETH',
+                    profile_image_key: 'character-profile-key',
+                    description: '',
+                },
+                characterMedia: [
+                    {
+                        id: 'both-media',
+                        sfw_image_key: 'both-sfw-key',
+                        nsfw_image_key: 'both-nsfw-key',
+                        sfw_artist: 'Both SFW Artist',
+                        nsfw_artist: 'Both NSFW Artist',
+                        sfw_width: 800,
+                        sfw_height: 600,
+                        nsfw_width: 900,
+                        nsfw_height: 600,
+                    },
+                    {
+                        id: 'nsfw-media',
+                        sfw_image_key: null,
+                        nsfw_image_key: 'nsfw-only-key',
+                        nsfw_blur_image_key: 'nsfw-only-blur-key',
+                        sfw_artist: '',
+                        nsfw_artist: 'NSFW Artist',
+                        sfw_width: null,
+                        sfw_height: null,
+                        nsfw_width: 1200,
+                        nsfw_height: 800,
+                    },
+                ],
+                galleryTabs: [
+                    {
+                        id: 'tab-default',
+                        name: 'default',
+                        sort_order: 0,
+                    },
+                ],
+                galleryRows: [
+                    {
+                        row_id: 'row-1',
+                        tab_id: 'tab-default',
+                        row_sort_order: 0,
+                        media_id: 'both-media',
+                        media_sort_order: 0,
+                    },
+                    {
+                        row_id: 'row-1',
+                        tab_id: 'tab-default',
+                        row_sort_order: 0,
+                        media_id: 'nsfw-media',
+                        media_sort_order: 1,
+                    },
+                ],
+            }),
+            {
+                cookie: 'myoc_session=session-token',
             },
-            mediaCount: 987,
-            profileUser: {
-                id: 'profile-user',
-                username: 'demo',
-                profile_photo_key: null,
-                bio: '',
-            },
-            characterSettings: {
-                id: 'character-1',
-                user_id: 'profile-user',
-                name: 'RAZETH',
-                profile_image_key: 'character-profile-key',
-                description: '',
-            },
-            characterMedia: [
-                {
-                    id: 'both-media',
-                    sfw_image_key: 'both-sfw-key',
-                    nsfw_image_key: 'both-nsfw-key',
-                    sfw_artist: 'Both SFW Artist',
-                    nsfw_artist: 'Both NSFW Artist',
-                    sfw_width: 800,
-                    sfw_height: 600,
-                    nsfw_width: 900,
-                    nsfw_height: 600,
-                },
-                {
-                    id: 'nsfw-media',
-                    sfw_image_key: null,
-                    nsfw_image_key: 'nsfw-only-key',
-                    nsfw_blur_image_key: 'nsfw-only-blur-key',
-                    sfw_artist: '',
-                    nsfw_artist: 'NSFW Artist',
-                    sfw_width: null,
-                    sfw_height: null,
-                    nsfw_width: 1200,
-                    nsfw_height: 800,
-                },
-            ],
-            galleryTabs: [{
-                id: 'tab-default',
-                name: 'default',
-                sort_order: 0,
-            }],
-            galleryRows: [
-                {
-                    row_id: 'row-1',
-                    tab_id: 'tab-default',
-                    row_sort_order: 0,
-                    media_id: 'both-media',
-                    media_sort_order: 0,
-                },
-                {
-                    row_id: 'row-1',
-                    tab_id: 'tab-default',
-                    row_sort_order: 0,
-                    media_id: 'nsfw-media',
-                    media_sort_order: 1,
-                },
-            ],
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -2353,7 +2593,9 @@ describe('GET /u/:username', () => {
         expect(html).toContain('data-title="NSFW Artist"')
         expect(html).toContain('Hide 18+ media')
         expect(html).toContain('data-display-nsfw-media="true"')
-        expect(html).toContain('data-safe-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"')
+        expect(html).toContain(
+            'data-safe-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"',
+        )
         expect(html).not.toContain('src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"')
         expect(html).toContain('https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png')
         expect(html).not.toContain('>Load 18+ media<')
@@ -2363,101 +2605,115 @@ describe('GET /u/:username', () => {
     })
 
     it('renders deferred alternate tab media from the NSFW variant when the current user enabled NSFW media', async () => {
-        const response = await getAppPath('/u/demo/RAZETH', createProfilePageDb({
-            currentUser: {
-                ...createCurrentUserRecord('viewer'),
-                display_nsfw_media: 1,
+        const response = await getAppPath(
+            '/u/demo/RAZETH',
+            createProfilePageDb({
+                currentUser: {
+                    ...createCurrentUserRecord('viewer'),
+                    display_nsfw_media: 1,
+                },
+                profileUser: {
+                    id: 'profile-user',
+                    username: 'demo',
+                    profile_photo_key: null,
+                    bio: '',
+                },
+                characterSettings: {
+                    id: 'character-1',
+                    user_id: 'profile-user',
+                    name: 'RAZETH',
+                    profile_image_key: 'character-profile-key',
+                    description: '',
+                },
+                characterMedia: [
+                    {
+                        id: 'sfw-media',
+                        sfw_image_key: 'sfw-only-key',
+                        nsfw_image_key: null,
+                        sfw_preview_image_key: 'sfw-only-preview-key',
+                        nsfw_preview_image_key: null,
+                        sfw_artist: 'SFW Artist',
+                        nsfw_artist: '',
+                        sfw_width: 640,
+                        sfw_height: 480,
+                        sfw_preview_width: 640,
+                        sfw_preview_height: 480,
+                        nsfw_width: null,
+                        nsfw_height: null,
+                        nsfw_preview_width: null,
+                        nsfw_preview_height: null,
+                    },
+                    {
+                        id: 'both-media',
+                        sfw_image_key: 'both-sfw-key',
+                        nsfw_image_key: 'both-nsfw-key',
+                        sfw_preview_image_key: 'both-sfw-preview-key',
+                        nsfw_preview_image_key: 'both-nsfw-preview-key',
+                        nsfw_blur_image_key: 'both-nsfw-blur-key',
+                        sfw_artist: 'Both SFW Artist',
+                        nsfw_artist: 'Both NSFW Artist',
+                        sfw_width: 800,
+                        sfw_height: 600,
+                        sfw_preview_width: 800,
+                        sfw_preview_height: 600,
+                        nsfw_width: 900,
+                        nsfw_height: 600,
+                        nsfw_preview_width: 900,
+                        nsfw_preview_height: 600,
+                    },
+                ],
+                galleryTabs: [
+                    {
+                        id: 'tab-default',
+                        name: 'default',
+                        sort_order: 0,
+                    },
+                    {
+                        id: 'tab-reference',
+                        name: 'references',
+                        sort_order: 1,
+                    },
+                ],
+                galleryRows: [
+                    {
+                        row_id: 'row-1',
+                        tab_id: 'tab-default',
+                        row_sort_order: 0,
+                        media_id: 'sfw-media',
+                        media_sort_order: 0,
+                    },
+                    {
+                        row_id: 'row-2',
+                        tab_id: 'tab-reference',
+                        row_sort_order: 0,
+                        media_id: 'both-media',
+                        media_sort_order: 0,
+                    },
+                ],
+            }),
+            {
+                cookie: 'myoc_session=session-token',
             },
-            profileUser: {
-                id: 'profile-user',
-                username: 'demo',
-                profile_photo_key: null,
-                bio: '',
-            },
-            characterSettings: {
-                id: 'character-1',
-                user_id: 'profile-user',
-                name: 'RAZETH',
-                profile_image_key: 'character-profile-key',
-                description: '',
-            },
-            characterMedia: [
-                {
-                    id: 'sfw-media',
-                    sfw_image_key: 'sfw-only-key',
-                    nsfw_image_key: null,
-                    sfw_preview_image_key: 'sfw-only-preview-key',
-                    nsfw_preview_image_key: null,
-                    sfw_artist: 'SFW Artist',
-                    nsfw_artist: '',
-                    sfw_width: 640,
-                    sfw_height: 480,
-                    sfw_preview_width: 640,
-                    sfw_preview_height: 480,
-                    nsfw_width: null,
-                    nsfw_height: null,
-                    nsfw_preview_width: null,
-                    nsfw_preview_height: null,
-                },
-                {
-                    id: 'both-media',
-                    sfw_image_key: 'both-sfw-key',
-                    nsfw_image_key: 'both-nsfw-key',
-                    sfw_preview_image_key: 'both-sfw-preview-key',
-                    nsfw_preview_image_key: 'both-nsfw-preview-key',
-                    nsfw_blur_image_key: 'both-nsfw-blur-key',
-                    sfw_artist: 'Both SFW Artist',
-                    nsfw_artist: 'Both NSFW Artist',
-                    sfw_width: 800,
-                    sfw_height: 600,
-                    sfw_preview_width: 800,
-                    sfw_preview_height: 600,
-                    nsfw_width: 900,
-                    nsfw_height: 600,
-                    nsfw_preview_width: 900,
-                    nsfw_preview_height: 600,
-                },
-            ],
-            galleryTabs: [
-                {
-                    id: 'tab-default',
-                    name: 'default',
-                    sort_order: 0,
-                },
-                {
-                    id: 'tab-reference',
-                    name: 'references',
-                    sort_order: 1,
-                },
-            ],
-            galleryRows: [
-                {
-                    row_id: 'row-1',
-                    tab_id: 'tab-default',
-                    row_sort_order: 0,
-                    media_id: 'sfw-media',
-                    media_sort_order: 0,
-                },
-                {
-                    row_id: 'row-2',
-                    tab_id: 'tab-reference',
-                    row_sort_order: 0,
-                    media_id: 'both-media',
-                    media_sort_order: 0,
-                },
-            ],
-        }), {
-            cookie: 'myoc_session=session-token',
-        })
+        )
         const html = await response.text()
 
         expect(response.status).toBe(200)
         expect(html).toContain('data-display-nsfw-media="true"')
-        expect(html).toContain('data-deferred-src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/preview/both-nsfw-preview-key.webp"')
-        expect(html).toContain('data-deferred-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/both-nsfw-key.png"')
-        expect(html).toContain('data-safe-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"')
-        expect(html).not.toContain('data-deferred-src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/preview/both-sfw-preview-key.webp"')
-        expect(html).not.toContain('data-deferred-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"')
+        expect(html).toContain(
+            'data-deferred-src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/preview/both-nsfw-preview-key.webp"',
+        )
+        expect(html).toContain(
+            'data-deferred-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/both-nsfw-key.png"',
+        )
+        expect(html).toContain(
+            'data-safe-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"',
+        )
+        expect(html).not.toContain(
+            'data-deferred-src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/preview/both-sfw-preview-key.webp"',
+        )
+        expect(html).not.toContain(
+            'data-deferred-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"',
+        )
     })
 
     it('renders a profile from live user, social link, folder, and character data', async () => {
@@ -2527,7 +2783,9 @@ describe('GET /u/:username', () => {
         expect(html).toContain('<meta content="image/webp" property="og:image:type"/>')
         expect(html).toContain('<meta content="demo profile photo" property="og:image:alt"/>')
         expect(html).toContain('<meta content="summary" name="twitter:card"/>')
-        expect(html).toContain('<meta content="https://m.myoc.art/users/profile-user/profile/profile-photo-key.webp" name="twitter:image"/>')
+        expect(html).toContain(
+            '<meta content="https://m.myoc.art/users/profile-user/profile/profile-photo-key.webp" name="twitter:image"/>',
+        )
         expect(html).toContain('"@type":"ProfilePage"')
         expect(html).toContain('Live profile bio.')
         expect(html).toContain('https://m.myoc.art/users/profile-user/profile/profile-photo-key.webp')
@@ -2614,14 +2872,17 @@ describe('GET /u/:username', () => {
     })
 
     it('returns 404 when a folder path does not exist', async () => {
-        const response = await getProfilePath('/u/demo/Missing%20Folder', createProfilePageDb({
-            profileUser: {
-                id: 'profile-user',
-                username: 'demo',
-                profile_photo_key: null,
-                bio: '',
-            },
-        }))
+        const response = await getProfilePath(
+            '/u/demo/Missing%20Folder',
+            createProfilePageDb({
+                profileUser: {
+                    id: 'profile-user',
+                    username: 'demo',
+                    profile_photo_key: null,
+                    bio: '',
+                },
+            }),
+        )
         const html = await response.text()
 
         expect(response.status).toBe(404)

@@ -30,59 +30,60 @@ type UserRequestOptions = TestRequestOptions
 async function postUser(body: unknown, db: D1Database, url = 'https://example.com/users'): Promise<Response> {
     const mediaBucket = createMockR2Bucket()
 
-    return apiRoutes.request(url, {
-        method: 'POST',
-        body: typeof body === 'string' ? body : JSON.stringify(body),
-        headers: {
-            'content-type': 'application/json',
+    return apiRoutes.request(
+        url,
+        {
+            method: 'POST',
+            body: typeof body === 'string' ? body : JSON.stringify(body),
+            headers: {
+                'content-type': 'application/json',
+            },
         },
-    }, {
-        DB: db,
-        MEDIA_BUCKET: mediaBucket,
-        MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
-    });
+        {
+            DB: db,
+            MEDIA_BUCKET: mediaBucket,
+            MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+        },
+    )
 }
 
-async function postCurrentUserSettings(
-    body: unknown,
-    db: D1Database,
-    options: UserRequestOptions = {},
-): Promise<Response> {
+async function postCurrentUserSettings(body: unknown, db: D1Database, options: UserRequestOptions = {}): Promise<Response> {
     const mediaBucket = createMockR2Bucket()
 
-    return apiRoutes.request('https://example.com/users/me', {
-        method: 'POST',
-        body: body instanceof FormData ? body : JSON.stringify(body),
-        headers: createRequestHeaders(body, options),
-    }, {
-        DB: db,
-        MEDIA_BUCKET: mediaBucket,
-        MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
-    });
+    return apiRoutes.request(
+        'https://example.com/users/me',
+        {
+            method: 'POST',
+            body: body instanceof FormData ? body : JSON.stringify(body),
+            headers: createRequestHeaders(body, options),
+        },
+        {
+            DB: db,
+            MEDIA_BUCKET: mediaBucket,
+            MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+        },
+    )
 }
 
-async function postCurrentUserReleaseView(
-    db: D1Database,
-    options: UserRequestOptions = {},
-): Promise<Response> {
+async function postCurrentUserReleaseView(db: D1Database, options: UserRequestOptions = {}): Promise<Response> {
     const mediaBucket = createMockR2Bucket()
 
-    return apiRoutes.request('https://example.com/users/me/release-view', {
-        method: 'POST',
-        body: JSON.stringify({}),
-        headers: createRequestHeaders({}, options),
-    }, {
-        DB: db,
-        MEDIA_BUCKET: mediaBucket,
-        MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
-    });
+    return apiRoutes.request(
+        'https://example.com/users/me/release-view',
+        {
+            method: 'POST',
+            body: JSON.stringify({}),
+            headers: createRequestHeaders({}, options),
+        },
+        {
+            DB: db,
+            MEDIA_BUCKET: mediaBucket,
+            MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+        },
+    )
 }
 
-async function postPasskeyPromptResponse(
-    body: unknown,
-    db: D1Database,
-    options: UserRequestOptions = {},
-): Promise<Response> {
+async function postPasskeyPromptResponse(body: unknown, db: D1Database, options: UserRequestOptions = {}): Promise<Response> {
     const mediaBucket = createMockR2Bucket()
     const headers = createRequestHeaders(body, options)
 
@@ -90,21 +91,25 @@ async function postPasskeyPromptResponse(
         headers.accept = 'text/html'
     }
 
-    return apiRoutes.request('https://example.com/users/me/passkey-prompt-response', {
-        method: 'POST',
-        body: body instanceof FormData ? body : JSON.stringify(body),
-        headers,
-    }, {
-        DB: db,
-        MEDIA_BUCKET: mediaBucket,
-        MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
-    });
+    return apiRoutes.request(
+        'https://example.com/users/me/passkey-prompt-response',
+        {
+            method: 'POST',
+            body: body instanceof FormData ? body : JSON.stringify(body),
+            headers,
+        },
+        {
+            DB: db,
+            MEDIA_BUCKET: mediaBucket,
+            MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+        },
+    )
 }
 
 async function postProfilePhoto(
     db: D1Database,
     mediaBucket: R2Bucket,
-    options: { sessionToken: string; csrfToken: string; file?: File },
+    options: {sessionToken: string; csrfToken: string; file?: File},
 ): Promise<Response> {
     const form = new FormData()
     form.set('csrfToken', options.csrfToken)
@@ -113,17 +118,21 @@ async function postProfilePhoto(
         form.set('profilePhoto', options.file)
     }
 
-    return apiRoutes.request('https://example.com/users/me/profile-photo', {
-        method: 'POST',
-        body: form,
-        headers: {
-            cookie: `myoc_session=${options.sessionToken}`,
+    return apiRoutes.request(
+        'https://example.com/users/me/profile-photo',
+        {
+            method: 'POST',
+            body: form,
+            headers: {
+                cookie: `myoc_session=${options.sessionToken}`,
+            },
         },
-    }, {
-        DB: db,
-        MEDIA_BUCKET: mediaBucket,
-        MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
-    });
+        {
+            DB: db,
+            MEDIA_BUCKET: mediaBucket,
+            MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+        },
+    )
 }
 
 const currentUserRecord = {
@@ -152,10 +161,13 @@ describe('POST /users', () => {
     it('returns 400 when required fields are missing', async () => {
         const {db} = createMockDb()
 
-        const response = await postUser({
-            email: 'test@example.com',
-            username: 'testuser',
-        }, db)
+        const response = await postUser(
+            {
+                email: 'test@example.com',
+                username: 'testuser',
+            },
+            db,
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -166,11 +178,14 @@ describe('POST /users', () => {
     it('returns 400 for an invalid email', async () => {
         const {db} = createMockDb()
 
-        const response = await postUser({
-            email: 'not-an-email',
-            username: 'testuser',
-            password: 'password123',
-        }, db)
+        const response = await postUser(
+            {
+                email: 'not-an-email',
+                username: 'testuser',
+                password: 'password123',
+            },
+            db,
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -181,11 +196,14 @@ describe('POST /users', () => {
     it('returns 400 for an invalid username', async () => {
         const {db} = createMockDb()
 
-        const response = await postUser({
-            email: 'test@example.com',
-            username: 'bad-user',
-            password: 'password123',
-        }, db)
+        const response = await postUser(
+            {
+                email: 'test@example.com',
+                username: 'bad-user',
+                password: 'password123',
+            },
+            db,
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -196,11 +214,14 @@ describe('POST /users', () => {
     it('returns 400 when the username contains URL-hostile characters', async () => {
         const {db} = createMockDb()
 
-        const response = await postUser({
-            email: 'test@example.com',
-            username: 'bad/user',
-            password: 'password123',
-        }, db)
+        const response = await postUser(
+            {
+                email: 'test@example.com',
+                username: 'bad/user',
+                password: 'password123',
+            },
+            db,
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -211,11 +232,14 @@ describe('POST /users', () => {
     it('returns 400 for a short password', async () => {
         const {db} = createMockDb()
 
-        const response = await postUser({
-            email: 'test@example.com',
-            username: 'testuser',
-            password: 'short',
-        }, db)
+        const response = await postUser(
+            {
+                email: 'test@example.com',
+                username: 'testuser',
+                password: 'short',
+            },
+            db,
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -226,11 +250,14 @@ describe('POST /users', () => {
     it('returns 409 when the email or username is already in use', async () => {
         const {db} = createMockDb({firstResults: [{id: 'existing-user'}]})
 
-        const response = await postUser({
-            email: 'test@example.com',
-            username: 'testuser',
-            password: 'password123',
-        }, db)
+        const response = await postUser(
+            {
+                email: 'test@example.com',
+                username: 'testuser',
+                password: 'password123',
+            },
+            db,
+        )
 
         expect(response.status).toBe(409)
         expect(await response.json()).toEqual({
@@ -244,11 +271,14 @@ describe('POST /users', () => {
             runError: new Error('UNIQUE constraint failed: users.email'),
         })
 
-        const response = await postUser({
-            email: 'test@example.com',
-            username: 'testuser',
-            password: 'password123',
-        }, db)
+        const response = await postUser(
+            {
+                email: 'test@example.com',
+                username: 'testuser',
+                password: 'password123',
+            },
+            db,
+        )
 
         expect(response.status).toBe(409)
         expect(await response.json()).toEqual({
@@ -259,15 +289,18 @@ describe('POST /users', () => {
     it('creates a user, starts a session, and returns the public user', async () => {
         const {db, boundStatements} = createMockDb({firstResults: [null]})
 
-        const response = await postUser({
-            email: ' Test@Example.com ',
-            username: ' testuser ',
-            password: ' password123 ',
-        }, db)
+        const response = await postUser(
+            {
+                email: ' Test@Example.com ',
+                username: ' testuser ',
+                password: ' password123 ',
+            },
+            db,
+        )
 
         expect(response.status).toBe(201)
 
-        const body = await response.json() as CreateUserResponse
+        const body = (await response.json()) as CreateUserResponse
         expect(body.user.email).toBe('test@example.com')
         expect(body.user.username).toBe('testuser')
         expect(body.user.role).toBe('user')
@@ -299,11 +332,14 @@ describe('POST /users/me', () => {
     it('returns 401 when the user is not logged in', async () => {
         const {db} = createMockDb()
 
-        const response = await postCurrentUserSettings({
-            email: 'test@example.com',
-            username: 'testuser',
-            bio: 'New bio',
-        }, db)
+        const response = await postCurrentUserSettings(
+            {
+                email: 'test@example.com',
+                username: 'testuser',
+                bio: 'New bio',
+            },
+            db,
+        )
 
         expect(response.status).toBe(401)
         expect(await response.json()).toEqual({
@@ -314,13 +350,17 @@ describe('POST /users/me', () => {
     it('returns 403 when a logged-in request is missing CSRF protection', async () => {
         const {db} = createMockDb()
 
-        const response = await postCurrentUserSettings({
-            email: 'test@example.com',
-            username: 'testuser',
-            bio: 'New bio',
-        }, db, {
-            sessionToken: 'session-token',
-        })
+        const response = await postCurrentUserSettings(
+            {
+                email: 'test@example.com',
+                username: 'testuser',
+                bio: 'New bio',
+            },
+            db,
+            {
+                sessionToken: 'session-token',
+            },
+        )
 
         expect(response.status).toBe(403)
         expect(await response.json()).toEqual({
@@ -334,14 +374,18 @@ describe('POST /users/me', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await postCurrentUserSettings({
-            email: 'test@example.com',
-            username: 'bad/user',
-            bio: 'New bio',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postCurrentUserSettings(
+            {
+                email: 'test@example.com',
+                username: 'bad/user',
+                bio: 'New bio',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -355,15 +399,19 @@ describe('POST /users/me', () => {
             firstResults: [currentUserRecord, null],
         })
 
-        const response = await postCurrentUserSettings({
-            email: ' New@Example.com ',
-            username: ' newuser ',
-            bio: ' Updated bio ',
-            password: '',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postCurrentUserSettings(
+            {
+                email: ' New@Example.com ',
+                username: ' newuser ',
+                bio: ' Updated bio ',
+                password: '',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({
@@ -411,14 +459,18 @@ describe('POST /users/me', () => {
             firstResults: [currentUserRecord, {id: 'other-user'}],
         })
 
-        const response = await postCurrentUserSettings({
-            email: 'taken@example.com',
-            username: 'takenuser',
-            bio: 'Updated bio',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postCurrentUserSettings(
+            {
+                email: 'taken@example.com',
+                username: 'takenuser',
+                bio: 'Updated bio',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(409)
         expect(await response.json()).toEqual({
@@ -432,15 +484,19 @@ describe('POST /users/me', () => {
             firstResults: [currentUserRecord, null],
         })
 
-        const response = await postCurrentUserSettings({
-            email: 'new@example.com',
-            username: 'newuser',
-            bio: 'Updated bio',
-            password: 'newpassword123',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postCurrentUserSettings(
+            {
+                email: 'new@example.com',
+                username: 'newuser',
+                bio: 'Updated bio',
+                password: 'newpassword123',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({
@@ -462,22 +518,26 @@ describe('POST /users/me', () => {
             firstResults: [currentUserRecord, null],
         })
 
-        const response = await postCurrentUserSettings({
-            email: 'new@example.com',
-            username: 'newuser',
-            bio: 'Updated bio',
-            twitterUrl: ' https://twitter.com/newuser ',
-            telegramUrl: '',
-            discordUrl: '',
-            instagramUrl: '',
-            furaffinityUrl: '',
-            blueskyUrl: 'https://bsky.app/profile/newuser.test',
-            customLinkLabel: 'Website',
-            customLinkUrl: 'https://example.com',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postCurrentUserSettings(
+            {
+                email: 'new@example.com',
+                username: 'newuser',
+                bio: 'Updated bio',
+                twitterUrl: ' https://twitter.com/newuser ',
+                telegramUrl: '',
+                discordUrl: '',
+                instagramUrl: '',
+                furaffinityUrl: '',
+                blueskyUrl: 'https://bsky.app/profile/newuser.test',
+                customLinkLabel: 'Website',
+                customLinkUrl: 'https://example.com',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({
@@ -499,15 +559,19 @@ describe('POST /users/me', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await postCurrentUserSettings({
-            email: 'new@example.com',
-            username: 'newuser',
-            bio: 'Updated bio',
-            twitterUrl: 'not-a-url',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postCurrentUserSettings(
+            {
+                email: 'new@example.com',
+                username: 'newuser',
+                bio: 'Updated bio',
+                twitterUrl: 'not-a-url',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -524,15 +588,19 @@ describe('POST /users/me', () => {
         })
 
         // noinspection HttpUrlsUsage
-        const response = await postCurrentUserSettings({
-            email: 'new@example.com',
-            username: 'newuser',
-            bio: 'Updated bio',
-            twitterUrl: 'http://twitter.com/newuser',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postCurrentUserSettings(
+            {
+                email: 'new@example.com',
+                username: 'newuser',
+                bio: 'Updated bio',
+                twitterUrl: 'http://twitter.com/newuser',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -608,13 +676,17 @@ describe('POST /users/me/passkey-prompt-response', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await postPasskeyPromptResponse({
-            choice: 'setup',
-            returnTo: '/search?q=demo',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postPasskeyPromptResponse(
+            {
+                choice: 'setup',
+                returnTo: '/search?q=demo',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({
@@ -709,10 +781,12 @@ describe('POST /users/me/profile-photo', () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
         const {db, boundStatements} = createMockDb({
-            firstResults: [{
-                ...currentUserRecord,
-                profile_photo_key: 'old-profile-photo-key',
-            }],
+            firstResults: [
+                {
+                    ...currentUserRecord,
+                    profile_photo_key: 'old-profile-photo-key',
+                },
+            ],
         })
 
         const response = await postProfilePhoto(db, mediaBucket, {
@@ -723,7 +797,7 @@ describe('POST /users/me/profile-photo', () => {
 
         expect(response.status).toBe(200)
 
-        const body = await response.json() as { profilePhotoKey: string; profilePhotoUrl: string }
+        const body = (await response.json()) as {profilePhotoKey: string; profilePhotoUrl: string}
         expect(body.profilePhotoKey).toMatch(profilePhotoKeyPattern)
         expect(body.profilePhotoUrl).toBe(`${mediaPublicBaseUrl}/users/current-user/profile/${body.profilePhotoKey}.webp`)
         expect(mediaBucket.put).toHaveBeenCalledTimes(1)
@@ -770,10 +844,12 @@ describe('POST /users/me/profile-photo', () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
         vi.mocked(mediaBucket.delete).mockRejectedValueOnce(new Error('R2 delete failed'))
         const {db} = createMockDb({
-            firstResults: [{
-                ...currentUserRecord,
-                profile_photo_key: 'old-profile-photo-key',
-            }],
+            firstResults: [
+                {
+                    ...currentUserRecord,
+                    profile_photo_key: 'old-profile-photo-key',
+                },
+            ],
         })
 
         try {

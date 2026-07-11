@@ -16,60 +16,60 @@ const EXTENSION_CONTENT_TYPES: Record<string, string> = {
 
 type ManagedR2MediaKey =
     | {
-    kind: 'userProfile'
-    key: string
-    userId: string
-    profilePhotoKey: string
-}
+          kind: 'userProfile'
+          key: string
+          userId: string
+          profilePhotoKey: string
+      }
     | {
-    kind: 'characterProfile'
-    key: string
-    userId: string
-    characterId: string
-    profileImageKey: string
-}
+          kind: 'characterProfile'
+          key: string
+          userId: string
+          characterId: string
+          profileImageKey: string
+      }
     | {
-    kind: 'characterFolderImage'
-    key: string
-    userId: string
-    folderId: string
-    folderImageKey: string
-}
+          kind: 'characterFolderImage'
+          key: string
+          userId: string
+          folderId: string
+          folderImageKey: string
+      }
     | {
-    kind: 'characterMedia'
-    key: string
-    userId: string
-    characterId: string
-    mediaId: string
-    rating: 'sfw' | 'nsfw'
-    imageKey: string
-    contentType: string
-}
+          kind: 'characterMedia'
+          key: string
+          userId: string
+          characterId: string
+          mediaId: string
+          rating: 'sfw' | 'nsfw'
+          imageKey: string
+          contentType: string
+      }
     | {
-    kind: 'characterMediaPreview'
-    key: string
-    userId: string
-    characterId: string
-    mediaId: string
-    rating: 'sfw' | 'nsfw'
-    imageKey: string
-}
+          kind: 'characterMediaPreview'
+          key: string
+          userId: string
+          characterId: string
+          mediaId: string
+          rating: 'sfw' | 'nsfw'
+          imageKey: string
+      }
     | {
-    kind: 'characterMediaNsfwBlur'
-    key: string
-    userId: string
-    characterId: string
-    mediaId: string
-    imageKey: string
-}
+          kind: 'characterMediaNsfwBlur'
+          key: string
+          userId: string
+          characterId: string
+          mediaId: string
+          imageKey: string
+      }
     | {
-    kind: 'characterHeightChart'
-    key: string
-    userId: string
-    characterId: string
-    imageKey: string
-    contentType: string
-}
+          kind: 'characterHeightChart'
+          key: string
+          userId: string
+          characterId: string
+          imageKey: string
+          contentType: string
+      }
 
 export type R2CleanupSummary = {
     scanned: number
@@ -84,10 +84,7 @@ export type R2CleanupSummary = {
 
 type R2CleanupEnv = Pick<Bindings, 'DB' | 'MEDIA_BUCKET'>
 
-export async function cleanupStaleR2Media(
-    env: R2CleanupEnv,
-    now: Date = new Date(),
-): Promise<R2CleanupSummary> {
+export async function cleanupStaleR2Media(env: R2CleanupEnv, now: Date = new Date()): Promise<R2CleanupSummary> {
     const summary: R2CleanupSummary = {
         scanned: 0,
         recognized: 0,
@@ -181,12 +178,7 @@ export function parseManagedR2MediaKey(key: string): ManagedR2MediaKey | null {
         const characterId = pathPart(parts, 2)
         const [profileImageKey, extension] = splitFileName(pathPart(parts, 4))
 
-        if (
-            isSafeSegment(userId)
-            && isSafeSegment(characterId)
-            && isSafeSegment(profileImageKey)
-            && extension === 'webp'
-        ) {
+        if (isSafeSegment(userId) && isSafeSegment(characterId) && isSafeSegment(profileImageKey) && extension === 'webp') {
             return {
                 kind: 'characterProfile',
                 key,
@@ -202,12 +194,7 @@ export function parseManagedR2MediaKey(key: string): ManagedR2MediaKey | null {
         const folderId = pathPart(parts, 3)
         const [folderImageKey, extension] = splitFileName(pathPart(parts, 5))
 
-        if (
-            isSafeSegment(userId)
-            && isSafeSegment(folderId)
-            && isSafeSegment(folderImageKey)
-            && extension === 'webp'
-        ) {
+        if (isSafeSegment(userId) && isSafeSegment(folderId) && isSafeSegment(folderImageKey) && extension === 'webp') {
             return {
                 kind: 'characterFolderImage',
                 key,
@@ -227,12 +214,12 @@ export function parseManagedR2MediaKey(key: string): ManagedR2MediaKey | null {
         const contentType = contentTypeForExtension(extension)
 
         if (
-            isSafeSegment(userId)
-            && isSafeSegment(characterId)
-            && isSafeSegment(mediaId)
-            && (rating === 'sfw' || rating === 'nsfw')
-            && isSafeSegment(imageKey)
-            && contentType
+            isSafeSegment(userId) &&
+            isSafeSegment(characterId) &&
+            isSafeSegment(mediaId) &&
+            (rating === 'sfw' || rating === 'nsfw') &&
+            isSafeSegment(imageKey) &&
+            contentType
         ) {
             return {
                 kind: 'characterMedia',
@@ -255,12 +242,12 @@ export function parseManagedR2MediaKey(key: string): ManagedR2MediaKey | null {
         const [imageKey, extension] = splitFileName(pathPart(parts, 7))
 
         if (
-            isSafeSegment(userId)
-            && isSafeSegment(characterId)
-            && isSafeSegment(mediaId)
-            && (rating === 'sfw' || rating === 'nsfw')
-            && isSafeSegment(imageKey)
-            && extension === 'webp'
+            isSafeSegment(userId) &&
+            isSafeSegment(characterId) &&
+            isSafeSegment(mediaId) &&
+            (rating === 'sfw' || rating === 'nsfw') &&
+            isSafeSegment(imageKey) &&
+            extension === 'webp'
         ) {
             return {
                 kind: 'characterMediaPreview',
@@ -281,11 +268,11 @@ export function parseManagedR2MediaKey(key: string): ManagedR2MediaKey | null {
         const [imageKey, extension] = splitFileName(pathPart(parts, 7))
 
         if (
-            isSafeSegment(userId)
-            && isSafeSegment(characterId)
-            && isSafeSegment(mediaId)
-            && isSafeSegment(imageKey)
-            && extension === 'webp'
+            isSafeSegment(userId) &&
+            isSafeSegment(characterId) &&
+            isSafeSegment(mediaId) &&
+            isSafeSegment(imageKey) &&
+            extension === 'webp'
         ) {
             return {
                 kind: 'characterMediaNsfwBlur',
@@ -304,12 +291,7 @@ export function parseManagedR2MediaKey(key: string): ManagedR2MediaKey | null {
         const [imageKey, extension] = splitFileName(pathPart(parts, 4))
         const contentType = contentTypeForExtension(extension)
 
-        if (
-            isSafeSegment(userId)
-            && isSafeSegment(characterId)
-            && isSafeSegment(imageKey)
-            && contentType
-        ) {
+        if (isSafeSegment(userId) && isSafeSegment(characterId) && isSafeSegment(imageKey) && contentType) {
             return {
                 kind: 'characterHeightChart',
                 key,
@@ -327,41 +309,44 @@ export function parseManagedR2MediaKey(key: string): ManagedR2MediaKey | null {
 async function isManagedR2MediaKeyReferenced(db: D1Database, parsed: ManagedR2MediaKey): Promise<boolean> {
     switch (parsed.kind) {
         case 'userProfile': {
-            const row = await db.prepare(
-                `SELECT 1
+            const row = await db
+                .prepare(
+                    `SELECT 1
                  FROM users
                  WHERE id = ?
                    AND profile_photo_key = ?
                  LIMIT 1`,
-            )
+                )
                 .bind(parsed.userId, parsed.profilePhotoKey)
                 .first()
             return Boolean(row)
         }
 
         case 'characterProfile': {
-            const row = await db.prepare(
-                `SELECT 1
+            const row = await db
+                .prepare(
+                    `SELECT 1
                  FROM characters
                  WHERE user_id = ?
                    AND id = ?
                    AND profile_image_key = ?
                  LIMIT 1`,
-            )
+                )
                 .bind(parsed.userId, parsed.characterId, parsed.profileImageKey)
                 .first()
             return Boolean(row)
         }
 
         case 'characterFolderImage': {
-            const row = await db.prepare(
-                `SELECT 1
+            const row = await db
+                .prepare(
+                    `SELECT 1
                  FROM character_folders
                  WHERE user_id = ?
                    AND id = ?
                    AND folder_image_key = ?
                  LIMIT 1`,
-            )
+                )
                 .bind(parsed.userId, parsed.folderId, parsed.folderImageKey)
                 .first()
             return Boolean(row)
@@ -370,8 +355,9 @@ async function isManagedR2MediaKeyReferenced(db: D1Database, parsed: ManagedR2Me
         case 'characterMedia': {
             const imageKeyColumn = parsed.rating === 'sfw' ? 'sfw_image_key' : 'nsfw_image_key'
             const contentTypeColumn = parsed.rating === 'sfw' ? 'sfw_content_type' : 'nsfw_content_type'
-            const row = await db.prepare(
-                `SELECT 1
+            const row = await db
+                .prepare(
+                    `SELECT 1
                  FROM character_media
                  WHERE user_id = ?
                    AND character_id = ?
@@ -379,7 +365,7 @@ async function isManagedR2MediaKeyReferenced(db: D1Database, parsed: ManagedR2Me
                    AND ${imageKeyColumn} = ?
                    AND lower(coalesce(${contentTypeColumn}, 'image/png')) = ?
                  LIMIT 1`,
-            )
+                )
                 .bind(parsed.userId, parsed.characterId, parsed.mediaId, parsed.imageKey, parsed.contentType)
                 .first()
             return Boolean(row)
@@ -387,45 +373,48 @@ async function isManagedR2MediaKeyReferenced(db: D1Database, parsed: ManagedR2Me
 
         case 'characterMediaPreview': {
             const imageKeyColumn = parsed.rating === 'sfw' ? 'sfw_preview_image_key' : 'nsfw_preview_image_key'
-            const row = await db.prepare(
-                `SELECT 1
+            const row = await db
+                .prepare(
+                    `SELECT 1
                  FROM character_media
                  WHERE user_id = ?
                    AND character_id = ?
                    AND id = ?
                    AND ${imageKeyColumn} = ?
                  LIMIT 1`,
-            )
+                )
                 .bind(parsed.userId, parsed.characterId, parsed.mediaId, parsed.imageKey)
                 .first()
             return Boolean(row)
         }
 
         case 'characterMediaNsfwBlur': {
-            const row = await db.prepare(
-                `SELECT 1
+            const row = await db
+                .prepare(
+                    `SELECT 1
                  FROM character_media
                  WHERE user_id = ?
                    AND character_id = ?
                    AND id = ?
                    AND nsfw_blur_image_key = ?
                  LIMIT 1`,
-            )
+                )
                 .bind(parsed.userId, parsed.characterId, parsed.mediaId, parsed.imageKey)
                 .first()
             return Boolean(row)
         }
 
         case 'characterHeightChart': {
-            const row = await db.prepare(
-                `SELECT height_chart_json
+            const row = await db
+                .prepare(
+                    `SELECT height_chart_json
                  FROM characters
                  WHERE user_id = ?
                    AND id = ?
                  LIMIT 1`,
-            )
+                )
                 .bind(parsed.userId, parsed.characterId)
-                .first<{ height_chart_json?: string | null }>()
+                .first<{height_chart_json?: string | null}>()
 
             return heightChartReferencesImage(row?.height_chart_json, parsed.imageKey, parsed.contentType)
         }
@@ -436,11 +425,7 @@ function isOldEnoughToClean(object: R2Object, now: Date): boolean {
     return now.getTime() - object.uploaded.getTime() >= MIN_STALE_AGE_MS
 }
 
-function heightChartReferencesImage(
-    rawJson: string | null | undefined,
-    imageKey: string,
-    contentType: string,
-): boolean {
+function heightChartReferencesImage(rawJson: string | null | undefined, imageKey: string, contentType: string): boolean {
     if (!rawJson) {
         return false
     }
@@ -452,8 +437,7 @@ function heightChartReferencesImage(
             return false
         }
 
-        return parsed.image.key === imageKey
-            && normalizeContentType(parsed.image.contentType) === contentType
+        return parsed.image.key === imageKey && normalizeContentType(parsed.image.contentType) === contentType
     } catch {
         return false
     }

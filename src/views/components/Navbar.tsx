@@ -20,12 +20,22 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
     const search = (
         <form action="/search" class="w-full" method="get">
             <label class="input input-bordered w-full">
-                <svg aria-hidden="true" class="h-4 w-4 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                     xmlns="http://www.w3.org/2000/svg">
-                    <path d="M21 21l-4.35-4.35M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14z" stroke-linecap="round"
-                          stroke-linejoin="round" stroke-width="2"/>
+                <svg
+                    aria-hidden="true"
+                    class="h-4 w-4 opacity-60"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    xmlns="http://www.w3.org/2000/svg"
+                >
+                    <path
+                        d="M21 21l-4.35-4.35M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14z"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                    />
                 </svg>
-                <input class="grow" maxLength={80} name="q" placeholder="Search characters, artists, tags..." type="search"/>
+                <input class="grow" maxLength={80} name="q" placeholder="Search characters, artists, tags..." type="search" />
             </label>
         </form>
     )
@@ -36,19 +46,18 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
         <header class="sticky top-0 z-50 border-b border-base-300 bg-base-200/95 px-4 py-2 sm:px-6">
             <div class="navbar min-h-0 p-0">
                 <div class="flex-1">
-                    <a class="font-display text-2xl" href="/">MyOC</a>
+                    <a class="font-display text-2xl" href="/">
+                        MyOC
+                    </a>
                 </div>
 
-                <div class="mx-3 hidden w-full max-w-md flex-none md:block">
-                    {search}
-                </div>
+                <div class="mx-3 hidden w-full max-w-md flex-none md:block">{search}</div>
                 <div class="flex-none">
                     {currentUser ? (
                         <details class="dropdown dropdown-end">
                             <summary aria-label="Open account menu" class="btn btn-ghost btn-circle avatar">
                                 <div class="w-10 rounded-full">
-                                    <img alt={`${currentUser.username} avatar`} data-profile-photo-image
-                                         src={avatarUrl}/>
+                                    <img alt={`${currentUser.username} avatar`} data-profile-photo-image src={avatarUrl} />
                                 </div>
                             </summary>
 
@@ -57,7 +66,7 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
                                     <div class="flex min-w-0 items-center gap-3 p-0">
                                         <div class="avatar">
                                             <div class="w-10 rounded-full">
-                                                <img alt="" data-profile-photo-image src={avatarUrl}/>
+                                                <img alt="" data-profile-photo-image src={avatarUrl} />
                                             </div>
                                         </div>
                                         <div class="min-w-0">
@@ -67,58 +76,74 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
                                     </div>
                                 </li>
                                 <li class="my-1">
-                                    <hr class="border-base-300"/>
+                                    <hr class="border-base-300" />
                                 </li>
-                                <li class="menu-title"><span>Account</span></li>
-                                <li><a href={`/u/${encodeURIComponent(currentUser.username)}`}>View Profile</a></li>
-                                <li><a href="/settings">Settings</a></li>
-                                <li class="my-1">
-                                    <hr class="border-base-300"/>
+                                <li class="menu-title">
+                                    <span>Account</span>
                                 </li>
-                                <li class="menu-title"><span>Library</span></li>
-                                <li><a href="/characters">Characters</a></li>
-                                <li><a href="/size-chart">Size Chart</a></li>
-                                <li class="my-1">
-                                    <hr class="border-base-300"/>
-                                </li>
-                                <li class="menu-title"><span>Updates</span></li>
-                                <li><a href="/whats-new">What's New</a></li>
-                                <li class="my-1">
-                                    <hr class="border-base-300"/>
-                                </li>
-                                <li class="menu-title"><span>Help</span></li>
                                 <li>
-                                    <a
-                                        href="https://github.com/razethion/myoc/issues"
-                                        rel="noreferrer"
-                                        target="_blank"
-                                    >
+                                    <a href={`/u/${encodeURIComponent(currentUser.username)}`}>View Profile</a>
+                                </li>
+                                <li>
+                                    <a href="/settings">Settings</a>
+                                </li>
+                                <li class="my-1">
+                                    <hr class="border-base-300" />
+                                </li>
+                                <li class="menu-title">
+                                    <span>Library</span>
+                                </li>
+                                <li>
+                                    <a href="/characters">Characters</a>
+                                </li>
+                                <li>
+                                    <a href="/size-chart">Size Chart</a>
+                                </li>
+                                <li class="my-1">
+                                    <hr class="border-base-300" />
+                                </li>
+                                <li class="menu-title">
+                                    <span>Updates</span>
+                                </li>
+                                <li>
+                                    <a href="/whats-new">What's New</a>
+                                </li>
+                                <li class="my-1">
+                                    <hr class="border-base-300" />
+                                </li>
+                                <li class="menu-title">
+                                    <span>Help</span>
+                                </li>
+                                <li>
+                                    <a href="https://github.com/razethion/myoc/issues" rel="noreferrer" target="_blank">
                                         Report issue
                                     </a>
                                 </li>
                                 <li>
-                                    <a
-                                        href="https://github.com/razethion/myoc/discussions"
-                                        rel="noreferrer"
-                                        target="_blank"
-                                    >
+                                    <a href="https://github.com/razethion/myoc/discussions" rel="noreferrer" target="_blank">
                                         Ask a question
                                     </a>
                                 </li>
                                 {currentUser.role === 'admin' && (
                                     <>
                                         <li class="my-1">
-                                            <hr class="border-base-300"/>
+                                            <hr class="border-base-300" />
                                         </li>
-                                        <li class="menu-title"><span>Moderation</span></li>
-                                        <li><a href="/admin">Admin</a></li>
+                                        <li class="menu-title">
+                                            <span>Moderation</span>
+                                        </li>
+                                        <li>
+                                            <a href="/admin">Admin</a>
+                                        </li>
                                     </>
                                 )}
                                 <li class="my-1">
-                                    <hr class="border-base-300"/>
+                                    <hr class="border-base-300" />
                                 </li>
                                 <li>
-                                    <button class="text-error" form="logout-form" type="submit">Logout</button>
+                                    <button class="text-error" form="logout-form" type="submit">
+                                        Logout
+                                    </button>
                                 </li>
                             </ul>
                             <form action="/api/logout" id="logout-form" method="post">
@@ -127,16 +152,18 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
                         </details>
                     ) : (
                         <div class="flex items-center gap-2">
-                            <a class="btn btn-ghost btn-sm sm:btn-md" href="/login">Login</a>
-                            <a class="btn btn-primary btn-sm sm:btn-md" href="/register">Create account</a>
+                            <a class="btn btn-ghost btn-sm sm:btn-md" href="/login">
+                                Login
+                            </a>
+                            <a class="btn btn-primary btn-sm sm:btn-md" href="/register">
+                                Create account
+                            </a>
                         </div>
                     )}
                 </div>
             </div>
 
-            <div class="mt-2 md:hidden">
-                {search}
-            </div>
+            <div class="mt-2 md:hidden">{search}</div>
 
             <VersionNotification
                 csrfToken={currentUser?.csrfToken ?? null}
@@ -148,10 +175,10 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
 }
 
 function VersionNotification({
-                                 csrfToken,
-                                 isAuthenticated,
-                                 showInitially,
-                             }: {
+    csrfToken,
+    isAuthenticated,
+    showInitially,
+}: {
     csrfToken: string | null
     isAuthenticated: boolean
     showInitially: boolean
@@ -162,8 +189,9 @@ function VersionNotification({
         : 'mt-2 rounded border border-primary/35 bg-primary/10 px-3 py-2 text-sm'
     const actions = (
         <div class="flex items-center justify-center gap-2 sm:justify-end">
-            <a class="btn btn-primary btn-xs" href="/whats-new" data-version-notification-link>What's
-                new</a>
+            <a class="btn btn-primary btn-xs" href="/whats-new" data-version-notification-link>
+                What's new
+            </a>
             <button
                 aria-label="Dismiss version notification"
                 class="btn btn-ghost btn-xs btn-square"
@@ -197,18 +225,12 @@ function VersionNotification({
                     </div>
                 )}
             </div>
-            <VersionNotificationScript csrfToken={csrfToken} isAuthenticated={isAuthenticated}/>
+            <VersionNotificationScript csrfToken={csrfToken} isAuthenticated={isAuthenticated} />
         </>
     )
 }
 
-function VersionNotificationScript({
-                                       csrfToken,
-                                       isAuthenticated,
-                                   }: {
-    csrfToken: string | null
-    isAuthenticated: boolean
-}) {
+function VersionNotificationScript({csrfToken, isAuthenticated}: {csrfToken: string | null; isAuthenticated: boolean}) {
     const script = `
 (function () {
     const appVersion = ${JSON.stringify(APP_VERSION)};
@@ -279,5 +301,5 @@ function VersionNotificationScript({
 })();
 `
 
-    return <script dangerouslySetInnerHTML={{__html: script}}/>
+    return <script dangerouslySetInnerHTML={{__html: script}} />
 }

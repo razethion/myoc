@@ -8,7 +8,7 @@ import {securityRoutes} from './api/security'
 import {userRoutes} from './api/users'
 import type {Bindings} from '../types/bindings'
 
-export const apiRoutes = new Hono<{ Bindings: Bindings }>()
+export const apiRoutes = new Hono<{Bindings: Bindings}>()
 
 apiRoutes.use('*', csrfProtection)
 

@@ -1,8 +1,5 @@
 import {Hono} from 'hono'
-import {
-    verifyRegistrationResponse,
-    type RegistrationResponseJSON,
-} from '@simplewebauthn/server'
+import {verifyRegistrationResponse, type RegistrationResponseJSON} from '@simplewebauthn/server'
 import {getCurrentUser, normalizeCredential, toSqlTimestamp} from '../../lib/auth/session'
 import {
     createCredentialPublicKeyValue,
@@ -43,7 +40,7 @@ type SecurityUserRecord = {
     secure_account_required_passkey_id: string | null
 }
 
-export const securityRoutes = new Hono<{ Bindings: Bindings }>()
+export const securityRoutes = new Hono<{Bindings: Bindings}>()
 
 securityRoutes.post('/passkeys/options', async (c) => {
     const currentUser = await getCurrentUser(c)
@@ -120,8 +117,7 @@ securityRoutes.post('/passkeys/verify', async (c) => {
                      ELSE secure_account_required_passkey_id
                  END
              WHERE id = ?`,
-        )
-            .bind(challenge.webauthn_user_id, passkeyId, currentUser.id),
+        ).bind(challenge.webauthn_user_id, passkeyId, currentUser.id),
         c.env.DB.prepare(
             `INSERT INTO user_passkeys (
                 id,
@@ -137,20 +133,19 @@ securityRoutes.post('/passkeys/verify', async (c) => {
                 created_at
             )
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-            .bind(
-                passkeyId,
-                currentUser.id,
-                credential.id,
-                createCredentialPublicKeyValue(credential.publicKey),
-                challenge.webauthn_user_id,
-                credential.counter,
-                credentialDeviceType,
-                credentialBackedUp ? 1 : 0,
-                serializeTransports(credential.transports),
-                normalizeOptionalText(body.name) ?? null,
-                toSqlTimestamp(now),
-            ),
+        ).bind(
+            passkeyId,
+            currentUser.id,
+            credential.id,
+            createCredentialPublicKeyValue(credential.publicKey),
+            challenge.webauthn_user_id,
+            credential.counter,
+            credentialDeviceType,
+            credentialBackedUp ? 1 : 0,
+            serializeTransports(credential.transports),
+            normalizeOptionalText(body.name) ?? null,
+            toSqlTimestamp(now),
+        ),
         c.env.DB.prepare('DELETE FROM webauthn_challenges WHERE id = ?').bind(challengeId),
     ])
 
@@ -165,10 +160,7 @@ securityRoutes.delete('/passkeys/:id', async (c) => {
     }
 
     const passkeyId = c.req.param('id')
-    const [user, passkeys] = await Promise.all([
-        getSecurityUser(c.env.DB, currentUser.id),
-        listUserPasskeys(c.env.DB, currentUser.id),
-    ])
+    const [user, passkeys] = await Promise.all([getSecurityUser(c.env.DB, currentUser.id), listUserPasskeys(c.env.DB, currentUser.id)])
 
     if (!user) {
         return c.json({error: 'Authentication required'}, 401)
@@ -312,18 +304,16 @@ securityRoutes.post('/complete', async (c) => {
         return c.json({error: 'Authentication required'}, 401)
     }
 
-    const [user, passkeys] = await Promise.all([
-        getSecurityUser(c.env.DB, currentUser.id),
-        listUserPasskeys(c.env.DB, currentUser.id),
-    ])
+    const [user, passkeys] = await Promise.all([getSecurityUser(c.env.DB, currentUser.id), listUserPasskeys(c.env.DB, currentUser.id)])
 
     if (!user) {
         return c.json({error: 'Authentication required'}, 401)
     }
 
     if (user.secure_account_required) {
-        const hasRequiredPasskey = Boolean(user.secure_account_required_passkey_id)
-            && passkeys.some((passkey) => passkey.id === user.secure_account_required_passkey_id)
+        const hasRequiredPasskey =
+            Boolean(user.secure_account_required_passkey_id) &&
+            passkeys.some((passkey) => passkey.id === user.secure_account_required_passkey_id)
 
         if (!hasRequiredPasskey) {
             return c.json({error: 'Add a new passkey before completing account recovery'}, 400)
@@ -351,8 +341,9 @@ securityRoutes.post('/complete', async (c) => {
 })
 
 async function getSecurityUser(db: D1Database, userId: string): Promise<SecurityUserRecord | null> {
-    return await db.prepare(
-        `SELECT id,
+    return await db
+        .prepare(
+            `SELECT id,
                 email,
                 username,
                 password_hash,
@@ -365,7 +356,7 @@ async function getSecurityUser(db: D1Database, userId: string): Promise<Security
          FROM users
          WHERE id = ?
          LIMIT 1`,
-    )
+        )
         .bind(userId)
         .first<SecurityUserRecord>()
 }

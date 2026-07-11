@@ -13,9 +13,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
         releasedOn: 'July 10, 2026',
         title: 'Passkeys!',
         summary: 'More secure or something.',
-        changes: [
-            'Passkeys can now be your preferred sign-in method.'
-        ],
+        changes: ['Passkeys can now be your preferred sign-in method.'],
     },
     {
         version: '2026.07.06.01',
@@ -24,7 +22,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
         summary: 'Bugfixes, new features, and more.',
         changes: [
             'Fixed a bug where some characters had their heads cut-off by the size-chart feature.',
-            'Added the option to specify where the character\'s nameplate should display below them.',
+            "Added the option to specify where the character's nameplate should display below them.",
             'Added the option to set images on folders, and rename folders.',
         ],
     },
@@ -44,15 +42,15 @@ export const RELEASE_NOTES: ReleaseNote[] = [
         version: '2026.07.02.01',
         releasedOn: 'July 2, 2026',
         title: 'Improved gallery editor',
-        summary: 'It\'s now easier than ever to edit your gallery.',
+        summary: "It's now easier than ever to edit your gallery.",
         important: true,
         changes: [
             'The gallery editor is now simpler and easier to use and understand the expected layout.',
             'Drag-and-drop is more reliable and predictable.',
             'IMPORTANT: "Fullsize last row" was replaced by a new setting that works across tabs. If you ' +
-            'used this feature, your preference was not saved. You should check your gallery to ensure ' +
-            'the final row renders how you want. Because the previous feature was tab-agnostic, ' +
-            'we could not infer your preferences.',
+                'used this feature, your preference was not saved. You should check your gallery to ensure ' +
+                'the final row renders how you want. Because the previous feature was tab-agnostic, ' +
+                'we could not infer your preferences.',
         ],
     },
     {
@@ -96,10 +94,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
         releasedOn: 'June 26, 2026',
         title: 'Toyhou.se Migrations',
         summary: 'Import characters and gallery images from Toyhou.se into MyOC.',
-        changes: [
-            'You can now migrate your toyhou.se profile to myoc.',
-            'Access migrations in your account settings.',
-        ],
+        changes: ['You can now migrate your toyhou.se profile to myoc.', 'Access migrations in your account settings.'],
     },
     {
         version: '2026.06.22.01',
@@ -107,7 +102,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
         title: 'Character Size Chart',
         summary: 'Compare your characters by height with the new size chart feature.',
         changes: [
-            'Added a size chart feature for characters! You can tell MyOC your character\'s height and see them next to each other!',
+            "Added a size chart feature for characters! You can tell MyOC your character's height and see them next to each other!",
             'You can also compare your characters to others with the global search tool!',
             'Size charts can be exported as an image or URL for sharing with others!',
         ],
@@ -131,7 +126,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
         changes: [
             'Signed-in users now have their latest seen version saved across devices.',
             'A notification appears when there is a newer release note they have not viewed yet.',
-            'Visiting the What\'s New page marks the current version as seen.',
+            "Visiting the What's New page marks the current version as seen.",
         ],
     },
     {
@@ -140,7 +135,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
         title: 'Bug fixes.',
         summary: 'Character names now accept the intended punctuation.',
         changes: [
-            'Some symbols weren\'t allowed in character names, but should have been. This has been fixed.',
+            "Some symbols weren't allowed in character names, but should have been. This has been fixed.",
             'Quoted character names such as "Ivo" are now accepted.',
             'Character-name validation no longer emits an invalid browser pattern warning.',
         ],
@@ -148,10 +143,10 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     {
         version: '2026.06.15.01',
         releasedOn: 'June 15, 2026',
-        title: 'What\'s New, Bugfixes, and more!',
-        summary: 'Now you can see what\'s happening on the site as it\'s happening!',
+        title: "What's New, Bugfixes, and more!",
+        summary: "Now you can see what's happening on the site as it's happening!",
         changes: [
-            'Added this What\'s New page with a dedicated block for each app version.',
+            "Added this What's New page with a dedicated block for each app version.",
             'Introduced application versioning starting with version 2026.06.15.01.',
             'Implemented the notification to users when a new version has released.',
         ],

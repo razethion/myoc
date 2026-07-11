@@ -3,11 +3,7 @@ import type {Child} from 'hono/jsx'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 
-export type AdminSection = 'image-approvals'
-    | 'moderate-images'
-    | 'moderate-characters'
-    | 'moderate-users'
-    | 'reports'
+export type AdminSection = 'image-approvals' | 'moderate-images' | 'moderate-characters' | 'moderate-users' | 'reports'
 
 type AdminPageProps = {
     activeSection: AdminSection
@@ -16,7 +12,7 @@ type AdminPageProps = {
     mediaBaseUrl: string
 }
 
-const adminNavItems: Array<{ label: string; section: AdminSection }> = [
+const adminNavItems: Array<{label: string; section: AdminSection}> = [
     {label: 'Image Approvals', section: 'image-approvals'},
     {label: 'Moderate Images', section: 'moderate-images'},
     {label: 'Moderate Characters', section: 'moderate-characters'},
@@ -38,7 +34,7 @@ export function AdminPage({activeSection, children, currentUser, mediaBaseUrl}: 
 
     return (
         <BaseLayout title={`${activeItem.label} | Admin | MyOC`}>
-            <Navbar currentUser={currentUser} mediaBaseUrl={mediaBaseUrl}/>
+            <Navbar currentUser={currentUser} mediaBaseUrl={mediaBaseUrl} />
             <main class="grid min-h-[calc(100vh-4rem)] bg-base-100 lg:grid-cols-[17rem_1fr]">
                 <aside class="border-b border-base-300 bg-base-200/70 lg:border-b-0 lg:border-r">
                     <nav aria-label="Admin sections" class="p-3">

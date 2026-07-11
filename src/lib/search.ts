@@ -53,12 +53,9 @@ type CharacterSearchRow = {
     username: string
 }
 
-export function normalizeSearchQuery(value: unknown): { query: string; wasTruncated: boolean } {
+export function normalizeSearchQuery(value: unknown): {query: string; wasTruncated: boolean} {
     const rawValue = typeof value === 'string' ? value : ''
-    const normalized = rawValue
-        .normalize('NFKC')
-        .replace(/\s+/g, ' ')
-        .trim()
+    const normalized = rawValue.normalize('NFKC').replace(/\s+/g, ' ').trim()
     const query = normalized.slice(0, SEARCH_QUERY_MAX_LENGTH)
 
     return {
@@ -82,11 +79,7 @@ export function normalizeSearchOffset(value: unknown): number {
     return Math.min(offset, SEARCH_MAX_OFFSET)
 }
 
-export async function searchAll(
-    db: D1Database,
-    mediaBaseUrl: string,
-    rawQuery: unknown,
-): Promise<SearchResults> {
+export async function searchAll(db: D1Database, mediaBaseUrl: string, rawQuery: unknown): Promise<SearchResults> {
     const {query, wasTruncated} = normalizeSearchQuery(rawQuery)
     const [users, characters] = await Promise.all([
         searchUsers(db, mediaBaseUrl, query, SEARCH_USER_PAGE_SIZE, 0),
@@ -115,8 +108,9 @@ export async function searchUsers(
     const safeLimit = normalizeLimit(limit, SEARCH_USER_PAGE_SIZE)
     const safeOffset = normalizeSearchOffset(String(offset))
     const terms = createSearchTerms(query)
-    const result = await db.prepare(
-        `SELECT users.id,
+    const result = await db
+        .prepare(
+            `SELECT users.id,
                 users.username,
                 users.bio,
                 users.profile_photo_key,
@@ -137,7 +131,7 @@ export async function searchUsers(
                   END,
                   lower(users.username)
          LIMIT ? OFFSET ?`,
-    )
+        )
         .bind(
             terms.exact,
             terms.prefix,
@@ -172,8 +166,9 @@ export async function searchCharacters(
     const safeLimit = normalizeLimit(limit, SEARCH_CHARACTER_PAGE_SIZE)
     const safeOffset = normalizeSearchOffset(String(offset))
     const terms = createSearchTerms(query)
-    const result = await db.prepare(
-        `SELECT characters.id,
+    const result = await db
+        .prepare(
+            `SELECT characters.id,
                 characters.name,
                 characters.profile_image_key,
                 users.id AS user_id,
@@ -198,7 +193,7 @@ export async function searchCharacters(
                   lower(characters.name),
                   lower(users.username)
          LIMIT ? OFFSET ?`,
-    )
+        )
         .bind(
             terms.exact,
             terms.prefix,
@@ -223,7 +218,7 @@ export async function searchCharacters(
     return collectionFromItems(items, total, rows.length > safeLimit, safeLimit, safeOffset)
 }
 
-function createSearchTerms(query: string): { exact: string; prefix: string; contains: string } {
+function createSearchTerms(query: string): {exact: string; prefix: string; contains: string} {
     const exact = query.toLowerCase()
     const escaped = escapeLike(exact)
 
@@ -238,27 +233,33 @@ function escapeLike(value: string): string {
     return value.replace(/[\\%_]/g, (character) => `\\${character}`)
 }
 
-async function countUsers(db: D1Database, terms: { exact: string; prefix: string; contains: string }): Promise<number> {
-    const row = await db.prepare(
-        `SELECT COUNT(*) AS count
+async function countUsers(db: D1Database, terms: {exact: string; prefix: string; contains: string}): Promise<number> {
+    const row = await db
+        .prepare(
+            `SELECT COUNT(*) AS count
          FROM users
          WHERE lower(username) = ?
             OR lower(username) LIKE ? ESCAPE '\\'
             OR lower(username) LIKE ? ESCAPE '\\'
             OR lower(bio) LIKE ? ESCAPE '\\'`,
-    )
+        )
         .bind(terms.exact, terms.prefix, terms.contains, terms.contains)
-        .first<{ count: number }>()
+        .first<{count: number}>()
 
     return Number(row?.count ?? 0)
 }
 
 async function countCharacters(
     db: D1Database,
-    terms: { exact: string; prefix: string; contains: string },
+    terms: {
+        exact: string
+        prefix: string
+        contains: string
+    },
 ): Promise<number> {
-    const row = await db.prepare(
-        `SELECT COUNT(*) AS count
+    const row = await db
+        .prepare(
+            `SELECT COUNT(*) AS count
          FROM characters
          INNER JOIN users ON users.id = characters.user_id
          WHERE lower(characters.name) = ?
@@ -267,9 +268,9 @@ async function countCharacters(
             OR lower(users.username) = ?
             OR lower(users.username) LIKE ? ESCAPE '\\'
             OR lower(users.username) LIKE ? ESCAPE '\\'`,
-    )
+        )
         .bind(terms.exact, terms.prefix, terms.contains, terms.exact, terms.prefix, terms.contains)
-        .first<{ count: number }>()
+        .first<{count: number}>()
 
     return Number(row?.count ?? 0)
 }
@@ -291,13 +292,7 @@ function emptyCollection<T>(offset = 0): SearchCollection<T> {
     }
 }
 
-function collectionFromItems<T>(
-    items: T[],
-    total: number,
-    hasMore: boolean,
-    limit: number,
-    offset: number,
-): SearchCollection<T> {
+function collectionFromItems<T>(items: T[], total: number, hasMore: boolean, limit: number, offset: number): SearchCollection<T> {
     return {
         items,
         total,

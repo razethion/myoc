@@ -14,12 +14,13 @@ function pluralize(count: number, singular: string, plural = `${singular}s`): st
     return `${count} ${count === 1 ? singular : plural}`
 }
 
-function UserResultCard({user}: { user: SearchUserResult }) {
+function UserResultCard({user}: {user: SearchUserResult}) {
     return (
-        <a class="group flex items-center gap-3 rounded border border-base-300 bg-base-200 p-3 transition hover:border-primary hover:bg-base-300"
-           href={user.profileUrl}>
-            <img alt={`${user.username} avatar`} class="h-16 w-16 rounded object-cover"
-                 src={user.profilePhotoUrl}/>
+        <a
+            class="group flex items-center gap-3 rounded border border-base-300 bg-base-200 p-3 transition hover:border-primary hover:bg-base-300"
+            href={user.profileUrl}
+        >
+            <img alt={`${user.username} avatar`} class="h-16 w-16 rounded object-cover" src={user.profilePhotoUrl} />
             <div class="min-w-0 flex-1">
                 <h3 class="truncate text-lg font-bold leading-tight">{user.username}</h3>
                 {user.bio ? <p class="mt-1 line-clamp-2 text-sm text-base-content/70">{user.bio}</p> : null}
@@ -31,13 +32,15 @@ function UserResultCard({user}: { user: SearchUserResult }) {
     )
 }
 
-function CharacterResultCard({character}: { character: SearchCharacterResult }) {
+function CharacterResultCard({character}: {character: SearchCharacterResult}) {
     return (
         <a aria-label={`View ${character.name}`} class="group block" href={character.characterUrl}>
             <figure>
-                <img alt={`${character.name} character thumbnail`}
-                     class="aspect-square w-full rounded object-cover transition group-hover:brightness-110"
-                     src={character.profileImageUrl}/>
+                <img
+                    alt={`${character.name} character thumbnail`}
+                    class="aspect-square w-full rounded object-cover transition group-hover:brightness-110"
+                    src={character.profileImageUrl}
+                />
                 <figcaption class="mt-2">
                     <p class="truncate text-center font-bold">{character.name}</p>
                     <p class="truncate text-center text-sm opacity-60">by {character.ownerUsername}</p>
@@ -47,7 +50,7 @@ function CharacterResultCard({character}: { character: SearchCharacterResult }) 
     )
 }
 
-function SearchPageScript({results}: { results: SearchResults }) {
+function SearchPageScript({results}: {results: SearchResults}) {
     const queryJson = safeScriptJson(results.query)
     const script = `
         const searchQuery = ${queryJson};
@@ -183,7 +186,7 @@ export function SearchPage({currentUser, guestInitial, mediaBaseUrl, results}: S
 
     return (
         <BaseLayout title={hasQuery ? `Search: ${results.query} | MyOC` : 'Search | MyOC'}>
-            <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl}/>
+            <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl} />
             <main class="container mx-auto px-3 py-4 sm:px-0">
                 <section class="mb-6">
                     <div class="flex flex-col gap-4 border-b border-base-300 pb-5 lg:flex-row lg:items-end lg:justify-between">
@@ -192,9 +195,7 @@ export function SearchPage({currentUser, guestInitial, mediaBaseUrl, results}: S
                             <h1 class="mt-1 text-4xl font-bold sm:text-5xl">
                                 {hasQuery ? <>Results for &quot;{results.query}&quot;</> : 'Search MyOC'}
                             </h1>
-                            <p class="mt-2 max-w-2xl text-sm opacity-70 sm:text-base">
-                                Browse matching profiles and character pages.
-                            </p>
+                            <p class="mt-2 max-w-2xl text-sm opacity-70 sm:text-base">Browse matching profiles and character pages.</p>
                         </div>
 
                         <div class="flex flex-wrap gap-2">
@@ -205,16 +206,33 @@ export function SearchPage({currentUser, guestInitial, mediaBaseUrl, results}: S
 
                     <form action="/search" class="mt-5 flex flex-col gap-3 sm:flex-row" method="get">
                         <label class="input input-bordered flex-1">
-                            <svg aria-hidden="true" class="h-4 w-4 opacity-60" fill="none" stroke="currentColor"
-                                 viewBox="0 0 24 24"
-                                 xmlns="http://www.w3.org/2000/svg">
-                                <path d="M21 21l-4.35-4.35M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14z"
-                                      stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+                            <svg
+                                aria-hidden="true"
+                                class="h-4 w-4 opacity-60"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                                xmlns="http://www.w3.org/2000/svg"
+                            >
+                                <path
+                                    d="M21 21l-4.35-4.35M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14z"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="2"
+                                />
                             </svg>
-                            <input class="grow" maxLength={80} name="q" placeholder="Search characters, artists, tags..."
-                                   type="search" value={results.query}/>
+                            <input
+                                class="grow"
+                                maxLength={80}
+                                name="q"
+                                placeholder="Search characters, artists, tags..."
+                                type="search"
+                                value={results.query}
+                            />
                         </label>
-                        <button class="btn btn-primary" type="submit">Search</button>
+                        <button class="btn btn-primary" type="submit">
+                            Search
+                        </button>
                     </form>
 
                     {results.wasTruncated ? (
@@ -236,11 +254,15 @@ export function SearchPage({currentUser, guestInitial, mediaBaseUrl, results}: S
                     <section class="grid gap-8 lg:grid-cols-[minmax(280px,0.95fr)_minmax(0,1.6fr)]">
                         <section aria-labelledby="users-heading">
                             <div class="mb-3 flex items-center justify-between gap-3">
-                                <h2 id="users-heading" class="text-2xl font-bold">Users</h2>
+                                <h2 id="users-heading" class="text-2xl font-bold">
+                                    Users
+                                </h2>
                             </div>
 
                             <div class="grid gap-3" data-results-list="users">
-                                {results.users.items.map((user) => <UserResultCard user={user}/>)}
+                                {results.users.items.map((user) => (
+                                    <UserResultCard user={user} />
+                                ))}
                             </div>
 
                             {results.users.items.length === 0 ? (
@@ -250,18 +272,27 @@ export function SearchPage({currentUser, guestInitial, mediaBaseUrl, results}: S
                             ) : null}
 
                             <div class="mt-4 flex justify-center">
-                                <button class={`btn btn-outline ${results.users.hasMore ? '' : 'hidden'}`} data-load-more="users"
-                                        type="button">Load more users</button>
+                                <button
+                                    class={`btn btn-outline ${results.users.hasMore ? '' : 'hidden'}`}
+                                    data-load-more="users"
+                                    type="button"
+                                >
+                                    Load more users
+                                </button>
                             </div>
                         </section>
 
                         <section aria-labelledby="characters-heading">
                             <div class="mb-3 flex items-center justify-between gap-3">
-                                <h2 id="characters-heading" class="text-2xl font-bold">Characters</h2>
+                                <h2 id="characters-heading" class="text-2xl font-bold">
+                                    Characters
+                                </h2>
                             </div>
 
                             <div class="grid grid-cols-2 gap-3 sm:gap-5 md:grid-cols-3 xl:grid-cols-4" data-results-list="characters">
-                                {results.characters.items.map((character) => <CharacterResultCard character={character}/>)}
+                                {results.characters.items.map((character) => (
+                                    <CharacterResultCard character={character} />
+                                ))}
                             </div>
 
                             {results.characters.items.length === 0 ? (
@@ -271,14 +302,19 @@ export function SearchPage({currentUser, guestInitial, mediaBaseUrl, results}: S
                             ) : null}
 
                             <div class="mt-6 flex justify-center">
-                                <button class={`btn btn-outline ${results.characters.hasMore ? '' : 'hidden'}`}
-                                        data-load-more="characters" type="button">Load more characters</button>
+                                <button
+                                    class={`btn btn-outline ${results.characters.hasMore ? '' : 'hidden'}`}
+                                    data-load-more="characters"
+                                    type="button"
+                                >
+                                    Load more characters
+                                </button>
                             </div>
                         </section>
                     </section>
                 )}
             </main>
-            <SearchPageScript results={results}/>
+            <SearchPageScript results={results} />
         </BaseLayout>
     )
 }

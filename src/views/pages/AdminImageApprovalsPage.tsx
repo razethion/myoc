@@ -8,17 +8,9 @@ type AdminImageApprovalsPageProps = {
 
 export function AdminImageApprovalsPage({csrfToken, data}: AdminImageApprovalsPageProps) {
     return (
-        <div
-            class="min-h-[calc(100vh-4rem)]"
-            data-csrf-token={csrfToken}
-            data-image-approvals
-        >
-            <AdminImageApprovalsStyles/>
-            <script
-                dangerouslySetInnerHTML={{__html: safeJson(data)}}
-                id="image-approval-data"
-                type="application/json"
-            ></script>
+        <div class="min-h-[calc(100vh-4rem)]" data-csrf-token={csrfToken} data-image-approvals>
+            <AdminImageApprovalsStyles />
+            <script dangerouslySetInnerHTML={{__html: safeJson(data)}} id="image-approval-data" type="application/json"></script>
             <div class="grid min-h-[calc(100vh-4rem)] xl:grid-cols-[1fr_22rem]">
                 <div class="min-w-0 p-4 sm:p-6" data-approval-current></div>
                 <aside class="border-t border-base-300 bg-base-200/60 xl:border-l xl:border-t-0">

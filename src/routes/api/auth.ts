@@ -66,7 +66,7 @@ type RecoveryLoginRequest = {
     recoveryPhrase?: unknown
 }
 
-export const authRoutes = new Hono<{ Bindings: Bindings }>()
+export const authRoutes = new Hono<{Bindings: Bindings}>()
 
 authRoutes.post('/logout', async (c) => {
     const sessionToken = getCookie(c, getSessionCookieName())
@@ -118,7 +118,7 @@ authRoutes.post('/login', async (c) => {
          LIMIT 1`,
     )
         .bind(username)
-        .first<UserRecord & { banned_at: string | null }>()
+        .first<UserRecord & {banned_at: string | null}>()
 
     if (!user || !hasUsablePassword(user.password_hash) || !(await compare(password, user.password_hash))) {
         return c.json({error: 'Invalid username or password'}, 401)
@@ -255,22 +255,21 @@ authRoutes.post('/register/passkey/verify', async (c) => {
                     secure_account_required_passkey_id
                 )
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            )
-                .bind(
-                    user.id,
-                    user.email,
-                    user.username,
-                    user.password_hash,
-                    user.role,
-                    user.bio,
-                    user.display_nsfw_media,
-                    user.created_at,
-                    challenge.webauthn_user_id,
-                    recoveryPhraseHash,
-                    toSqlTimestamp(now),
-                    1,
-                    passkeyId,
-                ),
+            ).bind(
+                user.id,
+                user.email,
+                user.username,
+                user.password_hash,
+                user.role,
+                user.bio,
+                user.display_nsfw_media,
+                user.created_at,
+                challenge.webauthn_user_id,
+                recoveryPhraseHash,
+                toSqlTimestamp(now),
+                1,
+                passkeyId,
+            ),
             c.env.DB.prepare(
                 `INSERT INTO user_passkeys (
                     id,
@@ -286,20 +285,19 @@ authRoutes.post('/register/passkey/verify', async (c) => {
                     created_at
                 )
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            )
-                .bind(
-                    passkeyId,
-                    user.id,
-                    credential.id,
-                    createCredentialPublicKeyValue(credential.publicKey),
-                    challenge.webauthn_user_id,
-                    credential.counter,
-                    credentialDeviceType,
-                    credentialBackedUp ? 1 : 0,
-                    serializeTransports(credential.transports),
-                    normalizeOptionalText(body.name) ?? 'Primary passkey',
-                    toSqlTimestamp(now),
-                ),
+            ).bind(
+                passkeyId,
+                user.id,
+                credential.id,
+                createCredentialPublicKeyValue(credential.publicKey),
+                challenge.webauthn_user_id,
+                credential.counter,
+                credentialDeviceType,
+                credentialBackedUp ? 1 : 0,
+                serializeTransports(credential.transports),
+                normalizeOptionalText(body.name) ?? 'Primary passkey',
+                toSqlTimestamp(now),
+            ),
             c.env.DB.prepare('DELETE FROM webauthn_challenges WHERE id = ?').bind(challengeId),
         ])
     } catch (error) {
@@ -313,12 +311,15 @@ authRoutes.post('/register/passkey/verify', async (c) => {
     const sessionToken = await createSession(c.env.DB, user.id, now)
     setSessionCookie(c, sessionToken)
 
-    return c.json({
-        user: toPublicUser(user),
-        csrfToken: await createCsrfToken(sessionToken),
-        recoveryPhrase,
-        recoveryPhraseNeedsConfirmation: true,
-    }, 201)
+    return c.json(
+        {
+            user: toPublicUser(user),
+            csrfToken: await createCsrfToken(sessionToken),
+            recoveryPhrase,
+            recoveryPhraseNeedsConfirmation: true,
+        },
+        201,
+    )
 })
 
 authRoutes.post('/login/passkey/options', async (c) => {
@@ -331,7 +332,7 @@ authRoutes.post('/login/passkey/options', async (c) => {
     }
 
     const username = normalizeCredential(body.username)
-    let user: { id: string } | null = null
+    let user: {id: string} | null = null
 
     if (username) {
         user = await c.env.DB.prepare(
@@ -343,7 +344,7 @@ authRoutes.post('/login/passkey/options', async (c) => {
              LIMIT 1`,
         )
             .bind(username)
-            .first<{ id: string }>()
+            .first<{id: string}>()
 
         if (!user) {
             return c.json({error: 'No passkey is registered for that username'}, 404)
@@ -415,14 +416,13 @@ authRoutes.post('/login/passkey/verify', async (c) => {
                  backed_up    = ?,
                  last_used_at = ?
              WHERE id = ?`,
-        )
-            .bind(
-                verification.authenticationInfo.newCounter,
-                verification.authenticationInfo.credentialDeviceType,
-                verification.authenticationInfo.credentialBackedUp ? 1 : 0,
-                toSqlTimestamp(now),
-                passkey.id,
-            ),
+        ).bind(
+            verification.authenticationInfo.newCounter,
+            verification.authenticationInfo.credentialDeviceType,
+            verification.authenticationInfo.credentialBackedUp ? 1 : 0,
+            toSqlTimestamp(now),
+            passkey.id,
+        ),
         c.env.DB.prepare('DELETE FROM webauthn_challenges WHERE id = ?').bind(challengeId),
     ])
 
@@ -466,7 +466,7 @@ authRoutes.post('/recovery/login', async (c) => {
          LIMIT 1`,
     )
         .bind(username)
-        .first<UserRecord & { recovery_phrase_hash: string | null; banned_at: string | null }>()
+        .first<UserRecord & {recovery_phrase_hash: string | null; banned_at: string | null}>()
 
     if (!user?.recovery_phrase_hash || !(await verifyRecoveryPhrase(recoveryPhrase, user.recovery_phrase_hash))) {
         return c.json({error: 'Invalid username or recovery phrase'}, 401)
@@ -521,8 +521,9 @@ function isUniqueConstraintError(error: unknown): boolean {
 }
 
 async function getUserForLogin(db: D1Database, userId: string): Promise<UserRecord | null> {
-    return await db.prepare(
-        `SELECT id,
+    return await db
+        .prepare(
+            `SELECT id,
                 email,
                 username,
                 password_hash,
@@ -538,7 +539,7 @@ async function getUserForLogin(db: D1Database, userId: string): Promise<UserReco
          WHERE id = ?
            AND banned_at IS NULL
          LIMIT 1`,
-    )
+        )
         .bind(userId)
         .first<UserRecord>()
 }
