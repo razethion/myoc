@@ -42,33 +42,9 @@ jobs:
       - name: Run quality checks
         run: npm run ci
 
-  build:
-    name: Build assets
-    needs: quality
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          package-manager-cache: false
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build assets
-        run: npm run build
-
   deploy-production:
     name: Deploy production
-    needs:
-      - quality
-      - build
+    needs: quality
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
     runs-on: ubuntu-latest
 
@@ -102,9 +78,7 @@ jobs:
 
   deploy-preview:
     name: Deploy preview
-    needs:
-      - quality
-      - build
+    needs: quality
     if: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
 
@@ -249,7 +223,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Comment preview link
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           PREVIEW_URL: ${{ steps.upload-preview.outputs.preview_url }}
           PREVIEW_ALIAS: ${{ steps.preview.outputs.preview_alias }}
