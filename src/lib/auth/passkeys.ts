@@ -242,12 +242,6 @@ export async function getWebAuthnChallenge(
         .first<WebAuthnChallengeRecord>()
 }
 
-export async function deleteWebAuthnChallenge(db: D1Database, challengeId: string): Promise<void> {
-    await db.prepare('DELETE FROM webauthn_challenges WHERE id = ?')
-        .bind(challengeId)
-        .run()
-}
-
 export async function listUserPasskeys(db: D1Database, userId: string): Promise<PasskeyRecord[]> {
     const result = await db.prepare(
         `SELECT id,
