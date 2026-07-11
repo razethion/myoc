@@ -10,10 +10,7 @@ import {AuthPage} from '../views/pages/AuthPage'
 import {AdminPage, isAdminSection, type AdminSection} from '../views/pages/AdminPage'
 import {AdminImageApprovalsPage} from '../views/pages/AdminImageApprovalsPage'
 import {AdminReportsPage} from '../views/pages/AdminReportsPage'
-import {
-    CharacterPage,
-    type CharacterPageCharacter,
-} from '../views/pages/CharacterPage'
+import {CharacterPage, type CharacterPageCharacter} from '../views/pages/CharacterPage'
 import {
     CharacterSettingsPage,
     type CharacterSettingsCharacter,
@@ -37,7 +34,7 @@ import {
     type HomePageDiscoverCharacter,
     type HomePageGalleryImage,
     type HomePageHeightChartCharacter,
-    type HomePageStats
+    type HomePageStats,
 } from '../views/pages/HomePage'
 import {
     MigratePage,
@@ -64,9 +61,9 @@ import {
 } from '../lib/media/url'
 import {validateProfileImagePayload} from '../lib/media/profileImage'
 
-export const pageRoutes = new Hono<{ Bindings: Bindings }>()
+export const pageRoutes = new Hono<{Bindings: Bindings}>()
 
-type PageRouteContext = Context<{ Bindings: Bindings }>
+type PageRouteContext = Context<{Bindings: Bindings}>
 
 const CHARACTER_NAME_MAX_LENGTH = 80
 const CHARACTER_NAME_ALLOWED_PATTERN = /^(?=.*[A-Za-z0-9])[A-Za-z0-9 _'".()-]+$/
@@ -155,12 +152,7 @@ pageRoutes.get('/login', async (c) => {
     }
 
     return c.html(
-        <AuthPage
-            currentUser={currentUser}
-            guestInitial={getRandomLetter()}
-            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
-            mode="login"
-        />,
+        <AuthPage currentUser={currentUser} guestInitial={getRandomLetter()} mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL} mode="login" />,
     )
 })
 
@@ -172,12 +164,7 @@ pageRoutes.get('/register', async (c) => {
     }
 
     return c.html(
-        <AuthPage
-            currentUser={currentUser}
-            guestInitial={getRandomLetter()}
-            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
-            mode="register"
-        />,
+        <AuthPage currentUser={currentUser} guestInitial={getRandomLetter()} mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL} mode="register" />,
     )
 })
 
@@ -194,13 +181,7 @@ pageRoutes.get(PASSKEY_PROMPT_PATH, async (c) => {
         return c.redirect(returnTo)
     }
 
-    return c.html(
-        <PasskeyPromptPage
-            currentUser={currentUser}
-            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
-            returnTo={returnTo}
-        />,
-    )
+    return c.html(<PasskeyPromptPage currentUser={currentUser} mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL} returnTo={returnTo} />)
 })
 
 pageRoutes.get('/settings', async (c) => {
@@ -346,21 +327,17 @@ pageRoutes.post('/migrate/import', async (c) => {
                 migrationResult = parseToyhouseMigrationPayload(payload)
 
                 if (migrationResult.myocUserId && migrationResult.myocUserId !== currentUser.id) {
-                    migrationError = 'Toyhou.se import was verified for a different MyOC account. Sign in to that account or create a fresh bookmarklet.'
+                    migrationError =
+                        'Toyhou.se import was verified for a different MyOC account. Sign in to that account or create a fresh bookmarklet.'
                     migrationResult = null
                 } else {
-                    migrationResult = await buildToyhouseMigrationReview(
-                        c.env.DB,
-                        migrationResult,
-                        currentUser.id,
-                    )
+                    migrationResult = await buildToyhouseMigrationReview(c.env.DB, migrationResult, currentUser.id)
                 }
             }
         } catch (error) {
             migrationError = error instanceof Error ? error.message : 'Toyhou.se data could not be read.'
         }
     }
-
 
     return c.html(
         <MigratePage
@@ -394,11 +371,18 @@ pageRoutes.post('/migrate/import/confirm', async (c) => {
                 const migrationResult = parseToyhouseMigrationPayload(payload)
 
                 if (migrationResult.myocUserId && migrationResult.myocUserId !== currentUser.id) {
-                    migrationError = 'Toyhou.se import was verified for a different MyOC account. Sign in to that account or create a fresh bookmarklet.'
+                    migrationError =
+                        'Toyhou.se import was verified for a different MyOC account. Sign in to that account or create a fresh bookmarklet.'
                 } else {
                     const reviewed = await buildToyhouseMigrationReview(c.env.DB, migrationResult, currentUser.id)
                     const selection = parseToyhouseImportSelection(formData, reviewed)
-                    clientImportPlan = await prepareToyhouseClientImportPlan(c.env.DB, c.env.MEDIA_BUCKET, currentUser.id, reviewed, selection)
+                    clientImportPlan = await prepareToyhouseClientImportPlan(
+                        c.env.DB,
+                        c.env.MEDIA_BUCKET,
+                        currentUser.id,
+                        reviewed,
+                        selection,
+                    )
                 }
             }
         } catch (error) {
@@ -471,28 +455,18 @@ async function renderAdminPage(c: PageRouteContext, activeSection: AdminSection)
         return renderNotFoundPage(c)
     }
 
-    const content = activeSection === 'image-approvals'
-        ? (
+    const content =
+        activeSection === 'image-approvals' ? (
             <AdminImageApprovalsPage
                 csrfToken={currentUser.csrfToken}
                 data={await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, c.req.query('mediaId'))}
             />
-        )
-        : activeSection === 'reports'
-            ? (
-                <AdminReportsPage
-                    csrfToken={currentUser.csrfToken}
-                    data={await getAdminReportsData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL)}
-                />
-            )
-            : null
+        ) : activeSection === 'reports' ? (
+            <AdminReportsPage csrfToken={currentUser.csrfToken} data={await getAdminReportsData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL)} />
+        ) : null
 
     return c.html(
-        <AdminPage
-            activeSection={activeSection}
-            currentUser={currentUser}
-            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
-        >
+        <AdminPage activeSection={activeSection} currentUser={currentUser} mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}>
             {content}
         </AdminPage>,
     )
@@ -505,18 +479,19 @@ pageRoutes.get('/edit/:characterId/height-chart', async (c) => {
         return c.redirect('/login')
     }
 
-    const character = await getCharacterHeightChartEditorCharacter(c.env.DB, currentUser.id, c.req.param('characterId'), c.env.MEDIA_PUBLIC_BASE_URL)
+    const character = await getCharacterHeightChartEditorCharacter(
+        c.env.DB,
+        currentUser.id,
+        c.req.param('characterId'),
+        c.env.MEDIA_PUBLIC_BASE_URL,
+    )
 
     if (!character) {
         return renderNotFoundPage(c, 'That character does not exist or you do not have access to edit it.')
     }
 
     return c.html(
-        <CharacterHeightChartEditorPage
-            character={character}
-            currentUser={currentUser}
-            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
-        />,
+        <CharacterHeightChartEditorPage character={character} currentUser={currentUser} mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL} />,
     )
 })
 
@@ -618,11 +593,12 @@ pageRoutes.get('/whats-new', async (c) => {
 })
 
 async function markCurrentVersionSeen(db: D1Database, userId: string): Promise<void> {
-    await db.prepare(
-        `UPDATE users
+    await db
+        .prepare(
+            `UPDATE users
          SET last_seen_version = ?
          WHERE id = ?`,
-    )
+        )
         .bind(APP_VERSION, userId)
         .run()
 }
@@ -679,10 +655,7 @@ pageRoutes.notFound(async (c) => {
     return renderNotFoundPage(c)
 })
 
-export async function renderNotFoundPage(
-    c: PageRouteContext,
-    message?: string,
-): Promise<Response> {
+export async function renderNotFoundPage(c: PageRouteContext, message?: string): Promise<Response> {
     if (prefersJson(c) || new URL(c.req.url).pathname.startsWith('/api/')) {
         return c.json({error: 'Not found'}, 404)
     }
@@ -712,9 +685,7 @@ function profileRedirectUrl(username: string, rawPath = ''): string {
         .map((segment) => encodeURIComponent(decodePathSegment(segment)))
         .join('/')
 
-    return suffix
-        ? `${userProfileUrl(username)}/${suffix}`
-        : userProfileUrl(username)
+    return suffix ? `${userProfileUrl(username)}/${suffix}` : userProfileUrl(username)
 }
 
 function getToyhouseUsernameQuery(value: string): string {
@@ -778,7 +749,9 @@ async function buildToyhouseMigrationReview(
     migrationResult: ToyhouseMigrationResult,
     myocUserId: string,
 ): Promise<ToyhouseMigrationResult> {
-    const existingCharactersByName = myocUserId ? await getExistingCharactersByName(db, myocUserId) : new Map<string, ExistingCharacterName>()
+    const existingCharactersByName = myocUserId
+        ? await getExistingCharactersByName(db, myocUserId)
+        : new Map<string, ExistingCharacterName>()
     const importNameCounts = new Map<string, number>()
 
     for (const character of migrationResult.characters) {
@@ -816,17 +789,20 @@ type ExistingCharacterName = {
 }
 
 async function getExistingCharactersByName(db: D1Database, userId: string): Promise<Map<string, ExistingCharacterName>> {
-    const result = await db.prepare(
-        `SELECT id, name
+    const result = await db
+        .prepare(
+            `SELECT id, name
          FROM characters
          WHERE user_id = ?`,
-    )
+        )
         .bind(userId)
         .all<ExistingCharacterName>()
 
-    return new Map((result.results ?? [])
-        .filter((row) => typeof row.id === 'string' && typeof row.name === 'string')
-        .map((row) => [normalizeCharacterNameKey(row.name), row]))
+    return new Map(
+        (result.results ?? [])
+            .filter((row) => typeof row.id === 'string' && typeof row.name === 'string')
+            .map((row) => [normalizeCharacterNameKey(row.name), row]),
+    )
 }
 
 function normalizeCharacterNameKey(name: string): string {
@@ -905,7 +881,8 @@ type ToyhouseActiveImportItemRecord = ToyhouseImportItemRecord & {
 
 function parseToyhouseImportSelection(formData: FormData, migrationResult: ToyhouseMigrationResult): ToyhouseImportSelection {
     const charactersById = new Map(migrationResult.characters.map((character) => [character.id, character]))
-    const characterIds = formData.getAll('characterIds')
+    const characterIds = formData
+        .getAll('characterIds')
         .filter((value): value is string => typeof value === 'string')
         .filter((characterId, index, values) => values.indexOf(characterId) === index)
 
@@ -925,10 +902,16 @@ function parseToyhouseImportSelection(formData: FormData, migrationResult: Toyho
         }
 
         const allowedImageUrls = new Set(character.images.map((image) => image.fullsizeUrl))
-        const selectedImages = new Set(formData.getAll(`imageUrls:${characterId}`)
-            .filter((value): value is string => typeof value === 'string' && allowedImageUrls.has(value)))
-        const selectedNsfwImages = new Set(formData.getAll(`nsfwImageUrls:${characterId}`)
-            .filter((value): value is string => typeof value === 'string' && selectedImages.has(value)))
+        const selectedImages = new Set(
+            formData
+                .getAll(`imageUrls:${characterId}`)
+                .filter((value): value is string => typeof value === 'string' && allowedImageUrls.has(value)),
+        )
+        const selectedNsfwImages = new Set(
+            formData
+                .getAll(`nsfwImageUrls:${characterId}`)
+                .filter((value): value is string => typeof value === 'string' && selectedImages.has(value)),
+        )
 
         imagesByCharacterId.set(characterId, selectedImages)
         nsfwImagesByCharacterId.set(characterId, selectedNsfwImages)
@@ -967,7 +950,7 @@ async function prepareToyhouseClientImportPlan(
     const charactersById = new Map(migrationResult.characters.map((character) => [character.id, character]))
     const planCharacters: (Omit<ToyhouseClientImportPlan['characters'][number], 'images'> & {
         images: (ToyhouseClientImportPlan['characters'][number]['images'][number] & {
-            status: 'pending';
+            status: 'pending'
             mediaId: null
         })[]
     })[] = []
@@ -980,10 +963,14 @@ async function prepareToyhouseClientImportPlan(
     let unexpectedError: unknown = null
 
     try {
-        staged.statements.push(db.prepare(
-            `INSERT INTO toyhouse_import_jobs (id, user_id, status, total_images, created_at, updated_at)
+        staged.statements.push(
+            db
+                .prepare(
+                    `INSERT INTO toyhouse_import_jobs (id, user_id, status, total_images, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?)`,
-        ).bind(importJobId, userId, 'running', 0, now, now))
+                )
+                .bind(importJobId, userId, 'running', 0, now, now),
+        )
 
         for (const characterId of selection.characterIds) {
             const character = charactersById.get(characterId)
@@ -997,9 +984,17 @@ async function prepareToyhouseClientImportPlan(
             }
 
             const nsfwImages = selection.nsfwImagesByCharacterId.get(characterId) ?? new Set<string>()
-            const targetCharacter = character.importMode === 'existing'
-                ? {id: character.targetCharacterId ?? '', isNew: false}
-                : await stageToyhouseImportedCharacter(db, bucket, userId, character, selection.profileImagesByCharacterId.get(characterId) ?? '', staged)
+            const targetCharacter =
+                character.importMode === 'existing'
+                    ? {id: character.targetCharacterId ?? '', isNew: false}
+                    : await stageToyhouseImportedCharacter(
+                          db,
+                          bucket,
+                          userId,
+                          character,
+                          selection.profileImagesByCharacterId.get(characterId) ?? '',
+                          staged,
+                      )
 
             if (!targetCharacter.id) {
                 stagingError = new Error(`Could not resolve import target for ${character.name}.`)
@@ -1012,42 +1007,48 @@ async function prepareToyhouseClientImportPlan(
 
             planCharacters.push({
                 importMode: targetCharacter.isNew ? 'create' : 'existing',
-                images: await Promise.all(selectedImages.map(async (fullsizeUrl, imageIndex) => {
-                    const importItemId = await toyhouseImportItemId(userId, targetCharacter.id, fullsizeUrl)
-                    const rating = nsfwImages.has(fullsizeUrl) ? 'nsfw' : 'sfw'
+                images: await Promise.all(
+                    selectedImages.map(async (fullsizeUrl, imageIndex) => {
+                        const importItemId = await toyhouseImportItemId(userId, targetCharacter.id, fullsizeUrl)
+                        const rating = nsfwImages.has(fullsizeUrl) ? 'nsfw' : 'sfw'
 
-                    itemIds.push(importItemId)
-                    staged.statements.push(db.prepare(
-                        `INSERT OR IGNORE INTO toyhouse_import_items (id, job_id, user_id, character_id,
+                        itemIds.push(importItemId)
+                        staged.statements.push(
+                            db
+                                .prepare(
+                                    `INSERT OR IGNORE INTO toyhouse_import_items (id, job_id, user_id, character_id,
                                                                       toyhouse_character_id, toyhouse_image_url,
                                                                       import_mode, rating, status, media_id, error,
                                                                       sort_order, created_at, updated_at)
                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    ).bind(
-                        importItemId,
-                        importJobId,
-                        userId,
-                        targetCharacter.id,
-                        character.id,
-                        fullsizeUrl,
-                        targetCharacter.isNew ? 'create' : 'existing',
-                        rating,
-                        'pending',
-                        null,
-                        '',
-                        imageIndex,
-                        now,
-                        now,
-                    ))
+                                )
+                                .bind(
+                                    importItemId,
+                                    importJobId,
+                                    userId,
+                                    targetCharacter.id,
+                                    character.id,
+                                    fullsizeUrl,
+                                    targetCharacter.isNew ? 'create' : 'existing',
+                                    rating,
+                                    'pending',
+                                    null,
+                                    '',
+                                    imageIndex,
+                                    now,
+                                    now,
+                                ),
+                        )
 
-                    return {
-                        fullsizeUrl,
-                        importItemId,
-                        mediaId: null,
-                        rating,
-                        status: 'pending',
-                    }
-                })),
+                        return {
+                            fullsizeUrl,
+                            importItemId,
+                            mediaId: null,
+                            rating,
+                            status: 'pending',
+                        }
+                    }),
+                ),
                 myocCharacterId: targetCharacter.id,
                 name: character.name,
                 toyhouseId: character.id,
@@ -1059,13 +1060,17 @@ async function prepareToyhouseClientImportPlan(
             if (totalImages === 0) {
                 stagingError = new Error('Select at least one image to import.')
             } else {
-                staged.statements.push(db.prepare(
-                    `UPDATE toyhouse_import_jobs
+                staged.statements.push(
+                    db
+                        .prepare(
+                            `UPDATE toyhouse_import_jobs
                      SET total_images = ?,
                          updated_at   = ?
                      WHERE id = ?
                        AND user_id = ?`,
-                ).bind(totalImages, now, importJobId, userId))
+                        )
+                        .bind(totalImages, now, importJobId, userId),
+                )
 
                 if (staged.statements.length > 0) {
                     await db.batch(staged.statements)
@@ -1082,10 +1087,10 @@ async function prepareToyhouseClientImportPlan(
 
                             return itemState
                                 ? {
-                                    ...image,
-                                    mediaId: itemState.media_id,
-                                    status: itemState.status,
-                                }
+                                      ...image,
+                                      mediaId: itemState.media_id,
+                                      status: itemState.status,
+                                  }
                                 : image
                         }),
                     })),
@@ -1125,18 +1130,16 @@ async function hasActiveToyhouseImportJob(db: D1Database, userId: string): Promi
     return job !== null
 }
 
-async function getActiveToyhouseClientImportPlan(
-    db: D1Database,
-    userId: string,
-): Promise<ToyhouseClientImportPlan | null> {
+async function getActiveToyhouseClientImportPlan(db: D1Database, userId: string): Promise<ToyhouseClientImportPlan | null> {
     const job = await getActiveToyhouseImportJob(db, userId)
 
     if (!job) {
         return null
     }
 
-    const result = await db.prepare(
-        `SELECT item.id,
+    const result = await db
+        .prepare(
+            `SELECT item.id,
                 item.character_id,
                 item.toyhouse_character_id,
                 item.toyhouse_image_url,
@@ -1152,7 +1155,7 @@ async function getActiveToyhouseClientImportPlan(
          WHERE item.job_id = ?
            AND item.user_id = ?
          ORDER BY character.name COLLATE NOCASE, item.sort_order, item.created_at`,
-    )
+        )
         .bind(job.id, userId)
         .all<ToyhouseActiveImportItemRecord>()
     const items = result.results ?? []
@@ -1180,13 +1183,15 @@ async function getActiveToyhouseClientImportPlan(
 
         characters.set(item.character_id, {
             importMode,
-            images: [{
-                fullsizeUrl: item.toyhouse_image_url,
-                importItemId: item.id,
-                mediaId: item.media_id,
-                rating: item.rating,
-                status: item.status,
-            }],
+            images: [
+                {
+                    fullsizeUrl: item.toyhouse_image_url,
+                    importItemId: item.id,
+                    mediaId: item.media_id,
+                    rating: item.rating,
+                    status: item.status,
+                },
+            ],
             myocCharacterId: item.character_id,
             name: item.name,
             toyhouseId: item.toyhouse_character_id,
@@ -1205,8 +1210,9 @@ async function getActiveToyhouseClientImportPlan(
 }
 
 async function getActiveToyhouseImportJob(db: D1Database, userId: string): Promise<ToyhouseImportJobRecord | null> {
-    return await db.prepare(
-        `SELECT import_job.id, import_job.total_images
+    return await db
+        .prepare(
+            `SELECT import_job.id, import_job.total_images
          FROM toyhouse_import_jobs import_job
          WHERE import_job.user_id = ?
            AND import_job.status <> 'complete'
@@ -1216,7 +1222,7 @@ async function getActiveToyhouseImportJob(db: D1Database, userId: string): Promi
                          AND item.user_id = import_job.user_id)
          ORDER BY import_job.updated_at DESC
          LIMIT 1`,
-    )
+        )
         .bind(userId)
         .first<ToyhouseImportJobRecord>()
 }
@@ -1224,9 +1230,7 @@ async function getActiveToyhouseImportJob(db: D1Database, userId: string): Promi
 async function toyhouseImportItemId(userId: string, characterId: string, imageUrl: string): Promise<string> {
     const bytes = new TextEncoder().encode(`${userId}\n${characterId}\n${imageUrl}`)
     const digest = await crypto.subtle.digest('SHA-256', bytes)
-    const hex = [...new Uint8Array(digest)]
-        .map((byte) => byte.toString(16).padStart(2, '0'))
-        .join('')
+    const hex = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 
     return `toyhouse-${hex.slice(0, 48)}`
 }
@@ -1246,12 +1250,13 @@ async function getToyhouseImportItemsByIds(
     for (let index = 0; index < itemIds.length; index += itemIdsPerQuery) {
         const itemIdChunk = itemIds.slice(index, index + itemIdsPerQuery)
         const placeholders = itemIdChunk.map(() => '?').join(', ')
-        const result = await db.prepare(
-            `SELECT id, status, media_id
+        const result = await db
+            .prepare(
+                `SELECT id, status, media_id
              FROM toyhouse_import_items
              WHERE user_id = ?
                AND id IN (${placeholders})`,
-        )
+            )
             .bind(userId, ...itemIdChunk)
             .all<ToyhouseImportItemRecord>()
 
@@ -1272,9 +1277,7 @@ async function stageToyhouseImportedCharacter(
     staged: StagedToyhouseImport,
 ): Promise<StagedToyhouseCharacter> {
     const profileImage = readWebpDataUrl(profileImageDataUrl)
-    const validation = 'error' in profileImage
-        ? profileImage
-        : validateProfileImagePayload(profileImage, `${character.name} profile image`)
+    const validation = 'error' in profileImage ? profileImage : validateProfileImagePayload(profileImage, `${character.name} profile image`)
 
     if ('error' in validation) {
         throw new Error(validation.error)
@@ -1297,18 +1300,21 @@ async function stageToyhouseImportedCharacter(
     })
     staged.uploadedKeys.push(profileObjectKey)
 
-    staged.statements.push(db.prepare(
-        `INSERT INTO characters (id, size_chart_id, user_id, name, profile_image_key, folder_id, sort_order, created_at,
+    staged.statements.push(
+        db
+            .prepare(
+                `INSERT INTO characters (id, size_chart_id, user_id, name, profile_image_key, folder_id, sort_order, created_at,
                                  updated_at)
          VALUES (?, randomblob(6), ?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .bind(characterId, userId, character.name, profileImageKey, null, 0, now, now),
     )
-        .bind(characterId, userId, character.name, profileImageKey, null, 0, now, now))
     staged.createdCharacters += 1
 
     return {id: characterId, isNew: true}
 }
 
-function readWebpDataUrl(value: string): { contentType: string; bytes: Uint8Array } | { error: string } {
+function readWebpDataUrl(value: string): {contentType: string; bytes: Uint8Array} | {error: string} {
     const match = /^data:(image\/webp);base64,(.+)$/i.exec(value)
 
     if (!match) {
@@ -1360,14 +1366,12 @@ function parseToyhouseCharacterPayload(value: unknown): ToyhouseMigrationResult[
     const thumbnailUrl = sanitizeHttpsUrl(character.thumbnailUrl)
     const images = Array.isArray(character.images)
         ? character.images
-            .slice(0, 1000)
-            .map(parseToyhouseImagePayload)
-            .filter((image): image is ToyhouseMigrationResult['characters'][number]['images'][number] => Boolean(image))
+              .slice(0, 1000)
+              .map(parseToyhouseImagePayload)
+              .filter((image): image is ToyhouseMigrationResult['characters'][number]['images'][number] => Boolean(image))
         : []
     const imageCountValue = Number(character.imageCount)
-    const imageCount = Number.isFinite(imageCountValue) && imageCountValue >= 0
-        ? Math.floor(imageCountValue)
-        : null
+    const imageCount = Number.isFinite(imageCountValue) && imageCountValue >= 0 ? Math.floor(imageCountValue) : null
 
     if (!id || !name || !url) {
         return null
@@ -1409,9 +1413,7 @@ function sanitizeMyocUserId(value: unknown): string {
 
     const userId = value.trim()
 
-    return userId.length > 0 && userId.length <= 128 && /^[A-Za-z0-9_-]+$/.test(userId)
-        ? userId
-        : ''
+    return userId.length > 0 && userId.length <= 128 && /^[A-Za-z0-9_-]+$/.test(userId) ? userId : ''
 }
 
 function sanitizeToyhouseUrl(value: unknown): string {
@@ -1423,9 +1425,7 @@ function sanitizeToyhouseUrl(value: unknown): string {
         const url = new URL(value)
         const host = url.hostname.toLowerCase()
 
-        return url.protocol === 'https:' && (host === 'toyhou.se' || host === 'www.toyhou.se')
-            ? url.toString()
-            : ''
+        return url.protocol === 'https:' && (host === 'toyhou.se' || host === 'www.toyhou.se') ? url.toString() : ''
     } catch {
         return ''
     }
@@ -1491,10 +1491,7 @@ async function getCachedHomePageStats(cache: KVNamespace | undefined, db: D1Data
     return stats
 }
 
-async function getCachedHomePageDiscoverCharacters(
-    cache: KVNamespace | undefined,
-    db: D1Database,
-): Promise<HomePageDiscoverCharacter[]> {
+async function getCachedHomePageDiscoverCharacters(cache: KVNamespace | undefined, db: D1Database): Promise<HomePageDiscoverCharacter[]> {
     const cached = await getCachedJson<HomePageDiscoverCharacter[]>(cache, HOME_PAGE_DISCOVER_CACHE_KEY)
 
     if (Array.isArray(cached) && cached.every(isHomePageDiscoverCharacter)) {
@@ -1525,8 +1522,9 @@ async function getCachedHomePageGalleryImages(
 }
 
 async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCharacter[]> {
-    const result = await db.prepare(
-        `WITH approved_sfw_media AS (SELECT id,
+    const result = await db
+        .prepare(
+            `WITH approved_sfw_media AS (SELECT id,
                                             character_id,
                                             sfw_image_key,
                                             sfw_preview_image_key,
@@ -1590,7 +1588,7 @@ async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCh
                                                       AND sfw_homepage_allowed = 1
                                                     ORDER BY RANDOM()
                                                     LIMIT 1)`,
-    )
+        )
         .all<{
             id: string
             user_id: string
@@ -1621,8 +1619,9 @@ async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCh
 }
 
 async function getHomePageGalleryImages(db: D1Database, mediaBaseUrl: string): Promise<HomePageGalleryImage[]> {
-    const result = await db.prepare(
-        `SELECT character_media.id,
+    const result = await db
+        .prepare(
+            `SELECT character_media.id,
                 character_media.user_id,
                 character_media.character_id,
                 character_media.sfw_image_key,
@@ -1643,26 +1642,31 @@ async function getHomePageGalleryImages(db: D1Database, mediaBaseUrl: string): P
            AND character_media.sfw_preview_image_key IS NOT NULL
          ORDER BY RANDOM()
          LIMIT 90`,
-    ).all<{
-        id: string
-        user_id: string
-        character_id: string
-        sfw_image_key: string | null
-        sfw_preview_image_key: string | null
-        sfw_content_type: string | null
-        sfw_width: number | null
-        sfw_height: number | null
-        sfw_preview_width: number | null
-        sfw_preview_height: number | null
-        sfw_artist: string | null
-        character_name: string | null
-        owner_username: string | null
-    }>()
+        )
+        .all<{
+            id: string
+            user_id: string
+            character_id: string
+            sfw_image_key: string | null
+            sfw_preview_image_key: string | null
+            sfw_content_type: string | null
+            sfw_width: number | null
+            sfw_height: number | null
+            sfw_preview_width: number | null
+            sfw_preview_height: number | null
+            sfw_artist: string | null
+            character_name: string | null
+            owner_username: string | null
+        }>()
 
     const images = (result.results ?? [])
-        .filter((image): image is typeof image & {
-            sfw_preview_image_key: string
-        } => Boolean(image.sfw_preview_image_key))
+        .filter(
+            (
+                image,
+            ): image is typeof image & {
+                sfw_preview_image_key: string
+            } => Boolean(image.sfw_preview_image_key),
+        )
         .map((image) => {
             const artist = image.sfw_artist?.trim() || 'an unknown artist'
             const characterName = image.character_name?.trim() || 'character'
@@ -1675,14 +1679,14 @@ async function getHomePageGalleryImages(db: D1Database, mediaBaseUrl: string): P
                 alt: `${characterName} gallery art by ${artist}`,
                 fallbackSrc: image.sfw_image_key
                     ? characterMediaImageUrl(
-                        mediaBaseUrl,
-                        image.user_id,
-                        image.character_id,
-                        image.id,
-                        image.sfw_image_key,
-                        'sfw',
-                        image.sfw_content_type,
-                    )
+                          mediaBaseUrl,
+                          image.user_id,
+                          image.character_id,
+                          image.id,
+                          image.sfw_image_key,
+                          'sfw',
+                          image.sfw_content_type,
+                      )
                     : null,
                 height,
                 href: characterProfileUrl(ownerUsername, characterName),
@@ -1729,8 +1733,9 @@ type HomePageHeightChartJson = {
 }
 
 async function getHomePageHeightChartCharacters(db: D1Database): Promise<HomePageHeightChartCharacter[]> {
-    const result = await db.prepare(
-        `SELECT characters.id,
+    const result = await db
+        .prepare(
+            `SELECT characters.id,
                 characters.name,
                 characters.user_id,
                 characters.height_chart_json,
@@ -1745,7 +1750,7 @@ async function getHomePageHeightChartCharacters(db: D1Database): Promise<HomePag
              )
          ORDER BY lower(characters.name)
          LIMIT 12`,
-    )
+        )
         .bind('razeth', '%ivo%', '%luxor%')
         .all<HomePageHeightChartRow>()
 
@@ -1760,10 +1765,14 @@ async function getHomePageHeightChartCharacters(db: D1Database): Promise<HomePag
                 score: targetNameScore(row.name, target.name),
                 chart: parseHomePageHeightChartJson(row.height_chart_json),
             }))
-            .filter((item): item is typeof item & {
-                chart: HomePageHeightChartJson & { image: NonNullable<HomePageHeightChartJson['image']> }
-                score: number
-            } => item.score !== null && Boolean(item.chart?.image) && !selectedIds.has(item.row.id))
+            .filter(
+                (
+                    item,
+                ): item is typeof item & {
+                    chart: HomePageHeightChartJson & {image: NonNullable<HomePageHeightChartJson['image']>}
+                    score: number
+                } => item.score !== null && Boolean(item.chart?.image) && !selectedIds.has(item.row.id),
+            )
             .sort((a, b) => a.score - b.score || a.row.name.localeCompare(b.row.name))
             .at(0)
 
@@ -1821,7 +1830,7 @@ function parseJsonRecord(value: string | null | undefined): Record<string, unkno
 function recordValue(source: Record<string, unknown>, key: string): Record<string, unknown> | null {
     const value = source[key]
 
-    return value && typeof value === 'object' ? value as Record<string, unknown> : null
+    return value && typeof value === 'object' ? (value as Record<string, unknown>) : null
 }
 
 function parseHeightChartParts(value: string | null | undefined): {
@@ -1860,17 +1869,17 @@ function parseHomePageHeightChartJson(value: string | null | undefined): HomePag
     const key = typeof image.key === 'string' ? image.key : ''
 
     if (
-        !key
-        || !Number.isFinite(meters)
-        || meters <= 0
-        || !Number.isFinite(headYPercent)
-        || !Number.isFinite(footYPercent)
-        || !Number.isFinite(nameTagXPercent)
-        || !Number.isFinite(naturalWidth)
-        || naturalWidth <= 0
-        || !Number.isFinite(naturalHeight)
-        || naturalHeight <= 0
-        || footYPercent <= headYPercent
+        !key ||
+        !Number.isFinite(meters) ||
+        meters <= 0 ||
+        !Number.isFinite(headYPercent) ||
+        !Number.isFinite(footYPercent) ||
+        !Number.isFinite(nameTagXPercent) ||
+        !Number.isFinite(naturalWidth) ||
+        naturalWidth <= 0 ||
+        !Number.isFinite(naturalHeight) ||
+        naturalHeight <= 0 ||
+        footYPercent <= headYPercent
     ) {
         return null
     }
@@ -1932,8 +1941,7 @@ function selectHomePageGalleryImageMix(images: HomePageGalleryImage[]): HomePage
     const selected: HomePageGalleryImage[] = []
 
     for (const groupName of pattern) {
-        const candidate = groups[groupName].find((image) => unused.has(image.id))
-            ?? images.find((image) => unused.has(image.id))
+        const candidate = groups[groupName].find((image) => unused.has(image.id)) ?? images.find((image) => unused.has(image.id))
 
         if (!candidate) {
             break
@@ -1966,8 +1974,10 @@ function shuffleHomePageGalleryImages(images: HomePageGalleryImage[]): HomePageG
 }
 
 async function getTableCount(db: D1Database, tableName: 'users' | 'characters' | 'character_media'): Promise<number> {
-    const row = await db.prepare(`SELECT COUNT(*) AS count
-                                  FROM ${tableName}`).first<{ count: number | string | null }>()
+    const row = await db
+        .prepare(`SELECT COUNT(*) AS count
+                                  FROM ${tableName}`)
+        .first<{count: number | string | null}>()
     const count = Number(row?.count ?? 0)
 
     return Number.isFinite(count) ? count : 0
@@ -2009,9 +2019,7 @@ function isHomePageStats(value: unknown): value is HomePageStats {
 
     const stats = value as Record<string, unknown>
 
-    return Number.isFinite(stats.users)
-        && Number.isFinite(stats.characters)
-        && Number.isFinite(stats.mediaItems)
+    return Number.isFinite(stats.users) && Number.isFinite(stats.characters) && Number.isFinite(stats.mediaItems)
 }
 
 function isHomePageDiscoverCharacter(value: unknown): value is HomePageDiscoverCharacter {
@@ -2021,17 +2029,19 @@ function isHomePageDiscoverCharacter(value: unknown): value is HomePageDiscoverC
 
     const character = value as Record<string, unknown>
 
-    return typeof character.id === 'string'
-        && typeof character.userId === 'string'
-        && typeof character.name === 'string'
-        && typeof character.ownerUsername === 'string'
-        && typeof character.profileImageKey === 'string'
-        && typeof character.previewMediaId === 'string'
-        && typeof character.previewImageKey === 'string'
-        && (typeof character.previewThumbnailImageKey === 'string' || character.previewThumbnailImageKey === null)
-        && (typeof character.previewContentType === 'string' || character.previewContentType === null)
-        && typeof character.previewArtist === 'string'
-        && Number.isFinite(character.imageCount)
+    return (
+        typeof character.id === 'string' &&
+        typeof character.userId === 'string' &&
+        typeof character.name === 'string' &&
+        typeof character.ownerUsername === 'string' &&
+        typeof character.profileImageKey === 'string' &&
+        typeof character.previewMediaId === 'string' &&
+        typeof character.previewImageKey === 'string' &&
+        (typeof character.previewThumbnailImageKey === 'string' || character.previewThumbnailImageKey === null) &&
+        (typeof character.previewContentType === 'string' || character.previewContentType === null) &&
+        typeof character.previewArtist === 'string' &&
+        Number.isFinite(character.imageCount)
+    )
 }
 
 function isHomePageGalleryImage(value: unknown): value is HomePageGalleryImage {
@@ -2041,15 +2051,17 @@ function isHomePageGalleryImage(value: unknown): value is HomePageGalleryImage {
 
     const image = value as Record<string, unknown>
 
-    return typeof image.id === 'string'
-        && typeof image.alt === 'string'
-        && (typeof image.fallbackSrc === 'string' || image.fallbackSrc === null || image.fallbackSrc === undefined)
-        && typeof image.height === 'number'
-        && Number.isFinite(image.height)
-        && typeof image.href === 'string'
-        && typeof image.src === 'string'
-        && typeof image.width === 'number'
-        && Number.isFinite(image.width)
+    return (
+        typeof image.id === 'string' &&
+        typeof image.alt === 'string' &&
+        (typeof image.fallbackSrc === 'string' || image.fallbackSrc === null || image.fallbackSrc === undefined) &&
+        typeof image.height === 'number' &&
+        Number.isFinite(image.height) &&
+        typeof image.href === 'string' &&
+        typeof image.src === 'string' &&
+        typeof image.width === 'number' &&
+        Number.isFinite(image.width)
+    )
 }
 
 function userProfileUrl(username: string): string {
@@ -2108,10 +2120,9 @@ async function renderProfilePage(c: PageRouteContext, username: string, rawPath 
 
     if (username !== profileUser.username) {
         const requestUrl = new URL(c.req.url)
-        const canonicalPath = [
-            userProfileUrl(profileUser.username),
-            ...pathSegments.map((segment) => encodeURIComponent(segment)),
-        ].join('/')
+        const canonicalPath = [userProfileUrl(profileUser.username), ...pathSegments.map((segment) => encodeURIComponent(segment))].join(
+            '/',
+        )
 
         return c.redirect(`${canonicalPath}${requestUrl.search}`, 301)
     }
@@ -2149,10 +2160,7 @@ async function renderProfilePage(c: PageRouteContext, username: string, rawPath 
 }
 
 function getProfilePathSegments(rawPath: string): string[] {
-    return rawPath
-        .split('/')
-        .filter(Boolean)
-        .map(decodePathSegment)
+    return rawPath.split('/').filter(Boolean).map(decodePathSegment)
 }
 
 function decodePathSegment(segment: string): string {
@@ -2163,13 +2171,10 @@ function decodePathSegment(segment: string): string {
     }
 }
 
-async function getCharacterPageCharacter(
-    db: D1Database,
-    userId: string,
-    characterName: string,
-): Promise<CharacterPageCharacter | null> {
-    const character = await db.prepare(
-        `SELECT id,
+async function getCharacterPageCharacter(db: D1Database, userId: string, characterName: string): Promise<CharacterPageCharacter | null> {
+    const character = await db
+        .prepare(
+            `SELECT id,
                 user_id,
                 name,
                 profile_image_key,
@@ -2180,7 +2185,7 @@ async function getCharacterPageCharacter(
            AND name = ? COLLATE NOCASE
          ORDER BY CASE WHEN name = ? THEN 0 ELSE 1 END, name
          LIMIT 1`,
-    )
+        )
         .bind(userId, characterName, characterName)
         .first<{
             id: string
@@ -2209,31 +2214,25 @@ function hasUsableHeightChart(value: string | null | undefined): boolean {
     const parts = parseHeightChartParts(value)
 
     return Boolean(
-        parts?.image
-        && typeof parts.image.key === 'string'
-        && parts.image.key
-        && Number.isFinite(Number(parts.image.naturalWidth))
-        && Number.isFinite(Number(parts.image.naturalHeight))
-        && parts.height
-        && Number.isFinite(Number(parts.height.meters))
-        && parts.calibration
-        && Number.isFinite(Number(parts.calibration.headYPercent))
-        && Number.isFinite(Number(parts.calibration.footYPercent)),
+        parts?.image &&
+            typeof parts.image.key === 'string' &&
+            parts.image.key &&
+            Number.isFinite(Number(parts.image.naturalWidth)) &&
+            Number.isFinite(Number(parts.image.naturalHeight)) &&
+            parts.height &&
+            Number.isFinite(Number(parts.height.meters)) &&
+            parts.calibration &&
+            Number.isFinite(Number(parts.calibration.headYPercent)) &&
+            Number.isFinite(Number(parts.calibration.footYPercent)),
     )
 }
 
-function findFolderPath(
-    folders: CharacterManagementFolder[],
-    pathSegments: string[],
-): CharacterManagementFolder[] {
+function findFolderPath(folders: CharacterManagementFolder[], pathSegments: string[]): CharacterManagementFolder[] {
     const folderPath: CharacterManagementFolder[] = []
     let parentFolderId: string | null = null
 
     for (const segment of pathSegments) {
-        const folder = folders.find((candidate) => (
-            candidate.parentFolderId === parentFolderId
-            && candidate.name === segment
-        ))
+        const folder = folders.find((candidate) => candidate.parentFolderId === parentFolderId && candidate.name === segment)
 
         if (!folder) {
             return folderPath
@@ -2247,13 +2246,14 @@ function findFolderPath(
 }
 
 async function getProfileUser(db: D1Database, username: string): Promise<ProfilePageUser | null> {
-    const user = await db.prepare(
-        `SELECT id, username, profile_photo_key, bio
+    const user = await db
+        .prepare(
+            `SELECT id, username, profile_photo_key, bio
          FROM users
          WHERE username = ? COLLATE NOCASE
          ORDER BY CASE WHEN username = ? THEN 0 ELSE 1 END, username
          LIMIT 1`,
-    )
+        )
         .bind(username, username)
         .first<{
             id: string
@@ -2275,12 +2275,13 @@ async function getProfileUser(db: D1Database, username: string): Promise<Profile
 }
 
 async function getUserSocialLinks(db: D1Database, userId: string): Promise<UserSocialLink[]> {
-    const result = await db.prepare(
-        `SELECT platform, label, url
+    const result = await db
+        .prepare(
+            `SELECT platform, label, url
          FROM user_social_links
          WHERE user_id = ?
          ORDER BY platform`,
-    )
+        )
         .bind(userId)
         .all<UserSocialLink>()
 
@@ -2288,12 +2289,13 @@ async function getUserSocialLinks(db: D1Database, userId: string): Promise<UserS
 }
 
 async function getCharacterFolders(db: D1Database, userId: string): Promise<CharacterManagementFolder[]> {
-    const result = await db.prepare(
-        `SELECT id, name, parent_folder_id, folder_image_key, sort_order
+    const result = await db
+        .prepare(
+            `SELECT id, name, parent_folder_id, folder_image_key, sort_order
          FROM character_folders
          WHERE user_id = ?
          ORDER BY parent_folder_id, sort_order, name`,
-    )
+        )
         .bind(userId)
         .all<{
             id: string
@@ -2313,16 +2315,14 @@ async function getCharacterFolders(db: D1Database, userId: string): Promise<Char
     }))
 }
 
-async function getCharacters(
-    db: D1Database,
-    userId: string,
-): Promise<CharacterManagementCharacter[]> {
-    const result = await db.prepare(
-        `SELECT id, name, profile_image_key, folder_id, sort_order
+async function getCharacters(db: D1Database, userId: string): Promise<CharacterManagementCharacter[]> {
+    const result = await db
+        .prepare(
+            `SELECT id, name, profile_image_key, folder_id, sort_order
          FROM characters
          WHERE user_id = ?
          ORDER BY sort_order, name`,
-    )
+        )
         .bind(userId)
         .all<{
             id: string
@@ -2342,12 +2342,10 @@ async function getCharacters(
     }))
 }
 
-async function getCharacterFolderPlacements(
-    db: D1Database,
-    userId: string,
-): Promise<CharacterFolderPlacement[]> {
-    const result = await db.prepare(
-        `SELECT placement.folder_id,
+async function getCharacterFolderPlacements(db: D1Database, userId: string): Promise<CharacterFolderPlacement[]> {
+    const result = await db
+        .prepare(
+            `SELECT placement.folder_id,
                 placement.character_id,
                 placement.sort_order
          FROM character_folder_placements placement
@@ -2359,7 +2357,7 @@ async function getCharacterFolderPlacements(
                                  AND character.user_id = placement.user_id
          WHERE placement.user_id = ?
          ORDER BY placement.folder_id, placement.sort_order, character.name`,
-    )
+        )
         .bind(userId)
         .all<{
             folder_id: string
@@ -2375,16 +2373,17 @@ async function getCharacterFolderPlacements(
 }
 
 async function getUploadedImageCount(db: D1Database, userId: string): Promise<number> {
-    const row = await db.prepare(
-        `SELECT COALESCE(SUM(
+    const row = await db
+        .prepare(
+            `SELECT COALESCE(SUM(
                                  CASE WHEN sfw_image_key IS NOT NULL THEN 1 ELSE 0 END +
                                  CASE WHEN nsfw_image_key IS NOT NULL THEN 1 ELSE 0 END
                          ), 0) AS uploaded_image_count
          FROM character_media
          WHERE user_id = ?`,
-    )
+        )
         .bind(userId)
-        .first<{ uploaded_image_count: number | null }>()
+        .first<{uploaded_image_count: number | null}>()
 
     return Number(row?.uploaded_image_count ?? 0)
 }
@@ -2394,8 +2393,9 @@ async function getCharacterSettingsCharacter(
     userId: string,
     characterId: string,
 ): Promise<CharacterSettingsCharacter | null> {
-    const character = await db.prepare(
-        `SELECT id,
+    const character = await db
+        .prepare(
+            `SELECT id,
                 user_id,
                 name,
                 profile_image_key,
@@ -2404,7 +2404,7 @@ async function getCharacterSettingsCharacter(
          WHERE id = ?
            AND user_id = ?
          LIMIT 1`,
-    )
+        )
         .bind(characterId, userId)
         .first<{
             id: string
@@ -2433,8 +2433,9 @@ async function getCharacterHeightChartEditorCharacter(
     characterId: string,
     mediaBaseUrl: string,
 ): Promise<CharacterHeightChartEditorCharacter | null> {
-    const character = await db.prepare(
-        `SELECT id,
+    const character = await db
+        .prepare(
+            `SELECT id,
                 user_id,
                 name,
                 height_chart_json
@@ -2442,7 +2443,7 @@ async function getCharacterHeightChartEditorCharacter(
          WHERE id = ?
            AND user_id = ?
          LIMIT 1`,
-    )
+        )
         .bind(characterId, userId)
         .first<{
             id: string
@@ -2459,12 +2460,7 @@ async function getCharacterHeightChartEditorCharacter(
         id: character.id,
         userId: character.user_id,
         name: character.name,
-        heightChart: parseCharacterHeightChartEditorData(
-            character.height_chart_json,
-            mediaBaseUrl,
-            character.user_id,
-            character.id,
-        ),
+        heightChart: parseCharacterHeightChartEditorData(character.height_chart_json, mediaBaseUrl, character.user_id, character.id),
     }
 }
 
@@ -2501,15 +2497,16 @@ function parseCharacterHeightChartEditorData(
         height: {
             meters,
         },
-        image: imageKey && Number.isFinite(naturalWidth) && Number.isFinite(naturalHeight)
-            ? {
-                key: imageKey,
-                contentType,
-                naturalWidth,
-                naturalHeight,
-                url: characterHeightChartImageUrl(mediaBaseUrl, userId, characterId, imageKey, contentType),
-            }
-            : null,
+        image:
+            imageKey && Number.isFinite(naturalWidth) && Number.isFinite(naturalHeight)
+                ? {
+                      key: imageKey,
+                      contentType,
+                      naturalWidth,
+                      naturalHeight,
+                      url: characterHeightChartImageUrl(mediaBaseUrl, userId, characterId, imageKey, contentType),
+                  }
+                : null,
         calibration: {
             headYPercent,
             footYPercent,
@@ -2519,13 +2516,10 @@ function parseCharacterHeightChartEditorData(
     }
 }
 
-async function getCharacterSettingsMedia(
-    db: D1Database,
-    userId: string,
-    characterId: string,
-): Promise<CharacterSettingsMedia[]> {
-    const result = await db.prepare(
-        `SELECT id,
+async function getCharacterSettingsMedia(db: D1Database, userId: string, characterId: string): Promise<CharacterSettingsMedia[]> {
+    const result = await db
+        .prepare(
+            `SELECT id,
                 sfw_image_key,
                 nsfw_image_key,
                 sfw_preview_image_key,
@@ -2547,7 +2541,7 @@ async function getCharacterSettingsMedia(
          WHERE character_id = ?
            AND user_id = ?
          ORDER BY created_at, id`,
-    )
+        )
         .bind(characterId, userId)
         .all<{
             id: string
@@ -2592,27 +2586,25 @@ async function getCharacterSettingsMedia(
     }))
 }
 
-async function getCharacterGalleryTabs(
-    db: D1Database,
-    userId: string,
-    characterId: string,
-): Promise<CharacterSettingsGalleryTab[]> {
+async function getCharacterGalleryTabs(db: D1Database, userId: string, characterId: string): Promise<CharacterSettingsGalleryTab[]> {
     const [tabResult, rowResult] = await Promise.all([
-        db.prepare(
-            `SELECT id, name, sort_order
+        db
+            .prepare(
+                `SELECT id, name, sort_order
              FROM character_gallery_tabs
              WHERE character_id = ?
                AND user_id = ?
              ORDER BY sort_order, name`,
-        )
+            )
             .bind(characterId, userId)
             .all<{
                 id: string
                 name: string
                 sort_order: number
             }>(),
-        db.prepare(
-            `SELECT character_gallery_rows.id            AS row_id,
+        db
+            .prepare(
+                `SELECT character_gallery_rows.id            AS row_id,
                     character_gallery_rows.tab_id        AS tab_id,
                     character_gallery_rows.sort_order    AS row_sort_order,
                     character_gallery_rows.force_full_width AS force_full_width,
@@ -2624,7 +2616,7 @@ async function getCharacterGalleryTabs(
              WHERE character_gallery_rows.character_id = ?
                AND character_gallery_rows.user_id = ?
              ORDER BY character_gallery_rows.sort_order, character_gallery_row_media.sort_order`,
-        )
+            )
             .bind(characterId, userId)
             .all<{
                 row_id: string
@@ -2667,29 +2659,31 @@ async function getCharacterGalleryTabs(
 function createDefaultGalleryTabs(media: CharacterSettingsMedia[]): CharacterSettingsGalleryTab[] {
     const mediaIdChunks = chunkGalleryItems(media.map((item) => item.id))
 
-    return [{
-        id: crypto.randomUUID(),
-        name: 'default',
-        rows: mediaIdChunks.map((mediaIds) => ({
+    return [
+        {
             id: crypto.randomUUID(),
-            mediaIds,
-            forceFullWidth: false,
-        })),
-    }]
+            name: 'default',
+            rows: mediaIdChunks.map((mediaIds) => ({
+                id: crypto.randomUUID(),
+                mediaIds,
+                forceFullWidth: false,
+            })),
+        },
+    ]
 }
 
-function splitOversizedGalleryRows(
-    rows: CharacterSettingsGalleryTab['rows'],
-): CharacterSettingsGalleryTab['rows'] {
+function splitOversizedGalleryRows(rows: CharacterSettingsGalleryTab['rows']): CharacterSettingsGalleryTab['rows'] {
     return rows.flatMap((row) => {
         const mediaIdChunks = chunkGalleryItems(row.mediaIds)
         const canForceFullWidth = row.forceFullWidth && row.mediaIds.length === 1
 
         if (mediaIdChunks.length === 0) {
-            return [{
-                ...row,
-                forceFullWidth: false,
-            }]
+            return [
+                {
+                    ...row,
+                    forceFullWidth: false,
+                },
+            ]
         }
 
         return mediaIdChunks.map((mediaIds, index) => ({
@@ -2700,9 +2694,7 @@ function splitOversizedGalleryRows(
     })
 }
 
-function normalizeGalleryRowFullWidths(
-    rows: CharacterSettingsGalleryTab['rows'],
-): CharacterSettingsGalleryTab['rows'] {
+function normalizeGalleryRowFullWidths(rows: CharacterSettingsGalleryTab['rows']): CharacterSettingsGalleryTab['rows'] {
     return rows.map((row, index) => ({
         ...row,
         forceFullWidth: shouldForceGalleryRowFullWidth(row, index, rows.length),

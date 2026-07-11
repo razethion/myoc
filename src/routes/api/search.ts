@@ -1,14 +1,9 @@
 import {Hono} from 'hono'
 import {characterHeightChartImageObjectKey, characterProfileImageUrl} from '../../lib/media/url'
-import {
-    normalizeSearchOffset,
-    normalizeSearchQuery,
-    searchCharacters,
-    searchUsers,
-} from '../../lib/search'
+import {normalizeSearchOffset, normalizeSearchQuery, searchCharacters, searchUsers} from '../../lib/search'
 import type {Bindings} from '../../types/bindings'
 
-export const searchRoutes = new Hono<{ Bindings: Bindings }>()
+export const searchRoutes = new Hono<{Bindings: Bindings}>()
 
 type SizeChartCharacterSearchRow = {
     id: string
@@ -51,9 +46,10 @@ searchRoutes.get('/', async (c) => {
         return c.json({error: 'Search type must be users or characters'}, 400)
     }
 
-    const results = type === 'users'
-        ? await searchUsers(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, query, undefined, offset)
-        : await searchCharacters(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, query, undefined, offset)
+    const results =
+        type === 'users'
+            ? await searchUsers(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, query, undefined, offset)
+            : await searchCharacters(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, query, undefined, offset)
 
     return c.json({
         type,
@@ -133,14 +129,10 @@ searchRoutes.get('/size-chart-characters/by-id', async (c) => {
         return c.json({items: []})
     }
 
-    const sizeChartIds = ids
-        .filter(isSizeChartId)
-        .map((id) => id.toLowerCase())
+    const sizeChartIds = ids.filter(isSizeChartId).map((id) => id.toLowerCase())
     const where = [
         `characters.id IN (${ids.map(() => '?').join(', ')})`,
-        ...(sizeChartIds.length > 0
-            ? [`${SIZE_CHART_ID_LOOKUP_SQL} IN (${sizeChartIds.map(() => '?').join(', ')})`]
-            : []),
+        ...(sizeChartIds.length > 0 ? [`${SIZE_CHART_ID_LOOKUP_SQL} IN (${sizeChartIds.map(() => '?').join(', ')})`] : []),
     ].join(' OR ')
 
     const result = await c.env.DB.prepare(
@@ -169,9 +161,7 @@ searchRoutes.get('/size-chart-characters/by-id', async (c) => {
     }
 
     return c.json({
-        items: ids
-            .map((id) => itemsById.get(id))
-            .filter((item): item is NonNullable<typeof item> => Boolean(item)),
+        items: ids.map((id) => itemsById.get(id)).filter((item): item is NonNullable<typeof item> => Boolean(item)),
     })
 })
 
@@ -187,7 +177,7 @@ searchRoutes.get('/size-chart-characters/:characterId/image', async (c) => {
          LIMIT 1`,
     )
         .bind(characterId)
-        .first<{ id: string; user_id: string; height_chart_json: string }>()
+        .first<{id: string; user_id: string; height_chart_json: string}>()
 
     const heightChart = parseSizeChartJson(character?.height_chart_json)
 
@@ -195,12 +185,9 @@ searchRoutes.get('/size-chart-characters/:characterId/image', async (c) => {
         return c.body(null, 404)
     }
 
-    const object = await c.env.MEDIA_BUCKET.get(characterHeightChartImageObjectKey(
-        character.user_id,
-        character.id,
-        heightChart.image.key,
-        heightChart.image.contentType,
-    ))
+    const object = await c.env.MEDIA_BUCKET.get(
+        characterHeightChartImageObjectKey(character.user_id, character.id, heightChart.image.key, heightChart.image.contentType),
+    )
 
     if (!object?.body) {
         return c.body(null, 404)
@@ -214,7 +201,7 @@ searchRoutes.get('/size-chart-characters/:characterId/image', async (c) => {
     })
 })
 
-function createSizeChartSearchTerms(query: string): { contains: string }[] {
+function createSizeChartSearchTerms(query: string): {contains: string}[] {
     return query
         .toLowerCase()
         .split(/\s+/)
@@ -273,12 +260,12 @@ function toSizeChartCharacterSearchResult(row: SizeChartCharacterSearchRow, medi
         hasSizeChart,
         heightChart: heightChart?.image
             ? {
-                ...heightChart,
-                image: {
-                    ...heightChart.image,
-                    url: `/api/search/size-chart-characters/${encodeURIComponent(row.id)}/image?key=${encodeURIComponent(heightChart.image.key)}`,
-                },
-            }
+                  ...heightChart,
+                  image: {
+                      ...heightChart.image,
+                      url: `/api/search/size-chart-characters/${encodeURIComponent(row.id)}/image?key=${encodeURIComponent(heightChart.image.key)}`,
+                  },
+              }
             : null,
     }
 }
@@ -296,9 +283,10 @@ function parseSizeChartJson(value: string | null | undefined): SizeChartJson | n
         }
 
         const chart = parsed as Record<string, unknown>
-        const height = chart.height && typeof chart.height === 'object' ? chart.height as Record<string, unknown> : null
-        const calibration = chart.calibration && typeof chart.calibration === 'object' ? chart.calibration as Record<string, unknown> : null
-        const image = chart.image && typeof chart.image === 'object' ? chart.image as Record<string, unknown> : null
+        const height = chart.height && typeof chart.height === 'object' ? (chart.height as Record<string, unknown>) : null
+        const calibration =
+            chart.calibration && typeof chart.calibration === 'object' ? (chart.calibration as Record<string, unknown>) : null
+        const image = chart.image && typeof chart.image === 'object' ? (chart.image as Record<string, unknown>) : null
 
         if (!height || !calibration || !image) {
             return null
@@ -312,7 +300,15 @@ function parseSizeChartJson(value: string | null | undefined): SizeChartJson | n
         const naturalHeight = Number(image.naturalHeight)
         const key = typeof image.key === 'string' ? image.key : ''
 
-        if (!key || !Number.isFinite(meters) || !Number.isFinite(headYPercent) || !Number.isFinite(footYPercent) || !Number.isFinite(nameTagXPercent) || !Number.isFinite(naturalWidth) || !Number.isFinite(naturalHeight)) {
+        if (
+            !key ||
+            !Number.isFinite(meters) ||
+            !Number.isFinite(headYPercent) ||
+            !Number.isFinite(footYPercent) ||
+            !Number.isFinite(nameTagXPercent) ||
+            !Number.isFinite(naturalWidth) ||
+            !Number.isFinite(naturalHeight)
+        ) {
             return null
         }
 

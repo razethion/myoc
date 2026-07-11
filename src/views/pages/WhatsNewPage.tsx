@@ -51,14 +51,14 @@ function WhatsNewStyles() {
     )
 }
 
-function ReleaseBlock({release, isCurrent}: { release: ReleaseNote, isCurrent: boolean }) {
+function ReleaseBlock({release, isCurrent}: {release: ReleaseNote; isCurrent: boolean}) {
     return (
         <li class="relative grid gap-4 pl-10 sm:pl-14">
             <span
-                class={`whats-new-dot absolute left-1.5 top-6 h-3 w-3 rounded-full sm:left-4 ${release.important ? 'bg-warning' : 'bg-primary'}`}></span>
+                class={`whats-new-dot absolute left-1.5 top-6 h-3 w-3 rounded-full sm:left-4 ${release.important ? 'bg-warning' : 'bg-primary'}`}
+            ></span>
             <article class="rounded-lg border border-base-300 bg-base-200/90 p-5 shadow-xl sm:p-6">
-                <div
-                    class="flex flex-col gap-3 border-b border-base-300 pb-4 sm:flex-row sm:items-start sm:justify-between">
+                <div class="flex flex-col gap-3 border-b border-base-300 pb-4 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                         <p class="text-sm font-semibold uppercase tracking-[0.22em] text-primary">{release.releasedOn}</p>
                         <h2 class="mt-2 text-2xl font-black leading-tight sm:text-3xl">{release.title}</h2>
@@ -91,24 +91,19 @@ function ReleaseBlock({release, isCurrent}: { release: ReleaseNote, isCurrent: b
 
 export function WhatsNewPage({currentUser, guestInitial, mediaBaseUrl, releases}: WhatsNewPageProps) {
     return (
-        <BaseLayout head={<WhatsNewStyles/>} title="What's New | MyOC">
-            <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl}/>
+        <BaseLayout head={<WhatsNewStyles />} title="What's New | MyOC">
+            <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl} />
             <main class="whats-new-shell min-h-[calc(100vh-4rem)] px-4 py-10 sm:px-6 sm:py-14 lg:px-8">
                 <section class="mx-auto max-w-5xl">
                     <div class="border-b border-base-300 pb-8">
                         <div class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
                             <div>
-                                <p class="text-sm font-semibold uppercase tracking-[0.28em] text-primary">Release
-                                    Notes</p>
+                                <p class="text-sm font-semibold uppercase tracking-[0.28em] text-primary">Release Notes</p>
                                 <h1 class="mt-3 text-4xl font-black tracking-tight sm:text-5xl">What's new</h1>
-                                <p class="mt-4 max-w-2xl text-lg leading-8 text-base-content/75">
-                                    Follow MyOC updates as they happen.
-                                </p>
+                                <p class="mt-4 max-w-2xl text-lg leading-8 text-base-content/75">Follow MyOC updates as they happen.</p>
                             </div>
-                            <div class="rounded-lg border border-base-300 bg-base-200 px-4 py-3"
-                                 data-app-version={APP_VERSION}>
-                                <p class="text-xs font-bold uppercase tracking-[0.22em] text-base-content/60">Current
-                                    version</p>
+                            <div class="rounded-lg border border-base-300 bg-base-200 px-4 py-3" data-app-version={APP_VERSION}>
+                                <p class="text-xs font-bold uppercase tracking-[0.22em] text-base-content/60">Current version</p>
                                 <p class="mt-1 text-xl font-black">v{APP_VERSION}</p>
                             </div>
                         </div>
@@ -116,7 +111,7 @@ export function WhatsNewPage({currentUser, guestInitial, mediaBaseUrl, releases}
 
                     <ol class="whats-new-list relative mt-10 grid gap-7">
                         {releases.map((release, index) => (
-                            <ReleaseBlock isCurrent={index === 0} release={release}/>
+                            <ReleaseBlock isCurrent={index === 0} release={release} />
                         ))}
                     </ol>
                 </section>

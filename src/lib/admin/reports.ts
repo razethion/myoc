@@ -1,8 +1,4 @@
-import {
-    characterMediaImageObjectKey,
-    characterMediaImageUrl,
-    characterMediaPreviewImageUrl,
-} from '../media/url'
+import {characterMediaImageObjectKey, characterMediaImageUrl, characterMediaPreviewImageUrl} from '../media/url'
 
 export type AdminImageReport = {
     type: 'image'
@@ -54,8 +50,9 @@ type ReportedMediaRow = {
 const REPORT_LIMIT = 100
 
 export async function getAdminReportsData(db: D1Database, mediaBaseUrl: string): Promise<AdminReportsData> {
-    const result = await db.prepare(
-        `SELECT character_media.id,
+    const result = await db
+        .prepare(
+            `SELECT character_media.id,
                 character_media.user_id,
                 users.username,
                 character_media.character_id,
@@ -100,16 +97,17 @@ export async function getAdminReportsData(db: D1Database, mediaBaseUrl: string):
          ORDER BY COALESCE(character_media.sfw_reviewed_at, character_media.nsfw_reviewed_at, character_media.created_at),
                   character_media.id
          LIMIT ?`,
-    )
+        )
         .bind(REPORT_LIMIT)
         .all<ReportedMediaRow>()
 
     const reports = (result.results ?? []).flatMap((row) => toImageReports(row, mediaBaseUrl))
-    reports.sort((left, right) => (
-        left.reportedAt.localeCompare(right.reportedAt)
-        || left.mediaId.localeCompare(right.mediaId)
-        || left.rating.localeCompare(right.rating)
-    ))
+    reports.sort(
+        (left, right) =>
+            left.reportedAt.localeCompare(right.reportedAt) ||
+            left.mediaId.localeCompare(right.mediaId) ||
+            left.rating.localeCompare(right.rating),
+    )
 
     return {
         reports: reports.slice(0, REPORT_LIMIT),
@@ -120,11 +118,33 @@ function toImageReports(row: ReportedMediaRow, mediaBaseUrl: string): AdminImage
     const reports: AdminImageReport[] = []
 
     if (row.sfw_image_key && row.sfw_review_status === 'reported') {
-        reports.push(toImageReport(row, mediaBaseUrl, 'sfw', row.sfw_image_key, row.sfw_preview_image_key, row.sfw_content_type, row.sfw_reviewed_at, row.sfw_reported_by_username))
+        reports.push(
+            toImageReport(
+                row,
+                mediaBaseUrl,
+                'sfw',
+                row.sfw_image_key,
+                row.sfw_preview_image_key,
+                row.sfw_content_type,
+                row.sfw_reviewed_at,
+                row.sfw_reported_by_username,
+            ),
+        )
     }
 
     if (row.nsfw_image_key && row.nsfw_review_status === 'reported') {
-        reports.push(toImageReport(row, mediaBaseUrl, 'nsfw', row.nsfw_image_key, row.nsfw_preview_image_key, row.nsfw_content_type, row.nsfw_reviewed_at, row.nsfw_reported_by_username))
+        reports.push(
+            toImageReport(
+                row,
+                mediaBaseUrl,
+                'nsfw',
+                row.nsfw_image_key,
+                row.nsfw_preview_image_key,
+                row.nsfw_content_type,
+                row.nsfw_reviewed_at,
+                row.nsfw_reported_by_username,
+            ),
+        )
     }
 
     return reports

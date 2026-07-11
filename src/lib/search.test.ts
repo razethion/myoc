@@ -1,12 +1,7 @@
 import {describe, expect, it, vi} from 'vitest'
-import {
-    normalizeSearchOffset,
-    normalizeSearchQuery,
-    SEARCH_QUERY_MAX_LENGTH,
-    searchUsers,
-} from './search'
+import {normalizeSearchOffset, normalizeSearchQuery, SEARCH_QUERY_MAX_LENGTH, searchUsers} from './search'
 
-function createRecordingDb(): { db: D1Database; binds: unknown[][] } {
+function createRecordingDb(): {db: D1Database; binds: unknown[][]} {
     const binds: unknown[][] = []
     const db = {
         prepare: vi.fn(() => ({

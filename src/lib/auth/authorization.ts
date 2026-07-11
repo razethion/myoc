@@ -1,10 +1,6 @@
 import type {Context} from 'hono'
 import type {Bindings} from '../../types/bindings'
-import {
-    getCurrentUser,
-    isAdminUser,
-    type CurrentUser,
-} from './session'
+import {getCurrentUser, isAdminUser, type CurrentUser} from './session'
 
 type AuthorizedUser = {
     currentUser: CurrentUser
@@ -15,7 +11,9 @@ type AuthorizationFailure = {
 }
 
 export async function requireAdminApiUser(
-    c: Context<{ Bindings: Bindings }>,
+    c: Context<{
+        Bindings: Bindings
+    }>,
 ): Promise<AuthorizedUser | AuthorizationFailure> {
     const currentUser = await getCurrentUser(c)
 

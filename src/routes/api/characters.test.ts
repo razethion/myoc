@@ -134,14 +134,19 @@ async function createChunkedSfwUploadTestContext() {
     })
     const csrfToken = await createCsrfToken(sessionToken)
 
-    const initResponse = await initChunkedMedia(character.id, {
-        ratings: ['sfw'],
-    }, db, {
-        mediaBucket,
-        sessionToken,
-        csrfToken,
-    })
-    const initBody = await initResponse.json() as ChunkedSfwInitBody
+    const initResponse = await initChunkedMedia(
+        character.id,
+        {
+            ratings: ['sfw'],
+        },
+        db,
+        {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        },
+    )
+    const initBody = (await initResponse.json()) as ChunkedSfwInitBody
 
     return {
         sessionToken,
@@ -153,52 +158,52 @@ async function createChunkedSfwUploadTestContext() {
     }
 }
 
-async function postCharacter(
-    body: unknown,
-    db: D1Database,
-    options: CharacterRequestOptions = {},
-): Promise<Response> {
-    return apiRoutes.request('https://example.com/characters', {
-        method: 'POST',
-        body: body instanceof FormData || typeof body === 'string' ? body : JSON.stringify(body),
-        headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
+async function postCharacter(body: unknown, db: D1Database, options: CharacterRequestOptions = {}): Promise<Response> {
+    return apiRoutes.request(
+        'https://example.com/characters',
+        {
+            method: 'POST',
+            body: body instanceof FormData || typeof body === 'string' ? body : JSON.stringify(body),
+            headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
 }
 
-async function postFolder(
-    body: unknown,
-    db: D1Database,
-    options: CharacterRequestOptions = {},
-): Promise<Response> {
-    return apiRoutes.request('https://example.com/characters/folders', {
-        method: 'POST',
-        body: typeof body === 'string' ? body : JSON.stringify(body),
-        headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
+async function postFolder(body: unknown, db: D1Database, options: CharacterRequestOptions = {}): Promise<Response> {
+    return apiRoutes.request(
+        'https://example.com/characters/folders',
+        {
+            method: 'POST',
+            body: typeof body === 'string' ? body : JSON.stringify(body),
+            headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
 }
 
-async function postTree(
-    body: unknown,
-    db: D1Database,
-    options: CharacterRequestOptions = {},
-): Promise<Response> {
-    return apiRoutes.request('https://example.com/characters/tree', {
-        method: 'POST',
-        body: typeof body === 'string' ? body : JSON.stringify(body),
-        headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
+async function postTree(body: unknown, db: D1Database, options: CharacterRequestOptions = {}): Promise<Response> {
+    return apiRoutes.request(
+        'https://example.com/characters/tree',
+        {
+            method: 'POST',
+            body: typeof body === 'string' ? body : JSON.stringify(body),
+            headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
 }
 
-async function postCharacterOrder(
-    body: unknown,
-    db: D1Database,
-    options: CharacterRequestOptions = {},
-): Promise<Response> {
-    return apiRoutes.request('https://example.com/characters/order', {
-        method: 'POST',
-        body: typeof body === 'string' ? body : JSON.stringify(body),
-        headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
+async function postCharacterOrder(body: unknown, db: D1Database, options: CharacterRequestOptions = {}): Promise<Response> {
+    return apiRoutes.request(
+        'https://example.com/characters/order',
+        {
+            method: 'POST',
+            body: typeof body === 'string' ? body : JSON.stringify(body),
+            headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
 }
 
 async function putFolderPlacements(
@@ -207,11 +212,15 @@ async function putFolderPlacements(
     db: D1Database,
     options: CharacterRequestOptions = {},
 ): Promise<Response> {
-    return apiRoutes.request(`https://example.com/characters/folders/${folderId}/placements`, {
-        method: 'PUT',
-        body: typeof body === 'string' ? body : JSON.stringify(body),
-        headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
+    return apiRoutes.request(
+        `https://example.com/characters/folders/${folderId}/placements`,
+        {
+            method: 'PUT',
+            body: typeof body === 'string' ? body : JSON.stringify(body),
+            headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
 }
 
 async function initChunkedMedia(
@@ -220,11 +229,15 @@ async function initChunkedMedia(
     db: D1Database,
     options: CharacterRequestOptions = {},
 ): Promise<Response> {
-    return apiRoutes.request(`https://example.com/characters/${characterId}/media/chunked/init`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-        headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
+    return apiRoutes.request(
+        `https://example.com/characters/${characterId}/media/chunked/init`,
+        {
+            method: 'POST',
+            body: JSON.stringify(body),
+            headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
 }
 
 async function putChunkedMediaPart(
@@ -256,11 +269,15 @@ async function completeChunkedMedia(
     db: D1Database,
     options: CharacterRequestOptions = {},
 ): Promise<Response> {
-    return apiRoutes.request(`https://example.com/characters/${characterId}/media/chunked/complete`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-        headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
+    return apiRoutes.request(
+        `https://example.com/characters/${characterId}/media/chunked/complete`,
+        {
+            method: 'POST',
+            body: JSON.stringify(body),
+            headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
 }
 
 async function completeToyhouseImportItem(
@@ -269,11 +286,15 @@ async function completeToyhouseImportItem(
     db: D1Database,
     options: CharacterRequestOptions = {},
 ): Promise<Response> {
-    return apiRoutes.request(`https://example.com/characters/toyhouse-import-items/${itemId}/complete`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-        headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
+    return apiRoutes.request(
+        `https://example.com/characters/toyhouse-import-items/${itemId}/complete`,
+        {
+            method: 'POST',
+            body: JSON.stringify(body),
+            headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
 }
 
 async function failToyhouseImportItem(
@@ -282,11 +303,15 @@ async function failToyhouseImportItem(
     db: D1Database,
     options: CharacterRequestOptions = {},
 ): Promise<Response> {
-    return apiRoutes.request(`https://example.com/characters/toyhouse-import-items/${itemId}/fail`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-        headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
+    return apiRoutes.request(
+        `https://example.com/characters/toyhouse-import-items/${itemId}/fail`,
+        {
+            method: 'POST',
+            body: JSON.stringify(body),
+            headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
 }
 
 async function postProfileImage(
@@ -295,11 +320,15 @@ async function postProfileImage(
     db: D1Database,
     options: CharacterRequestOptions = {},
 ): Promise<Response> {
-    return apiRoutes.request(`https://example.com/characters/${characterId}/profile-image`, {
-        method: 'POST',
-        body,
-        headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
+    return apiRoutes.request(
+        `https://example.com/characters/${characterId}/profile-image`,
+        {
+            method: 'POST',
+            body,
+            headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
 }
 
 async function putHeightChart(
@@ -308,24 +337,27 @@ async function putHeightChart(
     db: D1Database,
     options: CharacterRequestOptions = {},
 ): Promise<Response> {
-    return apiRoutes.request(`https://example.com/characters/${characterId}/height-chart`, {
-        method: 'PUT',
-        body,
-        headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
+    return apiRoutes.request(
+        `https://example.com/characters/${characterId}/height-chart`,
+        {
+            method: 'PUT',
+            body,
+            headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
 }
 
-async function patchFolder(
-    folderId: string,
-    body: unknown,
-    db: D1Database,
-    options: CharacterRequestOptions = {},
-): Promise<Response> {
-    return apiRoutes.request(`https://example.com/characters/folders/${folderId}`, {
-        method: 'PATCH',
-        body: typeof body === 'string' ? body : JSON.stringify(body),
-        headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
+async function patchFolder(folderId: string, body: unknown, db: D1Database, options: CharacterRequestOptions = {}): Promise<Response> {
+    return apiRoutes.request(
+        `https://example.com/characters/folders/${folderId}`,
+        {
+            method: 'PATCH',
+            body: typeof body === 'string' ? body : JSON.stringify(body),
+            headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
 }
 
 async function patchCharacter(
@@ -334,24 +366,27 @@ async function patchCharacter(
     db: D1Database,
     options: CharacterRequestOptions = {},
 ): Promise<Response> {
-    return apiRoutes.request(`https://example.com/characters/${characterId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(body),
-        headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
+    return apiRoutes.request(
+        `https://example.com/characters/${characterId}`,
+        {
+            method: 'PATCH',
+            body: JSON.stringify(body),
+            headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
 }
 
-async function putGallery(
-    characterId: string,
-    body: unknown,
-    db: D1Database,
-    options: CharacterRequestOptions = {},
-): Promise<Response> {
-    return apiRoutes.request(`https://example.com/characters/${characterId}/gallery`, {
-        method: 'PUT',
-        body: JSON.stringify(body),
-        headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
+async function putGallery(characterId: string, body: unknown, db: D1Database, options: CharacterRequestOptions = {}): Promise<Response> {
+    return apiRoutes.request(
+        `https://example.com/characters/${characterId}/gallery`,
+        {
+            method: 'PUT',
+            body: JSON.stringify(body),
+            headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
 }
 
 async function deleteCharacter(
@@ -360,31 +395,38 @@ async function deleteCharacter(
     db: D1Database,
     options: CharacterRequestOptions = {},
 ): Promise<Response> {
-    return apiRoutes.request(`https://example.com/characters/${characterId}`, {
-        method: 'DELETE',
-        body: typeof body === 'string' ? body : JSON.stringify(body),
-        headers: createRequestHeaders(body, options),
-    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
+    return apiRoutes.request(
+        `https://example.com/characters/${characterId}`,
+        {
+            method: 'DELETE',
+            body: typeof body === 'string' ? body : JSON.stringify(body),
+            headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
 }
 
-async function deleteFolder(
-    folderId: string,
-    db: D1Database,
-    options: CharacterRequestOptions = {},
-): Promise<Response> {
-    return apiRoutes.request(`https://example.com/characters/folders/${folderId}`, {
-        method: 'DELETE',
-        headers: createRequestHeaders(undefined, options, false),
-    }, requestEnv(db, options.mediaBucket, options.imagesBinding))
+async function deleteFolder(folderId: string, db: D1Database, options: CharacterRequestOptions = {}): Promise<Response> {
+    return apiRoutes.request(
+        `https://example.com/characters/folders/${folderId}`,
+        {
+            method: 'DELETE',
+            headers: createRequestHeaders(undefined, options, false),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
 }
 
 describe('POST /characters/tree', () => {
     it('returns 401 when the user is not logged in', async () => {
         const {db} = createMockDb()
 
-        const response = await postTree({
-            items: [],
-        }, db)
+        const response = await postTree(
+            {
+                items: [],
+            },
+            db,
+        )
 
         expect(response.status).toBe(401)
         expect(await response.json()).toEqual({
@@ -395,11 +437,15 @@ describe('POST /characters/tree', () => {
     it('returns 403 when a logged-in request is missing CSRF protection', async () => {
         const {db} = createMockDb()
 
-        const response = await postTree({
-            items: [],
-        }, db, {
-            sessionToken: 'session-token',
-        })
+        const response = await postTree(
+            {
+                items: [],
+            },
+            db,
+            {
+                sessionToken: 'session-token',
+            },
+        )
 
         expect(response.status).toBe(403)
         expect(await response.json()).toEqual({
@@ -431,12 +477,16 @@ describe('POST /characters/tree', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await postTree({
-            items: [{type: 'folder', id: 'main', children: [{type: 'folder', id: 'main'}]}],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postTree(
+            {
+                items: [{type: 'folder', id: 'main', children: [{type: 'folder', id: 'main'}]}],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -448,18 +498,19 @@ describe('POST /characters/tree', () => {
         const sessionToken = 'session-token'
         const {db} = createMockDb({
             firstResults: [currentUserRecord],
-            allResults: [
-                [],
-                [],
-            ],
+            allResults: [[], []],
         })
 
-        const response = await postTree({
-            items: [{type: 'folder', id: 'other-users-folder'}],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postTree(
+            {
+                items: [{type: 'folder', id: 'other-users-folder'}],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -472,18 +523,19 @@ describe('POST /characters/tree', () => {
         const sessionToken = 'session-token'
         const {db} = createMockDb({
             firstResults: [currentUserRecord],
-            allResults: [
-                [],
-                [],
-            ],
+            allResults: [[], []],
         })
 
-        const response = await postTree({
-            items: [{type: 'character', id: 'other-users-character'}],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postTree(
+            {
+                items: [{type: 'character', id: 'other-users-character'}],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -498,12 +550,16 @@ describe('POST /characters/tree', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await postTree({
-            items: Array.from({length: 501}, (_, index) => ({type: 'character', id: `character-${index}`})),
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postTree(
+            {
+                items: Array.from({length: 501}, (_, index) => ({type: 'character', id: `character-${index}`})),
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -524,19 +580,23 @@ describe('POST /characters/tree', () => {
             ],
         })
 
-        const response = await postTree({
-            items: folders.map((id) => ({type: 'folder', id})),
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postTree(
+            {
+                items: folders.map((id) => ({type: 'folder', id})),
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ok: true})
 
-        const ownershipQueries = boundStatements.filter((statement) => (
-            statement.sql.includes('FROM character_folders') && statement.sql.includes('id IN')
-        ))
+        const ownershipQueries = boundStatements.filter(
+            (statement) => statement.sql.includes('FROM character_folders') && statement.sql.includes('id IN'),
+        )
 
         expect(ownershipQueries).toHaveLength(3)
         expect(ownershipQueries.map((statement) => statement.binds.length)).toEqual([51, 51, 21])
@@ -553,22 +613,26 @@ describe('POST /characters/tree', () => {
             ],
         })
 
-        const response = await postTree({
-            items: [
-                {
-                    type: 'folder',
-                    id: 'main',
-                    children: [
-                        {type: 'character', id: 'razeth'},
-                        {type: 'folder', id: 'story', children: [{type: 'character', id: 'vyn'}]},
-                    ],
-                },
-                {type: 'character', id: 'kitty'},
-            ],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postTree(
+            {
+                items: [
+                    {
+                        type: 'folder',
+                        id: 'main',
+                        children: [
+                            {type: 'character', id: 'razeth'},
+                            {type: 'folder', id: 'story', children: [{type: 'character', id: 'vyn'}]},
+                        ],
+                    },
+                    {type: 'character', id: 'kitty'},
+                ],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ok: true})
@@ -607,17 +671,19 @@ describe('POST /characters/order', () => {
         const sessionToken = 'session-token'
         const {db, boundStatements} = createMockDb({
             firstResults: [currentUserRecord],
-            allResults: [
-                [{id: 'razeth'}, {id: 'vyn'}],
-            ],
+            allResults: [[{id: 'razeth'}, {id: 'vyn'}]],
         })
 
-        const response = await postCharacterOrder({
-            characterIds: ['razeth', 'vyn'],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postCharacterOrder(
+            {
+                characterIds: ['razeth', 'vyn'],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ok: true})
@@ -635,17 +701,19 @@ describe('POST /characters/order', () => {
         const sessionToken = 'session-token'
         const {db} = createMockDb({
             firstResults: [currentUserRecord],
-            allResults: [
-                [{id: 'razeth'}],
-            ],
+            allResults: [[{id: 'razeth'}]],
         })
 
-        const response = await postCharacterOrder({
-            characterIds: ['razeth', 'other-users-character'],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postCharacterOrder(
+            {
+                characterIds: ['razeth', 'other-users-character'],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -660,17 +728,20 @@ describe('PUT /characters/folders/:id/placements', () => {
         const sessionToken = 'session-token'
         const {db, boundStatements} = createMockDb({
             firstResults: [currentUserRecord, {id: 'story'}],
-            allResults: [
-                [{id: 'vyn'}, {id: 'razeth'}],
-            ],
+            allResults: [[{id: 'vyn'}, {id: 'razeth'}]],
         })
 
-        const response = await putFolderPlacements('story', {
-            characterIds: ['vyn', 'razeth'],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await putFolderPlacements(
+            'story',
+            {
+                characterIds: ['vyn', 'razeth'],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ok: true})
@@ -690,12 +761,17 @@ describe('PUT /characters/folders/:id/placements', () => {
             firstResults: [currentUserRecord, null],
         })
 
-        const response = await putFolderPlacements('missing-folder', {
-            characterIds: ['vyn'],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await putFolderPlacements(
+            'missing-folder',
+            {
+                characterIds: ['vyn'],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(404)
         expect(await response.json()).toEqual({
@@ -709,9 +785,12 @@ describe('POST /characters/folders', () => {
     it('returns 401 when the user is not logged in', async () => {
         const {db} = createMockDb()
 
-        const response = await postFolder({
-            name: 'Main Characters',
-        }, db)
+        const response = await postFolder(
+            {
+                name: 'Main Characters',
+            },
+            db,
+        )
 
         expect(response.status).toBe(401)
         expect(await response.json()).toEqual({
@@ -722,11 +801,15 @@ describe('POST /characters/folders', () => {
     it('returns 403 when a logged-in request is missing CSRF protection', async () => {
         const {db} = createMockDb()
 
-        const response = await postFolder({
-            name: 'Main Characters',
-        }, db, {
-            sessionToken: 'session-token',
-        })
+        const response = await postFolder(
+            {
+                name: 'Main Characters',
+            },
+            db,
+            {
+                sessionToken: 'session-token',
+            },
+        )
 
         expect(response.status).toBe(403)
         expect(await response.json()).toEqual({
@@ -758,12 +841,16 @@ describe('POST /characters/folders', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await postFolder({
-            parentFolderId: 'root',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postFolder(
+            {
+                parentFolderId: 'root',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -777,12 +864,16 @@ describe('POST /characters/folders', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await postFolder({
-            name: 'a'.repeat(81),
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postFolder(
+            {
+                name: 'a'.repeat(81),
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -796,12 +887,16 @@ describe('POST /characters/folders', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await postFolder({
-            name: 'Story/Arc',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postFolder(
+            {
+                name: 'Story/Arc',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -815,12 +910,16 @@ describe('POST /characters/folders', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await postFolder({
-            name: '-Story Arc',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postFolder(
+            {
+                name: '-Story Arc',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -834,13 +933,17 @@ describe('POST /characters/folders', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await postFolder({
-            name: 'Main Characters',
-            parentFolderId: '../bad',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postFolder(
+            {
+                name: 'Main Characters',
+                parentFolderId: '../bad',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -854,13 +957,17 @@ describe('POST /characters/folders', () => {
             firstResults: [currentUserRecord, null],
         })
 
-        const response = await postFolder({
-            name: 'Story Arc',
-            parentFolderId: 'missing-parent',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postFolder(
+            {
+                name: 'Story Arc',
+                parentFolderId: 'missing-parent',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(404)
         expect(await response.json()).toEqual({
@@ -874,17 +981,21 @@ describe('POST /characters/folders', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await postFolder({
-            name: ' Main Characters ',
-            parentFolderId: 'root',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postFolder(
+            {
+                name: ' Main Characters ',
+                parentFolderId: 'root',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(201)
 
-        const body = await response.json() as FolderResponse
+        const body = (await response.json()) as FolderResponse
         expect(body.folder.id).toMatch(new RegExp(`^${uuidPattern}$`))
         expect(body.folder.name).toBe('Main Characters')
         expect(body.folder.parentFolderId).toBeNull()
@@ -913,19 +1024,23 @@ describe('POST /characters/folders', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await postFolder({
-            name: ' Main Characters ',
-            parentFolderId: 'root',
-            folderImageData: createWebpDataUrl(512, 512),
-        }, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postFolder(
+            {
+                name: ' Main Characters ',
+                parentFolderId: 'root',
+                folderImageData: createWebpDataUrl(512, 512),
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(201)
 
-        const body = await response.json() as FolderResponse
+        const body = (await response.json()) as FolderResponse
         expectStoredFolderImage(mediaBucket, body.folder)
         expect(boundStatements[1]?.binds[4]).toBe(body.folder.folderImageKey)
     })
@@ -936,17 +1051,21 @@ describe('POST /characters/folders', () => {
             firstResults: [currentUserRecord, {id: 'main'}],
         })
 
-        const response = await postFolder({
-            name: 'Story Arc',
-            parentFolderId: 'main',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postFolder(
+            {
+                name: 'Story Arc',
+                parentFolderId: 'main',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(201)
 
-        const body = await response.json() as FolderResponse
+        const body = (await response.json()) as FolderResponse
         expect(body.folder.name).toBe('Story Arc')
         expect(body.folder.parentFolderId).toBe('main')
         expect(boundStatements).toHaveLength(3)
@@ -961,9 +1080,13 @@ describe('PATCH /characters/folders/:id', () => {
     it('returns 401 when the user is not logged in', async () => {
         const {db} = createMockDb()
 
-        const response = await patchFolder('folder-id', {
-            name: 'Renamed Folder',
-        }, db)
+        const response = await patchFolder(
+            'folder-id',
+            {
+                name: 'Renamed Folder',
+            },
+            db,
+        )
 
         expect(response.status).toBe(401)
         expect(await response.json()).toEqual({
@@ -974,11 +1097,16 @@ describe('PATCH /characters/folders/:id', () => {
     it('returns 403 when a logged-in request is missing CSRF protection', async () => {
         const {db} = createMockDb()
 
-        const response = await patchFolder('folder-id', {
-            name: 'Renamed Folder',
-        }, db, {
-            sessionToken: 'session-token',
-        })
+        const response = await patchFolder(
+            'folder-id',
+            {
+                name: 'Renamed Folder',
+            },
+            db,
+            {
+                sessionToken: 'session-token',
+            },
+        )
 
         expect(response.status).toBe(403)
         expect(await response.json()).toEqual({
@@ -993,12 +1121,17 @@ describe('PATCH /characters/folders/:id', () => {
             firstResults: [currentUserRecord, null],
         })
 
-        const response = await patchFolder('missing-folder', {
-            name: 'Renamed Folder',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await patchFolder(
+            'missing-folder',
+            {
+                name: 'Renamed Folder',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(404)
         expect(await response.json()).toEqual({
@@ -1013,12 +1146,17 @@ describe('PATCH /characters/folders/:id', () => {
             firstResults: [currentUserRecord, folder],
         })
 
-        const response = await patchFolder(folder.id, {
-            name: 'Bad/Name',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await patchFolder(
+            folder.id,
+            {
+                name: 'Bad/Name',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -1035,20 +1173,27 @@ describe('PATCH /characters/folders/:id', () => {
             firstResults: [currentUserRecord, folder],
         })
 
-        const response = await patchFolder(folder.id, {
-            name: ' Renamed Folder ',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await patchFolder(
+            folder.id,
+            {
+                name: ' Renamed Folder ',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(200)
 
-        const body = await response.json() as FolderResponse
+        const body = (await response.json()) as FolderResponse
         expect(body.folder.id).toBe(folder.id)
         expect(body.folder.name).toBe('Renamed Folder')
         expect(body.folder.folderImageKey).toBe('folder-image-id')
-        expect(body.folder.folderImageUrl).toBe(`${mediaPublicBaseUrl}/characters/current-user/folders/${folder.id}/image/folder-image-id.webp`)
+        expect(body.folder.folderImageUrl).toBe(
+            `${mediaPublicBaseUrl}/characters/current-user/folders/${folder.id}/image/folder-image-id.webp`,
+        )
         expect(boundStatements[2]?.sql).toContain('UPDATE character_folders')
         expect(boundStatements[2]?.binds[0]).toBe('Renamed Folder')
         expect(boundStatements[2]?.binds[2]).toBe(folder.id)
@@ -1060,9 +1205,12 @@ describe('POST /characters', () => {
     it('returns 401 when the user is not logged in', async () => {
         const {db} = createMockDb()
 
-        const response = await postCharacter({
-            name: 'Vyn',
-        }, db)
+        const response = await postCharacter(
+            {
+                name: 'Vyn',
+            },
+            db,
+        )
 
         expect(response.status).toBe(401)
         expect(await response.json()).toEqual({
@@ -1073,11 +1221,15 @@ describe('POST /characters', () => {
     it('returns 403 when a logged-in request is missing CSRF protection', async () => {
         const {db} = createMockDb()
 
-        const response = await postCharacter({
-            name: 'Vyn',
-        }, db, {
-            sessionToken: 'session-token',
-        })
+        const response = await postCharacter(
+            {
+                name: 'Vyn',
+            },
+            db,
+            {
+                sessionToken: 'session-token',
+            },
+        )
 
         expect(response.status).toBe(403)
         expect(await response.json()).toEqual({
@@ -1109,12 +1261,16 @@ describe('POST /characters', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await postCharacter({
-            folderId: 'root',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postCharacter(
+            {
+                folderId: 'root',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -1128,12 +1284,16 @@ describe('POST /characters', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await postCharacter({
-            name: 'a'.repeat(81),
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postCharacter(
+            {
+                name: 'a'.repeat(81),
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -1147,12 +1307,16 @@ describe('POST /characters', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await postCharacter({
-            name: 'Vyn#1',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postCharacter(
+            {
+                name: 'Vyn#1',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -1166,12 +1330,16 @@ describe('POST /characters', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await postCharacter({
-            name: '---',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postCharacter(
+            {
+                name: '---',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -1185,13 +1353,17 @@ describe('POST /characters', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await postCharacter({
-            name: 'Vyn',
-            folderId: '../bad',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postCharacter(
+            {
+                name: 'Vyn',
+                folderId: '../bad',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -1206,14 +1378,18 @@ describe('POST /characters', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await postCharacter({
-            name: ' Vyn ',
-            folderId: 'root',
-        }, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postCharacter(
+            {
+                name: ' Vyn ',
+                folderId: 'root',
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -1254,19 +1430,23 @@ describe('POST /characters', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await postCharacter({
-            name: ' Vyn "The Hawk" ',
-            folderId: 'root',
-            profileImageData: createWebpDataUrl(),
-        }, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postCharacter(
+            {
+                name: ' Vyn "The Hawk" ',
+                folderId: 'root',
+                profileImageData: createWebpDataUrl(),
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(201)
 
-        const body = await response.json() as CharacterResponse
+        const body = (await response.json()) as CharacterResponse
         expect(body.character.name).toBe('Vyn "The Hawk"')
         expect(body.character.folderId).toBeNull()
         expectStoredCharacterProfileImage(mediaBucket, body.character)
@@ -1285,19 +1465,23 @@ describe('POST /characters', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await postCharacter({
-            name: ' "Ivo" ',
-            folderId: 'root',
-            profileImageData: createWebpDataUrl(),
-        }, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await postCharacter(
+            {
+                name: ' "Ivo" ',
+                folderId: 'root',
+                profileImageData: createWebpDataUrl(),
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(201)
 
-        const body = await response.json() as CharacterResponse
+        const body = (await response.json()) as CharacterResponse
         expect(body.character.name).toBe('"Ivo"')
         expect(boundStatements[1]?.sql).toContain(['INSERT INTO', 'characters'].join(' '))
         expect(boundStatements[1]?.binds[2]).toBe('"Ivo"')
@@ -1322,7 +1506,7 @@ describe('POST /characters', () => {
 
         expect(response.status).toBe(201)
 
-        const body = await response.json() as CharacterResponse
+        const body = (await response.json()) as CharacterResponse
         expect(body.character.name).toBe('Ren')
         expect(body.character.folderId).toBe('story-arc')
         expectStoredCharacterProfileImage(mediaBucket, body.character)
@@ -1437,7 +1621,7 @@ describe('POST /characters', () => {
         form.set('new-character-profile-image', createWebpFile())
 
         const response = await postCharacter(form, db, {
-            contentLength: String((3 * 1024 * 1024) + 1),
+            contentLength: String(3 * 1024 * 1024 + 1),
             mediaBucket,
             sessionToken,
         })
@@ -1511,17 +1695,22 @@ describe('PATCH /characters/:id', () => {
             firstResults: [currentUserRecord, character],
         })
 
-        const response = await patchCharacter(character.id, {
-            name: 'DRD-5548 "Ivo"',
-            description: 'Updated description',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await patchCharacter(
+            character.id,
+            {
+                name: 'DRD-5548 "Ivo"',
+                description: 'Updated description',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(200)
 
-        const body = await response.json() as CharacterResponse
+        const body = (await response.json()) as CharacterResponse
         expect(body.character.name).toBe('DRD-5548 "Ivo"')
         expect(boundStatements.at(-1)?.sql).toContain('UPDATE characters')
         expect(boundStatements.at(-1)?.binds[0]).toBe('DRD-5548 "Ivo"')
@@ -1535,13 +1724,18 @@ describe('PATCH /characters/:id', () => {
             runError: new Error('UNIQUE constraint failed: characters.user_id, characters.name'),
         })
 
-        const response = await patchCharacter(character.id, {
-            name: 'Ren',
-            description: 'Updated description',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await patchCharacter(
+            character.id,
+            {
+                name: 'Ren',
+                description: 'Updated description',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(409)
         expect(await response.json()).toEqual({
@@ -1571,7 +1765,7 @@ describe('POST /characters/:id/profile-image', () => {
 
         expect(response.status).toBe(200)
 
-        const body = await response.json() as {
+        const body = (await response.json()) as {
             profileImageKey: string
             profileImageUrl: string
         }
@@ -1627,19 +1821,22 @@ describe('PUT /characters/:id/height-chart', () => {
             firstResults: [currentUserRecord, character],
         })
         const form = new FormData()
-        form.set('heightChartJson', JSON.stringify({
-            version: 1,
-            height: {
-                meters: 1.82,
-            },
-            image: null,
-            calibration: {
-                headYPercent: 5,
-                footYPercent: 95,
-                footIsVirtual: false,
-                nameTagXPercent: 50,
-            },
-        }))
+        form.set(
+            'heightChartJson',
+            JSON.stringify({
+                version: 1,
+                height: {
+                    meters: 1.82,
+                },
+                image: null,
+                calibration: {
+                    headYPercent: 5,
+                    footYPercent: 95,
+                    footIsVirtual: false,
+                    nameTagXPercent: 50,
+                },
+            }),
+        )
 
         const response = await putHeightChart(character.id, form, db, {
             sessionToken,
@@ -1659,19 +1856,22 @@ describe('PUT /characters/:id/height-chart', () => {
             firstResults: [currentUserRecord, character],
         })
         const form = new FormData()
-        form.set('heightChartJson', JSON.stringify({
-            version: 1,
-            height: {
-                meters: 1.8288,
-            },
-            image: null,
-            calibration: {
-                headYPercent: 4.567,
-                footYPercent: 94.321,
-                footIsVirtual: false,
-                nameTagXPercent: 52.345,
-            },
-        }))
+        form.set(
+            'heightChartJson',
+            JSON.stringify({
+                version: 1,
+                height: {
+                    meters: 1.8288,
+                },
+                image: null,
+                calibration: {
+                    headYPercent: 4.567,
+                    footYPercent: 94.321,
+                    footIsVirtual: false,
+                    nameTagXPercent: 52.345,
+                },
+            }),
+        )
         form.set('heightChartImage', createPngFile(320, 640))
 
         const response = await putHeightChart(character.id, form, db, {
@@ -1682,7 +1882,7 @@ describe('PUT /characters/:id/height-chart', () => {
 
         expect(response.status).toBe(200)
 
-        const body = await response.json() as {
+        const body = (await response.json()) as {
             heightChart: {
                 height: {
                     meters: number
@@ -1707,7 +1907,9 @@ describe('PUT /characters/:id/height-chart', () => {
         expect(body.heightChart.image.contentType).toBe('image/png')
         expect(body.heightChart.image.naturalWidth).toBe(320)
         expect(body.heightChart.image.naturalHeight).toBe(640)
-        expect(body.heightChart.image.url).toBe(`${mediaPublicBaseUrl}/characters/current-user/character-id/height-chart/${body.heightChart.image.key}.png`)
+        expect(body.heightChart.image.url).toBe(
+            `${mediaPublicBaseUrl}/characters/current-user/character-id/height-chart/${body.heightChart.image.key}.png`,
+        )
         expect(body.heightChart.calibration.headYPercent).toBe(4.57)
         expect(body.heightChart.calibration.footYPercent).toBe(94.32)
         expect(body.heightChart.calibration.nameTagXPercent).toBe(52.34)
@@ -1755,15 +1957,20 @@ describe('character media uploads', () => {
         })
         const csrfToken = await createCsrfToken(sessionToken)
 
-        const initResponse = await initChunkedMedia(character.id, {
-            ratings: ['sfw'],
-        }, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken,
-        })
+        const initResponse = await initChunkedMedia(
+            character.id,
+            {
+                ratings: ['sfw'],
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
         expect(initResponse.status).toBe(200)
-        const initBody = await initResponse.json() as {
+        const initBody = (await initResponse.json()) as {
             mediaId: string
             uploads: {
                 sfw: {
@@ -1793,28 +2000,33 @@ describe('character media uploads', () => {
             },
         )
         expect(partResponse.status).toBe(200)
-        const uploadedPart = await partResponse.json() as R2UploadedPart
+        const uploadedPart = (await partResponse.json()) as R2UploadedPart
 
-        const completeResponse = await completeChunkedMedia(character.id, {
-            mediaId: initBody.mediaId,
-            sfwArtist: 'Chunk Artist',
-            sfwUpload: {
-                uploadId: initBody.uploads.sfw.uploadId,
-                imageKey: initBody.uploads.sfw.imageKey,
-                contentType: 'image/png',
-                width: 10000,
-                height: 10000,
-                parts: [uploadedPart],
+        const completeResponse = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: initBody.mediaId,
+                sfwArtist: 'Chunk Artist',
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/png',
+                    width: 10000,
+                    height: 10000,
+                    parts: [uploadedPart],
+                },
+                sfwPreview: createPreviewPayload(1600, 1600),
             },
-            sfwPreview: createPreviewPayload(1600, 1600),
-        }, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken,
-        })
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
 
         expect(completeResponse.status).toBe(201)
-        const body = await completeResponse.json() as {
+        const body = (await completeResponse.json()) as {
             media: {
                 id: string
                 sfwImageKey: string
@@ -1835,12 +2047,16 @@ describe('character media uploads', () => {
         expect(body.media.id).toBe(initBody.mediaId)
         expect(body.media.sfwImageKey).toBe(initBody.uploads.sfw.imageKey)
         expect(body.media.sfwContentType).toBe('image/png')
-        expect(body.media.sfwImageUrl).toBe(`${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.png`)
+        expect(body.media.sfwImageUrl).toBe(
+            `${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.png`,
+        )
         expect(body.media.sfwWidth).toBe(10000)
         expect(body.media.sfwHeight).toBe(10000)
         expect(body.media.sfwByteSize).toBe(pngFile.size)
         expect(body.media.sfwPreviewImageKey).toMatch(new RegExp(`^${uuidPattern}$`))
-        expect(body.media.sfwPreviewImageUrl).toBe(`${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/sfw/preview/${body.media.sfwPreviewImageKey}.webp`)
+        expect(body.media.sfwPreviewImageUrl).toBe(
+            `${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/sfw/preview/${body.media.sfwPreviewImageKey}.webp`,
+        )
         expect(body.media.sfwPreviewWidth).toBe(1600)
         expect(body.media.sfwPreviewHeight).toBe(1600)
         expect(body.media.sfwPreviewByteSize).toBeGreaterThan(0)
@@ -1883,22 +2099,27 @@ describe('character media uploads', () => {
             firstResults: [currentUserRecord, character, {count: 500}],
         })
 
-        const completeResponse = await completeChunkedMedia(character.id, {
-            mediaId: 'media-id',
-            sfwUpload: {
-                uploadId: 'upload-id',
-                imageKey: 'image-key',
-                contentType: 'image/png',
-                width: 800,
-                height: 600,
-                parts: [{partNumber: 1, etag: 'etag'}],
+        const completeResponse = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: 'media-id',
+                sfwUpload: {
+                    uploadId: 'upload-id',
+                    imageKey: 'image-key',
+                    contentType: 'image/png',
+                    width: 800,
+                    height: 600,
+                    parts: [{partNumber: 1, etag: 'etag'}],
+                },
+                sfwPreview: createPreviewPayload(800, 600),
             },
-            sfwPreview: createPreviewPayload(800, 600),
-        }, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(completeResponse.status).toBe(409)
         expect(await completeResponse.json()).toEqual({
@@ -1918,14 +2139,19 @@ describe('character media uploads', () => {
         })
         const csrfToken = await createCsrfToken(sessionToken)
 
-        const initResponse = await initChunkedMedia(character.id, {
-            ratings: ['nsfw'],
-        }, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken,
-        })
-        const initBody = await initResponse.json() as {
+        const initResponse = await initChunkedMedia(
+            character.id,
+            {
+                ratings: ['nsfw'],
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
+        const initBody = (await initResponse.json()) as {
             mediaId: string
             uploads: {
                 nsfw: {
@@ -1952,35 +2178,42 @@ describe('character media uploads', () => {
                 csrfToken,
             },
         )
-        const uploadedPart = await partResponse.json() as R2UploadedPart
+        const uploadedPart = (await partResponse.json()) as R2UploadedPart
 
-        const completeResponse = await completeChunkedMedia(character.id, {
-            mediaId: initBody.mediaId,
-            nsfwUpload: {
-                uploadId: initBody.uploads.nsfw.uploadId,
-                imageKey: initBody.uploads.nsfw.imageKey,
-                contentType: 'image/png',
-                width: 800,
-                height: 600,
-                parts: [uploadedPart],
+        const completeResponse = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: initBody.mediaId,
+                nsfwUpload: {
+                    uploadId: initBody.uploads.nsfw.uploadId,
+                    imageKey: initBody.uploads.nsfw.imageKey,
+                    contentType: 'image/png',
+                    width: 800,
+                    height: 600,
+                    parts: [uploadedPart],
+                },
+                nsfwPreview: createPreviewPayload(800, 600),
             },
-            nsfwPreview: createPreviewPayload(800, 600),
-        }, db, {
-            imagesBinding,
-            mediaBucket,
-            sessionToken,
-            csrfToken,
-        })
+            db,
+            {
+                imagesBinding,
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
 
         expect(completeResponse.status).toBe(201)
-        const body = await completeResponse.json() as {
+        const body = (await completeResponse.json()) as {
             media: {
                 nsfwBlurImageKey: string
                 nsfwBlurImageUrl: string
             }
         }
         expect(body.media.nsfwBlurImageKey).toMatch(new RegExp(`^${uuidPattern}$`))
-        expect(body.media.nsfwBlurImageUrl).toBe(`${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/nsfw/blur/${body.media.nsfwBlurImageKey}.webp`)
+        expect(body.media.nsfwBlurImageUrl).toBe(
+            `${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/nsfw/blur/${body.media.nsfwBlurImageKey}.webp`,
+        )
         expect(imagesBinding.input).toHaveBeenCalledTimes(1)
         const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
         expect(imageTransformer.transform).toHaveBeenNthCalledWith(1, {width: 960, fit: 'scale-down'})
@@ -2000,14 +2233,7 @@ describe('character media uploads', () => {
     })
 
     it('rejects chunked gallery media when declared original dimensions do not match the stored image', async () => {
-        const {
-            sessionToken,
-            mediaBucket,
-            character,
-            db,
-            csrfToken,
-            initBody
-        } = await createChunkedSfwUploadTestContext()
+        const {sessionToken, mediaBucket, character, db, csrfToken, initBody} = await createChunkedSfwUploadTestContext()
 
         const pngFile = createPngFile(800, 600)
         const partResponse = await putChunkedMediaPart(
@@ -2021,24 +2247,29 @@ describe('character media uploads', () => {
             db,
             {mediaBucket, sessionToken, csrfToken},
         )
-        const uploadedPart = await partResponse.json() as R2UploadedPart
+        const uploadedPart = (await partResponse.json()) as R2UploadedPart
 
-        const completeResponse = await completeChunkedMedia(character.id, {
-            mediaId: initBody.mediaId,
-            sfwUpload: {
-                uploadId: initBody.uploads.sfw.uploadId,
-                imageKey: initBody.uploads.sfw.imageKey,
-                contentType: 'image/png',
-                width: 1600,
-                height: 1600,
-                parts: [uploadedPart],
+        const completeResponse = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/png',
+                    width: 1600,
+                    height: 1600,
+                    parts: [uploadedPart],
+                },
+                sfwPreview: createPreviewPayload(1600, 1600),
             },
-            sfwPreview: createPreviewPayload(1600, 1600),
-        }, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken,
-        })
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
 
         expect(completeResponse.status).toBe(400)
         expect(await completeResponse.json()).toEqual({
@@ -2050,14 +2281,7 @@ describe('character media uploads', () => {
     })
 
     it('rejects chunked gallery previews whose dimensions do not match the downscaled original', async () => {
-        const {
-            sessionToken,
-            mediaBucket,
-            character,
-            db,
-            csrfToken,
-            initBody
-        } = await createChunkedSfwUploadTestContext()
+        const {sessionToken, mediaBucket, character, db, csrfToken, initBody} = await createChunkedSfwUploadTestContext()
 
         const pngFile = createPngFile(10000, 5000)
         const partResponse = await putChunkedMediaPart(
@@ -2071,24 +2295,29 @@ describe('character media uploads', () => {
             db,
             {mediaBucket, sessionToken, csrfToken},
         )
-        const uploadedPart = await partResponse.json() as R2UploadedPart
+        const uploadedPart = (await partResponse.json()) as R2UploadedPart
 
-        const completeResponse = await completeChunkedMedia(character.id, {
-            mediaId: initBody.mediaId,
-            sfwUpload: {
-                uploadId: initBody.uploads.sfw.uploadId,
-                imageKey: initBody.uploads.sfw.imageKey,
-                contentType: 'image/png',
-                width: 10000,
-                height: 5000,
-                parts: [uploadedPart],
+        const completeResponse = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/png',
+                    width: 10000,
+                    height: 5000,
+                    parts: [uploadedPart],
+                },
+                sfwPreview: createPreviewPayload(1600, 1000),
             },
-            sfwPreview: createPreviewPayload(1600, 1000),
-        }, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken,
-        })
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
 
         expect(completeResponse.status).toBe(400)
         expect(await completeResponse.json()).toEqual({
@@ -2097,14 +2326,7 @@ describe('character media uploads', () => {
     })
 
     it('rejects gallery previews that are too large for their dimensions', async () => {
-        const {
-            sessionToken,
-            mediaBucket,
-            character,
-            db,
-            csrfToken,
-            initBody
-        } = await createChunkedSfwUploadTestContext()
+        const {sessionToken, mediaBucket, character, db, csrfToken, initBody} = await createChunkedSfwUploadTestContext()
 
         const pngFile = createPngFile(1, 1)
         const partResponse = await putChunkedMediaPart(
@@ -2118,29 +2340,34 @@ describe('character media uploads', () => {
             db,
             {mediaBucket, sessionToken, csrfToken},
         )
-        const uploadedPart = await partResponse.json() as R2UploadedPart
+        const uploadedPart = (await partResponse.json()) as R2UploadedPart
 
-        const completeResponse = await completeChunkedMedia(character.id, {
-            mediaId: initBody.mediaId,
-            sfwUpload: {
-                uploadId: initBody.uploads.sfw.uploadId,
-                imageKey: initBody.uploads.sfw.imageKey,
-                contentType: 'image/png',
-                width: 1,
-                height: 1,
-                parts: [uploadedPart],
+        const completeResponse = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/png',
+                    width: 1,
+                    height: 1,
+                    parts: [uploadedPart],
+                },
+                sfwPreview: {
+                    data: createPaddedWebpDataUrl(1, 1, 5000),
+                    contentType: 'image/webp',
+                    width: 1,
+                    height: 1,
+                },
             },
-            sfwPreview: {
-                data: createPaddedWebpDataUrl(1, 1, 5000),
-                contentType: 'image/webp',
-                width: 1,
-                height: 1,
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
             },
-        }, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken,
-        })
+        )
 
         expect(completeResponse.status).toBe(400)
         expect(await completeResponse.json()).toEqual({
@@ -2159,15 +2386,20 @@ describe('character media uploads', () => {
         })
         const csrfToken = await createCsrfToken(sessionToken)
 
-        const initResponse = await initChunkedMedia(character.id, {
-            uploads: [{rating: 'sfw', contentType: 'image/gif'}],
-        }, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken,
-        })
+        const initResponse = await initChunkedMedia(
+            character.id,
+            {
+                uploads: [{rating: 'sfw', contentType: 'image/gif'}],
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
         expect(initResponse.status).toBe(200)
-        const initBody = await initResponse.json() as {
+        const initBody = (await initResponse.json()) as {
             mediaId: string
             uploads: {
                 sfw: {
@@ -2207,27 +2439,32 @@ describe('character media uploads', () => {
             'image/gif',
         )
         expect(partResponse.status).toBe(200)
-        const uploadedPart = await partResponse.json() as R2UploadedPart
+        const uploadedPart = (await partResponse.json()) as R2UploadedPart
 
-        const completeResponse = await completeChunkedMedia(character.id, {
-            mediaId: initBody.mediaId,
-            sfwUpload: {
-                uploadId: initBody.uploads.sfw.uploadId,
-                imageKey: initBody.uploads.sfw.imageKey,
-                contentType: 'image/gif',
-                width: 320,
-                height: 240,
-                parts: [uploadedPart],
+        const completeResponse = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/gif',
+                    width: 320,
+                    height: 240,
+                    parts: [uploadedPart],
+                },
+                sfwPreview: createPreviewPayload(320, 240),
             },
-            sfwPreview: createPreviewPayload(320, 240),
-        }, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken,
-        })
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
 
         expect(completeResponse.status).toBe(201)
-        const body = await completeResponse.json() as {
+        const body = (await completeResponse.json()) as {
             media: {
                 sfwContentType: string
                 sfwImageUrl: string
@@ -2239,7 +2476,9 @@ describe('character media uploads', () => {
             }
         }
         expect(body.media.sfwContentType).toBe('image/gif')
-        expect(body.media.sfwImageUrl).toBe(`${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.gif`)
+        expect(body.media.sfwImageUrl).toBe(
+            `${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.gif`,
+        )
         expect(body.media.sfwWidth).toBe(320)
         expect(body.media.sfwHeight).toBe(240)
         expect(body.media.sfwByteSize).toBe(gifFile.size)
@@ -2254,12 +2493,17 @@ describe('character media uploads', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await failToyhouseImportItem('toyhouse-import-item', {
-            error: 'Toyhou.se returned 404',
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await failToyhouseImportItem(
+            'toyhouse-import-item',
+            {
+                error: 'Toyhou.se returned 404',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ok: true})
@@ -2290,15 +2534,20 @@ describe('character media uploads', () => {
         })
         const csrfToken = await createCsrfToken(sessionToken)
 
-        const initResponse = await initChunkedMedia(character.id, {
-            uploads: [{rating: 'sfw', contentType: 'image/png'}],
-        }, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken,
-        })
+        const initResponse = await initChunkedMedia(
+            character.id,
+            {
+                uploads: [{rating: 'sfw', contentType: 'image/png'}],
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
         expect(initResponse.status).toBe(200)
-        const initBody = await initResponse.json() as {
+        const initBody = (await initResponse.json()) as {
             mediaId: string
             uploads: {
                 sfw: {
@@ -2327,27 +2576,32 @@ describe('character media uploads', () => {
             },
         )
         expect(partResponse.status).toBe(200)
-        const uploadedPart = await partResponse.json() as R2UploadedPart
+        const uploadedPart = (await partResponse.json()) as R2UploadedPart
 
-        const completeResponse = await completeToyhouseImportItem(importItem.id, {
-            mediaId: initBody.mediaId,
-            sfwUpload: {
-                uploadId: initBody.uploads.sfw.uploadId,
-                imageKey: initBody.uploads.sfw.imageKey,
-                contentType: 'image/png',
-                width: 800,
-                height: 600,
-                parts: [uploadedPart],
+        const completeResponse = await completeToyhouseImportItem(
+            importItem.id,
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/png',
+                    width: 800,
+                    height: 600,
+                    parts: [uploadedPart],
+                },
+                sfwPreview: createPreviewPayload(800, 600),
             },
-            sfwPreview: createPreviewPayload(800, 600),
-        }, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken,
-        })
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
 
         expect(completeResponse.status).toBe(201)
-        const body = await completeResponse.json() as {
+        const body = (await completeResponse.json()) as {
             media: {
                 id: string
                 sfwImageKey: string
@@ -2411,7 +2665,6 @@ describe('character media uploads', () => {
         expect(mediaBucket.resumeMultipartUpload).not.toHaveBeenCalled()
         expect(db.batch).not.toHaveBeenCalled()
     })
-
 })
 
 describe('PUT /characters/:id/gallery', () => {
@@ -2422,12 +2675,17 @@ describe('PUT /characters/:id/gallery', () => {
             firstResults: [currentUserRecord, character],
         })
 
-        const response = await putGallery(character.id, {
-            tabs: [],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await putGallery(
+            character.id,
+            {
+                tabs: [],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -2443,19 +2701,28 @@ describe('PUT /characters/:id/gallery', () => {
             firstResults: [currentUserRecord, character],
         })
 
-        const response = await putGallery(character.id, {
-            tabs: [{
-                id: 'tab-one',
-                name: 'default',
-                rows: [{
-                    id: 'row-one',
-                    mediaIds: ['media-one', 'media-two', 'media-three', 'media-four', 'media-five', 'media-six'],
-                }],
-            }],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await putGallery(
+            character.id,
+            {
+                tabs: [
+                    {
+                        id: 'tab-one',
+                        name: 'default',
+                        rows: [
+                            {
+                                id: 'row-one',
+                                mediaIds: ['media-one', 'media-two', 'media-three', 'media-four', 'media-five', 'media-six'],
+                            },
+                        ],
+                    },
+                ],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -2472,19 +2739,28 @@ describe('PUT /characters/:id/gallery', () => {
             allResults: [[]],
         })
 
-        const response = await putGallery(character.id, {
-            tabs: [{
-                id: 'tab-one',
-                name: 'default',
-                rows: [{
-                    id: 'row-one',
-                    mediaIds: ['other-media'],
-                }],
-            }],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await putGallery(
+            character.id,
+            {
+                tabs: [
+                    {
+                        id: 'tab-one',
+                        name: 'default',
+                        rows: [
+                            {
+                                id: 'row-one',
+                                mediaIds: ['other-media'],
+                            },
+                        ],
+                    },
+                ],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -2510,22 +2786,29 @@ describe('PUT /characters/:id/gallery', () => {
             ],
         })
 
-        const response = await putGallery(character.id, {
-            tabs: [{
-                id: 'tab-one',
-                name: 'default',
-                rows,
-            }],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await putGallery(
+            character.id,
+            {
+                tabs: [
+                    {
+                        id: 'tab-one',
+                        name: 'default',
+                        rows,
+                    },
+                ],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(200)
 
-        const ownershipQueries = boundStatements.filter((statement) => (
-            statement.sql.includes('FROM character_media') && statement.sql.includes('id IN')
-        ))
+        const ownershipQueries = boundStatements.filter(
+            (statement) => statement.sql.includes('FROM character_media') && statement.sql.includes('id IN'),
+        )
 
         expect(ownershipQueries).toHaveLength(3)
         expect(ownershipQueries.map((statement) => statement.binds.length)).toEqual([52, 52, 22])
@@ -2539,30 +2822,41 @@ describe('PUT /characters/:id/gallery', () => {
             firstResults: [currentUserRecord, character],
         })
 
-        const response = await putGallery(character.id, {
-            tabs: [{
-                id: 'tab-one',
-                name: 'default',
-            }],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await putGallery(
+            character.id,
+            {
+                tabs: [
+                    {
+                        id: 'tab-one',
+                        name: 'default',
+                    },
+                ],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({
             gallery: {
-                tabs: [{
-                    id: 'tab-one',
-                    name: 'default',
-                    rows: [],
-                }],
+                tabs: [
+                    {
+                        id: 'tab-one',
+                        name: 'default',
+                        rows: [],
+                    },
+                ],
             },
         })
         expect(db.batch).toHaveBeenCalledTimes(1)
         expect(boundStatements.some((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_tabs'].join(' ')))).toBe(true)
         expect(boundStatements.some((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_rows'].join(' ')))).toBe(false)
-        expect(boundStatements.some((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_row_media'].join(' ')))).toBe(false)
+        expect(boundStatements.some((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_row_media'].join(' ')))).toBe(
+            false,
+        )
     })
 
     it('persists gallery tabs in request order', async () => {
@@ -2573,25 +2867,28 @@ describe('PUT /characters/:id/gallery', () => {
             allResults: [[]],
         })
 
-        const response = await putGallery(character.id, {
-            tabs: [
-                {id: 'tab-zeta', name: 'Zeta'},
-                {id: 'tab-alpha', name: 'Alpha'},
-                {id: 'tab-default', name: 'default'},
-            ],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await putGallery(
+            character.id,
+            {
+                tabs: [
+                    {id: 'tab-zeta', name: 'Zeta'},
+                    {id: 'tab-alpha', name: 'Alpha'},
+                    {id: 'tab-default', name: 'default'},
+                ],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(200)
-        const body = await response.json() as { gallery: { tabs: { id: string }[] } }
-        expect(body.gallery.tabs.map((tab) => tab.id)).toEqual([
-            'tab-zeta',
-            'tab-alpha',
-            'tab-default',
-        ])
-        const tabInsertStatements = boundStatements.filter((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_tabs'].join(' ')))
+        const body = (await response.json()) as {gallery: {tabs: {id: string}[]}}
+        expect(body.gallery.tabs.map((tab) => tab.id)).toEqual(['tab-zeta', 'tab-alpha', 'tab-default'])
+        const tabInsertStatements = boundStatements.filter((statement) =>
+            statement.sql.includes(['INSERT INTO', 'character_gallery_tabs'].join(' ')),
+        )
         expect(tabInsertStatements.map((statement) => [statement.binds[0], statement.binds[4]])).toEqual([
             ['tab-zeta', 0],
             ['tab-alpha', 1],
@@ -2607,29 +2904,34 @@ describe('PUT /characters/:id/gallery', () => {
             allResults: [[]],
         })
 
-        const response = await putGallery(character.id, {
-            tabs: [{
-                id: 'tab-default',
-                name: 'default',
-                rows: [
-                    {id: 'row-third', mediaIds: []},
-                    {id: 'row-first', mediaIds: []},
-                    {id: 'row-second', mediaIds: []},
+        const response = await putGallery(
+            character.id,
+            {
+                tabs: [
+                    {
+                        id: 'tab-default',
+                        name: 'default',
+                        rows: [
+                            {id: 'row-third', mediaIds: []},
+                            {id: 'row-first', mediaIds: []},
+                            {id: 'row-second', mediaIds: []},
+                        ],
+                    },
                 ],
-            }],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(200)
-        const body = await response.json() as { gallery: { tabs: { rows: { id: string }[] }[] } }
-        expect(body.gallery.tabs[0]?.rows.map((row) => row.id)).toEqual([
-            'row-third',
-            'row-first',
-            'row-second',
-        ])
-        const rowInsertStatements = boundStatements.filter((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_rows'].join(' ')))
+        const body = (await response.json()) as {gallery: {tabs: {rows: {id: string}[]}[]}}
+        expect(body.gallery.tabs[0]?.rows.map((row) => row.id)).toEqual(['row-third', 'row-first', 'row-second'])
+        const rowInsertStatements = boundStatements.filter((statement) =>
+            statement.sql.includes(['INSERT INTO', 'character_gallery_rows'].join(' ')),
+        )
         expect(rowInsertStatements.map((statement) => [statement.binds[0], statement.binds[4]])).toEqual([
             ['row-third', 0],
             ['row-first', 1],
@@ -2642,37 +2944,37 @@ describe('PUT /characters/:id/gallery', () => {
         const character = createCharacterRecord()
         const {db, boundStatements} = createMockDb({
             firstResults: [currentUserRecord, character],
-            allResults: [[
-                {id: 'media-one'},
-                {id: 'media-two'},
-                {id: 'media-three'},
-                {id: 'media-four'},
-            ], [
-                {id: 'media-one'},
-                {id: 'media-two'},
-                {id: 'media-three'},
-                {id: 'media-four'},
-            ]],
+            allResults: [
+                [{id: 'media-one'}, {id: 'media-two'}, {id: 'media-three'}, {id: 'media-four'}],
+                [{id: 'media-one'}, {id: 'media-two'}, {id: 'media-three'}, {id: 'media-four'}],
+            ],
         })
 
-        const response = await putGallery(character.id, {
-            tabs: [{
-                id: 'tab-default',
-                name: 'default',
-                rows: [
-                    {id: 'row-auto', mediaIds: ['media-one'], forceFullWidth: false},
-                    {id: 'row-ignored', mediaIds: ['media-three', 'media-four'], forceFullWidth: true},
-                    {id: 'row-final-forced', mediaIds: ['media-two'], forceFullWidth: true},
+        const response = await putGallery(
+            character.id,
+            {
+                tabs: [
+                    {
+                        id: 'tab-default',
+                        name: 'default',
+                        rows: [
+                            {id: 'row-auto', mediaIds: ['media-one'], forceFullWidth: false},
+                            {id: 'row-ignored', mediaIds: ['media-three', 'media-four'], forceFullWidth: true},
+                            {id: 'row-final-forced', mediaIds: ['media-two'], forceFullWidth: true},
+                        ],
+                    },
                 ],
-            }],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(200)
-        const body = await response.json() as {
-            gallery: { tabs: { rows: { id: string; mediaIds: string[]; forceFullWidth: boolean }[] }[] }
+        const body = (await response.json()) as {
+            gallery: {tabs: {rows: {id: string; mediaIds: string[]; forceFullWidth: boolean}[]}[]}
         }
         expect(body.gallery.tabs[0]?.rows).toEqual([
             {id: 'row-auto', mediaIds: ['media-one'], forceFullWidth: true},
@@ -2680,7 +2982,9 @@ describe('PUT /characters/:id/gallery', () => {
             {id: 'row-final-forced', mediaIds: ['media-two'], forceFullWidth: true},
         ])
 
-        const rowInsertStatements = boundStatements.filter((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_rows'].join(' ')))
+        const rowInsertStatements = boundStatements.filter((statement) =>
+            statement.sql.includes(['INSERT INTO', 'character_gallery_rows'].join(' ')),
+        )
         expect(rowInsertStatements.every((statement) => statement.sql.includes('force_full_width'))).toBe(true)
         expect(rowInsertStatements.map((statement) => [statement.binds[0], statement.binds[5]])).toEqual([
             ['row-auto', 1],
@@ -2694,38 +2998,37 @@ describe('PUT /characters/:id/gallery', () => {
         const character = createCharacterRecord()
         const {db, boundStatements} = createMockDb({
             firstResults: [currentUserRecord, character],
-            allResults: [[
-                {id: 'media-one'},
-            ], [
-                {id: 'media-one'},
-            ]],
+            allResults: [[{id: 'media-one'}], [{id: 'media-one'}]],
         })
 
-        const response = await putGallery(character.id, {
-            tabs: [{
-                id: 'tab-default',
-                name: 'default',
-                rows: [
-                    {id: 'row-only', mediaIds: ['media-one'], forceFullWidth: false},
+        const response = await putGallery(
+            character.id,
+            {
+                tabs: [
+                    {
+                        id: 'tab-default',
+                        name: 'default',
+                        rows: [{id: 'row-only', mediaIds: ['media-one'], forceFullWidth: false}],
+                    },
                 ],
-            }],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(200)
-        const body = await response.json() as {
-            gallery: { tabs: { rows: { id: string; mediaIds: string[]; forceFullWidth: boolean }[] }[] }
+        const body = (await response.json()) as {
+            gallery: {tabs: {rows: {id: string; mediaIds: string[]; forceFullWidth: boolean}[]}[]}
         }
-        expect(body.gallery.tabs[0]?.rows).toEqual([
-            {id: 'row-only', mediaIds: ['media-one'], forceFullWidth: false},
-        ])
+        expect(body.gallery.tabs[0]?.rows).toEqual([{id: 'row-only', mediaIds: ['media-one'], forceFullWidth: false}])
 
-        const rowInsertStatements = boundStatements.filter((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_rows'].join(' ')))
-        expect(rowInsertStatements.map((statement) => [statement.binds[0], statement.binds[5]])).toEqual([
-            ['row-only', 0],
-        ])
+        const rowInsertStatements = boundStatements.filter((statement) =>
+            statement.sql.includes(['INSERT INTO', 'character_gallery_rows'].join(' ')),
+        )
+        expect(rowInsertStatements.map((statement) => [statement.binds[0], statement.binds[5]])).toEqual([['row-only', 0]])
     })
 
     it('rejects gallery layouts when uploaded media is not placed on any tab', async () => {
@@ -2733,22 +3036,26 @@ describe('PUT /characters/:id/gallery', () => {
         const character = createCharacterRecord()
         const {db} = createMockDb({
             firstResults: [currentUserRecord, character],
-            allResults: [
-                [{id: 'media-one'}],
-                [{id: 'media-one'}, {id: 'media-two'}],
-            ],
+            allResults: [[{id: 'media-one'}], [{id: 'media-one'}, {id: 'media-two'}]],
         })
 
-        const response = await putGallery(character.id, {
-            tabs: [{
-                id: 'tab-default',
-                name: 'default',
-                rows: [{id: 'row-one', mediaIds: ['media-one']}],
-            }],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await putGallery(
+            character.id,
+            {
+                tabs: [
+                    {
+                        id: 'tab-default',
+                        name: 'default',
+                        rows: [{id: 'row-one', mediaIds: ['media-one']}],
+                    },
+                ],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -2762,25 +3069,29 @@ describe('PUT /characters/:id/gallery', () => {
         const character = createCharacterRecord()
         const {db} = createMockDb({
             firstResults: [currentUserRecord, character],
-            allResults: [
-                [{id: 'media-one'}],
-                [{id: 'media-one'}],
-            ],
+            allResults: [[{id: 'media-one'}], [{id: 'media-one'}]],
         })
 
-        const response = await putGallery(character.id, {
-            tabs: [{
-                id: 'tab-default',
-                name: 'default',
-                rows: [
-                    {id: 'row-one', mediaIds: ['media-one']},
-                    {id: 'row-empty', mediaIds: []},
+        const response = await putGallery(
+            character.id,
+            {
+                tabs: [
+                    {
+                        id: 'tab-default',
+                        name: 'default',
+                        rows: [
+                            {id: 'row-one', mediaIds: ['media-one']},
+                            {id: 'row-empty', mediaIds: []},
+                        ],
+                    },
                 ],
-            }],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -2794,28 +3105,30 @@ describe('PUT /characters/:id/gallery', () => {
         const character = createCharacterRecord()
         const {db} = createMockDb({
             firstResults: [currentUserRecord, character],
-            allResults: [
-                [{id: 'media-one'}],
-                [{id: 'media-one'}],
-            ],
+            allResults: [[{id: 'media-one'}], [{id: 'media-one'}]],
         })
 
-        const response = await putGallery(character.id, {
-            tabs: [
-                {
-                    id: 'tab-default',
-                    name: 'default',
-                    rows: [{id: 'row-one', mediaIds: ['media-one']}],
-                },
-                {
-                    id: 'tab-blank',
-                    name: 'Blank',
-                },
-            ],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await putGallery(
+            character.id,
+            {
+                tabs: [
+                    {
+                        id: 'tab-default',
+                        name: 'default',
+                        rows: [{id: 'row-one', mediaIds: ['media-one']}],
+                    },
+                    {
+                        id: 'tab-blank',
+                        name: 'Blank',
+                    },
+                ],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -2832,24 +3145,35 @@ describe('PUT /characters/:id/gallery', () => {
             allResults: [[]],
         })
 
-        const response = await putGallery(character.id, {
-            tabs: [{
-                id: 'tab-default',
-                name: 'References',
-            }],
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await putGallery(
+            character.id,
+            {
+                tabs: [
+                    {
+                        id: 'tab-default',
+                        name: 'References',
+                    },
+                ],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(200)
-        const body = await response.json() as { gallery: { tabs: { id: string; name: string }[] } }
-        expect(body.gallery.tabs).toEqual([{
-            id: 'tab-default',
-            name: 'References',
-            rows: [],
-        }])
-        const tabInsertStatement = boundStatements.find((statement) => statement.sql.includes(['INSERT INTO', 'character_gallery_tabs'].join(' ')))
+        const body = (await response.json()) as {gallery: {tabs: {id: string; name: string}[]}}
+        expect(body.gallery.tabs).toEqual([
+            {
+                id: 'tab-default',
+                name: 'References',
+                rows: [],
+            },
+        ])
+        const tabInsertStatement = boundStatements.find((statement) =>
+            statement.sql.includes(['INSERT INTO', 'character_gallery_tabs'].join(' ')),
+        )
         expect(tabInsertStatement?.binds[3]).toBe('References')
     })
 })
@@ -2931,10 +3255,14 @@ describe('DELETE /characters/:id', () => {
     it('returns 401 when the user is not logged in', async () => {
         const {db} = createMockDb()
 
-        const response = await deleteCharacter('character-id', {
-            confirmName: 'Vyn',
-            permanent: true,
-        }, db)
+        const response = await deleteCharacter(
+            'character-id',
+            {
+                confirmName: 'Vyn',
+                permanent: true,
+            },
+            db,
+        )
 
         expect(response.status).toBe(401)
         expect(await response.json()).toEqual({
@@ -2948,13 +3276,18 @@ describe('DELETE /characters/:id', () => {
             firstResults: [currentUserRecord, null],
         })
 
-        const response = await deleteCharacter('missing-character', {
-            confirmName: 'Vyn',
-            permanent: true,
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await deleteCharacter(
+            'missing-character',
+            {
+                confirmName: 'Vyn',
+                permanent: true,
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(404)
         expect(await response.json()).toEqual({
@@ -2968,12 +3301,17 @@ describe('DELETE /characters/:id', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await deleteCharacter('character-id', {
-            permanent: true,
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await deleteCharacter(
+            'character-id',
+            {
+                permanent: true,
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -2988,13 +3326,18 @@ describe('DELETE /characters/:id', () => {
             firstResults: [currentUserRecord],
         })
 
-        const response = await deleteCharacter('character-id', {
-            confirmName: 'Vyn',
-            permanent: false,
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await deleteCharacter(
+            'character-id',
+            {
+                confirmName: 'Vyn',
+                permanent: false,
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -3009,13 +3352,18 @@ describe('DELETE /characters/:id', () => {
             firstResults: [currentUserRecord, createCharacterRecord()],
         })
 
-        const response = await deleteCharacter('character-id', {
-            confirmName: 'Wrong name',
-            permanent: true,
-        }, db, {
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await deleteCharacter(
+            'character-id',
+            {
+                confirmName: 'Wrong name',
+                permanent: true,
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -3033,14 +3381,19 @@ describe('DELETE /characters/:id', () => {
             firstResults: [currentUserRecord, character],
         })
 
-        const response = await deleteCharacter('character-id', {
-            confirmName: 'vyn',
-            permanent: true,
-        }, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await deleteCharacter(
+            'character-id',
+            {
+                confirmName: 'vyn',
+                permanent: true,
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(204)
         expect(boundStatements).toHaveLength(4)
@@ -3057,29 +3410,38 @@ describe('DELETE /characters/:id', () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
         const character = createCharacterRecord()
-        const firstMediaChunk = Array.from({length: 100}, (_, index) => createMediaRecord({
-            id: `media-${index.toString().padStart(3, '0')}`,
-            sfw_image_key: `sfw-key-${index}`,
-            created_at: '2026-06-11 12:00:00',
-        }))
-        const secondMediaChunk = [createMediaRecord({
-            id: 'media-100',
-            sfw_image_key: 'sfw-key-100',
-            created_at: '2026-06-11 12:00:01',
-        })]
+        const firstMediaChunk = Array.from({length: 100}, (_, index) =>
+            createMediaRecord({
+                id: `media-${index.toString().padStart(3, '0')}`,
+                sfw_image_key: `sfw-key-${index}`,
+                created_at: '2026-06-11 12:00:00',
+            }),
+        )
+        const secondMediaChunk = [
+            createMediaRecord({
+                id: 'media-100',
+                sfw_image_key: 'sfw-key-100',
+                created_at: '2026-06-11 12:00:01',
+            }),
+        ]
         const {db, boundStatements} = createMockDb({
             firstResults: [currentUserRecord, character],
             allResults: [firstMediaChunk, secondMediaChunk],
         })
 
-        const response = await deleteCharacter('character-id', {
-            confirmName: 'Vyn',
-            permanent: true,
-        }, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await deleteCharacter(
+            'character-id',
+            {
+                confirmName: 'Vyn',
+                permanent: true,
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(204)
 
@@ -3108,29 +3470,36 @@ describe('DELETE /characters/:id', () => {
             firstResults: [currentUserRecord, character],
         })
 
-        const response = await deleteCharacter('character-id', {
-            confirmName: 'Vyn',
-            permanent: true,
-        }, db, {
-            mediaBucket,
-            sessionToken,
-            csrfToken: await createCsrfToken(sessionToken),
-        })
+        const response = await deleteCharacter(
+            'character-id',
+            {
+                confirmName: 'Vyn',
+                permanent: true,
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
 
         expect(response.status).toBe(204)
         expect(mediaBucket.delete).not.toHaveBeenCalled()
     })
 })
 
-function createCharacterRecord(overrides: Partial<{
-    id: string
-    user_id: string
-    name: string
-    profile_image_key: string | null
-    folder_id: string | null
-    created_at: string
-    updated_at: string
-}> = {}) {
+function createCharacterRecord(
+    overrides: Partial<{
+        id: string
+        user_id: string
+        name: string
+        profile_image_key: string | null
+        folder_id: string | null
+        created_at: string
+        updated_at: string
+    }> = {},
+) {
     return {
         id: 'character-id',
         user_id: currentUserRecord.id,
@@ -3143,25 +3512,27 @@ function createCharacterRecord(overrides: Partial<{
     }
 }
 
-function createMediaRecord(overrides: Partial<{
-    id: string
-    user_id: string
-    character_id: string
-    sfw_image_key: string | null
-    nsfw_image_key: string | null
-    sfw_content_type: string | null
-    nsfw_content_type: string | null
-    sfw_artist: string
-    nsfw_artist: string
-    sfw_width: number | null
-    sfw_height: number | null
-    sfw_byte_size: number | null
-    nsfw_width: number | null
-    nsfw_height: number | null
-    nsfw_byte_size: number | null
-    created_at: string
-    updated_at: string
-}> = {}) {
+function createMediaRecord(
+    overrides: Partial<{
+        id: string
+        user_id: string
+        character_id: string
+        sfw_image_key: string | null
+        nsfw_image_key: string | null
+        sfw_content_type: string | null
+        nsfw_content_type: string | null
+        sfw_artist: string
+        nsfw_artist: string
+        sfw_width: number | null
+        sfw_height: number | null
+        sfw_byte_size: number | null
+        nsfw_width: number | null
+        nsfw_height: number | null
+        nsfw_byte_size: number | null
+        created_at: string
+        updated_at: string
+    }> = {},
+) {
     return {
         id: 'media-id',
         user_id: currentUserRecord.id,
@@ -3184,16 +3555,18 @@ function createMediaRecord(overrides: Partial<{
     }
 }
 
-function createFolderRecord(overrides: Partial<{
-    id: string
-    user_id: string
-    name: string
-    parent_folder_id: string | null
-    folder_image_key: string | null
-    sort_order: number
-    created_at: string
-    updated_at: string
-}> = {}) {
+function createFolderRecord(
+    overrides: Partial<{
+        id: string
+        user_id: string
+        name: string
+        parent_folder_id: string | null
+        folder_image_key: string | null
+        sort_order: number
+        created_at: string
+        updated_at: string
+    }> = {},
+) {
     return {
         id: 'folder-id',
         user_id: currentUserRecord.id,

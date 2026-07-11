@@ -1,15 +1,7 @@
 {
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
   "files": {
-    "includes": [
-      "src/**",
-      "scripts/**",
-      "package.json",
-      "tsconfig.json",
-      "wrangler.jsonc",
-      "biome.json",
-      "knip.json"
-    ]
+    "includes": ["src/**", "scripts/**", "package.json", "tsconfig.json", "wrangler.jsonc", "biome.json", "knip.json"]
   },
   "formatter": {
     "indentStyle": "space",
@@ -42,9 +34,7 @@
   },
   "overrides": [
     {
-      "includes": [
-        "src/views/pages/adminImageApprovalsScript.ts"
-      ],
+      "includes": ["src/views/pages/adminImageApprovalsScript.ts"],
       "linter": {
         "rules": {
           "suspicious": {

@@ -37,17 +37,19 @@ function sizeChartJson() {
 describe('GET /api/search/size-chart-characters/by-id', () => {
     it('resolves legacy character IDs', async () => {
         const {db, boundStatements} = createMockDb({
-            allResults: [[
-                {
-                    id: 'legacy-character-id',
-                    size_chart_id: 'abcdef123456',
-                    name: 'Vyn',
-                    user_id: 'owner-id',
-                    username: 'owner',
-                    profile_image_key: 'profile-key',
-                    height_chart_json: sizeChartJson(),
-                },
-            ]],
+            allResults: [
+                [
+                    {
+                        id: 'legacy-character-id',
+                        size_chart_id: 'abcdef123456',
+                        name: 'Vyn',
+                        user_id: 'owner-id',
+                        username: 'owner',
+                        profile_image_key: 'profile-key',
+                        height_chart_json: sizeChartJson(),
+                    },
+                ],
+            ],
         })
 
         const response = await apiRoutes.request(
@@ -65,7 +67,7 @@ describe('GET /api/search/size-chart-characters/by-id', () => {
         expect(boundStatements[0]?.sql).not.toContain('lower(hex(characters.size_chart_id)) IN')
         expect(boundStatements[0]?.binds).toEqual(['legacy-character-id'])
 
-        const body = await response.json() as {
+        const body = (await response.json()) as {
             items: {
                 id: string
                 sizeChartId: string
@@ -80,22 +82,26 @@ describe('GET /api/search/size-chart-characters/by-id', () => {
         expect(body.items).toHaveLength(1)
         expect(body.items[0]?.id).toBe('legacy-character-id')
         expect(body.items[0]?.sizeChartId).toBe('abcdef123456')
-        expect(body.items[0]?.heightChart.image.url).toBe('/api/search/size-chart-characters/legacy-character-id/image?key=height-chart-image')
+        expect(body.items[0]?.heightChart.image.url).toBe(
+            '/api/search/size-chart-characters/legacy-character-id/image?key=height-chart-image',
+        )
     })
 
     it('resolves legacy character IDs and packed size chart IDs', async () => {
         const {db, boundStatements} = createMockDb({
-            allResults: [[
-                {
-                    id: 'legacy-character-id',
-                    size_chart_id: 'abcdef123456',
-                    name: 'Vyn',
-                    user_id: 'owner-id',
-                    username: 'owner',
-                    profile_image_key: 'profile-key',
-                    height_chart_json: sizeChartJson(),
-                },
-            ]],
+            allResults: [
+                [
+                    {
+                        id: 'legacy-character-id',
+                        size_chart_id: 'abcdef123456',
+                        name: 'Vyn',
+                        user_id: 'owner-id',
+                        username: 'owner',
+                        profile_image_key: 'profile-key',
+                        height_chart_json: sizeChartJson(),
+                    },
+                ],
+            ],
         })
 
         const response = await apiRoutes.request(
@@ -111,13 +117,9 @@ describe('GET /api/search/size-chart-characters/by-id', () => {
         expect(response.status).toBe(200)
         expect(boundStatements[0]?.sql).toContain('characters.size_chart_id')
         expect(boundStatements[0]?.sql).toContain('lower(hex(characters.size_chart_id))')
-        expect(boundStatements[0]?.binds).toEqual([
-            'abcdef123456',
-            'legacy-character-id',
-            'abcdef123456',
-        ])
+        expect(boundStatements[0]?.binds).toEqual(['abcdef123456', 'legacy-character-id', 'abcdef123456'])
 
-        const body = await response.json() as {
+        const body = (await response.json()) as {
             items: {
                 id: string
                 sizeChartId: string
@@ -132,7 +134,9 @@ describe('GET /api/search/size-chart-characters/by-id', () => {
         expect(body.items).toHaveLength(2)
         expect(body.items[0]?.id).toBe('legacy-character-id')
         expect(body.items[0]?.sizeChartId).toBe('abcdef123456')
-        expect(body.items[0]?.heightChart.image.url).toBe('/api/search/size-chart-characters/legacy-character-id/image?key=height-chart-image')
+        expect(body.items[0]?.heightChart.image.url).toBe(
+            '/api/search/size-chart-characters/legacy-character-id/image?key=height-chart-image',
+        )
         expect(body.items[1]?.id).toBe('legacy-character-id')
     })
 })

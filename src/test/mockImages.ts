@@ -24,11 +24,12 @@ function createMockImageTransformer(): ImageTransformer {
         transform: vi.fn(() => transformer),
         draw: vi.fn(() => transformer),
         output: vi.fn(async () => ({
-            response: () => new Response(transformedImageBytes, {
-                headers: {
-                    'content-type': 'image/webp',
-                },
-            }),
+            response: () =>
+                new Response(transformedImageBytes, {
+                    headers: {
+                        'content-type': 'image/webp',
+                    },
+                }),
             contentType: () => 'image/webp',
             image: () => streamFromBytes(transformedImageBytes),
         })),

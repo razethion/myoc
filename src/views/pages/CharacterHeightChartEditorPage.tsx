@@ -44,16 +44,11 @@ function safeJson(value: unknown): string {
         .replace(/\u2029/g, '\\u2029')
 }
 
-function CharacterHeightChartEditorScript({
-                                              character,
-                                              csrfToken,
-                                          }: {
-    character: CharacterHeightChartEditorCharacter
-    csrfToken: string
-}) {
+function CharacterHeightChartEditorScript({character, csrfToken}: {character: CharacterHeightChartEditorCharacter; csrfToken: string}) {
     return (
-        <script dangerouslySetInnerHTML={{
-            __html: `
+        <script
+            dangerouslySetInnerHTML={{
+                __html: `
 const character = ${safeJson(character)};
 const csrfToken = ${safeJson(csrfToken)};
 const INCHES_PER_METER = 39.37007874015748;
@@ -667,19 +662,15 @@ window.addEventListener('resize', () => {
 });
 renderAll();
 `,
-        }}/>
+            }}
+        />
     )
 }
 
-export function CharacterHeightChartEditorPage({
-                                                   currentUser,
-                                                   character,
-                                                   mediaBaseUrl,
-                                               }: CharacterHeightChartEditorPageProps) {
+export function CharacterHeightChartEditorPage({currentUser, character, mediaBaseUrl}: CharacterHeightChartEditorPageProps) {
     return (
         <BaseLayout title={`${character.name} Height Chart | MyOC`}>
-            <Navbar currentUser={currentUser} guestInitial={currentUser.username.charAt(0).toUpperCase()}
-                    mediaBaseUrl={mediaBaseUrl}/>
+            <Navbar currentUser={currentUser} guestInitial={currentUser.username.charAt(0).toUpperCase()} mediaBaseUrl={mediaBaseUrl} />
             <main class="container mx-auto max-w-6xl px-3 py-6 sm:px-0">
                 <style>{`
                     .height-chart-shell { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 380px); gap: 1rem; align-items: start; }
@@ -712,20 +703,22 @@ export function CharacterHeightChartEditorPage({
                 `}</style>
                 <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                        <p class="text-sm font-bold uppercase tracking-wide text-base-content/60">Height Chart
-                            Editor</p>
+                        <p class="text-sm font-bold uppercase tracking-wide text-base-content/60">Height Chart Editor</p>
                         <h1 class="text-4xl font-bold">{character.name}</h1>
                     </div>
                     <div class="flex flex-wrap gap-2">
-                        <a class="btn btn-ghost" href={`/edit/${encodeURIComponent(character.id)}`}>Back to Settings</a>
-                        <button class="btn btn-primary" id="save-height-chart" type="button">Save Height Data</button>
+                        <a class="btn btn-ghost" href={`/edit/${encodeURIComponent(character.id)}`}>
+                            Back to Settings
+                        </a>
+                        <button class="btn btn-primary" id="save-height-chart" type="button">
+                            Save Height Data
+                        </button>
                     </div>
                 </div>
                 <div class="height-chart-shell">
                     <section class="rounded-box border border-base-300 bg-base-200 shadow-xl">
                         <div class="flex items-center justify-between gap-3 border-b border-base-300 px-4 py-3">
-                            <strong
-                                id="height-chart-status">{character.heightChart?.image ? character.name : 'No height data'}</strong>
+                            <strong id="height-chart-status">{character.heightChart?.image ? character.name : 'No height data'}</strong>
                             <span class="text-sm text-base-content/60">Centered preview</span>
                         </div>
                         <div class="height-chart-plot" id="height-chart-plot"></div>
@@ -733,70 +726,93 @@ export function CharacterHeightChartEditorPage({
                     <aside class="rounded-box border border-base-300 bg-base-200 p-4 shadow-xl">
                         <div class="space-y-5">
                             <fieldset class="fieldset">
-                                <label class="fieldset-label" for="height-chart-image">Height Chart Image</label>
-                                <input accept="image/*" class="file-input w-full" id="height-chart-image" type="file"/>
-                                <button class="btn btn-outline btn-error btn-sm mt-2" id="remove-height-chart-image"
-                                        type="button">Remove Image
+                                <label class="fieldset-label" for="height-chart-image">
+                                    Height Chart Image
+                                </label>
+                                <input accept="image/*" class="file-input w-full" id="height-chart-image" type="file" />
+                                <button class="btn btn-outline btn-error btn-sm mt-2" id="remove-height-chart-image" type="button">
+                                    Remove Image
                                 </button>
                             </fieldset>
                             <section class="grid gap-3">
                                 <div>
-                                    <span
-                                        class="text-xs font-black uppercase tracking-wide text-base-content/60">Character</span>
-                                    <div
-                                        class="mt-1 rounded border border-base-300 bg-base-100 px-3 py-2 font-bold">{character.name}</div>
+                                    <span class="text-xs font-black uppercase tracking-wide text-base-content/60">Character</span>
+                                    <div class="mt-1 rounded border border-base-300 bg-base-100 px-3 py-2 font-bold">{character.name}</div>
                                 </div>
                                 <div>
-                                    <span
-                                        class="text-xs font-black uppercase tracking-wide text-base-content/60">Height</span>
+                                    <span class="text-xs font-black uppercase tracking-wide text-base-content/60">Height</span>
                                     <div class="mt-2 grid grid-cols-2 gap-2">
-                                        <label class="input input-bordered flex items-center gap-2"><input class="grow"
-                                                                                                           id="height-feet"
-                                                                                                           min="0"
-                                                                                                           step="1"
-                                                                                                           type="number"/><span>ft</span></label>
-                                        <label class="input input-bordered flex items-center gap-2"><input class="grow"
-                                                                                                           id="height-inches"
-                                                                                                           min="0"
-                                                                                                           step="1"
-                                                                                                           type="number"/><span>in</span></label>
+                                        <label class="input input-bordered flex items-center gap-2">
+                                            <input class="grow" id="height-feet" min="0" step="1" type="number" />
+                                            <span>ft</span>
+                                        </label>
+                                        <label class="input input-bordered flex items-center gap-2">
+                                            <input class="grow" id="height-inches" min="0" step="1" type="number" />
+                                            <span>in</span>
+                                        </label>
                                     </div>
-                                    <label class="input input-bordered mt-2 flex items-center gap-2"><input class="grow"
-                                                                                                            id="height-meters"
-                                                                                                            min="0.01"
-                                                                                                            step="0.01"
-                                                                                                            type="number"/><span>m</span></label>
+                                    <label class="input input-bordered mt-2 flex items-center gap-2">
+                                        <input class="grow" id="height-meters" min="0.01" step="0.01" type="number" />
+                                        <span>m</span>
+                                    </label>
                                 </div>
                             </section>
                             <section class="space-y-4" id="height-chart-calibration">
                                 <label class="label cursor-pointer justify-start gap-3">
-                                    <input checked={Boolean(character.heightChart?.calibration.footIsVirtual)}
-                                           class="toggle toggle-primary" data-cropped-feet type="checkbox"/>
+                                    <input
+                                        checked={Boolean(character.heightChart?.calibration.footIsVirtual)}
+                                        class="toggle toggle-primary"
+                                        data-cropped-feet
+                                        type="checkbox"
+                                    />
                                     <span class="label-text font-bold">Feet not visible</span>
                                 </label>
                                 <div class="height-chart-calibration-frame" id="height-chart-calibration-frame"></div>
                                 <div class="space-y-3">
                                     <label class="grid gap-1">
-                                        <span
-                                            class="flex justify-between text-xs font-black uppercase tracking-wide text-base-content/60"><span>Head</span><output
-                                            id="head-marker-value"></output></span>
-                                        <input class="range range-primary range-sm" data-height-marker="top"
-                                               id="head-marker" max="100" min="0" step="0.1" type="range"/>
+                                        <span class="flex justify-between text-xs font-black uppercase tracking-wide text-base-content/60">
+                                            <span>Head</span>
+                                            <output id="head-marker-value"></output>
+                                        </span>
+                                        <input
+                                            class="range range-primary range-sm"
+                                            data-height-marker="top"
+                                            id="head-marker"
+                                            max="100"
+                                            min="0"
+                                            step="0.1"
+                                            type="range"
+                                        />
                                     </label>
                                     <label class="grid gap-1">
-                                        <span
-                                            class="flex justify-between text-xs font-black uppercase tracking-wide text-base-content/60"><span
-                                            id="foot-marker-label">Foot</span><output
-                                            id="foot-marker-value"></output></span>
-                                        <input class="range range-error range-sm" data-height-marker="bottom"
-                                               id="foot-marker" max="100" min="0" step="0.1" type="range"/>
+                                        <span class="flex justify-between text-xs font-black uppercase tracking-wide text-base-content/60">
+                                            <span id="foot-marker-label">Foot</span>
+                                            <output id="foot-marker-value"></output>
+                                        </span>
+                                        <input
+                                            class="range range-error range-sm"
+                                            data-height-marker="bottom"
+                                            id="foot-marker"
+                                            max="100"
+                                            min="0"
+                                            step="0.1"
+                                            type="range"
+                                        />
                                     </label>
                                     <label class="grid gap-1">
-                                        <span
-                                            class="flex justify-between text-xs font-black uppercase tracking-wide text-base-content/60"><span>Nametag</span><output
-                                            id="nametag-marker-value"></output></span>
-                                        <input class="range range-secondary range-sm" data-nametag-marker
-                                               id="nametag-marker" max="100" min="0" step="0.1" type="range"/>
+                                        <span class="flex justify-between text-xs font-black uppercase tracking-wide text-base-content/60">
+                                            <span>Nametag</span>
+                                            <output id="nametag-marker-value"></output>
+                                        </span>
+                                        <input
+                                            class="range range-secondary range-sm"
+                                            data-nametag-marker
+                                            id="nametag-marker"
+                                            max="100"
+                                            min="0"
+                                            step="0.1"
+                                            type="range"
+                                        />
                                     </label>
                                 </div>
                             </section>
@@ -805,7 +821,7 @@ export function CharacterHeightChartEditorPage({
                 </div>
                 <div class="toast toast-end z-50" data-height-chart-toast-region></div>
             </main>
-            <CharacterHeightChartEditorScript character={character} csrfToken={currentUser.csrfToken}/>
+            <CharacterHeightChartEditorScript character={character} csrfToken={currentUser.csrfToken} />
         </BaseLayout>
     )
 }

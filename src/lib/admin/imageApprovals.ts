@@ -1,8 +1,4 @@
-import {
-    characterMediaImageObjectKey,
-    characterMediaImageUrl,
-    characterMediaPreviewImageUrl,
-} from '../media/url'
+import {characterMediaImageObjectKey, characterMediaImageUrl, characterMediaPreviewImageUrl} from '../media/url'
 
 export type ImageApprovalAction =
     | 'approve_sfw_homepage'
@@ -151,9 +147,7 @@ export async function getImageApprovalData(
         getImageApprovalCount(db),
         getImageApprovalHistory(db),
     ])
-    let current = selectedMediaId
-        ? await getImageApprovalItem(db, mediaBaseUrl, selectedMediaId)
-        : null
+    let current = selectedMediaId ? await getImageApprovalItem(db, mediaBaseUrl, selectedMediaId) : null
 
     if (!current && pending[0]) {
         current = await getImageApprovalItem(db, mediaBaseUrl, pending[0].id)
@@ -167,13 +161,10 @@ export async function getImageApprovalData(
     }
 }
 
-export async function getImageApprovalItem(
-    db: D1Database,
-    mediaBaseUrl: string,
-    mediaId: string,
-): Promise<ImageApprovalItem | null> {
-    const row = await db.prepare(
-        `SELECT character_media.id,
+export async function getImageApprovalItem(db: D1Database, mediaBaseUrl: string, mediaId: string): Promise<ImageApprovalItem | null> {
+    const row = await db
+        .prepare(
+            `SELECT character_media.id,
                 character_media.user_id,
                 users.username,
                 users.email,
@@ -207,7 +198,7 @@ export async function getImageApprovalItem(
                   INNER JOIN characters ON characters.id = character_media.character_id
          WHERE character_media.id = ?
          LIMIT 1`,
-    )
+        )
         .bind(mediaId)
         .first<ImageApprovalRow>()
 
@@ -215,21 +206,25 @@ export async function getImageApprovalItem(
 }
 
 export function isValidImageApprovalAction(value: unknown): value is ImageApprovalAction {
-    return typeof value === 'string' && [
-        'approve_sfw_homepage',
-        'approve_sfw_no_homepage',
-        'mark_nsfw',
-        'report_sfw',
-        'approve_nsfw',
-        'mark_sfw_homepage',
-        'mark_sfw_no_homepage',
-        'report_nsfw',
-    ].includes(value)
+    return (
+        typeof value === 'string' &&
+        [
+            'approve_sfw_homepage',
+            'approve_sfw_no_homepage',
+            'mark_nsfw',
+            'report_sfw',
+            'approve_nsfw',
+            'mark_sfw_homepage',
+            'mark_sfw_no_homepage',
+            'report_nsfw',
+        ].includes(value)
+    )
 }
 
 async function getImageApprovalQueue(db: D1Database): Promise<ImageApprovalQueueItem[]> {
-    const result = await db.prepare(
-        `SELECT character_media.id,
+    const result = await db
+        .prepare(
+            `SELECT character_media.id,
                 users.username,
                 characters.name AS character_name,
                 character_media.sfw_image_key,
@@ -261,7 +256,7 @@ async function getImageApprovalQueue(db: D1Database): Promise<ImageApprovalQueue
              )
          ORDER BY character_media.created_at, character_media.id
          LIMIT ?`,
-    )
+        )
         .bind(QUEUE_LIMIT)
         .all<QueueRow>()
 
@@ -276,8 +271,9 @@ async function getImageApprovalQueue(db: D1Database): Promise<ImageApprovalQueue
 }
 
 async function getImageApprovalCount(db: D1Database): Promise<number> {
-    const row = await db.prepare(
-        `SELECT (
+    const row = await db
+        .prepare(
+            `SELECT (
              SELECT COUNT(*)
              FROM character_media
              WHERE sfw_image_key IS NOT NULL
@@ -296,16 +292,17 @@ async function getImageApprovalCount(db: D1Database): Promise<number> {
                    OR updated_at > nsfw_reviewed_at
                )
          ) AS count`,
-    )
+        )
         .bind()
-        .first<{ count: number }>()
+        .first<{count: number}>()
 
     return row?.count ?? 0
 }
 
 async function getImageApprovalHistory(db: D1Database): Promise<ImageApprovalHistoryItem[]> {
-    const result = await db.prepare(
-        `SELECT character_media_review_events.id,
+    const result = await db
+        .prepare(
+            `SELECT character_media_review_events.id,
                 character_media_review_events.media_id,
                 character_media_review_events.image_rating,
                 character_media_review_events.action,
@@ -322,7 +319,7 @@ async function getImageApprovalHistory(db: D1Database): Promise<ImageApprovalHis
          ORDER BY character_media_review_events.created_at DESC,
                   character_media_review_events.id DESC
          LIMIT ?`,
-    )
+        )
         .bind(HISTORY_LIMIT)
         .all<HistoryRow>()
 
@@ -368,42 +365,60 @@ function toImageApprovalItem(row: ImageApprovalRow, mediaBaseUrl: string): Image
             name: row.character_name,
             url: `/u/${encodeURIComponent(row.username)}/${encodeURIComponent(row.character_name)}`,
         },
-        sfw: row.sfw_image_key ? {
-            rating: 'sfw',
-            imageKey: row.sfw_image_key,
-            contentType: row.sfw_content_type ?? 'image/png',
-            imageUrl: sfwPreviewImageUrl ?? sfwFullImageUrl ?? '',
-            fullImageUrl: sfwFullImageUrl ?? '',
-            previewImageUrl: sfwPreviewImageUrl,
-            objectKey: characterMediaImageObjectKey(row.user_id, row.character_id, row.id, row.sfw_image_key, 'sfw', row.sfw_content_type),
-            artist: row.sfw_artist,
-            width: row.sfw_width,
-            height: row.sfw_height,
-            byteSize: row.sfw_byte_size,
-            reviewStatus: row.sfw_review_status,
-            reviewedAt: row.sfw_reviewed_at,
-            approvedAt: row.sfw_approved_at,
-            homepageAllowed: Boolean(row.sfw_homepage_allowed),
-            needsReview: variantNeedsReview(row.sfw_review_status, row.sfw_reviewed_at, row.updated_at),
-        } : null,
-        nsfw: row.nsfw_image_key ? {
-            rating: 'nsfw',
-            imageKey: row.nsfw_image_key,
-            contentType: row.nsfw_content_type ?? 'image/png',
-            imageUrl: nsfwPreviewImageUrl ?? nsfwFullImageUrl ?? '',
-            fullImageUrl: nsfwFullImageUrl ?? '',
-            previewImageUrl: nsfwPreviewImageUrl,
-            objectKey: characterMediaImageObjectKey(row.user_id, row.character_id, row.id, row.nsfw_image_key, 'nsfw', row.nsfw_content_type),
-            artist: row.nsfw_artist,
-            width: row.nsfw_width,
-            height: row.nsfw_height,
-            byteSize: row.nsfw_byte_size,
-            reviewStatus: row.nsfw_review_status,
-            reviewedAt: row.nsfw_reviewed_at,
-            approvedAt: row.nsfw_approved_at,
-            homepageAllowed: false,
-            needsReview: variantNeedsReview(row.nsfw_review_status, row.nsfw_reviewed_at, row.updated_at),
-        } : null,
+        sfw: row.sfw_image_key
+            ? {
+                  rating: 'sfw',
+                  imageKey: row.sfw_image_key,
+                  contentType: row.sfw_content_type ?? 'image/png',
+                  imageUrl: sfwPreviewImageUrl ?? sfwFullImageUrl ?? '',
+                  fullImageUrl: sfwFullImageUrl ?? '',
+                  previewImageUrl: sfwPreviewImageUrl,
+                  objectKey: characterMediaImageObjectKey(
+                      row.user_id,
+                      row.character_id,
+                      row.id,
+                      row.sfw_image_key,
+                      'sfw',
+                      row.sfw_content_type,
+                  ),
+                  artist: row.sfw_artist,
+                  width: row.sfw_width,
+                  height: row.sfw_height,
+                  byteSize: row.sfw_byte_size,
+                  reviewStatus: row.sfw_review_status,
+                  reviewedAt: row.sfw_reviewed_at,
+                  approvedAt: row.sfw_approved_at,
+                  homepageAllowed: Boolean(row.sfw_homepage_allowed),
+                  needsReview: variantNeedsReview(row.sfw_review_status, row.sfw_reviewed_at, row.updated_at),
+              }
+            : null,
+        nsfw: row.nsfw_image_key
+            ? {
+                  rating: 'nsfw',
+                  imageKey: row.nsfw_image_key,
+                  contentType: row.nsfw_content_type ?? 'image/png',
+                  imageUrl: nsfwPreviewImageUrl ?? nsfwFullImageUrl ?? '',
+                  fullImageUrl: nsfwFullImageUrl ?? '',
+                  previewImageUrl: nsfwPreviewImageUrl,
+                  objectKey: characterMediaImageObjectKey(
+                      row.user_id,
+                      row.character_id,
+                      row.id,
+                      row.nsfw_image_key,
+                      'nsfw',
+                      row.nsfw_content_type,
+                  ),
+                  artist: row.nsfw_artist,
+                  width: row.nsfw_width,
+                  height: row.nsfw_height,
+                  byteSize: row.nsfw_byte_size,
+                  reviewStatus: row.nsfw_review_status,
+                  reviewedAt: row.nsfw_reviewed_at,
+                  approvedAt: row.nsfw_approved_at,
+                  homepageAllowed: false,
+                  needsReview: variantNeedsReview(row.nsfw_review_status, row.nsfw_reviewed_at, row.updated_at),
+              }
+            : null,
     }
 }
 

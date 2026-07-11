@@ -354,9 +354,7 @@ function AuthPageScript() {
         }
     `
 
-    return (
-        <script dangerouslySetInnerHTML={{__html: script}}></script>
-    )
+    return <script dangerouslySetInnerHTML={{__html: script}}></script>
 }
 
 export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPageProps) {
@@ -364,14 +362,15 @@ export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPa
 
     return (
         <BaseLayout head={<AuthPageStyles />} title={`${mode === 'login' ? 'Login' : 'Create account'} | MyOC`}>
-            <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl}/>
+            <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl} />
 
-            <main class={`auth-shell relative flex min-h-[calc(100vh-4rem)] items-center overflow-hidden px-4 py-12 sm:px-6 lg:px-8 ${isLogin ? '' : 'lg:py-16'}`}>
+            <main
+                class={`auth-shell relative flex min-h-[calc(100vh-4rem)] items-center overflow-hidden px-4 py-12 sm:px-6 lg:px-8 ${isLogin ? '' : 'lg:py-16'}`}
+            >
                 {isLogin ? (
                     <div class="relative z-10 mx-auto w-full max-w-md">
                         <section class="auth-card rounded-3xl p-6 sm:p-8">
-                            <form action="/api/login/passkey/options" class="flex flex-col gap-6"
-                                  data-passkey-login-form method="post">
+                            <form action="/api/login/passkey/options" class="flex flex-col gap-6" data-passkey-login-form method="post">
                                 <div class="text-center">
                                     <span class="badge badge-primary badge-lg">Login</span>
                                     <h1 class="mt-5 text-4xl font-black leading-none sm:text-5xl">Welcome back.</h1>
@@ -384,70 +383,111 @@ export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPa
                                     <div class="label">
                                         <span class="label-text">Username</span>
                                     </div>
-                                    <input autocomplete="username webauthn" class="input input-bordered w-full"
-                                           name="username" type="text"/>
+                                    <input
+                                        autocomplete="username webauthn"
+                                        class="input input-bordered w-full"
+                                        name="username"
+                                        type="text"
+                                    />
                                 </label>
 
-                                <button class="btn btn-primary btn-block" type="submit">Continue with Passkey</button>
+                                <button class="btn btn-primary btn-block" type="submit">
+                                    Continue with Passkey
+                                </button>
 
                                 <div class="flex flex-wrap justify-center gap-3 text-sm">
-                                    <button class="link link-primary font-semibold" data-show-password-login
-                                            type="button">Use password
+                                    <button class="link link-primary font-semibold" data-show-password-login type="button">
+                                        Use password
                                     </button>
-                                    <button class="link link-primary font-semibold" data-show-recovery-login
-                                            type="button">Use recovery phrase
+                                    <button class="link link-primary font-semibold" data-show-recovery-login type="button">
+                                        Use recovery phrase
                                     </button>
                                 </div>
 
                                 <p class="text-center text-sm opacity-75">
-                                    New to MyOC? <a class="link link-primary font-semibold" href="/register">Create an
-                                    account</a>
+                                    New to MyOC?{' '}
+                                    <a class="link link-primary font-semibold" href="/register">
+                                        Create an account
+                                    </a>
                                 </p>
                             </form>
 
-                            <form action="/api/login" class="mt-6 flex flex-col gap-4 border-t border-base-300 pt-6"
-                                  data-password-login-form hidden method="post">
+                            <form
+                                action="/api/login"
+                                class="mt-6 flex flex-col gap-4 border-t border-base-300 pt-6"
+                                data-password-login-form
+                                hidden
+                                method="post"
+                            >
                                 <div class="alert alert-error" data-auth-alert hidden></div>
                                 <label class="form-control w-full">
                                     <div class="label">
                                         <span class="label-text">Username</span>
                                     </div>
-                                    <input autocomplete="username" class="input input-bordered w-full" name="username"
-                                           required type="text"/>
+                                    <input
+                                        autocomplete="username"
+                                        class="input input-bordered w-full"
+                                        name="username"
+                                        required
+                                        type="text"
+                                    />
                                 </label>
 
                                 <label class="form-control w-full">
                                     <div class="label">
                                         <span class="label-text">Password</span>
                                     </div>
-                                    <input autocomplete="current-password" class="input input-bordered w-full"
-                                           name="password" required type="password"/>
+                                    <input
+                                        autocomplete="current-password"
+                                        class="input input-bordered w-full"
+                                        name="password"
+                                        required
+                                        type="password"
+                                    />
                                 </label>
 
-                                <button class="btn btn-secondary btn-block" type="submit">Login with Password</button>
+                                <button class="btn btn-secondary btn-block" type="submit">
+                                    Login with Password
+                                </button>
                             </form>
 
-                            <form action="/api/recovery/login"
-                                  class="mt-6 flex flex-col gap-4 border-t border-base-300 pt-6"
-                                  data-recovery-login-form hidden method="post">
+                            <form
+                                action="/api/recovery/login"
+                                class="mt-6 flex flex-col gap-4 border-t border-base-300 pt-6"
+                                data-recovery-login-form
+                                hidden
+                                method="post"
+                            >
                                 <div class="alert alert-error" data-auth-alert hidden></div>
                                 <label class="form-control w-full">
                                     <div class="label">
                                         <span class="label-text">Username</span>
                                     </div>
-                                    <input autocomplete="username" class="input input-bordered w-full" name="username"
-                                           required type="text"/>
+                                    <input
+                                        autocomplete="username"
+                                        class="input input-bordered w-full"
+                                        name="username"
+                                        required
+                                        type="text"
+                                    />
                                 </label>
 
                                 <label class="form-control w-full">
                                     <div class="label">
                                         <span class="label-text">Recovery phrase</span>
                                     </div>
-                                    <input autocomplete="off" class="input input-bordered w-full" name="recoveryPhrase"
-                                           required type="text"/>
+                                    <input
+                                        autocomplete="off"
+                                        class="input input-bordered w-full"
+                                        name="recoveryPhrase"
+                                        required
+                                        type="text"
+                                    />
                                 </label>
 
-                                <button class="btn btn-secondary btn-block" type="submit">Recover Account</button>
+                                <button class="btn btn-secondary btn-block" type="submit">
+                                    Recover Account
+                                </button>
                             </form>
                         </section>
                     </div>
@@ -457,28 +497,39 @@ export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPa
                             <span class="badge badge-secondary badge-lg">Create account</span>
                             <h1 class="mt-5 text-4xl font-black leading-none sm:text-5xl">Build a home for your characters.</h1>
                             <p class="mt-4 leading-7 opacity-75">
-                                Keep references, commissions, variants, and folders together in a gallery built around original-quality character art.
+                                Keep references, commissions, variants, and folders together in a gallery built around original-quality
+                                character art.
                             </p>
 
                             <div class="mt-8 space-y-4">
                                 <div class="rounded-2xl border border-base-300 bg-base-200/70 p-4">
                                     <p class="font-bold">Organize character media</p>
-                                    <p class="mt-1 text-sm opacity-70">Group artwork, references, outfits, and detail shots around each character.</p>
+                                    <p class="mt-1 text-sm opacity-70">
+                                        Group artwork, references, outfits, and detail shots around each character.
+                                    </p>
                                 </div>
                                 <div class="rounded-2xl border border-base-300 bg-base-200/70 p-4">
                                     <p class="font-bold">Preserve image quality</p>
-                                    <p class="mt-1 text-sm opacity-70">Upload and view art without flattening it into low-quality previews.</p>
+                                    <p class="mt-1 text-sm opacity-70">
+                                        Upload and view art without flattening it into low-quality previews.
+                                    </p>
                                 </div>
                                 <div class="rounded-2xl border border-base-300 bg-base-200/70 p-4">
                                     <p class="font-bold">Share clean galleries</p>
-                                    <p class="mt-1 text-sm opacity-70">Create focused character pages that are easy to browse and send to others.</p>
+                                    <p class="mt-1 text-sm opacity-70">
+                                        Create focused character pages that are easy to browse and send to others.
+                                    </p>
                                 </div>
                             </div>
                         </aside>
 
                         <section class="auth-card rounded-3xl p-6 sm:p-8">
-                            <form action="/api/register/passkey/options" class="flex flex-col gap-6"
-                                  data-passkey-register-form method="post">
+                            <form
+                                action="/api/register/passkey/options"
+                                class="flex flex-col gap-6"
+                                data-passkey-register-form
+                                method="post"
+                            >
                                 <div>
                                     <h2 class="text-3xl font-black">Account details</h2>
                                     <p class="mt-2 opacity-70">Create a passkey account without setting a password.</p>
@@ -498,33 +549,50 @@ export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPa
                                         <span class="label-text">Username</span>
                                         <span class="label-text-alt">3-32 letters, numbers, or underscores</span>
                                     </div>
-                                    <input autocomplete="username" class="input input-bordered w-full" maxLength={32} minLength={3} name="username" pattern="[A-Za-z0-9_]+" required title="Use 3-32 letters, numbers, or underscores." type="text" />
+                                    <input
+                                        autocomplete="username"
+                                        class="input input-bordered w-full"
+                                        maxLength={32}
+                                        minLength={3}
+                                        name="username"
+                                        pattern="[A-Za-z0-9_]+"
+                                        required
+                                        title="Use 3-32 letters, numbers, or underscores."
+                                        type="text"
+                                    />
                                 </label>
 
-                                <button class="btn btn-primary btn-block" type="submit">Create Account with Passkey
+                                <button class="btn btn-primary btn-block" type="submit">
+                                    Create Account with Passkey
                                 </button>
 
-                                <button class="btn btn-ghost btn-block" data-show-password-register type="button">Use
-                                    Password Instead
+                                <button class="btn btn-ghost btn-block" data-show-password-register type="button">
+                                    Use Password Instead
                                 </button>
 
                                 <p class="text-center text-sm opacity-75">
-                                    Already have an account? <a class="link link-primary font-semibold"
-                                                                href="/login">Login</a>
+                                    Already have an account?{' '}
+                                    <a class="link link-primary font-semibold" href="/login">
+                                        Login
+                                    </a>
                                 </p>
                             </form>
 
                             <div class="mt-6 border-t border-base-300 pt-6" data-password-register-panel hidden>
-                                <form action="/api/users" class="flex flex-col gap-6" data-password-register-form
-                                      method="post">
+                                <form action="/api/users" class="flex flex-col gap-6" data-password-register-form method="post">
                                     <div class="alert alert-error" data-auth-alert hidden></div>
 
                                     <label class="form-control w-full">
                                         <div class="label">
                                             <span class="label-text">Email</span>
                                         </div>
-                                        <input autocomplete="email" class="input input-bordered w-full" name="email"
-                                               required type="email"/>
+                                        <input
+                                            autocomplete="email"
+                                            class="input input-bordered w-full"
+                                            name="email"
+                                            required
+                                            type="email"
+                                        />
                                     </label>
 
                                     <label class="form-control w-full">
@@ -532,9 +600,17 @@ export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPa
                                             <span class="label-text">Username</span>
                                             <span class="label-text-alt">3-32 letters, numbers, or underscores</span>
                                         </div>
-                                        <input autocomplete="username" class="input input-bordered w-full"
-                                               maxLength={32} minLength={3} name="username" pattern="[A-Za-z0-9_]+"
-                                               required title="Use 3-32 letters, numbers, or underscores." type="text"/>
+                                        <input
+                                            autocomplete="username"
+                                            class="input input-bordered w-full"
+                                            maxLength={32}
+                                            minLength={3}
+                                            name="username"
+                                            pattern="[A-Za-z0-9_]+"
+                                            required
+                                            title="Use 3-32 letters, numbers, or underscores."
+                                            type="text"
+                                        />
                                     </label>
 
                                     <label class="form-control w-full">
@@ -542,12 +618,18 @@ export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPa
                                             <span class="label-text">Password</span>
                                             <span class="label-text-alt">8+ characters</span>
                                         </div>
-                                        <input autocomplete="new-password" class="input input-bordered w-full"
-                                               minLength={8} name="password" required type="password"/>
+                                        <input
+                                            autocomplete="new-password"
+                                            class="input input-bordered w-full"
+                                            minLength={8}
+                                            name="password"
+                                            required
+                                            type="password"
+                                        />
                                     </label>
 
-                                    <button class="btn btn-secondary btn-block" type="submit">Create Account with
-                                        Password
+                                    <button class="btn btn-secondary btn-block" type="submit">
+                                        Create Account with Password
                                     </button>
                                 </form>
                             </div>
@@ -565,7 +647,9 @@ export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPa
                     </div>
 
                     <div class="modal-action">
-                        <button class="btn btn-primary" data-recovery-saved-button type="button">Saved</button>
+                        <button class="btn btn-primary" data-recovery-saved-button type="button">
+                            Saved
+                        </button>
                     </div>
 
                     <div class="mt-4" data-recovery-confirm-panel hidden>
@@ -573,11 +657,11 @@ export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPa
                             <div class="label">
                                 <span class="label-text">Enter recovery phrase</span>
                             </div>
-                            <input autocomplete="off" class="input input-bordered w-full" data-recovery-confirm-input
-                                   type="text"/>
+                            <input autocomplete="off" class="input input-bordered w-full" data-recovery-confirm-input type="text" />
                         </label>
                         <div class="mt-3 flex justify-end">
-                            <button class="btn btn-primary" data-recovery-confirm-button type="button">Confirm Phrase
+                            <button class="btn btn-primary" data-recovery-confirm-button type="button">
+                                Confirm Phrase
                             </button>
                         </div>
                     </div>
