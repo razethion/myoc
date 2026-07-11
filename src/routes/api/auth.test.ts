@@ -3,7 +3,18 @@ import {describe, expect, it} from 'vitest'
 import {apiRoutes} from '../api'
 import {createMockDb} from '../../test/mockD1'
 import {createCsrfToken, type UserRecord} from '../../lib/auth/session'
+import {hashRecoveryPhrase} from '../../lib/auth/passkeys'
 import {expectSessionCookie} from '../../test/assertions'
+
+type SecurityTestUser = UserRecord & {
+    webauthn_user_id: string | null
+    recovery_phrase_hash: string | null
+    recovery_phrase_confirmed_at: string | null
+    secure_account_required: number
+    secure_account_required_at: string | null
+    secure_account_required_passkey_id: string | null
+    banned_at: string | null
+}
 
 async function postLogin(body: unknown, db: D1Database, url = '/login', cookie?: string): Promise<Response> {
     return apiRoutes.request(url, {
@@ -12,6 +23,42 @@ async function postLogin(body: unknown, db: D1Database, url = '/login', cookie?:
         headers: {
             'content-type': 'application/json',
             ...(cookie ? {cookie} : {}),
+        },
+    }, {
+        DB: db,
+    });
+}
+
+async function postPasskeyRegistrationOptions(body: unknown, db: D1Database): Promise<Response> {
+    return apiRoutes.request('https://example.com/register/passkey/options', {
+        method: 'POST',
+        body: typeof body === 'string' ? body : JSON.stringify(body),
+        headers: {
+            'content-type': 'application/json',
+        },
+    }, {
+        DB: db,
+    });
+}
+
+async function postRecoveryLogin(body: unknown, db: D1Database): Promise<Response> {
+    return apiRoutes.request('https://example.com/recovery/login', {
+        method: 'POST',
+        body: typeof body === 'string' ? body : JSON.stringify(body),
+        headers: {
+            'content-type': 'application/json',
+        },
+    }, {
+        DB: db,
+    });
+}
+
+async function postSecurityComplete(db: D1Database, sessionToken = 'session-token'): Promise<Response> {
+    return apiRoutes.request('https://example.com/security/complete', {
+        method: 'POST',
+        headers: {
+            cookie: `myoc_session=${sessionToken}`,
+            'x-csrf-token': await createCsrfToken(sessionToken),
         },
     }, {
         DB: db,
@@ -185,6 +232,160 @@ describe('POST /login', () => {
     })
 })
 
+describe('POST /register/passkey/options', () => {
+    it('returns 400 when required fields are missing', async () => {
+        const {db} = createMockDb()
+
+        const response = await postPasskeyRegistrationOptions({
+            email: 'test@example.com',
+        }, db)
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Email and username are required',
+        })
+    })
+
+    it('returns 409 when the email or username is already in use', async () => {
+        const {db} = createMockDb({firstResults: [{id: 'existing-user'}]})
+
+        const response = await postPasskeyRegistrationOptions({
+            email: 'test@example.com',
+            username: 'testuser',
+        }, db)
+
+        expect(response.status).toBe(409)
+        expect(await response.json()).toEqual({
+            error: 'Email or username is already in use',
+        })
+    })
+
+    it('creates a passkey registration challenge for a new account', async () => {
+        const {db, boundStatements} = createMockDb({firstResults: [null]})
+
+        const response = await postPasskeyRegistrationOptions({
+            email: ' Test@Example.com ',
+            username: ' testuser ',
+        }, db)
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            challengeId: string
+            options: { challenge: string; user: { name: string } }
+        }
+        expect(body.challengeId).toMatch(/^[0-9a-f-]{36}$/)
+        expect(body.options.challenge).toBeTruthy()
+        expect(body.options.user.name).toBe('testuser')
+        expect(db.batch).toHaveBeenCalledTimes(1)
+        expect(boundStatements[0]?.binds).toEqual(['test@example.com', 'testuser'])
+        expect(boundStatements[2]?.sql).toContain(['INSERT INTO', 'webauthn_challenges'].join(' '))
+        expect(boundStatements[2]?.binds[2]).toBe('test@example.com')
+        expect(boundStatements[2]?.binds[3]).toBe('testuser')
+    })
+})
+
+describe('POST /recovery/login', () => {
+    it('returns 401 when the recovery phrase does not match', async () => {
+        const user = {
+            ...await createTestUser('password123'),
+            recovery_phrase_hash: await hashRecoveryPhrase('correct-horse-battery-staple'),
+            banned_at: null,
+        }
+        const {db} = createMockDb({firstResults: [user]})
+
+        const response = await postRecoveryLogin({
+            username: 'testuser',
+            recoveryPhrase: 'wrong phrase',
+        }, db)
+
+        expect(response.status).toBe(401)
+        expect(await response.json()).toEqual({
+            error: 'Invalid username or recovery phrase',
+        })
+    })
+
+    it('creates a session and forces account security review when recovery succeeds', async () => {
+        const recoveryPhrase = 'correct-horse-battery-staple'
+        const user = {
+            ...await createTestUser('password123'),
+            recovery_phrase_hash: await hashRecoveryPhrase(recoveryPhrase),
+            banned_at: null,
+        }
+        const {db, boundStatements} = createMockDb({firstResults: [user]})
+
+        const response = await postRecoveryLogin({
+            username: 'testuser',
+            recoveryPhrase,
+        }, db)
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toMatchObject({
+            secureAccountRequired: true,
+            user: {
+                id: user.id,
+                username: user.username,
+            },
+        })
+        expectSessionCookie(response)
+        expect(boundStatements[1]?.sql).toContain('secure_account_required')
+        expect(boundStatements[1]?.sql).toContain('secure_account_required_at')
+        expect(boundStatements[1]?.sql).toContain('secure_account_required_passkey_id = NULL')
+        expect(boundStatements[1]?.binds).toHaveLength(2)
+        expect(boundStatements[1]?.binds[1]).toBe(user.id)
+        expect(boundStatements.some((statement) => statement.sql.includes(['DELETE FROM', 'user_passkeys'].join(' ')))).toBe(false)
+        expect(boundStatements.some((statement) => (
+            statement.sql.includes(['DELETE FROM', 'sessions'].join(' '))
+            && statement.sql.includes('user_id')
+        ))).toBe(false)
+        expect(db.batch).toHaveBeenCalledTimes(1)
+    })
+})
+
+describe('POST /security/complete', () => {
+    it('requires a new passkey after recovery instead of accepting existing passkeys', async () => {
+        const user = await createSecurityUser({
+            recovery_phrase_confirmed_at: '2026-06-10 12:05:00',
+            secure_account_required: 1,
+            secure_account_required_at: '2026-06-10 12:00:00',
+            secure_account_required_passkey_id: null,
+        })
+        const {db, boundStatements} = createMockDb({
+            firstResults: [createSessionUser(user), user],
+            allResults: [[createPasskey('old-passkey')]],
+        })
+
+        const response = await postSecurityComplete(db)
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Add a new passkey before completing account recovery',
+        })
+        expect(boundStatements.some((statement) => statement.sql.includes('SET password_hash'))).toBe(false)
+    })
+
+    it('completes recovery when the forced passkey is still registered', async () => {
+        const user = await createSecurityUser({
+            recovery_phrase_confirmed_at: '2026-06-10 12:05:00',
+            secure_account_required: 1,
+            secure_account_required_at: '2026-06-10 12:00:00',
+            secure_account_required_passkey_id: 'new-passkey',
+        })
+        const {db, boundStatements} = createMockDb({
+            firstResults: [createSessionUser(user), user],
+            allResults: [[createPasskey('old-passkey'), createPasskey('new-passkey')]],
+        })
+
+        const response = await postSecurityComplete(db)
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ok: true})
+        expect(boundStatements[3]?.sql).toContain('secure_account_required = 0')
+        expect(boundStatements[3]?.sql).toContain('secure_account_required_at = NULL')
+        expect(boundStatements[3]?.sql).toContain('secure_account_required_passkey_id = NULL')
+        expect(boundStatements[3]?.binds[1]).toBe(user.id)
+    })
+})
+
 describe('POST /logout', () => {
     it('returns 204 and clears the cookie when no session cookie exists', async () => {
         const {db} = createMockDb()
@@ -259,6 +460,56 @@ async function createTestUser(password: string): Promise<UserRecord> {
         display_nsfw_media: 0,
         last_seen_version: null,
         created_at: '2026-06-10 12:00:00',
+    }
+}
+
+async function createSecurityUser(overrides: Partial<SecurityTestUser> = {}): Promise<SecurityTestUser> {
+    return {
+        ...await createTestUser('password123'),
+        webauthn_user_id: 'webauthn-user-1',
+        recovery_phrase_hash: null,
+        recovery_phrase_confirmed_at: null,
+        secure_account_required: 0,
+        secure_account_required_at: null,
+        secure_account_required_passkey_id: null,
+        banned_at: null,
+        ...overrides,
+    }
+}
+
+function createSessionUser(user: UserRecord & {
+    recovery_phrase_confirmed_at?: string | null
+    secure_account_required?: number | null
+}) {
+    return {
+        id: user.id,
+        session_id: 'session-1',
+        email: user.email,
+        username: user.username,
+        role: user.role,
+        profile_photo_key: user.profile_photo_key,
+        bio: user.bio,
+        display_nsfw_media: user.display_nsfw_media,
+        last_seen_version: user.last_seen_version,
+        recovery_phrase_confirmed_at: user.recovery_phrase_confirmed_at ?? null,
+        secure_account_required: user.secure_account_required ?? 0,
+    }
+}
+
+function createPasskey(id: string) {
+    return {
+        id,
+        user_id: 'user-1',
+        credential_id: `${id}-credential`,
+        public_key: `${id}-public-key`,
+        webauthn_user_id: 'webauthn-user-1',
+        counter: 0,
+        device_type: 'singleDevice',
+        backed_up: 0,
+        transports: null,
+        name: id,
+        created_at: '2026-06-10 12:10:00',
+        last_used_at: null,
     }
 }
 

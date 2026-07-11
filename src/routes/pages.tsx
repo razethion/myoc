@@ -1,5 +1,6 @@
 import {Hono, type Context} from 'hono'
 import {getCurrentUser, isAdminUser, toSqlTimestamp} from '../lib/auth/session'
+import {listUserPasskeys, listUserSessions, toPasskeySummary} from '../lib/auth/passkeys'
 import {getImageApprovalData} from '../lib/admin/imageApprovals'
 import {getAdminReportsData} from '../lib/admin/reports'
 import {chunkGalleryItems, shouldForceGalleryRowFullWidth} from '../lib/gallery'
@@ -45,6 +46,7 @@ import {
     type ToyhouseMigrationResult,
 } from '../views/pages/MigratePage'
 import {NotFoundPage} from '../views/pages/NotFoundPage'
+import {PasskeyPromptPage} from '../views/pages/PasskeyPromptPage'
 import {ProductVisionPage} from '../views/pages/ProductVisionPage'
 import {ProfilePage, type ProfilePageUser} from '../views/pages/ProfilePage'
 import {SearchPage} from '../views/pages/SearchPage'
@@ -76,6 +78,7 @@ const HOME_PAGE_DISCOVER_CACHE_KEY = 'home:discover:v2'
 const HOME_PAGE_GALLERY_CACHE_KEY = 'home:gallery:v1'
 const HOME_PAGE_CACHE_TTL_SECONDS = 600
 const HOME_PAGE_GALLERY_CACHE_TTL_SECONDS = 60 * 60 * 24
+const PASSKEY_PROMPT_PATH = '/passkey-setup'
 const HOME_PAGE_HEIGHT_CHART_TARGETS = [
     {
         name: 'ivo',
@@ -95,6 +98,26 @@ const HOME_PAGE_HEIGHT_CHART_TARGETS = [
     },
 ] as const
 const D1_SAFE_VARIABLES_PER_QUERY = 90
+
+pageRoutes.use('*', async (c, next) => {
+    if (c.req.method !== 'GET') {
+        return await next()
+    }
+
+    const url = new URL(c.req.url)
+
+    if (!shouldCheckPasskeyPrompt(url.pathname)) {
+        return await next()
+    }
+
+    const currentUser = await getCurrentUser(c)
+
+    if (!(await shouldRedirectToPasskeyPrompt(c.env.DB, currentUser))) {
+        return await next()
+    }
+
+    return c.redirect(`${PASSKEY_PROMPT_PATH}?returnTo=${encodeURIComponent(`${url.pathname}${url.search}`)}`)
+})
 
 function getRandomLetter(): string {
     const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -158,6 +181,28 @@ pageRoutes.get('/register', async (c) => {
     )
 })
 
+pageRoutes.get(PASSKEY_PROMPT_PATH, async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return c.redirect('/login')
+    }
+
+    const returnTo = safePromptReturnTo(c.req.query('returnTo'), currentUser.username)
+
+    if (!(await shouldRedirectToPasskeyPrompt(c.env.DB, currentUser))) {
+        return c.redirect(returnTo)
+    }
+
+    return c.html(
+        <PasskeyPromptPage
+            currentUser={currentUser}
+            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+            returnTo={returnTo}
+        />,
+    )
+})
+
 pageRoutes.get('/settings', async (c) => {
     const currentUser = await getCurrentUser(c)
 
@@ -165,12 +210,18 @@ pageRoutes.get('/settings', async (c) => {
         return c.redirect('/login')
     }
 
-    const socialLinks = await getUserSocialLinks(c.env.DB, currentUser.id)
+    const [socialLinks, passkeys, sessions] = await Promise.all([
+        getUserSocialLinks(c.env.DB, currentUser.id),
+        listUserPasskeys(c.env.DB, currentUser.id),
+        listUserSessions(c.env.DB, currentUser),
+    ])
 
     return c.html(
         <UserSettingsPage
             currentUser={currentUser}
             mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+            passkeys={passkeys.map(toPasskeySummary)}
+            sessions={sessions}
             socialLinks={socialLinks}
         />,
     )
@@ -574,6 +625,34 @@ async function markCurrentVersionSeen(db: D1Database, userId: string): Promise<v
     )
         .bind(APP_VERSION, userId)
         .run()
+}
+
+function shouldCheckPasskeyPrompt(pathname: string): boolean {
+    if (pathname === PASSKEY_PROMPT_PATH) {
+        return false
+    }
+
+    if (pathname.startsWith('/assets/') || pathname.startsWith('/vendor/')) {
+        return false
+    }
+
+    return !/\.[A-Za-z0-9]+$/.test(pathname)
+}
+
+async function shouldRedirectToPasskeyPrompt(db: D1Database, currentUser: Awaited<ReturnType<typeof getCurrentUser>>): Promise<boolean> {
+    if (!currentUser || currentUser.passkeyPromptSeen || currentUser.secureAccountRequired) {
+        return false
+    }
+
+    return (await listUserPasskeys(db, currentUser.id)).length === 0
+}
+
+function safePromptReturnTo(value: string | undefined, username: string): string {
+    if (!value || !value.startsWith('/') || value.startsWith('//') || value === PASSKEY_PROMPT_PATH || value.startsWith('/api/')) {
+        return userProfileUrl(username)
+    }
+
+    return value
 }
 
 pageRoutes.get('/u/:username/:profilePath{.+}', async (c) => {

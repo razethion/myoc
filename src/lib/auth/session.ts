@@ -13,12 +13,17 @@ export type UserRecord = {
     display_nsfw_media: number
     last_seen_version: string | null
     created_at: string
+    webauthn_user_id?: string | null
+    recovery_phrase_confirmed_at?: string | null
+    secure_account_required?: number | null
+    passkey_prompt_seen_at?: string | null
 }
 
 export type UserRole = 'user' | 'admin'
 
 export type CurrentUser = {
     id: string
+    sessionId?: string
     email: string
     username: string
     role: UserRole
@@ -26,6 +31,9 @@ export type CurrentUser = {
     bio: string
     displayNsfwMedia: boolean
     lastSeenVersion: string | null
+    recoveryPhraseConfirmed?: boolean
+    secureAccountRequired?: boolean
+    passkeyPromptSeen?: boolean
     csrfToken: string
 }
 
@@ -68,13 +76,17 @@ export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promis
     const sessionHash = await sha256Hex(sessionToken)
     const user = await c.env.DB.prepare(
         `SELECT users.id,
+                sessions.id AS session_id,
                 users.email,
                 users.username,
                 users.role,
                 users.profile_photo_key,
                 users.bio,
                 users.display_nsfw_media,
-                users.last_seen_version
+                users.last_seen_version,
+                users.recovery_phrase_confirmed_at,
+                users.secure_account_required,
+                users.passkey_prompt_seen_at
          FROM sessions
          INNER JOIN users ON users.id = sessions.user_id
          WHERE sessions.session_hash = ?
@@ -85,6 +97,7 @@ export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promis
         .bind(sessionHash, toSqlTimestamp(new Date()))
         .first<{
             id: string
+            session_id: string
             email: string
             username: string
             role: string | null
@@ -92,6 +105,9 @@ export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promis
             bio: string
             display_nsfw_media: number
             last_seen_version: string | null
+            recovery_phrase_confirmed_at: string | null
+            secure_account_required: number | null
+            passkey_prompt_seen_at: string | null
         }>()
 
     if (!user) {
@@ -100,6 +116,7 @@ export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promis
 
     return {
         id: user.id,
+        sessionId: user.session_id,
         email: user.email,
         username: user.username,
         role: normalizeUserRole(user.role),
@@ -107,6 +124,9 @@ export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promis
         bio: user.bio,
         displayNsfwMedia: Boolean(user.display_nsfw_media),
         lastSeenVersion: user.last_seen_version ?? null,
+        recoveryPhraseConfirmed: Boolean(user.recovery_phrase_confirmed_at),
+        secureAccountRequired: Boolean(user.secure_account_required),
+        passkeyPromptSeen: Boolean(user.passkey_prompt_seen_at),
         csrfToken: await createCsrfToken(sessionToken),
     }
 }
