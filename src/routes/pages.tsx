@@ -378,7 +378,7 @@ pageRoutes.post('/migrate/import', async (c) => {
 pageRoutes.post('/migrate/import/confirm', async (c) => {
     const currentUser = await getCurrentUser(c)
     let clientImportPlan: ToyhouseClientImportPlan | null = null
-    let importResult: ToyhouseImportResult | null = null
+    const importResult: ToyhouseImportResult | null = null
     let migrationError = ''
 
     if (!currentUser) {
