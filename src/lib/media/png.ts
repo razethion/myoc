@@ -11,7 +11,7 @@ export function getPngDimensions(bytes: Uint8Array): PngDimensions | null {
     }
 
     for (let index = 0; index < PNG_SIGNATURE.length; index += 1) {
-        if (bytes[index] !== PNG_SIGNATURE[index]) {
+        if (byteAt(bytes, index) !== PNG_SIGNATURE[index]) {
             return null
         }
     }
@@ -34,7 +34,7 @@ function readAscii(bytes: Uint8Array, offset: number, length: number): string {
     let value = ''
 
     for (let index = 0; index < length; index += 1) {
-        value += String.fromCharCode(bytes[offset + index])
+        value += String.fromCharCode(byteAt(bytes, offset + index))
     }
 
     return value
@@ -42,9 +42,18 @@ function readAscii(bytes: Uint8Array, offset: number, length: number): string {
 
 function readUint32Be(bytes: Uint8Array, offset: number): number {
     return (
-        (bytes[offset] * 0x1000000)
-        + ((bytes[offset + 1] << 16) >>> 0)
-        + ((bytes[offset + 2] << 8) >>> 0)
-        + bytes[offset + 3]
+        (byteAt(bytes, offset) * 0x1000000)
+        + ((byteAt(bytes, offset + 1) << 16) >>> 0)
+        + ((byteAt(bytes, offset + 2) << 8) >>> 0)
+        + byteAt(bytes, offset + 3)
     )
+}
+
+function byteAt(bytes: Uint8Array, offset: number): number {
+    const value = bytes[offset]
+    if (value === undefined) {
+        throw new Error(`PNG byte offset out of range: ${offset}`)
+    }
+
+    return value
 }

@@ -29,7 +29,12 @@ export function isAdminSection(section: string): section is AdminSection {
 }
 
 export function AdminPage({activeSection, children, currentUser, mediaBaseUrl}: AdminPageProps) {
-    const activeItem = adminNavItems.find((item) => item.section === activeSection) ?? adminNavItems[0]
+    const fallbackItem = adminNavItems[0]
+    if (!fallbackItem) {
+        throw new Error('Admin navigation is empty.')
+    }
+
+    const activeItem = adminNavItems.find((item) => item.section === activeSection) ?? fallbackItem
 
     return (
         <BaseLayout title={`${activeItem.label} | Admin | MyOC`}>

@@ -451,7 +451,9 @@ function HomePageMotionStyles() {
 }
 
 function niceStep(rawStep: number, candidates: number[]): number {
-    return candidates.find((candidate) => candidate >= rawStep) ?? candidates[candidates.length - 1]
+    const fallback = candidates[candidates.length - 1]
+
+    return candidates.find((candidate) => candidate >= rawStep) ?? fallback ?? rawStep
 }
 
 function gridStep(maxMeters: number): number {

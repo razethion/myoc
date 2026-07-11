@@ -85,7 +85,14 @@ export function createMockR2Bucket(): R2Bucket {
             const truncated = nextCursorIndex < keys.length
 
             return {
-                objects: selectedKeys.map((key) => objectFor(key, objects.get(key)!)),
+                objects: selectedKeys.map((key) => {
+                    const object = objects.get(key)
+                    if (object === undefined) {
+                        throw new Error(`Missing object for key: ${key}`)
+                    }
+
+                    return objectFor(key, object)
+                }),
                 truncated,
                 cursor: truncated ? String(nextCursorIndex) : undefined,
                 delimitedPrefixes: [],

@@ -33,7 +33,7 @@ function formatSecurityDate(value: string | null): string {
         return 'Never'
     }
 
-    const date = new Date(value.replace(' ', 'T') + 'Z')
+    const date = new Date(`${value.replace(' ', 'T')}Z`)
 
     if (Number.isNaN(date.getTime())) {
         return value

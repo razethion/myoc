@@ -386,7 +386,7 @@ async function parsePasskeyPromptResponse(req: Request): Promise<{
 }
 
 function safeLocalRedirectPath(value: string | null): string | null {
-    if (!value || !value.startsWith('/') || value.startsWith('//')) {
+    if (!value?.startsWith('/') || value.startsWith('//')) {
         return null
     }
 
