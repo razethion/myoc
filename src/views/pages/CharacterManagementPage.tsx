@@ -1694,7 +1694,7 @@ export function CharacterManagementPage({
                         </fieldset>
                         <div class="hidden rounded-box border border-base-300 bg-base-100 p-3" data-character-profile-cropper>
                             <div class="h-[min(62dvh,34rem)] min-h-96 overflow-hidden rounded-box bg-base-300">
-                                <img alt="Crop character profile image"
+                                <img alt="Crop character portrait"
                                      class="block h-full w-full object-contain"
                                      data-character-profile-crop-image/>
                             </div>
@@ -1748,7 +1748,7 @@ export function CharacterManagementPage({
                         <div class="hidden rounded-box border border-base-300 bg-base-100 p-3"
                              data-new-folder-image-cropper>
                             <div class="h-[min(62dvh,34rem)] min-h-96 overflow-hidden rounded-box bg-base-300">
-                                <img alt="Crop new folder image"
+                                <img alt="Crop new folder cover"
                                      class="block h-full w-full object-contain"
                                      data-new-folder-image-crop-image/>
                             </div>
@@ -1800,7 +1800,7 @@ export function CharacterManagementPage({
                         <div class="hidden rounded-box border border-base-300 bg-base-100 p-3"
                              data-edit-folder-image-cropper>
                             <div class="h-[min(62dvh,34rem)] min-h-96 overflow-hidden rounded-box bg-base-300">
-                                <img alt="Crop folder image"
+                                <img alt="Crop folder cover"
                                      class="block h-full w-full object-contain"
                                      data-edit-folder-image-crop-image/>
                             </div>

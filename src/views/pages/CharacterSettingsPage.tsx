@@ -1674,7 +1674,8 @@ export function CharacterSettingsPage({
 
                 <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     <div class="flex min-w-0 items-center gap-3">
-                        <img alt="Current profile image" class="h-14 w-14 shrink-0 rounded object-cover sm:h-16 sm:w-16"
+                        <img alt="Current character portrait"
+                             class="h-14 w-14 shrink-0 rounded object-cover sm:h-16 sm:w-16"
                              data-character-profile-image-preview loading="lazy" src={profileImageUrl}/>
                         <h1 class="min-w-0 wrap-break-word text-4xl font-bold sm:text-5xl"
                             data-character-title>{character.name}</h1>
@@ -1699,7 +1700,7 @@ export function CharacterSettingsPage({
                     </fieldset>
                     <div class="hidden rounded-box border border-base-300 bg-base-100 p-3" data-character-profile-cropper>
                         <div class="max-h-88 overflow-hidden rounded-box bg-base-300">
-                            <img alt="Crop character profile image" class="block max-h-88 w-full object-contain"
+                            <img alt="Crop character portrait" class="block max-h-88 w-full object-contain"
                                  data-character-profile-crop-image/>
                         </div>
                         <p class="mt-2 text-xs text-base-content/60">Drag to choose the square profile crop. The saved

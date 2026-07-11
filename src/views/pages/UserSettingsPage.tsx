@@ -1258,7 +1258,7 @@ export function UserSettingsPage({
                                     <div class="mt-4 hidden rounded-box border border-base-300 bg-base-100 p-4"
                                          data-profile-photo-cropper>
                                         <div class="max-h-[22rem] overflow-hidden rounded-box bg-base-300">
-                                            <img alt="Selected profile photo crop editor"
+                                            <img alt="Selected avatar crop editor"
                                                  class="block max-h-[22rem] w-full object-contain"
                                                  data-profile-photo-crop-image/>
                                         </div>

@@ -740,7 +740,7 @@ function ToyhouseImportReviewForm({migrationResult}: { migrationResult: Toyhouse
                                                         data-toyhouse-image-card key={image.fullsizeUrl}>
                                                     <span class="block">
                                                         <img
-                                                            alt={`${character.name} gallery image`}
+                                                            alt={`${character.name} gallery entry`}
                                                             class="aspect-square w-full object-contain"
                                                             loading="lazy"
                                                             src={image.fullsizeUrl}
