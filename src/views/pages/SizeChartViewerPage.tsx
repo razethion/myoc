@@ -10,8 +10,9 @@ type SizeChartViewerPageProps = {
 
 function SizeChartViewerScript() {
     return (
-        <script dangerouslySetInnerHTML={{
-            __html: `
+        <script
+            dangerouslySetInnerHTML={{
+                __html: `
 const INCHES_PER_METER = 39.37007874015748;
 const LABEL_GUTTER = 70;
 const LABEL_GAP = 8;
@@ -1101,14 +1102,15 @@ void restoreLayoutFromUrl()
         renderAll();
     });
 `,
-        }}/>
+            }}
+        />
     )
 }
 
 export function SizeChartViewerPage({currentUser, guestInitial, mediaBaseUrl}: SizeChartViewerPageProps) {
     return (
         <BaseLayout title="Size Chart | MyOC">
-            <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl}/>
+            <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl} />
             <main class="size-chart-page px-3 py-6 sm:px-6">
                 <style>{`
                     .size-chart-page { min-height: calc(100vh - 4rem); }
@@ -1163,8 +1165,9 @@ export function SizeChartViewerPage({currentUser, guestInitial, mediaBaseUrl}: S
                         <p class="text-sm font-bold uppercase tracking-wide text-base-content/60">Site Tools</p>
                         <h1 class="text-4xl font-bold">Size Chart</h1>
                     </div>
-                    <p class="max-w-xl text-sm text-base-content/70">Search the site for characters with saved height
-                        data, then add them to a temporary comparison chart.</p>
+                    <p class="max-w-xl text-sm text-base-content/70">
+                        Search the site for characters with saved height data, then add them to a temporary comparison chart.
+                    </p>
                 </div>
                 <div class="alert alert-warning alert-dash mb-4" role="alert">
                     <span>This feature does not yet support content preferences. You may see NSFW media unexpectedly.</span>
@@ -1173,8 +1176,8 @@ export function SizeChartViewerPage({currentUser, guestInitial, mediaBaseUrl}: S
                     <section class="size-chart-panel">
                         <div class="flex items-center justify-between gap-3 border-b border-base-300 px-4 py-3">
                             <strong id="size-chart-status">0 characters</strong>
-                            <button class="btn btn-outline btn-sm" disabled id="size-chart-export" type="button">Export
-                                PNG
+                            <button class="btn btn-outline btn-sm" disabled id="size-chart-export" type="button">
+                                Export PNG
                             </button>
                         </div>
                         <div class="size-chart-plot" id="size-chart-plot"></div>
@@ -1184,8 +1187,13 @@ export function SizeChartViewerPage({currentUser, guestInitial, mediaBaseUrl}: S
                         <section class="size-chart-panel p-4">
                             <label class="fieldset">
                                 <span class="fieldset-label">Search Characters</span>
-                                <input autocomplete="off" class="input input-bordered w-full" id="size-chart-search"
-                                       placeholder="username character name" type="search"/>
+                                <input
+                                    autocomplete="off"
+                                    class="input input-bordered w-full"
+                                    id="size-chart-search"
+                                    placeholder="username character name"
+                                    type="search"
+                                />
                             </label>
                             <div class="size-chart-results mt-3" id="size-chart-search-results"></div>
                         </section>
@@ -1204,7 +1212,7 @@ export function SizeChartViewerPage({currentUser, guestInitial, mediaBaseUrl}: S
                     </aside>
                 </div>
             </main>
-            <SizeChartViewerScript/>
+            <SizeChartViewerScript />
         </BaseLayout>
     )
 }

@@ -12,7 +12,7 @@ export function createMockKVNamespace(options: MockKvOptions = {}): KVNamespace 
     }
 
     return {
-        get: vi.fn(async (key: string, type?: string | { type?: string }) => {
+        get: vi.fn(async (key: string, type?: string | {type?: string}) => {
             const value = values.get(key)
 
             if (value == null) {

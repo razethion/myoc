@@ -49,10 +49,12 @@ export async function createSession(db: D1Database, userId: string, now = new Da
 
     await db.batch([
         db.prepare('DELETE FROM sessions WHERE expires_at <= ?').bind(toSqlTimestamp(now)),
-        db.prepare(
-            `INSERT INTO sessions (id, user_id, session_hash, expires_at)
+        db
+            .prepare(
+                `INSERT INTO sessions (id, user_id, session_hash, expires_at)
              VALUES (?, ?, ?, ?)`,
-        ).bind(crypto.randomUUID(), userId, sessionHash, toSqlTimestamp(expiresAt)),
+            )
+            .bind(crypto.randomUUID(), userId, sessionHash, toSqlTimestamp(expiresAt)),
     ])
 
     return sessionToken
@@ -61,12 +63,10 @@ export async function createSession(db: D1Database, userId: string, now = new Da
 export async function deleteSession(db: D1Database, sessionToken: string): Promise<void> {
     const sessionHash = await sha256Hex(sessionToken)
 
-    await db.prepare('DELETE FROM sessions WHERE session_hash = ?')
-        .bind(sessionHash)
-        .run()
+    await db.prepare('DELETE FROM sessions WHERE session_hash = ?').bind(sessionHash).run()
 }
 
-export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promise<CurrentUser | null> {
+export async function getCurrentUser(c: Context<{Bindings: Bindings}>): Promise<CurrentUser | null> {
     const sessionToken = getCookie(c, SESSION_COOKIE)
 
     if (!sessionToken) {
@@ -131,7 +131,7 @@ export async function getCurrentUser(c: Context<{ Bindings: Bindings }>): Promis
     }
 }
 
-export function setSessionCookie(c: Context<{ Bindings: Bindings }>, sessionToken: string): void {
+export function setSessionCookie(c: Context<{Bindings: Bindings}>, sessionToken: string): void {
     setCookie(c, SESSION_COOKIE, sessionToken, {
         httpOnly: true,
         maxAge: SESSION_TTL_SECONDS,
@@ -141,7 +141,7 @@ export function setSessionCookie(c: Context<{ Bindings: Bindings }>, sessionToke
     })
 }
 
-export function clearSessionCookie(c: Context<{ Bindings: Bindings }>): void {
+export function clearSessionCookie(c: Context<{Bindings: Bindings}>): void {
     setCookie(c, SESSION_COOKIE, '', {
         httpOnly: true,
         maxAge: 0,
@@ -194,7 +194,7 @@ export function toSqlTimestamp(date: Date): string {
     return date.toISOString().replace('T', ' ').slice(0, 19)
 }
 
-export function isAdminUser(user: CurrentUser | null): user is CurrentUser & { role: 'admin' } {
+export function isAdminUser(user: CurrentUser | null): user is CurrentUser & {role: 'admin'} {
     return user?.role === 'admin'
 }
 
@@ -205,18 +205,12 @@ export function normalizeUserRole(role: unknown): UserRole {
 function createSessionToken(): string {
     const bytes = new Uint8Array(SESSION_TOKEN_BYTES)
     crypto.getRandomValues(bytes)
-    return [...bytes].map((byte) => byte
-        .toString(16)
-        .padStart(2, '0'))
-        .join('')
+    return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
 async function sha256Hex(value: string): Promise<string> {
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
-    return [...new Uint8Array(digest)].map((byte) => byte
-        .toString(16)
-        .padStart(2, '0'))
-        .join('')
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
 function timingSafeEqual(left: string, right: string): boolean {

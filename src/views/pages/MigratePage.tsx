@@ -70,58 +70,73 @@ type MigratePageProps = {
 }
 
 export function MigratePage({
-                                clientImportPlan = null,
-                                currentUser,
-                                guestInitial = 'M',
-                                importResult = null,
-                                mediaBaseUrl,
-                                migrationError = '',
-                                migrationResult = null,
-                                receiveToyhouseImport = false,
-                                showSetupForm = true,
-                                siteUrl,
-                                toyhouseUsername = '',
-                            }: MigratePageProps) {
+    clientImportPlan = null,
+    currentUser,
+    guestInitial = 'M',
+    importResult = null,
+    mediaBaseUrl,
+    migrationError = '',
+    migrationResult = null,
+    receiveToyhouseImport = false,
+    showSetupForm = true,
+    siteUrl,
+    toyhouseUsername = '',
+}: MigratePageProps) {
     const normalizedToyhouseUsername = getToyhouseUsername(toyhouseUsername)
     const toyhouseFolderUrl = getToyhouseFolderUrl(normalizedToyhouseUsername)
 
     return (
         <BaseLayout title="Migrate from Toyhou.se | MyOC">
-            <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl}/>
+            <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl} />
 
             <main class="container mx-auto max-w-3xl px-3 py-6 sm:px-0">
                 <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     <div class="min-w-0">
                         <h1 class="text-4xl font-bold sm:text-5xl">Migrate from Toyhou.se</h1>
-                        <p class="mt-1 text-sm text-base-content/70">
-                            Import your public Toyhou.se profile into MyOC.
-                        </p>
+                        <p class="mt-1 text-sm text-base-content/70">Import your public Toyhou.se profile into MyOC.</p>
                     </div>
                     {currentUser ? (
-                        <a class="btn btn-ghost" href="/settings">Back to Settings</a>
+                        <a class="btn btn-ghost" href="/settings">
+                            Back to Settings
+                        </a>
                     ) : (
-                        <a class="btn btn-primary" href="/login">Sign in</a>
+                        <a class="btn btn-primary" href="/login">
+                            Sign in
+                        </a>
                     )}
                 </div>
 
                 <section class="space-y-5">
                     <div class="alert border-warning/40 bg-warning/10 text-base-content">
-                        <span>
-                            Please ensure you are logged into toyhouse before starting.
-                        </span>
+                        <span>Please ensure you are logged into toyhouse before starting.</span>
                     </div>
 
                     {showSetupForm && (
                         <form action="/migrate" class="rounded-box border border-base-300 bg-base-200 p-4" method="get">
                             <fieldset class="fieldset">
-                                <label class="fieldset-label" for="toyhouse-username">Toyhou.se username</label>
+                                <label class="fieldset-label" for="toyhouse-username">
+                                    Toyhou.se username
+                                </label>
                                 <label class="input input-bordered w-full">
-                                    <svg aria-hidden="true" class="h-5 w-5 opacity-60" fill="none" stroke="currentColor"
-                                         viewBox="0 0 24 24">
-                                        <path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 4.43"
-                                              stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
-                                        <path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07l1.33-1.33"
-                                              stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+                                    <svg
+                                        aria-hidden="true"
+                                        class="h-5 w-5 opacity-60"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                    >
+                                        <path
+                                            d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 4.43"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                            stroke-width="2"
+                                        />
+                                        <path
+                                            d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07l1.33-1.33"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                            stroke-width="2"
+                                        />
                                     </svg>
                                     <input
                                         class="grow"
@@ -136,13 +151,14 @@ export function MigratePage({
                                     />
                                 </label>
                                 <div class="label">
-                                    <span
-                                        class="label-text-alt">Use the username from https://toyhou.se/username.</span>
+                                    <span class="label-text-alt">Use the username from https://toyhou.se/username.</span>
                                 </div>
                             </fieldset>
 
                             <div class="mt-4 flex justify-end">
-                                <button class="btn btn-primary" type="submit">Submit</button>
+                                <button class="btn btn-primary" type="submit">
+                                    Submit
+                                </button>
                             </div>
                         </form>
                     )}
@@ -154,7 +170,7 @@ export function MigratePage({
                                 Add this MyOC user ID anywhere in your Toyhou.se profile text before running the import.
                             </p>
                             <label class="input input-bordered mt-3 w-full">
-                                <input class="grow font-mono text-sm" readonly type="text" value={currentUser.id}/>
+                                <input class="grow font-mono text-sm" readonly type="text" value={currentUser.id} />
                             </label>
                         </section>
                     )}
@@ -191,10 +207,9 @@ export function MigratePage({
                                 Waiting for the bookmarklet to start.
                             </p>
                             <div class="mt-4 h-3 overflow-hidden rounded-full bg-base-300">
-                                <div class="h-full w-[4%] rounded-full bg-primary transition-all"
-                                     data-toyhouse-import-receiver-bar></div>
+                                <div class="h-full w-[4%] rounded-full bg-primary transition-all" data-toyhouse-import-receiver-bar></div>
                             </div>
-                            <ToyhouseImportReceiverScript/>
+                            <ToyhouseImportReceiverScript />
                         </section>
                     )}
 
@@ -202,21 +217,23 @@ export function MigratePage({
                         <section class="rounded-box border border-success/40 bg-success/10 p-4">
                             <h2 class="text-xl font-bold">Import complete</h2>
                             <p class="mt-1 text-sm text-base-content/70">
-                                Created {importResult.createdCharacters} character{importResult.createdCharacters === 1 ? '' : 's'},
-                                updated {importResult.updatedCharacters} existing
-                                character{importResult.updatedCharacters === 1 ? '' : 's'},
-                                and
+                                Created {importResult.createdCharacters} character{importResult.createdCharacters === 1 ? '' : 's'}, updated{' '}
+                                {importResult.updatedCharacters} existing character{importResult.updatedCharacters === 1 ? '' : 's'}, and
                                 imported {importResult.importedImages} image{importResult.importedImages === 1 ? '' : 's'}.
-                                {importResult.skippedImages > 0 ? ` ${importResult.skippedImages} image${importResult.skippedImages === 1 ? '' : 's'} could not be imported.` : ''}
+                                {importResult.skippedImages > 0
+                                    ? ` ${importResult.skippedImages} image${importResult.skippedImages === 1 ? '' : 's'} could not be imported.`
+                                    : ''}
                             </p>
                             <div class="mt-4 flex justify-end">
-                                <a class="btn btn-primary" href="/characters">View Characters</a>
+                                <a class="btn btn-primary" href="/characters">
+                                    View Characters
+                                </a>
                             </div>
                         </section>
                     )}
 
                     {clientImportPlan && currentUser && (
-                        <ToyhouseClientImportRunner csrfToken={currentUser.csrfToken} importPlan={clientImportPlan}/>
+                        <ToyhouseClientImportRunner csrfToken={currentUser.csrfToken} importPlan={clientImportPlan} />
                     )}
 
                     {migrationResult && (
@@ -225,19 +242,19 @@ export function MigratePage({
                                 <div>
                                     <h2 class="text-2xl font-bold">Review Characters for Import</h2>
                                     <p class="text-sm text-base-content/70">
-                                        Found {migrationResult.characters.length} characters
-                                        across {migrationResult.pagesFetched} page{migrationResult.pagesFetched === 1 ? '' : 's'}.
+                                        Found {migrationResult.characters.length} characters across {migrationResult.pagesFetched} page
+                                        {migrationResult.pagesFetched === 1 ? '' : 's'}.
                                     </p>
                                 </div>
-                                <a class="link link-primary text-sm" href={migrationResult.folderUrl}>View on
-                                    Toyhou.se</a>
+                                <a class="link link-primary text-sm" href={migrationResult.folderUrl}>
+                                    View on Toyhou.se
+                                </a>
                             </div>
 
                             {migrationResult.characters.length > 0 ? (
-                                <ToyhouseImportReviewForm migrationResult={migrationResult}/>
+                                <ToyhouseImportReviewForm migrationResult={migrationResult} />
                             ) : (
-                                <div
-                                    class="rounded-box border border-base-300 bg-base-200 p-4 text-sm text-base-content/70">
+                                <div class="rounded-box border border-base-300 bg-base-200 p-4 text-sm text-base-content/70">
                                     No public characters were found for this profile.
                                 </div>
                             )}
@@ -266,13 +283,7 @@ function getToyhouseUsername(value: string): string {
     return /^[A-Za-z0-9_-]+$/.test(username) ? username : ''
 }
 
-function ToyhouseClientImportRunner({
-                                        csrfToken,
-                                        importPlan,
-                                    }: {
-    csrfToken: string
-    importPlan: ToyhouseClientImportPlan
-}) {
+function ToyhouseClientImportRunner({csrfToken, importPlan}: {csrfToken: string; importPlan: ToyhouseClientImportPlan}) {
     return (
         <section class="rounded-box border border-base-300 bg-base-200 p-4" data-toyhouse-client-import>
             <h2 class="text-xl font-bold">Uploading Toyhou.se Images</h2>
@@ -283,25 +294,20 @@ function ToyhouseClientImportRunner({
                 Keep this page open. MyOC will upload each image in chunks and retry temporary failures.
             </p>
             <div class="mt-4 h-3 overflow-hidden rounded-full bg-base-300">
-                <div class="h-full w-[4%] rounded-full bg-primary transition-all"
-                     data-toyhouse-client-import-bar></div>
+                <div class="h-full w-[4%] rounded-full bg-primary transition-all" data-toyhouse-client-import-bar></div>
             </div>
-            <div class="mt-4 hidden rounded border border-success/30 bg-success/10 p-3 text-sm text-success"
-                 data-toyhouse-client-import-complete>
+            <div
+                class="mt-4 hidden rounded border border-success/30 bg-success/10 p-3 text-sm text-success"
+                data-toyhouse-client-import-complete
+            >
                 Import complete.
             </div>
-            <ToyhouseClientImportScript csrfToken={csrfToken} importPlan={importPlan}/>
+            <ToyhouseClientImportScript csrfToken={csrfToken} importPlan={importPlan} />
         </section>
     )
 }
 
-function ToyhouseClientImportScript({
-                                        csrfToken,
-                                        importPlan,
-                                    }: {
-    csrfToken: string
-    importPlan: ToyhouseClientImportPlan
-}) {
+function ToyhouseClientImportScript({csrfToken, importPlan}: {csrfToken: string; importPlan: ToyhouseClientImportPlan}) {
     const script = `
 (function () {
     const root = document.querySelector('[data-toyhouse-client-import]');
@@ -617,25 +623,26 @@ function ToyhouseClientImportScript({
     return <script dangerouslySetInnerHTML={{__html: script}}></script>
 }
 
-function ToyhouseImportReviewForm({migrationResult}: { migrationResult: ToyhouseMigrationResult }) {
+function ToyhouseImportReviewForm({migrationResult}: {migrationResult: ToyhouseMigrationResult}) {
     const readyCount = migrationResult.characters.filter((character) => character.canImport !== false).length
     const blockedCount = migrationResult.characters.length - readyCount
 
     return (
         <>
             <form action="/migrate/import/confirm" class="space-y-4" data-toyhouse-import-review method="post">
-                <textarea class="hidden" name="toyhousePayload">{JSON.stringify(migrationResult)}</textarea>
+                <textarea class="hidden" name="toyhousePayload">
+                    {JSON.stringify(migrationResult)}
+                </textarea>
                 <div class="rounded-box border border-base-300 bg-base-200 p-4">
                     <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <p class="font-semibold">
                             {readyCount} ready to import, {blockedCount} blocked
                         </p>
-                        <button class="btn btn-primary" data-toyhouse-final-import-button disabled={readyCount === 0}
-                                type="submit">Import Selected
+                        <button class="btn btn-primary" data-toyhouse-final-import-button disabled={readyCount === 0} type="submit">
+                            Import Selected
                         </button>
                     </div>
-                    <div class="mt-3 hidden rounded border border-base-300 bg-base-100 p-3"
-                         data-toyhouse-final-import-progress>
+                    <div class="mt-3 hidden rounded border border-base-300 bg-base-100 p-3" data-toyhouse-final-import-progress>
                         <p class="text-sm font-semibold" data-toyhouse-final-import-status>
                             Preparing import...
                         </p>
@@ -643,8 +650,7 @@ function ToyhouseImportReviewForm({migrationResult}: { migrationResult: Toyhouse
                             Keep this page open while MyOC imports your images.
                         </p>
                         <div class="mt-3 h-3 overflow-hidden rounded-full bg-base-300">
-                            <div class="h-full w-[4%] rounded-full bg-primary transition-all"
-                                 data-toyhouse-final-import-bar></div>
+                            <div class="h-full w-[4%] rounded-full bg-primary transition-all" data-toyhouse-final-import-bar></div>
                         </div>
                     </div>
                 </div>
@@ -669,11 +675,17 @@ function ToyhouseImportReviewForm({migrationResult}: { migrationResult: Toyhouse
                                         />
                                         {canImport && (
                                             <>
-                                                <input name={`importMode:${character.id}`} type="hidden"
-                                                       value={character.importMode ?? 'create'}/>
+                                                <input
+                                                    name={`importMode:${character.id}`}
+                                                    type="hidden"
+                                                    value={character.importMode ?? 'create'}
+                                                />
                                                 {character.targetCharacterId && (
-                                                    <input name={`targetCharacterId:${character.id}`} type="hidden"
-                                                           value={character.targetCharacterId}/>
+                                                    <input
+                                                        name={`targetCharacterId:${character.id}`}
+                                                        type="hidden"
+                                                        value={character.targetCharacterId}
+                                                    />
                                                 )}
                                             </>
                                         )}
@@ -685,22 +697,21 @@ function ToyhouseImportReviewForm({migrationResult}: { migrationResult: Toyhouse
                                                 src={character.thumbnailUrl}
                                             />
                                         ) : (
-                                            <div
-                                                class="flex h-14 w-14 shrink-0 items-center justify-center rounded bg-base-300 text-xl font-bold">
+                                            <div class="flex h-14 w-14 shrink-0 items-center justify-center rounded bg-base-300 text-xl font-bold">
                                                 {character.name.charAt(0).toUpperCase()}
                                             </div>
                                         )}
                                         <div class="min-w-0 flex-1">
-                                            <div
-                                                class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                                                <a class="font-semibold link-hover"
-                                                   href={character.url}>{character.name}</a>
+                                            <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                                                <a class="font-semibold link-hover" href={character.url}>
+                                                    {character.name}
+                                                </a>
                                                 {canImport && character.importMode === 'existing' ? (
                                                     <span class="badge badge-info">Add images to existing</span>
                                                 ) : canImport ? (
                                                     <span class="badge badge-success">Create new character</span>
-                                                ) : !canImport && (
-                                                    <span class="badge badge-warning">Blocked</span>
+                                                ) : (
+                                                    !canImport && <span class="badge badge-warning">Blocked</span>
                                                 )}
                                             </div>
                                             <p class="text-sm text-base-content/60">
@@ -709,14 +720,15 @@ function ToyhouseImportReviewForm({migrationResult}: { migrationResult: Toyhouse
                                             </p>
                                             {canImport && character.importMode === 'existing' ? (
                                                 <p class="mt-1 text-sm text-info">
-                                                    A character named {character.name} already exists. Selected images
-                                                    will be added to that character.
+                                                    A character named {character.name} already exists. Selected images will be added to that
+                                                    character.
                                                 </p>
-                                            ) : canImport && (
-                                                <p class="mt-1 text-sm text-success">
-                                                    A new character named {character.name} will be created with the
-                                                    selected images.
-                                                </p>
+                                            ) : (
+                                                canImport && (
+                                                    <p class="mt-1 text-sm text-success">
+                                                        A new character named {character.name} will be created with the selected images.
+                                                    </p>
+                                                )
                                             )}
                                             {importIssues.length > 0 && (
                                                 <ul class="mt-2 space-y-1 text-sm text-warning">
@@ -737,42 +749,44 @@ function ToyhouseImportReviewForm({migrationResult}: { migrationResult: Toyhouse
                                                 return (
                                                     <div
                                                         class="overflow-hidden rounded border border-base-300 bg-base-100"
-                                                        data-toyhouse-image-card key={image.fullsizeUrl}>
-                                                    <span class="block">
-                                                        <img
-                                                            alt={`${character.name} gallery entry`}
-                                                            class="aspect-square w-full object-contain"
-                                                            loading="lazy"
-                                                            src={image.fullsizeUrl}
-                                                        />
-                                                    </span>
+                                                        data-toyhouse-image-card
+                                                        key={image.fullsizeUrl}
+                                                    >
+                                                        <span class="block">
+                                                            <img
+                                                                alt={`${character.name} gallery entry`}
+                                                                class="aspect-square w-full object-contain"
+                                                                loading="lazy"
+                                                                src={image.fullsizeUrl}
+                                                            />
+                                                        </span>
                                                         <span class="block space-y-2 p-2">
-                                                        <span class="flex items-center gap-2 text-sm">
-                                                            <input
-                                                                checked={canImport}
-                                                                class="checkbox checkbox-sm checkbox-primary"
-                                                                data-toyhouse-image-select={character.id}
-                                                                disabled={!canImport}
-                                                                id={imageInputId}
-                                                                name={`imageUrls:${character.id}`}
-                                                                type="checkbox"
-                                                                value={image.fullsizeUrl}
-                                                            />
-                                                            <label for={imageInputId}>Import image</label>
+                                                            <span class="flex items-center gap-2 text-sm">
+                                                                <input
+                                                                    checked={canImport}
+                                                                    class="checkbox checkbox-sm checkbox-primary"
+                                                                    data-toyhouse-image-select={character.id}
+                                                                    disabled={!canImport}
+                                                                    id={imageInputId}
+                                                                    name={`imageUrls:${character.id}`}
+                                                                    type="checkbox"
+                                                                    value={image.fullsizeUrl}
+                                                                />
+                                                                <label for={imageInputId}>Import image</label>
+                                                            </span>
+                                                            <span class="flex items-center gap-2 text-sm">
+                                                                <input
+                                                                    class="checkbox checkbox-sm checkbox-error"
+                                                                    data-toyhouse-image-nsfw={character.id}
+                                                                    disabled={!canImport}
+                                                                    id={nsfwInputId}
+                                                                    name={`nsfwImageUrls:${character.id}`}
+                                                                    type="checkbox"
+                                                                    value={image.fullsizeUrl}
+                                                                />
+                                                                <label for={nsfwInputId}>NSFW</label>
+                                                            </span>
                                                         </span>
-                                                        <span class="flex items-center gap-2 text-sm">
-                                                            <input
-                                                                class="checkbox checkbox-sm checkbox-error"
-                                                                data-toyhouse-image-nsfw={character.id}
-                                                                disabled={!canImport}
-                                                                id={nsfwInputId}
-                                                                name={`nsfwImageUrls:${character.id}`}
-                                                                type="checkbox"
-                                                                value={image.fullsizeUrl}
-                                                            />
-                                                            <label for={nsfwInputId}>NSFW</label>
-                                                        </span>
-                                                    </span>
                                                     </div>
                                                 )
                                             })}
@@ -784,7 +798,7 @@ function ToyhouseImportReviewForm({migrationResult}: { migrationResult: Toyhouse
                     </ul>
                 </div>
             </form>
-            <ToyhouseImportReviewScript/>
+            <ToyhouseImportReviewScript />
         </>
     )
 }
@@ -1416,40 +1430,38 @@ function createToyhouseBookmarklet(siteUrl: string, expectedMyocUserId: string):
     return `javascript:${script.replace(/\s+/g, ' ').trim()}`
 }
 
-function ToyhouseImportDialog({
-                                  bookmarkletUrl,
-                                  toyhouseFolderUrl,
-                              }: {
-    bookmarkletUrl: string
-    toyhouseFolderUrl: string
-}) {
+function ToyhouseImportDialog({bookmarkletUrl, toyhouseFolderUrl}: {bookmarkletUrl: string; toyhouseFolderUrl: string}) {
     return (
         <>
             <dialog class="modal" data-toyhouse-import-dialog>
                 <div class="modal-box max-w-xl">
                     <h2 class="text-2xl font-bold">Save the import bookmarklet</h2>
                     <div class="mt-4 space-y-4 text-sm text-base-content/75">
+                        <p>Drag this button to your browser bookmarks bar.</p>
+                        <a class="btn btn-primary" href={bookmarkletUrl}>
+                            Import to MyOC
+                        </a>
                         <p>
-                            Drag this button to your browser bookmarks bar.
-                        </p>
-                        <a class="btn btn-primary" href={bookmarkletUrl}>Import to MyOC</a>
-                        <p>
-                            After it is bookmarked, MyOC will open your Toyhou.se character page. Click the saved
-                            bookmark while viewing Toyhou.se to send the character list back here.
+                            After it is bookmarked, MyOC will open your Toyhou.se character page. Click the saved bookmark while viewing
+                            Toyhou.se to send the character list back here.
                         </p>
                     </div>
                     <div class="modal-action">
                         <form method="dialog">
-                            <button class="btn btn-ghost" type="submit">Cancel</button>
+                            <button class="btn btn-ghost" type="submit">
+                                Cancel
+                            </button>
                         </form>
-                        <a class="btn btn-secondary" href={toyhouseFolderUrl}>I Bookmarked It</a>
+                        <a class="btn btn-secondary" href={toyhouseFolderUrl}>
+                            I Bookmarked It
+                        </a>
                     </div>
                 </div>
                 <form class="modal-backdrop" method="dialog">
                     <button type="submit">close</button>
                 </form>
             </dialog>
-            <ToyhouseImportDialogScript/>
+            <ToyhouseImportDialogScript />
         </>
     )
 }

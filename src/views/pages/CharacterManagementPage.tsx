@@ -41,10 +41,7 @@ type CharacterManagementFolderTreeItem = CharacterManagementFolder & {
     children: CharacterManagementFolderTreeItem[]
 }
 
-function buildFolderTree(
-    folders: CharacterManagementFolder[],
-    parentFolderId: string | null = null,
-): CharacterManagementFolderTreeItem[] {
+function buildFolderTree(folders: CharacterManagementFolder[], parentFolderId: string | null = null): CharacterManagementFolderTreeItem[] {
     return folders
         .filter((folder) => folder.parentFolderId === parentFolderId)
         .sort(compareOrderedNames)
@@ -54,10 +51,13 @@ function buildFolderTree(
         }))
 }
 
-function compareOrderedNames(left: { sortOrder: number; name: string }, right: {
-    sortOrder: number;
-    name: string
-}): number {
+function compareOrderedNames(
+    left: {sortOrder: number; name: string},
+    right: {
+        sortOrder: number
+        name: string
+    },
+): number {
     return left.sortOrder - right.sortOrder || left.name.localeCompare(right.name)
 }
 
@@ -66,7 +66,8 @@ function formatCount(count: number, singular: string, plural = `${singular}s`): 
 }
 
 const CHARACTER_NAME_INPUT_PATTERN = String.raw`(?=.*[A-Za-z0-9])[A-Za-z0-9 _'.\(\)"\-]+`
-const CHARACTER_NAME_INPUT_TITLE = 'Use letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses. Include at least one letter or number.'
+const CHARACTER_NAME_INPUT_TITLE =
+    'Use letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses. Include at least one letter or number.'
 
 function CharacterManagementStyles() {
     return (
@@ -185,11 +186,11 @@ function CharacterManagementStyles() {
 }
 
 function CharacterManagementScript({
-                                       characters,
-                                       csrfToken,
-                                       folders,
-                                       placements,
-                                   }: {
+    characters,
+    csrfToken,
+    folders,
+    placements,
+}: {
     characters: CharacterManagementCharacter[]
     csrfToken: string
     folders: CharacterManagementFolder[]
@@ -1550,8 +1551,8 @@ export function CharacterManagementPage({
     currentUser,
     folders,
     characters,
-                                            placements,
-                                            uploadedImageCount,
+    placements,
+    uploadedImageCount,
     mediaBaseUrl,
 }: CharacterManagementPageProps) {
     const foldersWithUrls = folders.map((folder) => ({
@@ -1570,34 +1571,28 @@ export function CharacterManagementPage({
     const folderTree = buildFolderTree(foldersWithUrls)
 
     return (
-        <BaseLayout
-            head={(
-                <CharacterManagementStyles/>
-            )}
-            title="Character Management | MyOC"
-        >
-            <Navbar currentUser={currentUser} mediaBaseUrl={mediaBaseUrl}/>
+        <BaseLayout head={<CharacterManagementStyles />} title="Character Management | MyOC">
+            <Navbar currentUser={currentUser} mediaBaseUrl={mediaBaseUrl} />
             <main class="management-shell min-h-screen px-3 py-6 sm:px-5">
-                <section
-                    class="mx-auto mb-5 max-w-7xl overflow-hidden rounded-[2rem] border border-base-300 bg-base-100/90 p-5 shadow-sm sm:p-7">
+                <section class="mx-auto mb-5 max-w-7xl overflow-hidden rounded-[2rem] border border-base-300 bg-base-100/90 p-5 shadow-sm sm:p-7">
                     <div class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
                         <div class="max-w-3xl">
                             <h1 class="mt-2 text-4xl font-black leading-none sm:text-6xl">Character Studio.</h1>
-                            <p class="mt-4 max-w-2xl text-base text-base-content/70">
-                                Create, delete, and sort characters and folders.
-                            </p>
+                            <p class="mt-4 max-w-2xl text-base text-base-content/70">Create, delete, and sort characters and folders.</p>
                         </div>
                     </div>
                     <div class="mt-6 grid gap-3 sm:grid-cols-3">
                         <div class="rounded-box bg-base-200 p-4">
                             <p class="text-xs uppercase tracking-[0.2em] text-base-content/55">Characters</p>
-                            <p class="mt-1 text-2xl font-black"
-                               id="character-count">{formatCount(characters.length, 'character')}</p>
+                            <p class="mt-1 text-2xl font-black" id="character-count">
+                                {formatCount(characters.length, 'character')}
+                            </p>
                         </div>
                         <div class="rounded-box bg-base-200 p-4">
                             <p class="text-xs uppercase tracking-[0.2em] text-base-content/55">Folders</p>
-                            <p class="mt-1 text-2xl font-black"
-                               id="folder-count">{formatCount(folders.length, 'folder')}</p>
+                            <p class="mt-1 text-2xl font-black" id="folder-count">
+                                {formatCount(folders.length, 'folder')}
+                            </p>
                         </div>
                         <div class="rounded-box bg-base-200 p-4">
                             <p class="text-xs uppercase tracking-[0.2em] text-base-content/55">Images Uploaded</p>
@@ -1606,22 +1601,26 @@ export function CharacterManagementPage({
                     </div>
                 </section>
 
-                <div
-                    class="mx-auto grid max-w-7xl gap-5 xl:grid-cols-[minmax(22rem,1.1fr)_minmax(17rem,0.8fr)_minmax(22rem,1fr)]">
+                <div class="mx-auto grid max-w-7xl gap-5 xl:grid-cols-[minmax(22rem,1.1fr)_minmax(17rem,0.8fr)_minmax(22rem,1fr)]">
                     <section class="card border border-base-300 bg-base-100/95 shadow-sm">
                         <div class="card-body gap-4 p-4 sm:p-5">
                             <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                 <div>
                                     <h2 class="card-title text-2xl">All Characters</h2>
-                                    <p class="text-sm text-base-content/65">Create and delete characters, and change
-                                        their sort-order for your main profile (outside of folders).</p>
+                                    <p class="text-sm text-base-content/65">
+                                        Create and delete characters, and change their sort-order for your main profile (outside of
+                                        folders).
+                                    </p>
                                 </div>
-                                <button class="btn btn-primary" id="create-character-button" type="button">New
-                                    Character
+                                <button class="btn btn-primary" id="create-character-button" type="button">
+                                    New Character
                                 </button>
                             </div>
-                            <div class="profile-dropzone space-y-2 rounded-box bg-base-200/65 p-2" data-profile-dropzone
-                                 id="profile-character-list"></div>
+                            <div
+                                class="profile-dropzone space-y-2 rounded-box bg-base-200/65 p-2"
+                                data-profile-dropzone
+                                id="profile-character-list"
+                            ></div>
                         </div>
                     </section>
 
@@ -1630,21 +1629,25 @@ export function CharacterManagementPage({
                             <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                 <div>
                                     <h2 class="card-title text-2xl">Folders</h2>
-                                    <p class="text-sm text-base-content/65">Create, delete, sort, and nest folders.
-                                        Select a folder to display its contents.</p>
+                                    <p class="text-sm text-base-content/65">
+                                        Create, delete, sort, and nest folders. Select a folder to display its contents.
+                                    </p>
                                 </div>
-                                <button class="btn" id="create-folder-button" type="button">New Folder</button>
+                                <button class="btn" id="create-folder-button" type="button">
+                                    New Folder
+                                </button>
                             </div>
                             <div class="rounded-box border border-base-300 bg-base-200/55 p-3">
                                 <div class="mb-2 flex items-center gap-2 rounded-box bg-base-100 px-3 py-2 font-bold">
-                                    <span aria-hidden="true" class="text-base-content/45">/</span>
+                                    <span aria-hidden="true" class="text-base-content/45">
+                                        /
+                                    </span>
                                     <span class="min-w-0 flex-1 truncate">All characters</span>
                                     <span class="badge badge-ghost badge-sm">fixed</span>
                                 </div>
                                 <div id="folder-tree-root">
                                     {folderTree.length > 0 ? null : (
-                                        <div
-                                            class="rounded-box border border-dashed border-base-300 bg-base-100 p-4 text-sm text-base-content/65">
+                                        <div class="rounded-box border border-dashed border-base-300 bg-base-100 p-4 text-sm text-base-content/65">
                                             No folders yet.
                                         </div>
                                     )}
@@ -1657,12 +1660,10 @@ export function CharacterManagementPage({
                         <div class="card-body gap-4 p-4 sm:p-5">
                             <div>
                                 <h2 class="mb-2 text-2xl font-black text-base-content">Inside Folder</h2>
-                                <p class="text-sm text-base-content/65">Select a folder, then add and order characters
-                                    inside it.</p>
+                                <p class="text-sm text-base-content/65">Select a folder, then add and order characters inside it.</p>
                             </div>
                             <div id="selected-folder-panel">
-                                <div
-                                    class="rounded-box border border-dashed border-base-300 bg-base-100 p-8 text-center text-base-content/65">
+                                <div class="rounded-box border border-dashed border-base-300 bg-base-100 p-8 text-center text-base-content/65">
                                     Select or create a folder to manage its character order.
                                 </div>
                             </div>
@@ -1674,29 +1675,40 @@ export function CharacterManagementPage({
             <dialog class="modal" id="create-character-modal">
                 <div class="modal-box w-11/12 max-w-3xl">
                     <form method="dialog">
-                        <button aria-label="Close create character dialog"
-                                class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                        <button
+                            aria-label="Close create character dialog"
+                            class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
+                            type="submit"
+                        >
+                            x
                         </button>
                     </form>
                     <h2 class="text-xl font-bold">Create Character</h2>
                     <form class="mt-5 space-y-4" id="create-character-form">
                         <fieldset class="fieldset">
                             <legend class="fieldset-legend">Character Name</legend>
-                            <input class="input w-full" id="new-character-name" maxLength={80}
-                                   pattern={CHARACTER_NAME_INPUT_PATTERN} required
-                                   title={CHARACTER_NAME_INPUT_TITLE}
-                                   type="text"/>
+                            <input
+                                class="input w-full"
+                                id="new-character-name"
+                                maxLength={80}
+                                pattern={CHARACTER_NAME_INPUT_PATTERN}
+                                required
+                                title={CHARACTER_NAME_INPUT_TITLE}
+                                type="text"
+                            />
                         </fieldset>
                         <fieldset class="fieldset">
                             <legend class="fieldset-legend">Profile Image</legend>
-                            <input accept="image/*" class="file-input w-full" id="new-character-profile-image" required type="file"/>
+                            <input accept="image/*" class="file-input w-full" id="new-character-profile-image" required type="file" />
                             <p class="label">You'll be able to crop the image before uploading.</p>
                         </fieldset>
                         <div class="hidden rounded-box border border-base-300 bg-base-100 p-3" data-character-profile-cropper>
                             <div class="h-[min(62dvh,34rem)] min-h-96 overflow-hidden rounded-box bg-base-300">
-                                <img alt="Crop character portrait"
-                                     class="block h-full w-full object-contain"
-                                     data-character-profile-crop-image/>
+                                <img
+                                    alt="Crop character portrait"
+                                    class="block h-full w-full object-contain"
+                                    data-character-profile-crop-image
+                                />
                             </div>
                             <p class="mt-2 text-xs text-base-content/60">Drag to choose the square profile crop.</p>
                         </div>
@@ -1708,8 +1720,12 @@ export function CharacterManagementPage({
                             <p class="label">You can add the character to more folders later.</p>
                         </fieldset>
                         <div class="modal-action">
-                            <button class="btn btn-ghost" data-close-create-character-modal type="button">Cancel</button>
-                            <button class="btn btn-primary" type="submit">Create Character</button>
+                            <button class="btn btn-ghost" data-close-create-character-modal type="button">
+                                Cancel
+                            </button>
+                            <button class="btn btn-primary" type="submit">
+                                Create Character
+                            </button>
                         </div>
                     </form>
                 </div>
@@ -1721,18 +1737,27 @@ export function CharacterManagementPage({
             <dialog class="modal" id="create-folder-modal">
                 <div class="modal-box w-11/12 max-w-3xl">
                     <form method="dialog">
-                        <button aria-label="Close create folder dialog"
-                                class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                        <button
+                            aria-label="Close create folder dialog"
+                            class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
+                            type="submit"
+                        >
+                            x
                         </button>
                     </form>
                     <h2 class="text-xl font-bold">Create Folder</h2>
                     <form class="mt-5 space-y-4" id="create-folder-form">
                         <fieldset class="fieldset">
                             <legend class="fieldset-legend">Folder Name</legend>
-                            <input class="input w-full" id="new-folder-name" maxLength={80}
-                                   pattern="[A-Za-z0-9][A-Za-z0-9 _'.()-]*" required
-                                   title="Use letters, numbers, spaces, apostrophes, hyphens, underscores, periods, and parentheses. Start with a letter or number."
-                                   type="text"/>
+                            <input
+                                class="input w-full"
+                                id="new-folder-name"
+                                maxLength={80}
+                                pattern="[A-Za-z0-9][A-Za-z0-9 _'.()-]*"
+                                required
+                                title="Use letters, numbers, spaces, apostrophes, hyphens, underscores, periods, and parentheses. Start with a letter or number."
+                                type="text"
+                            />
                         </fieldset>
                         <fieldset class="fieldset">
                             <legend class="fieldset-legend">Parent Folder</legend>
@@ -1742,26 +1767,31 @@ export function CharacterManagementPage({
                         </fieldset>
                         <fieldset class="fieldset">
                             <legend class="fieldset-legend">Folder Image</legend>
-                            <input accept="image/*" class="file-input w-full" id="new-folder-image" type="file"/>
+                            <input accept="image/*" class="file-input w-full" id="new-folder-image" type="file" />
                             <p class="label">Optional. You'll be able to crop the image before creating the folder.</p>
                         </fieldset>
-                        <div class="hidden rounded-box border border-base-300 bg-base-100 p-3"
-                             data-new-folder-image-cropper>
+                        <div class="hidden rounded-box border border-base-300 bg-base-100 p-3" data-new-folder-image-cropper>
                             <div class="h-[min(62dvh,34rem)] min-h-96 overflow-hidden rounded-box bg-base-300">
-                                <img alt="Crop new folder cover"
-                                     class="block h-full w-full object-contain"
-                                     data-new-folder-image-crop-image/>
+                                <img
+                                    alt="Crop new folder cover"
+                                    class="block h-full w-full object-contain"
+                                    data-new-folder-image-crop-image
+                                />
                             </div>
                             <div class="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                 <p class="text-xs text-base-content/60">Drag to choose the square folder crop.</p>
-                                <button class="btn btn-ghost btn-sm" data-cancel-new-folder-image-crop
-                                        type="button">Remove image
+                                <button class="btn btn-ghost btn-sm" data-cancel-new-folder-image-crop type="button">
+                                    Remove image
                                 </button>
                             </div>
                         </div>
                         <div class="modal-action">
-                            <button class="btn btn-ghost" data-close-create-folder-modal type="button">Cancel</button>
-                            <button class="btn" type="submit">Create Folder</button>
+                            <button class="btn btn-ghost" data-close-create-folder-modal type="button">
+                                Cancel
+                            </button>
+                            <button class="btn" type="submit">
+                                Create Folder
+                            </button>
                         </div>
                     </form>
                 </div>
@@ -1773,51 +1803,59 @@ export function CharacterManagementPage({
             <dialog class="modal" id="edit-folder-modal">
                 <div class="modal-box w-11/12 max-w-3xl">
                     <form method="dialog">
-                        <button aria-label="Close edit folder dialog"
-                                class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                        <button
+                            aria-label="Close edit folder dialog"
+                            class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
+                            type="submit"
+                        >
+                            x
                         </button>
                     </form>
                     <h2 class="text-xl font-bold">Edit Folder</h2>
                     <form class="mt-5 space-y-4" id="edit-folder-form">
                         <fieldset class="fieldset">
                             <legend class="fieldset-legend">Folder Name</legend>
-                            <input class="input w-full" id="edit-folder-name" maxLength={80}
-                                   pattern="[A-Za-z0-9][A-Za-z0-9 _'.()-]*" required
-                                   title="Use letters, numbers, spaces, apostrophes, hyphens, underscores, periods, and parentheses. Start with a letter or number."
-                                   type="text"/>
+                            <input
+                                class="input w-full"
+                                id="edit-folder-name"
+                                maxLength={80}
+                                pattern="[A-Za-z0-9][A-Za-z0-9 _'.()-]*"
+                                required
+                                title="Use letters, numbers, spaces, apostrophes, hyphens, underscores, periods, and parentheses. Start with a letter or number."
+                                type="text"
+                            />
                         </fieldset>
-                        <div class="hidden rounded-box border border-base-300 bg-base-200/65 p-3"
-                             data-edit-folder-current-image-frame>
-                            <p class="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-base-content/55">Current
-                                image</p>
-                            <img alt="" class="h-24 w-24 rounded-box object-cover" data-edit-folder-current-image/>
+                        <div class="hidden rounded-box border border-base-300 bg-base-200/65 p-3" data-edit-folder-current-image-frame>
+                            <p class="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-base-content/55">Current image</p>
+                            <img alt="" class="h-24 w-24 rounded-box object-cover" data-edit-folder-current-image />
                         </div>
                         <fieldset class="fieldset">
                             <legend class="fieldset-legend">Folder Image</legend>
-                            <input accept="image/*" class="file-input w-full" id="edit-folder-image" type="file"/>
+                            <input accept="image/*" class="file-input w-full" id="edit-folder-image" type="file" />
                             <p class="label">Choose a new image to crop, or remove the current image.</p>
                         </fieldset>
-                        <div class="hidden rounded-box border border-base-300 bg-base-100 p-3"
-                             data-edit-folder-image-cropper>
+                        <div class="hidden rounded-box border border-base-300 bg-base-100 p-3" data-edit-folder-image-cropper>
                             <div class="h-[min(62dvh,34rem)] min-h-96 overflow-hidden rounded-box bg-base-300">
-                                <img alt="Crop folder cover"
-                                     class="block h-full w-full object-contain"
-                                     data-edit-folder-image-crop-image/>
+                                <img alt="Crop folder cover" class="block h-full w-full object-contain" data-edit-folder-image-crop-image />
                             </div>
                             <div class="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                 <p class="text-xs text-base-content/60">Drag to choose the square folder crop.</p>
-                                <button class="btn btn-ghost btn-sm" data-cancel-edit-folder-image-crop
-                                        type="button">Cancel image change
+                                <button class="btn btn-ghost btn-sm" data-cancel-edit-folder-image-crop type="button">
+                                    Cancel image change
                                 </button>
                             </div>
                         </div>
-                        <div
-                            class="modal-action flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
-                            <button class="btn btn-ghost" data-remove-edit-folder-image type="button">Remove image
+                        <div class="modal-action flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <button class="btn btn-ghost" data-remove-edit-folder-image type="button">
+                                Remove image
                             </button>
                             <div class="flex justify-end gap-2">
-                                <button class="btn btn-ghost" data-close-edit-folder-modal type="button">Cancel</button>
-                                <button class="btn btn-primary" type="submit">Save Folder</button>
+                                <button class="btn btn-ghost" data-close-edit-folder-modal type="button">
+                                    Cancel
+                                </button>
+                                <button class="btn btn-primary" type="submit">
+                                    Save Folder
+                                </button>
                             </div>
                         </div>
                     </form>
@@ -1830,28 +1868,35 @@ export function CharacterManagementPage({
             <dialog class="modal" id="delete-character-modal">
                 <div class="modal-box">
                     <form method="dialog">
-                        <button aria-label="Close delete dialog"
-                                class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                        <button
+                            aria-label="Close delete dialog"
+                            class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
+                            type="submit"
+                        >
+                            x
                         </button>
                     </form>
                     <h2 class="text-xl font-bold">Delete Character</h2>
                     <p class="mt-3 text-sm text-base-content/80">
-                        This removes the character from your account, all folders, and its gallery. Type the character
-                        name and confirm permanent deletion to continue.
+                        This removes the character from your account, all folders, and its gallery. Type the character name and confirm
+                        permanent deletion to continue.
                     </p>
                     <form class="mt-5 space-y-4" id="delete-character-form">
                         <fieldset class="fieldset">
                             <legend class="fieldset-legend">Character Name</legend>
-                            <input autocomplete="off" class="input w-full" id="delete-character-confirm-name" required
-                                   type="text"/>
+                            <input autocomplete="off" class="input w-full" id="delete-character-confirm-name" required type="text" />
                         </fieldset>
                         <label class="label cursor-pointer justify-start gap-3">
-                            <input class="checkbox checkbox-error" id="delete-confirm-permanent" type="checkbox"/>
+                            <input class="checkbox checkbox-error" id="delete-confirm-permanent" type="checkbox" />
                             <span>I understand this cannot be undone.</span>
                         </label>
                         <div class="modal-action">
-                            <button class="btn btn-ghost" data-close-delete-character-modal type="button">Cancel</button>
-                            <button class="btn btn-error" type="submit">Delete Character</button>
+                            <button class="btn btn-ghost" data-close-delete-character-modal type="button">
+                                Cancel
+                            </button>
+                            <button class="btn btn-error" type="submit">
+                                Delete Character
+                            </button>
                         </div>
                     </form>
                 </div>
@@ -1863,16 +1908,26 @@ export function CharacterManagementPage({
             <dialog class="modal" id="delete-folder-modal">
                 <div class="modal-box">
                     <form method="dialog">
-                        <button aria-label="Close delete folder dialog"
-                                class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                        <button
+                            aria-label="Close delete folder dialog"
+                            class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
+                            type="submit"
+                        >
+                            x
                         </button>
                     </form>
                     <h2 class="text-xl font-bold">Remove Folder</h2>
-                    <p class="mt-3 text-sm text-base-content/80">Nested folders move to All characters. Character
-                        placements in this folder are removed, but characters are not deleted.</p>
+                    <p class="mt-3 text-sm text-base-content/80">
+                        Nested folders move to All characters. Character placements in this folder are removed, but characters are not
+                        deleted.
+                    </p>
                     <div class="modal-action">
-                        <button class="btn btn-ghost" data-cancel-delete-folder type="button">Cancel</button>
-                        <button class="btn btn-error" data-confirm-delete-folder type="button">Remove Folder</button>
+                        <button class="btn btn-ghost" data-cancel-delete-folder type="button">
+                            Cancel
+                        </button>
+                        <button class="btn btn-error" data-confirm-delete-folder type="button">
+                            Remove Folder
+                        </button>
                     </div>
                 </div>
                 <form class="modal-backdrop" method="dialog">

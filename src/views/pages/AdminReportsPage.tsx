@@ -15,7 +15,7 @@ const reportActions = [
 export function AdminReportsPage({csrfToken, data}: AdminReportsPageProps) {
     return (
         <div class="p-4 sm:p-6">
-            <AdminReportsStyles/>
+            <AdminReportsStyles />
             <div class="mb-6">
                 <h2 class="text-2xl font-bold">Reports</h2>
                 <p class="mt-1 text-sm text-base-content/70">Oldest reports are shown first.</p>
@@ -24,7 +24,7 @@ export function AdminReportsPage({csrfToken, data}: AdminReportsPageProps) {
             {data.reports.length > 0 ? (
                 <div class="grid gap-4">
                     {data.reports.map((report) => (
-                        <ImageReportCard csrfToken={csrfToken} report={report}/>
+                        <ImageReportCard csrfToken={csrfToken} report={report} />
                     ))}
                 </div>
             ) : (
@@ -34,12 +34,12 @@ export function AdminReportsPage({csrfToken, data}: AdminReportsPageProps) {
                 </div>
             )}
 
-            <AdminReportsScript/>
+            <AdminReportsScript />
         </div>
     )
 }
 
-function ImageReportCard({csrfToken, report}: { csrfToken: string; report: AdminImageReport }) {
+function ImageReportCard({csrfToken, report}: {csrfToken: string; report: AdminImageReport}) {
     const title = `${report.rating.toUpperCase()} image report`
     const reportedBy = report.reportedByUsername
         ? `Reported by @${report.reportedByUsername} in Image Approvals.`
@@ -49,7 +49,7 @@ function ImageReportCard({csrfToken, report}: { csrfToken: string; report: Admin
     return (
         <article class="admin-report-card">
             <div class="admin-report-preview">
-                <img alt={title} src={displayImageUrl}/>
+                <img alt={title} src={displayImageUrl} />
             </div>
 
             <div class="min-w-0 flex-1">
@@ -80,8 +80,12 @@ function ImageReportCard({csrfToken, report}: { csrfToken: string; report: Admin
                 </dl>
 
                 <div class="mt-4 flex flex-wrap gap-2">
-                    <a class="btn btn-sm btn-outline" href={report.character.url}>View Character</a>
-                    <a class="btn btn-sm btn-outline" href={report.user.profileUrl}>View User</a>
+                    <a class="btn btn-sm btn-outline" href={report.character.url}>
+                        View Character
+                    </a>
+                    <a class="btn btn-sm btn-outline" href={report.user.profileUrl}>
+                        View User
+                    </a>
                 </div>
 
                 <div class="mt-5 flex flex-wrap gap-2">
@@ -106,13 +110,18 @@ function ImageReportCard({csrfToken, report}: { csrfToken: string; report: Admin
                             </p>
                             <div class="modal-action">
                                 <form method="dialog">
-                                    <button class="btn btn-ghost" type="submit">Cancel</button>
+                                    <button class="btn btn-ghost" type="submit">
+                                        Cancel
+                                    </button>
                                 </form>
                                 <form
                                     action={`/api/admin/reports/images/${encodeURIComponent(report.mediaId)}/${report.rating}/${item.action}`}
-                                    method="post">
-                                    <input name="csrfToken" type="hidden" value={csrfToken}/>
-                                    <button class={`btn ${item.className}`} type="submit">{item.label}</button>
+                                    method="post"
+                                >
+                                    <input name="csrfToken" type="hidden" value={csrfToken} />
+                                    <button class={`btn ${item.className}`} type="submit">
+                                        {item.label}
+                                    </button>
                                 </form>
                             </div>
                         </div>
@@ -184,7 +193,5 @@ function AdminReportsScript() {
         }
     `
 
-    return (
-        <script dangerouslySetInnerHTML={{__html: script}}></script>
-    )
+    return <script dangerouslySetInnerHTML={{__html: script}}></script>
 }

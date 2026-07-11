@@ -12,7 +12,12 @@ type ProfileImagePayload = {
 export function validateProfileImagePayload(
     image: ProfileImagePayload,
     label: string,
-): { ok: true } | { error: string; status: 400 } {
+):
+    | {ok: true}
+    | {
+          error: string
+          status: 400
+      } {
     if (image.contentType !== 'image/webp') {
         return {error: `${label} must be a WebP image`, status: 400}
     }

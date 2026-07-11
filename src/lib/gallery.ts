@@ -1,9 +1,6 @@
 export const GALLERY_MAX_IMAGES_PER_ROW = 5
 
-export function chunkGalleryItems<T>(
-    items: T[],
-    maxItemsPerRow = GALLERY_MAX_IMAGES_PER_ROW,
-): T[][] {
+export function chunkGalleryItems<T>(items: T[], maxItemsPerRow = GALLERY_MAX_IMAGES_PER_ROW): T[][] {
     if (items.length === 0) {
         return []
     }
@@ -18,7 +15,7 @@ export function chunkGalleryItems<T>(
 }
 
 export function shouldForceGalleryRowFullWidth(
-    row: { mediaIds: readonly unknown[], forceFullWidth?: boolean },
+    row: {mediaIds: readonly unknown[]; forceFullWidth?: boolean},
     rowIndex: number,
     rowCount: number,
 ): boolean {

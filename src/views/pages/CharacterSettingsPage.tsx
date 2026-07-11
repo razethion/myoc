@@ -53,7 +53,8 @@ type CharacterSettingsPageProps = {
 }
 
 const CHARACTER_NAME_INPUT_PATTERN = String.raw`(?=.*[A-Za-z0-9])[A-Za-z0-9 _'.\(\)"\-]+`
-const CHARACTER_NAME_INPUT_TITLE = 'Use letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses. Include at least one letter or number.'
+const CHARACTER_NAME_INPUT_TITLE =
+    'Use letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses. Include at least one letter or number.'
 
 function safeJson(value: unknown): string {
     return JSON.stringify(value)
@@ -74,7 +75,15 @@ function mediaWithUrls(mediaBaseUrl: string, character: CharacterSettingsCharact
             ? characterMediaPreviewImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.sfwPreviewImageKey, 'sfw')
             : null,
         nsfwImageUrl: media.nsfwImageKey
-            ? characterMediaImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwImageKey, 'nsfw', media.nsfwContentType)
+            ? characterMediaImageUrl(
+                  mediaBaseUrl,
+                  character.userId,
+                  character.id,
+                  media.id,
+                  media.nsfwImageKey,
+                  'nsfw',
+                  media.nsfwContentType,
+              )
             : null,
         nsfwPreviewImageUrl: media.nsfwPreviewImageKey
             ? characterMediaPreviewImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwPreviewImageKey, 'nsfw')
@@ -94,8 +103,9 @@ function CharacterSettingsScript({
     csrfToken: string
 }) {
     return (
-        <script dangerouslySetInnerHTML={{
-            __html: `
+        <script
+            dangerouslySetInnerHTML={{
+                __html: `
 const character = ${safeJson(character)};
 const csrfToken = ${safeJson(csrfToken)};
 const maxGalleryImagesPerRow = ${safeJson(GALLERY_MAX_IMAGES_PER_ROW)};
@@ -1606,26 +1616,19 @@ if (tagLayouts.size === 0) {
 renderGallery();
 updateDeleteButtonState();
 `,
-        }}/>
+            }}
+        />
     )
 }
 
-export function CharacterSettingsPage({
-    currentUser,
-    character,
-    media,
-    galleryTabs,
-    mediaBaseUrl,
-}: CharacterSettingsPageProps) {
+export function CharacterSettingsPage({currentUser, character, media, galleryTabs, mediaBaseUrl}: CharacterSettingsPageProps) {
     const mediaItems = media.map((item) => mediaWithUrls(mediaBaseUrl, character, item))
     const profileImageUrl = characterProfileImageUrl(mediaBaseUrl, character.userId, character.id, character.profileImageKey)
     const characterViewUrl = `/u/${encodeURIComponent(currentUser.username)}/${encodeURIComponent(character.name)}`
 
     return (
-        <BaseLayout
-            title={`${character.name} Settings | MyOC`}
-        >
-            <Navbar currentUser={currentUser} guestInitial={currentUser.username.charAt(0).toUpperCase()} mediaBaseUrl={mediaBaseUrl}/>
+        <BaseLayout title={`${character.name} Settings | MyOC`}>
+            <Navbar currentUser={currentUser} guestInitial={currentUser.username.charAt(0).toUpperCase()} mediaBaseUrl={mediaBaseUrl} />
             <main class="container mx-auto max-w-7xl px-3 py-6 sm:px-4">
                 <style>{`
                     .media-pool-item { contain: layout paint; touch-action: none; user-select: none; }
@@ -1674,52 +1677,92 @@ export function CharacterSettingsPage({
 
                 <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     <div class="flex min-w-0 items-center gap-3">
-                        <img alt="Current character portrait"
-                             class="h-14 w-14 shrink-0 rounded object-cover sm:h-16 sm:w-16"
-                             data-character-profile-image-preview loading="lazy" src={profileImageUrl}/>
-                        <h1 class="min-w-0 wrap-break-word text-4xl font-bold sm:text-5xl"
-                            data-character-title>{character.name}</h1>
+                        <img
+                            alt="Current character portrait"
+                            class="h-14 w-14 shrink-0 rounded object-cover sm:h-16 sm:w-16"
+                            data-character-profile-image-preview
+                            loading="lazy"
+                            src={profileImageUrl}
+                        />
+                        <h1 class="min-w-0 wrap-break-word text-4xl font-bold sm:text-5xl" data-character-title>
+                            {character.name}
+                        </h1>
                     </div>
                     <div class="flex flex-wrap gap-2 sm:justify-end">
-                        <a class="btn btn-primary" href={characterViewUrl}>View Character</a>
-                        <a class="btn btn-secondary" href={`/edit/${encodeURIComponent(character.id)}/height-chart`}>Height
-                            Chart</a>
-                        <a class="btn btn-secondary" href="/characters">Back to Characters</a>
-                        <button class="btn btn-error" id="delete-character-button" type="button">Delete Character</button>
+                        <a class="btn btn-primary" href={characterViewUrl}>
+                            View Character
+                        </a>
+                        <a class="btn btn-secondary" href={`/edit/${encodeURIComponent(character.id)}/height-chart`}>
+                            Height Chart
+                        </a>
+                        <a class="btn btn-secondary" href="/characters">
+                            Back to Characters
+                        </a>
+                        <button class="btn btn-error" id="delete-character-button" type="button">
+                            Delete Character
+                        </button>
                     </div>
                 </div>
 
                 <form class="space-y-5" id="character-settings-form">
                     <fieldset class="fieldset">
-                        <label class="fieldset-label" for="character-profile-photo">Profile Photo</label>
-                        <input accept="image/*" class="file-input w-full" id="character-profile-photo"
-                               name="character-profile-photo" type="file"/>
+                        <label class="fieldset-label" for="character-profile-photo">
+                            Profile Photo
+                        </label>
+                        <input
+                            accept="image/*"
+                            class="file-input w-full"
+                            id="character-profile-photo"
+                            name="character-profile-photo"
+                            type="file"
+                        />
                         <div class="label">
                             <span class="label-text-alt">You'll be able to crop the image before uploading.</span>
                         </div>
                     </fieldset>
                     <div class="hidden rounded-box border border-base-300 bg-base-100 p-3" data-character-profile-cropper>
                         <div class="max-h-88 overflow-hidden rounded-box bg-base-300">
-                            <img alt="Crop character portrait" class="block max-h-88 w-full object-contain"
-                                 data-character-profile-crop-image/>
+                            <img
+                                alt="Crop character portrait"
+                                class="block max-h-88 w-full object-contain"
+                                data-character-profile-crop-image
+                            />
                         </div>
-                        <p class="mt-2 text-xs text-base-content/60">Drag to choose the square profile crop. The saved
-                            image will be converted to 512x512 WebP.</p>
+                        <p class="mt-2 text-xs text-base-content/60">
+                            Drag to choose the square profile crop. The saved image will be converted to 512x512 WebP.
+                        </p>
                     </div>
 
                     <fieldset class="fieldset">
-                        <label class="fieldset-label" for="character-name">Character Name</label>
-                        <input class="input input-bordered w-full" id="character-name" maxLength={80}
-                               name="character-name" pattern={CHARACTER_NAME_INPUT_PATTERN} required
-                               title={CHARACTER_NAME_INPUT_TITLE}
-                               type="text" value={character.name}/>
+                        <label class="fieldset-label" for="character-name">
+                            Character Name
+                        </label>
+                        <input
+                            class="input input-bordered w-full"
+                            id="character-name"
+                            maxLength={80}
+                            name="character-name"
+                            pattern={CHARACTER_NAME_INPUT_PATTERN}
+                            required
+                            title={CHARACTER_NAME_INPUT_TITLE}
+                            type="text"
+                            value={character.name}
+                        />
                     </fieldset>
 
                     <fieldset class="fieldset">
-                        <label class="fieldset-label" for="character-description">Description</label>
-                        <textarea class="textarea textarea-bordered min-h-32 w-full resize-y" id="character-description"
-                                  maxLength={255} name="character-description"
-                                  placeholder="Write a short character description...">{character.description}</textarea>
+                        <label class="fieldset-label" for="character-description">
+                            Description
+                        </label>
+                        <textarea
+                            class="textarea textarea-bordered min-h-32 w-full resize-y"
+                            id="character-description"
+                            maxLength={255}
+                            name="character-description"
+                            placeholder="Write a short character description..."
+                        >
+                            {character.description}
+                        </textarea>
                         <div class="label justify-end">
                             <span class="label-text-alt">255 characters max</span>
                         </div>
@@ -1729,19 +1772,26 @@ export function CharacterSettingsPage({
                         <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                             <div>
                                 <h2 class="text-2xl font-bold">Gallery</h2>
-                                <p class="text-sm text-base-content/70">Upload PNG, JPG, WebP, GIF, AVIF, or other
-                                    browser-supported images, then manage the gallery tabs.</p>
+                                <p class="text-sm text-base-content/70">
+                                    Upload PNG, JPG, WebP, GIF, AVIF, or other browser-supported images, then manage the gallery tabs.
+                                </p>
                             </div>
                             <div class="flex flex-wrap items-center justify-end gap-3">
-                                <button class="btn btn-secondary" id="bulk-upload-images" type="button">Bulk Upload</button>
-                                <button class="btn btn-primary" id="upload-media-button" type="button">Upload Image</button>
+                                <button class="btn btn-secondary" id="bulk-upload-images" type="button">
+                                    Bulk Upload
+                                </button>
+                                <button class="btn btn-primary" id="upload-media-button" type="button">
+                                    Upload Image
+                                </button>
                             </div>
                         </div>
 
                         <div class="rounded-box border border-base-300 bg-base-200 p-4">
                             <div class="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                                 <h3 class="text-lg font-semibold">All Media</h3>
-                                <span class="badge badge-neutral" id="all-media-count">0 media</span>
+                                <span class="badge badge-neutral" id="all-media-count">
+                                    0 media
+                                </span>
                             </div>
                             <div class="flex flex-wrap gap-3" id="all-media-pool"></div>
                         </div>
@@ -1749,40 +1799,68 @@ export function CharacterSettingsPage({
                         <div>
                             <div class="mb-3 min-w-0">
                                 <h3 class="text-lg font-semibold">Gallery Tabs</h3>
-                                <p class="text-sm text-base-content/70">Create, rename, delete, and reorder the tabs
-                                    shown on this character gallery.</p>
+                                <p class="text-sm text-base-content/70">
+                                    Create, rename, delete, and reorder the tabs shown on this character gallery.
+                                </p>
                             </div>
-                            <div aria-label="Gallery layout tabs"
-                                 class="gallery-layout-tabs tabs tabs-border flex-nowrap overflow-x-auto"
-                                 id="gallery-tag-tabs" role="tablist"></div>
+                            <div
+                                aria-label="Gallery layout tabs"
+                                class="gallery-layout-tabs tabs tabs-border flex-nowrap overflow-x-auto"
+                                id="gallery-tag-tabs"
+                                role="tablist"
+                            ></div>
                             <div class="gallery-layout-panel rounded-box border border-base-300 bg-base-200 p-4">
                                 <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                     <div>
-                                        <h4 class="font-semibold" id="active-gallery-tag-title">Default</h4>
-                                        <p class="text-sm text-base-content/70" id="active-gallery-tag-meta">0 rows / 0
-                                            images</p>
+                                        <h4 class="font-semibold" id="active-gallery-tag-title">
+                                            Default
+                                        </h4>
+                                        <p class="text-sm text-base-content/70" id="active-gallery-tag-meta">
+                                            0 rows / 0 images
+                                        </p>
                                     </div>
                                     <div class="flex flex-wrap items-center gap-2 sm:justify-end">
-                                        <button aria-label="Move active tab left"
-                                                class="gallery-layout-tab-action btn btn-dark btn-sm btn-square"
-                                                id="move-active-gallery-tab-left" title="Move tab left" type="button">←
+                                        <button
+                                            aria-label="Move active tab left"
+                                            class="gallery-layout-tab-action btn btn-dark btn-sm btn-square"
+                                            id="move-active-gallery-tab-left"
+                                            title="Move tab left"
+                                            type="button"
+                                        >
+                                            ←
                                         </button>
-                                        <button aria-label="Move active tab right"
-                                                class="gallery-layout-tab-action btn btn-dark btn-sm btn-square"
-                                                id="move-active-gallery-tab-right" title="Move tab right"
-                                                type="button">→
+                                        <button
+                                            aria-label="Move active tab right"
+                                            class="gallery-layout-tab-action btn btn-dark btn-sm btn-square"
+                                            id="move-active-gallery-tab-right"
+                                            title="Move tab right"
+                                            type="button"
+                                        >
+                                            →
                                         </button>
-                                        <button aria-label="Rename active tab"
-                                                class="gallery-layout-tab-action btn btn-dash btn-warning btn-sm btn-square"
-                                                id="rename-active-gallery-tab" title="Rename tab" type="button">✎
+                                        <button
+                                            aria-label="Rename active tab"
+                                            class="gallery-layout-tab-action btn btn-dash btn-warning btn-sm btn-square"
+                                            id="rename-active-gallery-tab"
+                                            title="Rename tab"
+                                            type="button"
+                                        >
+                                            ✎
                                         </button>
-                                        <button aria-label="Delete active tab"
-                                                class="gallery-layout-tab-action btn btn-error btn-sm btn-square"
-                                                id="delete-active-gallery-tab" title="Delete tab" type="button">
-                                            <svg aria-hidden="true" class="h-4 w-4" fill="none" stroke="currentColor"
-                                                 viewBox="0 0 24 24">
-                                                <path d="M4 7h16M10 11v6M14 11v6M6 7l1 14h10l1-14M9 7V4h6v3"
-                                                      stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+                                        <button
+                                            aria-label="Delete active tab"
+                                            class="gallery-layout-tab-action btn btn-error btn-sm btn-square"
+                                            id="delete-active-gallery-tab"
+                                            title="Delete tab"
+                                            type="button"
+                                        >
+                                            <svg aria-hidden="true" class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path
+                                                    d="M4 7h16M10 11v6M14 11v6M6 7l1 14h10l1-14M9 7V4h6v3"
+                                                    stroke-linecap="round"
+                                                    stroke-linejoin="round"
+                                                    stroke-width="2"
+                                                />
                                             </svg>
                                         </button>
                                     </div>
@@ -1793,20 +1871,24 @@ export function CharacterSettingsPage({
                     </section>
 
                     <div class="mt-8 flex flex-col items-end gap-2">
-                        <button class="btn btn-primary" id="save-character-settings" type="submit">Save Changes</button>
-                        <p class="max-w-xl text-right text-sm font-semibold text-warning" hidden
-                           id="save-character-settings-warning"></p>
+                        <button class="btn btn-primary" id="save-character-settings" type="submit">
+                            Save Changes
+                        </button>
+                        <p class="max-w-xl text-right text-sm font-semibold text-warning" hidden id="save-character-settings-warning"></p>
                     </div>
                 </form>
 
-                <UploadDialog/>
-                <BulkUploadDialog/>
-                <BulkUploadProgressDialog/>
-                <GalleryTagDialogs/>
-                <MediaDialogs characterName={character.name}/>
-                <DeleteCharacterDialog characterName={character.name}/>
-                <div aria-live="polite" class="toast toast-top toast-end pointer-events-none z-9999"
-                     data-character-settings-toast-region></div>
+                <UploadDialog />
+                <BulkUploadDialog />
+                <BulkUploadProgressDialog />
+                <GalleryTagDialogs />
+                <MediaDialogs characterName={character.name} />
+                <DeleteCharacterDialog characterName={character.name} />
+                <div
+                    aria-live="polite"
+                    class="toast toast-top toast-end pointer-events-none z-9999"
+                    data-character-settings-toast-region
+                ></div>
 
                 <script src="/vendor/cropperjs/cropper.min.js"></script>
                 <CharacterSettingsScript
@@ -1825,33 +1907,74 @@ function UploadDialog() {
         <dialog class="modal" id="upload-image-modal">
             <div class="modal-box">
                 <form method="dialog">
-                    <button aria-label="Close upload dialog"
-                            class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                    <button aria-label="Close upload dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">
+                        x
                     </button>
                 </form>
                 <h2 class="text-xl font-bold">Upload Image</h2>
                 <form class="mt-5 space-y-4" id="upload-image-form">
-                    <p class="text-sm text-base-content/70">PNG, JPG, WebP, GIF, and AVIF images are accepted. Files are
-                        stored unmodified.</p>
+                    <p class="text-sm text-base-content/70">
+                        PNG, JPG, WebP, GIF, and AVIF images are accepted. Files are stored unmodified.
+                    </p>
                     <div class="grid gap-3 sm:grid-cols-2">
                         <fieldset class="fieldset rounded border border-base-300 bg-base-200 p-3">
-                            <label class="fieldset-label" for="gallery-image-sfw-file">SFW</label>
-                            <div class="mb-3 flex aspect-video items-center justify-center overflow-hidden rounded bg-base-300 text-xs text-base-content/60" data-upload-sfw-preview>No SFW image selected</div>
-                            <input accept="image/*" class="file-input w-full" id="gallery-image-sfw-file" type="file"/>
+                            <label class="fieldset-label" for="gallery-image-sfw-file">
+                                SFW
+                            </label>
+                            <div
+                                class="mb-3 flex aspect-video items-center justify-center overflow-hidden rounded bg-base-300 text-xs text-base-content/60"
+                                data-upload-sfw-preview
+                            >
+                                No SFW image selected
+                            </div>
+                            <input accept="image/*" class="file-input w-full" id="gallery-image-sfw-file" type="file" />
                         </fieldset>
                         <fieldset class="fieldset rounded border border-base-300 bg-base-200 p-3">
-                            <label class="fieldset-label" for="gallery-image-nsfw-file">NSFW</label>
-                            <div class="mb-3 flex aspect-video items-center justify-center overflow-hidden rounded bg-base-300 text-xs text-base-content/60" data-upload-nsfw-preview>No NSFW image selected</div>
-                            <input accept="image/*" class="file-input w-full" id="gallery-image-nsfw-file" type="file"/>
+                            <label class="fieldset-label" for="gallery-image-nsfw-file">
+                                NSFW
+                            </label>
+                            <div
+                                class="mb-3 flex aspect-video items-center justify-center overflow-hidden rounded bg-base-300 text-xs text-base-content/60"
+                                data-upload-nsfw-preview
+                            >
+                                No NSFW image selected
+                            </div>
+                            <input accept="image/*" class="file-input w-full" id="gallery-image-nsfw-file" type="file" />
                         </fieldset>
                     </div>
                     <div class="grid gap-3 sm:grid-cols-2">
-                        <fieldset class="fieldset"><label class="fieldset-label" for="gallery-image-sfw-artist">SFW Credits</label><input class="input input-bordered w-full" id="gallery-image-sfw-artist" maxLength={80} placeholder="Artist name" type="text"/></fieldset>
-                        <fieldset class="fieldset"><label class="fieldset-label" for="gallery-image-nsfw-artist">NSFW Credits</label><input class="input input-bordered w-full" id="gallery-image-nsfw-artist" maxLength={80} placeholder="Artist name" type="text"/></fieldset>
+                        <fieldset class="fieldset">
+                            <label class="fieldset-label" for="gallery-image-sfw-artist">
+                                SFW Credits
+                            </label>
+                            <input
+                                class="input input-bordered w-full"
+                                id="gallery-image-sfw-artist"
+                                maxLength={80}
+                                placeholder="Artist name"
+                                type="text"
+                            />
+                        </fieldset>
+                        <fieldset class="fieldset">
+                            <label class="fieldset-label" for="gallery-image-nsfw-artist">
+                                NSFW Credits
+                            </label>
+                            <input
+                                class="input input-bordered w-full"
+                                id="gallery-image-nsfw-artist"
+                                maxLength={80}
+                                placeholder="Artist name"
+                                type="text"
+                            />
+                        </fieldset>
                     </div>
                     <div class="modal-action">
-                        <button class="btn btn-ghost" data-close-upload-modal type="button">Cancel</button>
-                        <button class="btn btn-primary" type="submit">Add Image</button>
+                        <button class="btn btn-ghost" data-close-upload-modal type="button">
+                            Cancel
+                        </button>
+                        <button class="btn btn-primary" type="submit">
+                            Add Image
+                        </button>
                     </div>
                 </form>
             </div>
@@ -1867,25 +1990,37 @@ function BulkUploadDialog() {
         <dialog class="modal" id="bulk-upload-modal">
             <div class="modal-box max-w-3xl">
                 <form method="dialog">
-                    <button aria-label="Close bulk upload dialog"
-                            class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                    <button
+                        aria-label="Close bulk upload dialog"
+                        class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
+                        type="submit"
+                    >
+                        x
                     </button>
                 </form>
                 <h2 class="text-xl font-bold">Bulk Upload</h2>
                 <form class="mt-5 space-y-4" id="bulk-upload-form">
                     <fieldset class="fieldset">
-                        <label class="fieldset-label" for="bulk-gallery-image-files">Image Files</label>
-                        <input accept="image/*" class="file-input w-full" id="bulk-gallery-image-files" multiple required type="file"/>
+                        <label class="fieldset-label" for="bulk-gallery-image-files">
+                            Image Files
+                        </label>
+                        <input accept="image/*" class="file-input w-full" id="bulk-gallery-image-files" multiple required type="file" />
                     </fieldset>
                     <div class="space-y-3" id="bulk-upload-list"></div>
                     <div class="modal-action">
-                        <button class="btn btn-ghost" data-close-bulk-upload-modal type="button">Cancel</button>
-                        <button class="btn btn-primary" type="submit">Add Images</button>
+                        <button class="btn btn-ghost" data-close-bulk-upload-modal type="button">
+                            Cancel
+                        </button>
+                        <button class="btn btn-primary" type="submit">
+                            Add Images
+                        </button>
                     </div>
                 </form>
             </div>
             <form class="modal-backdrop">
-                <button aria-label="Bulk upload backdrop" type="button">close</button>
+                <button aria-label="Bulk upload backdrop" type="button">
+                    close
+                </button>
             </form>
         </dialog>
     )
@@ -1896,16 +2031,23 @@ function BulkUploadProgressDialog() {
         <dialog class="modal" id="bulk-upload-progress-modal">
             <div class="modal-box max-w-2xl">
                 <h2 class="text-xl font-bold">Uploading Images</h2>
-                <p class="mt-1 text-sm text-base-content/70" id="bulk-upload-progress-summary">Preparing upload</p>
+                <p class="mt-1 text-sm text-base-content/70" id="bulk-upload-progress-summary">
+                    Preparing upload
+                </p>
                 <progress class="progress mt-5 w-full" id="bulk-upload-progress-bar" max="100" value="0"></progress>
-                <p class="mt-2 truncate text-sm text-base-content/70" id="bulk-upload-progress-detail">Waiting to
-                    upload</p>
+                <p class="mt-2 truncate text-sm text-base-content/70" id="bulk-upload-progress-detail">
+                    Waiting to upload
+                </p>
                 <div class="modal-action">
-                    <button class="btn btn-primary" hidden id="bulk-upload-progress-close" type="button">Close</button>
+                    <button class="btn btn-primary" hidden id="bulk-upload-progress-close" type="button">
+                        Close
+                    </button>
                 </div>
             </div>
             <form class="modal-backdrop">
-                <button aria-label="Bulk upload progress backdrop" disabled type="button">Uploading</button>
+                <button aria-label="Bulk upload progress backdrop" disabled type="button">
+                    Uploading
+                </button>
             </form>
         </dialog>
     )
@@ -1917,14 +2059,26 @@ function GalleryTagDialogs() {
             <dialog class="modal" id="gallery-tag-modal">
                 <div class="modal-box">
                     <form method="dialog">
-                        <button aria-label="Close tag dialog"
-                                class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                        <button aria-label="Close tag dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">
+                            x
                         </button>
                     </form>
                     <h2 class="text-xl font-bold">Add Gallery Tab</h2>
                     <form class="mt-5 space-y-4" id="gallery-tag-form">
-                        <fieldset class="fieldset"><label class="fieldset-label" for="gallery-tag-name">Tab Name</label><input class="input input-bordered w-full" id="gallery-tag-name" maxLength={32} required type="text"/></fieldset>
-                        <div class="modal-action"><button class="btn btn-ghost" data-close-gallery-tag-modal type="button">Cancel</button><button class="btn btn-primary" type="submit">Add Tab</button></div>
+                        <fieldset class="fieldset">
+                            <label class="fieldset-label" for="gallery-tag-name">
+                                Tab Name
+                            </label>
+                            <input class="input input-bordered w-full" id="gallery-tag-name" maxLength={32} required type="text" />
+                        </fieldset>
+                        <div class="modal-action">
+                            <button class="btn btn-ghost" data-close-gallery-tag-modal type="button">
+                                Cancel
+                            </button>
+                            <button class="btn btn-primary" type="submit">
+                                Add Tab
+                            </button>
+                        </div>
                     </form>
                 </div>
                 <form class="modal-backdrop" method="dialog">
@@ -1934,14 +2088,30 @@ function GalleryTagDialogs() {
             <dialog class="modal" id="rename-gallery-tag-modal">
                 <div class="modal-box">
                     <form method="dialog">
-                        <button aria-label="Close rename tab dialog"
-                                class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                        <button
+                            aria-label="Close rename tab dialog"
+                            class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
+                            type="submit"
+                        >
+                            x
                         </button>
                     </form>
                     <h2 class="text-xl font-bold">Rename Gallery Tab</h2>
                     <form class="mt-5 space-y-4" id="rename-gallery-tag-form">
-                        <fieldset class="fieldset"><label class="fieldset-label" for="rename-gallery-tag-name">Tab Name</label><input class="input input-bordered w-full" id="rename-gallery-tag-name" maxLength={32} required type="text"/></fieldset>
-                        <div class="modal-action"><button class="btn btn-ghost" data-close-rename-gallery-tag-modal type="button">Cancel</button><button class="btn btn-primary" type="submit">Rename Tab</button></div>
+                        <fieldset class="fieldset">
+                            <label class="fieldset-label" for="rename-gallery-tag-name">
+                                Tab Name
+                            </label>
+                            <input class="input input-bordered w-full" id="rename-gallery-tag-name" maxLength={32} required type="text" />
+                        </fieldset>
+                        <div class="modal-action">
+                            <button class="btn btn-ghost" data-close-rename-gallery-tag-modal type="button">
+                                Cancel
+                            </button>
+                            <button class="btn btn-primary" type="submit">
+                                Rename Tab
+                            </button>
+                        </div>
                     </form>
                 </div>
                 <form class="modal-backdrop" method="dialog">
@@ -1951,9 +2121,15 @@ function GalleryTagDialogs() {
             <dialog class="modal" id="delete-gallery-tag-modal">
                 <div class="modal-box">
                     <h2 class="text-xl font-bold">Delete Tab?</h2>
-                    <p class="mt-3 text-sm text-base-content/80">This removes that gallery tab. The media stays in All
-                        Media.</p>
-                    <div class="modal-action"><button class="btn btn-ghost" data-cancel-delete-gallery-tag type="button">Cancel</button><button class="btn btn-error" data-confirm-delete-gallery-tag type="button">Delete Tab</button></div>
+                    <p class="mt-3 text-sm text-base-content/80">This removes that gallery tab. The media stays in All Media.</p>
+                    <div class="modal-action">
+                        <button class="btn btn-ghost" data-cancel-delete-gallery-tag type="button">
+                            Cancel
+                        </button>
+                        <button class="btn btn-error" data-confirm-delete-gallery-tag type="button">
+                            Delete Tab
+                        </button>
+                    </div>
                 </div>
                 <form class="modal-backdrop" method="dialog">
                     <button type="submit">close</button>
@@ -1963,15 +2139,21 @@ function GalleryTagDialogs() {
     )
 }
 
-function MediaDialogs({characterName}: { characterName: string }) {
+function MediaDialogs({characterName}: {characterName: string}) {
     return (
         <>
             <dialog class="modal" id="delete-media-modal">
                 <div class="modal-box">
                     <h2 class="text-xl font-bold">Delete Media?</h2>
-                    <p class="mt-3 text-sm text-base-content/80">This removes the media from this character
-                        entirely.</p>
-                    <div class="modal-action"><button class="btn btn-ghost" data-cancel-delete-media type="button">Cancel</button><button class="btn btn-error" data-confirm-delete-media type="button">Delete Media</button></div>
+                    <p class="mt-3 text-sm text-base-content/80">This removes the media from this character entirely.</p>
+                    <div class="modal-action">
+                        <button class="btn btn-ghost" data-cancel-delete-media type="button">
+                            Cancel
+                        </button>
+                        <button class="btn btn-error" data-confirm-delete-media type="button">
+                            Delete Media
+                        </button>
+                    </div>
                 </div>
                 <form class="modal-backdrop" method="dialog">
                     <button type="submit">close</button>
@@ -1980,64 +2162,127 @@ function MediaDialogs({characterName}: { characterName: string }) {
             <dialog class="modal" id="edit-image-artist-modal">
                 <div class="modal-box">
                     <form method="dialog">
-                        <button aria-label="Close artist dialog"
-                                class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                        <button
+                            aria-label="Close artist dialog"
+                            class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
+                            type="submit"
+                        >
+                            x
                         </button>
                     </form>
                     <h2 class="text-xl font-bold">Edit Image</h2>
                     <form class="mt-5 space-y-4" id="edit-image-artist-form">
-                        <p class="text-sm text-base-content/70">PNG, JPG, WebP, GIF, and AVIF replacements are accepted.
-                            Files are stored unmodified.</p>
+                        <p class="text-sm text-base-content/70">
+                            PNG, JPG, WebP, GIF, and AVIF replacements are accepted. Files are stored unmodified.
+                        </p>
                         <div class="grid gap-3 sm:grid-cols-2">
                             <fieldset class="fieldset rounded border border-base-300 bg-base-200 p-3">
-                                <label class="fieldset-label" for="edit-gallery-image-sfw-file">SFW</label>
-                                <div class="mb-3 flex aspect-video items-center justify-center overflow-hidden rounded bg-base-300 text-xs text-base-content/60" data-edit-sfw-preview>No SFW image uploaded</div>
-                                <input accept="image/*" class="file-input w-full" id="edit-gallery-image-sfw-file" type="file"/>
-                                <button class="btn btn-error btn-outline btn-sm mt-3 w-full" data-remove-edit-sfw type="button">Remove SFW Image</button>
+                                <label class="fieldset-label" for="edit-gallery-image-sfw-file">
+                                    SFW
+                                </label>
+                                <div
+                                    class="mb-3 flex aspect-video items-center justify-center overflow-hidden rounded bg-base-300 text-xs text-base-content/60"
+                                    data-edit-sfw-preview
+                                >
+                                    No SFW image uploaded
+                                </div>
+                                <input accept="image/*" class="file-input w-full" id="edit-gallery-image-sfw-file" type="file" />
+                                <button class="btn btn-error btn-outline btn-sm mt-3 w-full" data-remove-edit-sfw type="button">
+                                    Remove SFW Image
+                                </button>
                             </fieldset>
                             <fieldset class="fieldset rounded border border-base-300 bg-base-200 p-3">
-                                <label class="fieldset-label" for="edit-gallery-image-nsfw-file">NSFW</label>
-                                <div class="mb-3 flex aspect-video items-center justify-center overflow-hidden rounded bg-base-300 text-xs text-base-content/60" data-edit-nsfw-preview>No NSFW image uploaded</div>
-                                <input accept="image/*" class="file-input w-full" id="edit-gallery-image-nsfw-file" type="file"/>
-                                <button class="btn btn-error btn-outline btn-sm mt-3 w-full" data-remove-edit-nsfw type="button">Remove NSFW Image</button>
+                                <label class="fieldset-label" for="edit-gallery-image-nsfw-file">
+                                    NSFW
+                                </label>
+                                <div
+                                    class="mb-3 flex aspect-video items-center justify-center overflow-hidden rounded bg-base-300 text-xs text-base-content/60"
+                                    data-edit-nsfw-preview
+                                >
+                                    No NSFW image uploaded
+                                </div>
+                                <input accept="image/*" class="file-input w-full" id="edit-gallery-image-nsfw-file" type="file" />
+                                <button class="btn btn-error btn-outline btn-sm mt-3 w-full" data-remove-edit-nsfw type="button">
+                                    Remove NSFW Image
+                                </button>
                             </fieldset>
                         </div>
                         <div class="grid gap-3 sm:grid-cols-2">
-                            <fieldset class="fieldset"><label class="fieldset-label" for="edit-gallery-image-sfw-artist">SFW Credits</label><input class="input input-bordered w-full" id="edit-gallery-image-sfw-artist" maxLength={80} type="text"/></fieldset>
-                            <fieldset class="fieldset"><label class="fieldset-label" for="edit-gallery-image-nsfw-artist">NSFW Credits</label><input class="input input-bordered w-full" id="edit-gallery-image-nsfw-artist" maxLength={80} type="text"/></fieldset>
+                            <fieldset class="fieldset">
+                                <label class="fieldset-label" for="edit-gallery-image-sfw-artist">
+                                    SFW Credits
+                                </label>
+                                <input class="input input-bordered w-full" id="edit-gallery-image-sfw-artist" maxLength={80} type="text" />
+                            </fieldset>
+                            <fieldset class="fieldset">
+                                <label class="fieldset-label" for="edit-gallery-image-nsfw-artist">
+                                    NSFW Credits
+                                </label>
+                                <input class="input input-bordered w-full" id="edit-gallery-image-nsfw-artist" maxLength={80} type="text" />
+                            </fieldset>
                         </div>
-                        <div class="modal-action"><button class="btn btn-ghost" data-close-edit-artist-modal type="button">Cancel</button><button class="btn btn-primary" type="submit">Save Image</button></div>
+                        <div class="modal-action">
+                            <button class="btn btn-ghost" data-close-edit-artist-modal type="button">
+                                Cancel
+                            </button>
+                            <button class="btn btn-primary" type="submit">
+                                Save Image
+                            </button>
+                        </div>
                     </form>
                 </div>
                 <form class="modal-backdrop" method="dialog">
                     <button type="submit">close</button>
                 </form>
             </dialog>
-            <input hidden readOnly value={characterName}/>
+            <input hidden readOnly value={characterName} />
         </>
     )
 }
 
-function DeleteCharacterDialog({characterName}: { characterName: string }) {
+function DeleteCharacterDialog({characterName}: {characterName: string}) {
     return (
         <dialog class="modal" id="delete-character-modal">
             <div class="modal-box">
                 <form method="dialog">
-                    <button aria-label="Close delete dialog"
-                            class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">x
+                    <button aria-label="Close delete dialog" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" type="submit">
+                        x
                     </button>
                 </form>
                 <h2 class="text-xl font-bold">Delete Character</h2>
-                <p class="mt-3 text-sm text-base-content/80">This will permanently delete this character and its gallery. Type the character name to continue.</p>
+                <p class="mt-3 text-sm text-base-content/80">
+                    This will permanently delete this character and its gallery. Type the character name to continue.
+                </p>
                 <form class="mt-5 space-y-4" id="delete-character-form">
                     <fieldset class="fieldset">
-                        <label class="fieldset-label" for="delete-character-confirm-name">Character Name</label>
-                        <input autocomplete="off" class="input input-bordered w-full" id="delete-character-confirm-name"
-                               placeholder={characterName} required type="text"/>
+                        <label class="fieldset-label" for="delete-character-confirm-name">
+                            Character Name
+                        </label>
+                        <input
+                            autocomplete="off"
+                            class="input input-bordered w-full"
+                            id="delete-character-confirm-name"
+                            placeholder={characterName}
+                            required
+                            type="text"
+                        />
                     </fieldset>
-                    <label class="label cursor-pointer justify-start gap-3"><input class="checkbox checkbox-error" id="delete-confirm-permanent" type="checkbox"/><span class="label-text">I understand this deletion is permanent.</span></label>
-                    <label class="label cursor-pointer justify-start gap-3"><input class="checkbox checkbox-error" id="delete-confirm-final" type="checkbox"/><span class="label-text">I confirm I want to delete this character.</span></label>
-                    <div class="modal-action"><button class="btn btn-ghost" data-close-delete-modal type="button">Cancel</button><button class="btn btn-error" disabled id="confirm-delete-character" type="submit">Delete Character</button></div>
+                    <label class="label cursor-pointer justify-start gap-3">
+                        <input class="checkbox checkbox-error" id="delete-confirm-permanent" type="checkbox" />
+                        <span class="label-text">I understand this deletion is permanent.</span>
+                    </label>
+                    <label class="label cursor-pointer justify-start gap-3">
+                        <input class="checkbox checkbox-error" id="delete-confirm-final" type="checkbox" />
+                        <span class="label-text">I confirm I want to delete this character.</span>
+                    </label>
+                    <div class="modal-action">
+                        <button class="btn btn-ghost" data-close-delete-modal type="button">
+                            Cancel
+                        </button>
+                        <button class="btn btn-error" disabled id="confirm-delete-character" type="submit">
+                            Delete Character
+                        </button>
+                    </div>
                 </form>
             </div>
             <form class="modal-backdrop" method="dialog">

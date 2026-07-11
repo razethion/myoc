@@ -37,7 +37,7 @@ export const FIXED_SOCIAL_LINKS = [
     },
 ] as const
 
-export type FixedSocialPlatform = typeof FIXED_SOCIAL_LINKS[number]['platform']
+export type FixedSocialPlatform = (typeof FIXED_SOCIAL_LINKS)[number]['platform']
 export type SocialPlatform = FixedSocialPlatform | 'custom'
 
 export type UserSocialLink = {

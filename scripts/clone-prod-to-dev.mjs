@@ -123,10 +123,7 @@ function loadLocalEnv(filename) {
 }
 
 function unquoteEnvValue(value) {
-    if (
-        (value.startsWith('"') && value.endsWith('"'))
-        || (value.startsWith("'") && value.endsWith("'"))
-    ) {
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
         return value.slice(1, -1)
     }
 
@@ -150,20 +147,25 @@ async function confirmDestructiveWork() {
 
 function run(command, commandArgs, options = {}) {
     return new Promise((resolvePromise, reject) => {
-        const child = execFile(command, commandArgs, {
-            cwd: rootDir,
-            maxBuffer: 1024 * 1024 * 100,
-            ...options,
-        }, (error, stdout, stderr) => {
-            if (error) {
-                error.stdout = stdout
-                error.stderr = stderr
-                error.message = `${error.message}\nCommand: ${formatCommand(command, commandArgs)}`
-                reject(error)
-                return
-            }
-            resolvePromise({stdout, stderr})
-        })
+        const child = execFile(
+            command,
+            commandArgs,
+            {
+                cwd: rootDir,
+                maxBuffer: 1024 * 1024 * 100,
+                ...options,
+            },
+            (error, stdout, stderr) => {
+                if (error) {
+                    error.stdout = stdout
+                    error.stderr = stderr
+                    error.message = `${error.message}\nCommand: ${formatCommand(command, commandArgs)}`
+                    reject(error)
+                    return
+                }
+                resolvePromise({stdout, stderr})
+            },
+        )
 
         if (options.stdio === 'inherit') {
             child.stdout?.pipe(process.stdout)
@@ -177,9 +179,7 @@ function wranglerArgs(args) {
 }
 
 function formatCommand(command, args) {
-    return [command, ...args].map((part) => (
-        /\s/.test(part) ? `"${part.replaceAll('"', '\\"')}"` : part
-    )).join(' ')
+    return [command, ...args].map((part) => (/\s/.test(part) ? `"${part.replaceAll('"', '\\"')}"` : part)).join(' ')
 }
 
 async function cloneD1() {
@@ -188,15 +188,11 @@ async function cloneD1() {
     await mkdir(tmpDir, {recursive: true})
 
     console.log(`Exporting remote D1 ${config.prodD1Database}...`)
-    await run(process.execPath, wranglerArgs([
-        'd1',
-        'export',
-        config.prodD1Database,
-        '--remote',
-        '--output',
-        exportFile,
-        '--skip-confirmation',
-    ]), {stdio: 'inherit'})
+    await run(
+        process.execPath,
+        wranglerArgs(['d1', 'export', config.prodD1Database, '--remote', '--output', exportFile, '--skip-confirmation']),
+        {stdio: 'inherit'},
+    )
 
     console.log('Preparing D1 export for local import...')
     await sanitizeD1Export(exportFile, importFile)
@@ -228,15 +224,7 @@ async function resetLocalD1State() {
 async function importLocalD1(importFile) {
     await mkdir(localD1StateDir, {recursive: true})
     console.log('Initializing fresh local D1 state...')
-    await run(process.execPath, wranglerArgs([
-        'd1',
-        'execute',
-        config.localD1Database,
-        '--local',
-        '--json',
-        '--command',
-        'SELECT 1;',
-    ]))
+    await run(process.execPath, wranglerArgs(['d1', 'execute', config.localD1Database, '--local', '--json', '--command', 'SELECT 1;']))
 
     const dbFile = await findLocalD1DatabaseFile()
     const {DatabaseSync} = await import('node:sqlite')
@@ -264,7 +252,9 @@ function executeD1ImportStatements(db, statements) {
             db.exec(statement)
         } catch (error) {
             const preview = statement.split('\n')[0]?.slice(0, 200) ?? ''
-            throw new Error(`D1 import failed at statement ${index + 1}/${statements.length}: ${preview}\n${error instanceof Error ? error.message : String(error)}`)
+            throw new Error(
+                `D1 import failed at statement ${index + 1}/${statements.length}: ${preview}\n${error instanceof Error ? error.message : String(error)}`,
+            )
         }
 
         const tableName = createTableName(statement)
@@ -312,12 +302,13 @@ async function sanitizeD1Export(exportFile, importFile) {
     const tableStatements = sanitizedStatements.filter((statement) => /^CREATE TABLE\b/i.test(statement.trimStart()))
     const indexStatements = sanitizedStatements.filter((statement) => /^CREATE (?:UNIQUE )?INDEX\b/i.test(statement.trimStart()))
     const insertStatements = orderInsertStatements(sanitizedStatements.filter((statement) => /^INSERT INTO\b/i.test(statement.trimStart())))
-    const dataStatements = sanitizedStatements.filter((statement) => (
-        !/^PRAGMA\b/i.test(statement.trimStart())
-        && !/^CREATE TABLE\b/i.test(statement.trimStart())
-        && !/^CREATE (?:UNIQUE )?INDEX\b/i.test(statement.trimStart())
-        && !/^INSERT INTO\b/i.test(statement.trimStart())
-    ))
+    const dataStatements = sanitizedStatements.filter(
+        (statement) =>
+            !/^PRAGMA\b/i.test(statement.trimStart()) &&
+            !/^CREATE TABLE\b/i.test(statement.trimStart()) &&
+            !/^CREATE (?:UNIQUE )?INDEX\b/i.test(statement.trimStart()) &&
+            !/^INSERT INTO\b/i.test(statement.trimStart()),
+    )
     const sanitized = [
         'PRAGMA foreign_keys=OFF;',
         ...tableStatements,
@@ -328,7 +319,9 @@ async function sanitizeD1Export(exportFile, importFile) {
     ].join('\n')
 
     await writeFile(importFile, sanitized)
-    console.log(`D1 export prepared: ${tableStatements.length} table(s), ${insertStatements.length} insert(s), ${indexStatements.length} index(es), ${removedStatements} managed SQLite statement(s) removed.`)
+    console.log(
+        `D1 export prepared: ${tableStatements.length} table(s), ${insertStatements.length} insert(s), ${indexStatements.length} index(es), ${removedStatements} managed SQLite statement(s) removed.`,
+    )
 }
 
 function splitSqlStatements(sql) {
@@ -374,9 +367,7 @@ function orderInsertStatements(statements) {
 
     return [
         ...importTableOrder.flatMap((tableName) => insertsByTable.get(tableName) ?? []),
-        ...[...insertsByTable.entries()]
-            .filter(([tableName]) => !importTableOrder.includes(tableName))
-            .flatMap(([, inserts]) => inserts),
+        ...[...insertsByTable.entries()].filter(([tableName]) => !importTableOrder.includes(tableName)).flatMap(([, inserts]) => inserts),
         ...unordered,
     ]
 }
@@ -397,8 +388,7 @@ function createIndexName(statement) {
 }
 
 function isManagedSqliteStatement(line) {
-    return /\bsqlite_sequence\b/i.test(line)
-        || /\bsqlite_stat\d*\b/i.test(line)
+    return /\bsqlite_sequence\b/i.test(line) || /\bsqlite_stat\d*\b/i.test(line)
 }
 
 async function cloneR2() {
@@ -449,11 +439,15 @@ async function cloneR2WithS3() {
         deleted: 0,
     }
 
-    console.log(`[r2] Plan: ${summary.toCopy} copy, ${summary.toRefreshExisting} refresh existing height-chart, ${summary.skippedExisting} skip existing, ${summary.toDelete} delete, ${summary.sourceObjects} source object(s), ${summary.destObjects} destination object(s).`)
+    console.log(
+        `[r2] Plan: ${summary.toCopy} copy, ${summary.toRefreshExisting} refresh existing height-chart, ${summary.skippedExisting} skip existing, ${summary.toDelete} delete, ${summary.sourceObjects} source object(s), ${summary.destObjects} destination object(s).`,
+    )
 
     if (dryRun) {
         console.log('[r2] Dry run: no R2 objects were changed.')
-        console.log(`R2 plan: ${summary.toCopy} copy, ${summary.toRefreshExisting} refresh existing height-chart, ${summary.skippedExisting} skip existing, ${summary.toDelete} delete, ${summary.sourceObjects} source object(s).`)
+        console.log(
+            `R2 plan: ${summary.toCopy} copy, ${summary.toRefreshExisting} refresh existing height-chart, ${summary.skippedExisting} skip existing, ${summary.toDelete} delete, ${summary.sourceObjects} source object(s).`,
+        )
         return
     }
 
@@ -467,13 +461,18 @@ async function cloneR2WithS3() {
     })
 
     console.log('[r2] Deleting objects missing from source...')
-    for (const keys of chunks(toDelete.map((object) => object.key), 1000)) {
+    for (const keys of chunks(
+        toDelete.map((object) => object.key),
+        1000,
+    )) {
         await deleteR2S3Objects(config.devR2Bucket, keys)
         summary.deleted += keys.length
         console.log(`[r2] Deleted ${summary.deleted}/${summary.toDelete} object(s).`)
     }
 
-    console.log(`R2 plan: ${summary.toCopy} copy, ${summary.toRefreshExisting} refresh existing height-chart, ${summary.skippedExisting} skip existing, ${summary.toDelete} delete, ${summary.sourceObjects} source object(s).`)
+    console.log(
+        `R2 plan: ${summary.toCopy} copy, ${summary.toRefreshExisting} refresh existing height-chart, ${summary.skippedExisting} skip existing, ${summary.toDelete} delete, ${summary.sourceObjects} source object(s).`,
+    )
     console.log(`R2 applied: ${summary.copied} copied, ${summary.deleted} deleted.`)
 }
 
@@ -603,29 +602,27 @@ function signR2S3Request({method, url, queryEntries, headers, body}) {
         payloadHash,
     ].join('\n')
     const scope = `${dateStamp}/${config.r2Region}/s3/aws4_request`
-    const stringToSign = [
-        'AWS4-HMAC-SHA256',
-        amzDate,
-        scope,
-        sha256Hex(canonicalRequest),
-    ].join('\n')
+    const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, sha256Hex(canonicalRequest)].join('\n')
     const signingKey = awsSigningKey(config.r2SecretAccessKey, dateStamp, config.r2Region, 's3')
     const signature = hmacHex(signingKey, stringToSign)
 
-    requestHeaders.set('authorization', [
-        `AWS4-HMAC-SHA256 Credential=${config.r2AccessKeyId}/${scope}`,
-        `SignedHeaders=${signedHeaderNames}`,
-        `Signature=${signature}`,
-    ].join(', '))
+    requestHeaders.set(
+        'authorization',
+        [
+            `AWS4-HMAC-SHA256 Credential=${config.r2AccessKeyId}/${scope}`,
+            `SignedHeaders=${signedHeaderNames}`,
+            `Signature=${signature}`,
+        ].join(', '),
+    )
 
     return requestHeaders
 }
 
 function canonicalQueryString(entries) {
     return entries
-        .sort(([leftName, leftValue], [rightName, rightValue]) => (
-            leftName === rightName ? leftValue.localeCompare(rightValue) : leftName.localeCompare(rightName)
-        ))
+        .sort(([leftName, leftValue], [rightName, rightValue]) =>
+            leftName === rightName ? leftValue.localeCompare(rightValue) : leftName.localeCompare(rightName),
+        )
         .map(([name, value]) => `${awsEncode(name)}=${awsEncode(value)}`)
         .join('&')
 }
@@ -658,8 +655,7 @@ function encodeS3Path(value) {
 }
 
 function awsEncode(value) {
-    return encodeURIComponent(value)
-        .replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)
+    return encodeURIComponent(value).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)
 }
 
 function s3CopySource(bucket, key) {
@@ -703,23 +699,30 @@ async function cloneR2WithWorker() {
     const workerFile = resolve(tmpDir, 'r2-clone-worker.mjs')
     const workerConfigFile = resolve(tmpDir, 'r2-clone-wrangler.jsonc')
     await writeFile(workerFile, r2CloneWorkerSource())
-    await writeFile(workerConfigFile, JSON.stringify({
-        name: 'myoc-r2-clone',
-        main: './r2-clone-worker.mjs',
-        compatibility_date: '2026-06-10',
-        r2_buckets: [
+    await writeFile(
+        workerConfigFile,
+        JSON.stringify(
             {
-                binding: 'PROD_MEDIA_BUCKET',
-                bucket_name: config.prodR2Bucket,
-                remote: true,
+                name: 'myoc-r2-clone',
+                main: './r2-clone-worker.mjs',
+                compatibility_date: '2026-06-10',
+                r2_buckets: [
+                    {
+                        binding: 'PROD_MEDIA_BUCKET',
+                        bucket_name: config.prodR2Bucket,
+                        remote: true,
+                    },
+                    {
+                        binding: 'DEV_MEDIA_BUCKET',
+                        bucket_name: config.devR2Bucket,
+                        remote: true,
+                    },
+                ],
             },
-            {
-                binding: 'DEV_MEDIA_BUCKET',
-                bucket_name: config.devR2Bucket,
-                remote: true,
-            },
-        ],
-    }, null, 2))
+            null,
+            2,
+        ),
+    )
 
     const dev = await startR2CloneWorker(workerConfigFile)
     try {
@@ -734,7 +737,9 @@ async function cloneR2WithWorker() {
         }
 
         const summary = await readR2CloneProgress(response)
-        console.log(`R2 plan: ${summary.toCopy} copy, ${summary.toRefreshExisting} refresh existing height-chart, ${summary.skippedExisting} skip existing, ${summary.toDelete} delete, ${summary.sourceObjects} source object(s).`)
+        console.log(
+            `R2 plan: ${summary.toCopy} copy, ${summary.toRefreshExisting} refresh existing height-chart, ${summary.skippedExisting} skip existing, ${summary.toDelete} delete, ${summary.sourceObjects} source object(s).`,
+        )
         if (!dryRun) {
             console.log(`R2 applied: ${summary.copied} copied, ${summary.deleted} deleted.`)
         }
@@ -822,19 +827,23 @@ function parseServerSentEvent(eventText) {
 async function startR2CloneWorker(workerConfigFile) {
     console.log(`Starting temporary R2 clone Worker on http://127.0.0.1:${config.workerPort}...`)
     const state = {
-        child: spawn(process.execPath, wranglerArgs([
-            'dev',
-            '--config',
-            workerConfigFile,
-            '--port',
-            String(config.workerPort),
-            '--log-level',
-            'info',
-            '--show-interactive-dev-session=false',
-        ]), {
-            cwd: rootDir,
-            stdio: ['ignore', 'pipe', 'pipe'],
-        }),
+        child: spawn(
+            process.execPath,
+            wranglerArgs([
+                'dev',
+                '--config',
+                workerConfigFile,
+                '--port',
+                String(config.workerPort),
+                '--log-level',
+                'info',
+                '--show-interactive-dev-session=false',
+            ]),
+            {
+                cwd: rootDir,
+                stdio: ['ignore', 'pipe', 'pipe'],
+            },
+        ),
         exited: false,
         logs: '',
     }
@@ -875,10 +884,7 @@ async function stopR2CloneWorker(state) {
     if (!state || state.exited) return
 
     state.child.kill()
-    await Promise.race([
-        new Promise((resolvePromise) => state.child.once('exit', resolvePromise)),
-        delay(5000),
-    ])
+    await Promise.race([new Promise((resolvePromise) => state.child.once('exit', resolvePromise)), delay(5000)])
 }
 
 function delay(ms) {

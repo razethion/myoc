@@ -1,16 +1,11 @@
-export function createWebpFile(
-    width = 512,
-    height = 512,
-    type = 'image/webp',
-    name = 'profile-image.webp',
-): File {
+export function createWebpFile(width = 512, height = 512, type = 'image/webp', name = 'profile-image.webp'): File {
     return new File([createVp8xWebpBytes(width, height)], name, {
         type,
     })
 }
 
 export function createOversizedWebpFile(name = 'profile-image.webp'): File {
-    return new File([new Uint8Array((2 * 1024 * 1024) + 1)], name, {
+    return new File([new Uint8Array(2 * 1024 * 1024 + 1)], name, {
         type: 'image/webp',
     })
 }

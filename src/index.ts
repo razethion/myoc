@@ -1,10 +1,10 @@
-import { Hono } from 'hono'
+import {Hono} from 'hono'
 import {cleanupStaleR2Media} from './lib/media/r2Cleanup'
-import { apiRoutes } from './routes/api'
-import { pageRoutes, renderNotFoundPage } from './routes/pages'
-import type { Bindings } from './types/bindings'
+import {apiRoutes} from './routes/api'
+import {pageRoutes, renderNotFoundPage} from './routes/pages'
+import type {Bindings} from './types/bindings'
 
-const app = new Hono<{ Bindings: Bindings }>()
+const app = new Hono<{Bindings: Bindings}>()
 
 app.route('/api', apiRoutes)
 app.route('/', pageRoutes)

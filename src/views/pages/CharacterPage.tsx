@@ -117,22 +117,21 @@ function encodeLayoutValue(layout: unknown): string {
         binary += String.fromCharCode(byte)
     })
 
-    return btoa(binary)
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/g, '')
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
 }
 
 function sizeChartUrlForCharacter(characterId: string): string {
     const layout = {
         version: 1,
         selectedId: characterId,
-        characters: [{
-            id: characterId,
-            xPct: 50,
-            flipped: false,
-            layer: 1,
-        }],
+        characters: [
+            {
+                id: characterId,
+                xPct: 50,
+                flipped: false,
+                layer: 1,
+            },
+        ],
     }
 
     return `/size-chart?layout=${encodeLayoutValue(layout)}`
@@ -151,13 +150,13 @@ function hiddenNsfwPlaceholderUrl(): string {
 }
 
 function CharacterPageHead({
-                               character,
-                               imageUrl,
-                               metaDescriptionFallback,
-                               pageTitle,
-                               profileUser,
-                               siteUrl,
-                           }: {
+    character,
+    imageUrl,
+    metaDescriptionFallback,
+    pageTitle,
+    profileUser,
+    siteUrl,
+}: {
     character: CharacterPageCharacter
     imageUrl: string
     metaDescriptionFallback: string
@@ -184,30 +183,27 @@ function CharacterPageHead({
 
     return (
         <>
-            <meta content={description} name="description"/>
-            <link href={canonicalUrl} rel="canonical"/>
+            <meta content={description} name="description" />
+            <link href={canonicalUrl} rel="canonical" />
 
-            <meta content={pageTitle} property="og:title"/>
-            <meta content={description} property="og:description"/>
-            <meta content="article" property="og:type"/>
-            <meta content={canonicalUrl} property="og:url"/>
-            <meta content="MyOC" property="og:site_name"/>
-            <meta content={imageUrl} property="og:image"/>
-            <meta content="512" property="og:image:width"/>
-            <meta content="512" property="og:image:height"/>
-            <meta content="image/webp" property="og:image:type"/>
-            <meta content={imageAlt} property="og:image:alt"/>
+            <meta content={pageTitle} property="og:title" />
+            <meta content={description} property="og:description" />
+            <meta content="article" property="og:type" />
+            <meta content={canonicalUrl} property="og:url" />
+            <meta content="MyOC" property="og:site_name" />
+            <meta content={imageUrl} property="og:image" />
+            <meta content="512" property="og:image:width" />
+            <meta content="512" property="og:image:height" />
+            <meta content="image/webp" property="og:image:type" />
+            <meta content={imageAlt} property="og:image:alt" />
 
-            <meta content="summary" name="twitter:card"/>
-            <meta content={pageTitle} name="twitter:title"/>
-            <meta content={description} name="twitter:description"/>
-            <meta content={imageUrl} name="twitter:image"/>
-            <meta content={imageAlt} name="twitter:image:alt"/>
+            <meta content="summary" name="twitter:card" />
+            <meta content={pageTitle} name="twitter:title" />
+            <meta content={description} name="twitter:description" />
+            <meta content={imageUrl} name="twitter:image" />
+            <meta content={imageAlt} name="twitter:image:alt" />
 
-            <script
-                dangerouslySetInnerHTML={{__html: JSON.stringify(structuredData)}}
-                type="application/ld+json"
-            ></script>
+            <script dangerouslySetInnerHTML={{__html: JSON.stringify(structuredData)}} type="application/ld+json"></script>
         </>
     )
 }
@@ -242,7 +238,9 @@ function displayMediaFor(
         ? characterMediaImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.sfwImageKey, 'sfw', media.sfwContentType)
         : null
     const sfwImageAlt = media.sfwImageKey
-        ? (sfwArtist === 'Unknown artist' ? 'Character media by an unknown artist' : `Character media by ${sfwArtist}`)
+        ? sfwArtist === 'Unknown artist'
+            ? 'Character media by an unknown artist'
+            : `Character media by ${sfwArtist}`
         : null
     const nsfwDisplayPreviewUrl = media.nsfwPreviewImageKey
         ? characterMediaPreviewImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwPreviewImageKey, 'nsfw')
@@ -251,18 +249,14 @@ function displayMediaFor(
         ? characterMediaImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwImageKey, 'nsfw', media.nsfwContentType)
         : null
     const nsfwImageAlt = media.nsfwImageKey
-        ? (nsfwArtist === 'Unknown artist' ? 'Character media by an unknown artist' : `Character media by ${nsfwArtist}`)
+        ? nsfwArtist === 'Unknown artist'
+            ? 'Character media by an unknown artist'
+            : `Character media by ${nsfwArtist}`
         : null
     const hiddenWidth = media.nsfwPreviewWidth ?? media.nsfwWidth
     const hiddenHeight = media.nsfwPreviewHeight ?? media.nsfwHeight
     const hiddenDisplayUrl = media.nsfwBlurImageKey
-        ? characterMediaNsfwBlurImageUrl(
-            mediaBaseUrl,
-            character.userId,
-            character.id,
-            media.id,
-            media.nsfwBlurImageKey,
-        )
+        ? characterMediaNsfwBlurImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwBlurImageKey)
         : hiddenNsfwPlaceholderUrl()
     const safeDisplayUrl = sfwDisplayUrl ?? hiddenDisplayUrl
     const safeDisplayPreviewUrl = sfwDisplayUrl ? sfwDisplayPreviewUrl : null
@@ -492,39 +486,43 @@ function CharacterPageStyles() {
 
 function LockIcon() {
     return (
-        <svg aria-hidden="true" class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-             xmlns="http://www.w3.org/2000/svg">
-            <path d="M16 10V7a4 4 0 0 0-8 0v3" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
-            <path d="M6 10h12v10H6V10Z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+        <svg aria-hidden="true" class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M16 10V7a4 4 0 0 0-8 0v3" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" />
+            <path d="M6 10h12v10H6V10Z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" />
         </svg>
     )
 }
 
-function SettingsLink({characterId}: { characterId: string }) {
+function SettingsLink({characterId}: {characterId: string}) {
     return (
-        <a aria-label="Content settings" class="btn btn-square btn-ghost absolute right-3 top-4 sm:right-0"
-           href={`/edit/${encodeURIComponent(characterId)}`} title="Settings">
+        <a
+            aria-label="Content settings"
+            class="btn btn-square btn-ghost absolute right-3 top-4 sm:right-0"
+            href={`/edit/${encodeURIComponent(characterId)}`}
+            title="Settings"
+        >
             <span class="sr-only">Content settings</span>
-            <svg aria-hidden="true" class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                 xmlns="http://www.w3.org/2000/svg">
-                <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.607 2.296.07 2.572-1.065Z"
-                      stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
-                <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" stroke-linecap="round" stroke-linejoin="round"
-                      stroke-width="2"/>
+            <svg
+                aria-hidden="true"
+                class="h-6 w-6"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                xmlns="http://www.w3.org/2000/svg"
+            >
+                <path
+                    d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.607 2.296.07 2.572-1.065Z"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                />
+                <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" />
             </svg>
         </a>
     )
 }
 
-function GalleryImage({
-                          allowNsfwToggle,
-                          deferMediaLoad,
-                          media,
-                      }: {
-    allowNsfwToggle: boolean
-    deferMediaLoad: boolean
-    media: DisplayMedia
-}) {
+function GalleryImage({allowNsfwToggle, deferMediaLoad, media}: {allowNsfwToggle: boolean; deferMediaLoad: boolean; media: DisplayMedia}) {
     const aspect = media.displayWidth / media.displayHeight
     const style = `--media-width:${media.displayWidth};--media-height:${media.displayHeight};--media-aspect:${aspect};`
     const revealWidth = media.nsfwDisplayWidth ?? media.displayWidth
@@ -561,7 +559,7 @@ function GalleryImage({
                 data-fullres-src={!deferMediaLoad && hasFullresPending ? media.displayUrl : undefined}
                 data-nsfw-displayed={media.isNsfw && !media.isNsfwHidden ? 'true' : 'false'}
                 data-nsfw-hidden={media.isNsfwHidden ? 'true' : 'false'}
-                data-preview-src={!deferMediaLoad ? media.displayPreviewUrl ?? undefined : undefined}
+                data-preview-src={!deferMediaLoad ? (media.displayPreviewUrl ?? undefined) : undefined}
                 data-title={media.artist}
                 decoding="async"
                 height={media.displayHeight}
@@ -575,7 +573,7 @@ function GalleryImage({
             {media.isNsfwHidden || media.safeDisplayIsNsfwHidden ? (
                 <div aria-hidden="true" class="nsfw-media-warning" hidden={!media.isNsfwHidden}>
                     <div class="nsfw-media-badge">
-                        <LockIcon/>
+                        <LockIcon />
                         <span>18+</span>
                     </div>
                 </div>
@@ -585,10 +583,10 @@ function GalleryImage({
 }
 
 function CharacterPageScript({
-                                 allowNsfwToggle,
-                                 defaultTabName,
-                                 persistNsfwTogglePreference,
-                             }: {
+    allowNsfwToggle,
+    defaultTabName,
+    persistNsfwTogglePreference,
+}: {
     allowNsfwToggle: boolean
     defaultTabName: string
     persistNsfwTogglePreference: boolean
@@ -1123,24 +1121,28 @@ export function CharacterPage({
     media,
     galleryTabs,
     mediaBaseUrl,
-                                  metaDescriptionFallback,
-                                  siteUrl,
+    metaDescriptionFallback,
+    siteUrl,
 }: CharacterPageProps) {
     const displayNsfwMedia = Boolean(currentUser?.displayNsfwMedia)
     const allowNsfwToggle = media.some((item) => Boolean(item.nsfwImageKey))
-    const mediaById = new Map(media.map((item) => [
-        item.id,
-        displayMediaFor(item, character, mediaBaseUrl, displayNsfwMedia),
-    ]))
-    const tabs = galleryTabs.length > 0 ? galleryTabs : [{
-        id: 'default',
-        name: 'default',
-        rows: [{
-            id: 'default-row',
-            mediaIds: media.map((item) => item.id),
-            forceFullWidth: false,
-        }],
-    }]
+    const mediaById = new Map(media.map((item) => [item.id, displayMediaFor(item, character, mediaBaseUrl, displayNsfwMedia)]))
+    const tabs =
+        galleryTabs.length > 0
+            ? galleryTabs
+            : [
+                  {
+                      id: 'default',
+                      name: 'default',
+                      rows: [
+                          {
+                              id: 'default-row',
+                              mediaIds: media.map((item) => item.id),
+                              forceFullWidth: false,
+                          },
+                      ],
+                  },
+              ]
     const defaultTabName = tabs[0]?.name ?? 'default'
     const ownerProfileImageUrl = profileImageFor(profileUser, mediaBaseUrl)
     const characterThumbnailUrl = characterProfileImageUrl(mediaBaseUrl, profileUser.id, character.id, character.profileImageKey)
@@ -1149,7 +1151,7 @@ export function CharacterPage({
 
     return (
         <BaseLayout
-            head={(
+            head={
                 <>
                     <CharacterPageHead
                         character={character}
@@ -1159,9 +1161,9 @@ export function CharacterPage({
                         profileUser={profileUser}
                         siteUrl={siteUrl}
                     />
-                    <CharacterPageStyles/>
+                    <CharacterPageStyles />
                 </>
-            )}
+            }
             title={pageTitle}
         >
             <Navbar
@@ -1170,7 +1172,7 @@ export function CharacterPage({
                 mediaBaseUrl={mediaBaseUrl}
             />
             <main class="container relative mx-auto px-3 py-4 sm:px-0">
-                {canEdit ? <SettingsLink characterId={character.id}/> : null}
+                {canEdit ? <SettingsLink characterId={character.id} /> : null}
 
                 <div class="mb-4 flex justify-center">
                     <a class="flex items-center gap-3" href={`/u/${encodeURIComponent(profileUser.username)}`}>
@@ -1188,13 +1190,15 @@ export function CharacterPage({
                 </div>
 
                 <div class="mb-4 flex justify-center">
-                    <img alt={`${character.name} portrait`}
-                         class="h-28 w-28 rounded object-cover sm:h-32 sm:w-32"
-                         decoding="async"
-                         height="128"
-                         loading="lazy"
-                         src={characterThumbnailUrl}
-                         width="128"/>
+                    <img
+                        alt={`${character.name} portrait`}
+                        class="h-28 w-28 rounded object-cover sm:h-32 sm:w-32"
+                        decoding="async"
+                        height="128"
+                        loading="lazy"
+                        src={characterThumbnailUrl}
+                        width="128"
+                    />
                 </div>
 
                 <h1 class="mb-4 break-words text-center text-5xl font-bold sm:text-6xl">{character.name}</h1>
@@ -1212,9 +1216,12 @@ export function CharacterPage({
 
                 {allowNsfwToggle ? (
                     <div class="mb-6 flex justify-center">
-                        <button aria-pressed={displayNsfwMedia ? 'true' : 'false'}
-                                class="btn btn-xs btn-outline rounded-full"
-                                data-display-nsfw-media={displayNsfwMedia ? 'true' : 'false'} type="button">
+                        <button
+                            aria-pressed={displayNsfwMedia ? 'true' : 'false'}
+                            class="btn btn-xs btn-outline rounded-full"
+                            data-display-nsfw-media={displayNsfwMedia ? 'true' : 'false'}
+                            type="button"
+                        >
                             {displayNsfwMedia ? 'Hide 18+ media' : 'Load 18+ media'}
                         </button>
                     </div>
@@ -1224,41 +1231,50 @@ export function CharacterPage({
                     <fieldset aria-label="Gallery sort options" class="mb-6 flex flex-wrap justify-center gap-2">
                         {tabs.map((tab, index) => (
                             <label class="cursor-pointer">
-                                <input checked={index === 0} class="peer sr-only" name="gallery-sort" type="radio" value={tab.name}/>
-                                <span
-                                    class="btn btn-sm btn-outline rounded-full peer-checked:border-white peer-checked:bg-white peer-checked:text-black">{displayGalleryTabName(tab.name)}</span>
+                                <input checked={index === 0} class="peer sr-only" name="gallery-sort" type="radio" value={tab.name} />
+                                <span class="btn btn-sm btn-outline rounded-full peer-checked:border-white peer-checked:bg-white peer-checked:text-black">
+                                    {displayGalleryTabName(tab.name)}
+                                </span>
                             </label>
                         ))}
                     </fieldset>
                 ) : null}
 
                 {tabs.map((tab, tabIndex) => {
-                    const visualRows = tab.rows.length > 0
-                        ? tab.rows.flatMap((row, rowIndex) => {
-                            const rowMedia = row.mediaIds
-                                .map((mediaId) => mediaById.get(mediaId))
-                                .filter((item): item is DisplayMedia => Boolean(item))
+                    const visualRows =
+                        tab.rows.length > 0
+                            ? tab.rows.flatMap((row, rowIndex) => {
+                                  const rowMedia = row.mediaIds
+                                      .map((mediaId) => mediaById.get(mediaId))
+                                      .filter((item): item is DisplayMedia => Boolean(item))
 
-                            return chunkGalleryItems(rowMedia).map((mediaItems, index) => ({
-                                forceFullWidth: shouldForceGalleryRowFullWidth(row, rowIndex, tab.rows.length) && rowMedia.length === 1 && mediaItems.length === 1 && index === 0,
-                                mediaItems,
-                            }))
-                        })
-                        : chunkGalleryItems([...mediaById.values()].filter((item): item is DisplayMedia => Boolean(item))).map((mediaItems) => ({
-                            forceFullWidth: false,
-                            mediaItems,
-                        }))
+                                  return chunkGalleryItems(rowMedia).map((mediaItems, index) => ({
+                                      forceFullWidth:
+                                          shouldForceGalleryRowFullWidth(row, rowIndex, tab.rows.length) &&
+                                          rowMedia.length === 1 &&
+                                          mediaItems.length === 1 &&
+                                          index === 0,
+                                      mediaItems,
+                                  }))
+                              })
+                            : chunkGalleryItems([...mediaById.values()].filter((item): item is DisplayMedia => Boolean(item))).map(
+                                  (mediaItems) => ({
+                                      forceFullWidth: false,
+                                      mediaItems,
+                                  }),
+                              )
 
                     return (
-                        <section class="gallery-tab-panel justified-gallery" data-gallery-tab-panel={tab.name}
-                                 hidden={tabIndex > 0}>
+                        <section class="gallery-tab-panel justified-gallery" data-gallery-tab-panel={tab.name} hidden={tabIndex > 0}>
                             {visualRows.map((row) => (
                                 <div class={`justified-row ${row.forceFullWidth ? 'row-force-full-width' : ''}`}>
-                                    {row.mediaItems.map((item) => <GalleryImage
-                                        allowNsfwToggle={allowNsfwToggle}
-                                        deferMediaLoad={tabs.length > 1 && tabIndex > 0}
-                                        media={item}
-                                    />)}
+                                    {row.mediaItems.map((item) => (
+                                        <GalleryImage
+                                            allowNsfwToggle={allowNsfwToggle}
+                                            deferMediaLoad={tabs.length > 1 && tabIndex > 0}
+                                            media={item}
+                                        />
+                                    ))}
                                 </div>
                             ))}
                         </section>
@@ -1274,7 +1290,7 @@ export function CharacterPage({
 
             <dialog class="modal backdrop:bg-black/75" id="gallery-lightbox">
                 <div class="modal-box max-w-6xl border border-base-content/20 bg-base-200 p-0 shadow-2xl">
-                    <img alt="" class="max-h-[80vh] w-full object-contain" id="lightbox-image"/>
+                    <img alt="" class="max-h-[80vh] w-full object-contain" id="lightbox-image" />
                     <div class="space-y-2 p-4">
                         <h2 class="text-xl font-semibold" id="lightbox-title">
                             <span class="sr-only">Selected gallery item</span>

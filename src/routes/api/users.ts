@@ -12,14 +12,11 @@ import {
 } from '../../lib/auth/session'
 import {APP_VERSION} from '../../lib/releases'
 import {profilePhotoObjectKey, profilePhotoUrl} from '../../lib/media/url'
-import {
-    PROFILE_IMAGE_MAX_REQUEST_BYTES,
-    validateProfileImagePayload,
-} from '../../lib/media/profileImage'
+import {PROFILE_IMAGE_MAX_REQUEST_BYTES, validateProfileImagePayload} from '../../lib/media/profileImage'
 import {FIXED_SOCIAL_LINKS, type UserSocialLink} from '../../lib/socialLinks'
 import type {Bindings} from '../../types/bindings'
 
-type UserRouteContext = Context<{ Bindings: Bindings }>
+type UserRouteContext = Context<{Bindings: Bindings}>
 
 type CreateUserRequest = {
     email?: unknown
@@ -43,7 +40,7 @@ type PasskeyPromptChoice = 'setup' | 'later'
 
 const PASSWORD_HASH_ROUNDS = 10
 const BIO_MAX_LENGTH = 255
-export const userRoutes = new Hono<{ Bindings: Bindings }>()
+export const userRoutes = new Hono<{Bindings: Bindings}>()
 
 userRoutes.post('/me/release-view', async (c) => {
     const currentUser = await getCurrentUser(c)
@@ -118,10 +115,13 @@ userRoutes.post('/me/profile-photo', async (c) => {
     }
 
     const bytes = new Uint8Array(await file.arrayBuffer())
-    const validation = validateProfileImagePayload({
-        contentType: file.type,
-        bytes,
-    }, 'Profile photo')
+    const validation = validateProfileImagePayload(
+        {
+            contentType: file.type,
+            bytes,
+        },
+        'Profile photo',
+    )
 
     if ('error' in validation) {
         return c.json({error: validation.error}, validation.status)
@@ -227,35 +227,39 @@ userRoutes.post('/me', async (c) => {
         const statements: D1PreparedStatement[] = []
 
         if (password) {
-            statements.push(c.env.DB.prepare(
-                `UPDATE users
+            statements.push(
+                c.env.DB.prepare(
+                    `UPDATE users
                  SET email         = ?,
                      username      = ?,
                      bio           = ?,
                      display_nsfw_media = ?,
                      password_hash = ?
                  WHERE id = ?`,
+                ).bind(email, username, bio, displayNsfwMedia ? 1 : 0, await hash(password, PASSWORD_HASH_ROUNDS), currentUser.id),
             )
-                .bind(email, username, bio, displayNsfwMedia ? 1 : 0, await hash(password, PASSWORD_HASH_ROUNDS), currentUser.id))
         } else {
-            statements.push(c.env.DB.prepare(
-                `UPDATE users
+            statements.push(
+                c.env.DB.prepare(
+                    `UPDATE users
                  SET email              = ?,
                      username           = ?,
                      bio                = ?,
                      display_nsfw_media = ?
                  WHERE id = ?`,
+                ).bind(email, username, bio, displayNsfwMedia ? 1 : 0, currentUser.id),
             )
-                .bind(email, username, bio, displayNsfwMedia ? 1 : 0, currentUser.id))
         }
 
         statements.push(c.env.DB.prepare('DELETE FROM user_social_links WHERE user_id = ?').bind(currentUser.id))
 
         for (const link of socialLinksResult.links) {
-            statements.push(c.env.DB.prepare(
-                `INSERT INTO user_social_links (user_id, platform, label, url, updated_at)
+            statements.push(
+                c.env.DB.prepare(
+                    `INSERT INTO user_social_links (user_id, platform, label, url, updated_at)
                  VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-            ).bind(currentUser.id, link.platform, link.label, link.url))
+                ).bind(currentUser.id, link.platform, link.label, link.url),
+            )
         }
 
         await c.env.DB.batch(statements)
@@ -367,7 +371,7 @@ async function parsePasskeyPromptResponse(req: Request): Promise<{
     const contentType = req.headers.get('content-type') ?? ''
 
     if (contentType.includes('application/json')) {
-        const body = await req.json().catch(() => ({})) as { choice?: unknown; returnTo?: unknown }
+        const body = (await req.json().catch(() => ({}))) as {choice?: unknown; returnTo?: unknown}
 
         return {
             choice: body.choice === 'setup' ? 'setup' : 'later',
@@ -402,13 +406,10 @@ function normalizeOptionalText(value: unknown): string | null {
 }
 
 function parseBooleanPreference(value: unknown): boolean {
-    return value === true
-        || value === 'true'
-        || value === '1'
-        || value === 'on'
+    return value === true || value === 'true' || value === '1' || value === 'on'
 }
 
-function parseSocialLinks(body: UpdateUserRequest): { links: UserSocialLink[] } | { error: string } {
+function parseSocialLinks(body: UpdateUserRequest): {links: UserSocialLink[]} | {error: string} {
     const links: UserSocialLink[] = []
 
     for (const definition of FIXED_SOCIAL_LINKS) {
@@ -471,7 +472,7 @@ function readSocialUrl(body: UpdateUserRequest, platform: string, formName: stri
     return normalizeOptionalText(body[formName]) ?? ''
 }
 
-function validateSocialUrl(value: string, label: string): { url: string } | { error: string } {
+function validateSocialUrl(value: string, label: string): {url: string} | {error: string} {
     if (value.length > 2048) {
         return {error: `${label} URL must be 2048 characters or fewer`}
     }
@@ -520,9 +521,15 @@ async function parseUpdateUserRequest(req: UserRouteContext['req']): Promise<Upd
     }
 }
 
-function respondToUpdate(c: UserRouteContext, body: { ok: true } | {
-    error: string
-}, status: 200 | 400 | 401 | 409 = 200): Response {
+function respondToUpdate(
+    c: UserRouteContext,
+    body:
+        | {ok: true}
+        | {
+              error: string
+          },
+    status: 200 | 400 | 401 | 409 = 200,
+): Response {
     if (c.req.header('accept')?.includes('text/html')) {
         return c.redirect('/settings', status === 200 ? 302 : 303)
     }

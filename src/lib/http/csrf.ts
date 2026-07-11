@@ -1,9 +1,6 @@
 import type {Context, Next} from 'hono'
 import {getCookie} from 'hono/cookie'
-import {
-    getSessionCookieName,
-    isValidCsrfToken,
-} from '../auth/session'
+import {getSessionCookieName, isValidCsrfToken} from '../auth/session'
 import type {Bindings} from '../../types/bindings'
 
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
@@ -19,7 +16,7 @@ const PUBLIC_UNSAFE_PATHS = new Set([
     '/api/users',
 ])
 
-export async function csrfProtection(c: Context<{ Bindings: Bindings }>, next: Next) {
+export async function csrfProtection(c: Context<{Bindings: Bindings}>, next: Next) {
     if (!UNSAFE_METHODS.has(c.req.method)) {
         return await next()
     }
@@ -43,7 +40,7 @@ export async function csrfProtection(c: Context<{ Bindings: Bindings }>, next: N
     return await next()
 }
 
-async function getCsrfToken(c: Context<{ Bindings: Bindings }>): Promise<string | null> {
+async function getCsrfToken(c: Context<{Bindings: Bindings}>): Promise<string | null> {
     const headerToken = c.req.header('x-csrf-token')
 
     if (headerToken) {

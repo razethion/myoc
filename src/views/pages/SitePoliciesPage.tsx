@@ -27,7 +27,7 @@ const POLICY_SECTIONS: PolicySection[] = [
         ],
         bullets: [
             'Content means any text, image, file, link, tag, title, caption, profile field, character field, or metadata submitted by a user.',
-            'Public content means content visible to users other than the uploader or the uploader\'s approved viewers.',
+            "Public content means content visible to users other than the uploader or the uploader's approved viewers.",
             'MyOC may remove, restrict, relabel, or decline to host content that violates these policies or creates legal, security, operational, or safety risk.',
         ],
     },
@@ -124,7 +124,7 @@ const POLICY_SECTIONS: PolicySection[] = [
         ],
         bullets: [
             'Do not post threats, targeted insults, harassment, discriminatory attacks, hateful conduct, or encouragement of self-harm or violence.',
-            'Do not disclose, solicit, trade, or threaten to disclose another person\'s private identifying information.',
+            "Do not disclose, solicit, trade, or threaten to disclose another person's private identifying information.",
             'Do not spam, flood, brigade, manipulate reports, coordinate harassment, or encourage other users to contact someone on your behalf.',
         ],
     },
@@ -171,8 +171,8 @@ const POLICY_SECTIONS: PolicySection[] = [
             'If any policy term is unenforceable, the remaining terms continue to apply. If these Site Policies conflict with a separate Terms of Service, Privacy Policy, or legally required notice, the more specific or legally controlling document governs.',
         ],
         bullets: [
-            'Policy examples are illustrative and do not limit MyOC\'s ability to address comparable conduct or content.',
-            'Failure to enforce a policy in one situation does not waive MyOC\'s right to enforce that policy later.',
+            "Policy examples are illustrative and do not limit MyOC's ability to address comparable conduct or content.",
+            "Failure to enforce a policy in one situation does not waive MyOC's right to enforce that policy later.",
             'MyOC may preserve or disclose content and account records where required to comply with law, protect users, or investigate abuse.',
         ],
     },
@@ -181,7 +181,7 @@ const POLICY_SECTIONS: PolicySection[] = [
 export function SitePoliciesPage({currentUser, guestInitial, mediaBaseUrl}: SitePoliciesPageProps) {
     return (
         <BaseLayout title="Site Policies | MyOC">
-            <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl}/>
+            <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl} />
             <main class="min-h-[calc(100vh-4rem)] bg-base-100 px-4 py-12 sm:px-6 lg:px-8 lg:py-16">
                 <section class="mx-auto max-w-6xl">
                     <div class="border-b border-base-content/10 pb-8">
@@ -190,8 +190,8 @@ export function SitePoliciesPage({currentUser, guestInitial, mediaBaseUrl}: Site
                             Rules for hosting, sharing, and moderating character media.
                         </h1>
                         <p class="mt-5 max-w-3xl text-base leading-7 text-base-content/70 sm:text-lg sm:leading-8">
-                            These policies define what users may upload, how content must be labeled, and how MyOC
-                            may respond when content, conduct, or technical behavior creates risk.
+                            These policies define what users may upload, how content must be labeled, and how MyOC may respond when content,
+                            conduct, or technical behavior creates risk.
                         </p>
                     </div>
 
@@ -210,10 +210,7 @@ export function SitePoliciesPage({currentUser, guestInitial, mediaBaseUrl}: Site
                                     <ul class="mt-6 grid gap-3 text-sm leading-6 text-base-content/70">
                                         {section.bullets.map((item) => (
                                             <li class="flex gap-3">
-                                                <span
-                                                    aria-hidden="true"
-                                                    class="mt-2 h-1.5 w-1.5 shrink-0 bg-primary"
-                                                ></span>
+                                                <span aria-hidden="true" class="mt-2 h-1.5 w-1.5 shrink-0 bg-primary"></span>
                                                 <span>{item}</span>
                                             </li>
                                         ))}
@@ -222,9 +219,7 @@ export function SitePoliciesPage({currentUser, guestInitial, mediaBaseUrl}: Site
                                         <div class="mt-8 grid gap-6 md:grid-cols-2">
                                             {section.groups.map((group) => (
                                                 <div class="border border-base-content/10 p-5">
-                                                    <h3 class="text-sm font-bold uppercase tracking-wide">
-                                                        {group.title}
-                                                    </h3>
+                                                    <h3 class="text-sm font-bold uppercase tracking-wide">{group.title}</h3>
                                                     <ul class="mt-4 grid gap-3 text-sm leading-6 text-base-content/70">
                                                         {group.items.map((item) => (
                                                             <li class="flex gap-3">

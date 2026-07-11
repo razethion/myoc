@@ -4,29 +4,30 @@ export function createMockR2Bucket(): R2Bucket {
     const objects = new Map<string, Uint8Array>()
     const multipartUploads = new Map<string, Map<number, Uint8Array>>()
 
-    const objectFor = (key: string, bytes: Uint8Array): R2ObjectBody => ({
-        key,
-        version: 'mock-version',
-        size: bytes.byteLength,
-        etag: 'mock-etag',
-        httpEtag: '"mock-etag"',
-        checksums: {},
-        uploaded: new Date('2026-06-10T12:00:00Z'),
-        storageClass: 'Standard',
-        writeHttpMetadata: vi.fn(),
-        body: new ReadableStream({
-            start(controller) {
-                controller.enqueue(bytes)
-                controller.close()
-            },
-        }),
-        bodyUsed: false,
-        arrayBuffer: vi.fn(async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)),
-        bytes: vi.fn(async () => bytes),
-        text: vi.fn(async () => new TextDecoder().decode(bytes)),
-        json: vi.fn(async () => JSON.parse(new TextDecoder().decode(bytes))),
-        blob: vi.fn(async () => new Blob([bytes])),
-    } as unknown as R2ObjectBody)
+    const objectFor = (key: string, bytes: Uint8Array): R2ObjectBody =>
+        ({
+            key,
+            version: 'mock-version',
+            size: bytes.byteLength,
+            etag: 'mock-etag',
+            httpEtag: '"mock-etag"',
+            checksums: {},
+            uploaded: new Date('2026-06-10T12:00:00Z'),
+            storageClass: 'Standard',
+            writeHttpMetadata: vi.fn(),
+            body: new ReadableStream({
+                start(controller) {
+                    controller.enqueue(bytes)
+                    controller.close()
+                },
+            }),
+            bodyUsed: false,
+            arrayBuffer: vi.fn(async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)),
+            bytes: vi.fn(async () => bytes),
+            text: vi.fn(async () => new TextDecoder().decode(bytes)),
+            json: vi.fn(async () => JSON.parse(new TextDecoder().decode(bytes))),
+            blob: vi.fn(async () => new Blob([bytes])),
+        }) as unknown as R2ObjectBody
 
     const bucket = {
         put: vi.fn(async (key: string, value: ReadableStream | ArrayBuffer | ArrayBufferView | string | null | Blob) => {
@@ -41,12 +42,8 @@ export function createMockR2Bucket(): R2Bucket {
                 return null
             }
 
-            const range = options?.range && 'offset' in options.range
-                ? options.range
-                : null
-            const rangedBytes = range
-                ? bytes.slice(range.offset ?? 0, (range.offset ?? 0) + (range.length ?? bytes.byteLength))
-                : bytes
+            const range = options?.range && 'offset' in options.range ? options.range : null
+            const rangedBytes = range ? bytes.slice(range.offset ?? 0, (range.offset ?? 0) + (range.length ?? bytes.byteLength)) : bytes
 
             return objectFor(key, rangedBytes)
         }),
@@ -77,9 +74,7 @@ export function createMockR2Bucket(): R2Bucket {
             const prefix = options?.prefix ?? ''
             const limit = options?.limit ?? 1000
             const start = options?.cursor ? Number(options.cursor) : 0
-            const keys = [...objects.keys()]
-                .filter((key) => key.startsWith(prefix))
-                .sort()
+            const keys = [...objects.keys()].filter((key) => key.startsWith(prefix)).sort()
             const selectedKeys = keys.slice(start, start + limit)
             const nextCursorIndex = start + selectedKeys.length
             const truncated = nextCursorIndex < keys.length

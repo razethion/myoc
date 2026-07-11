@@ -1,49 +1,47 @@
 {
-	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "myoc",
-	"main": "src/index.ts",
-	"compatibility_date": "2026-06-10",
-	"workers_dev": false,
-	"observability": {
-		"logs": {
-			"enabled": true,
-			"invocation_logs": true
-		}
-	},
-  "triggers": {
-    "crons": [
-      "0 9 * * *"
-    ]
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "myoc",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-10",
+  "workers_dev": false,
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
   },
-	"assets": {
-		"directory": "./public"
-	},
+  "triggers": {
+    "crons": ["0 9 * * *"]
+  },
+  "assets": {
+    "directory": "./public"
+  },
   "images": {
     "binding": "IMAGES",
     "remote": true
   },
-	"vars": {
-		"MEDIA_PUBLIC_BASE_URL": "https://m.myoc.art"
-	},
-	"d1_databases": [
-		{
-			"binding": "DB",
-			"database_name": "myoc-db",
-			"database_id": "909ada8f-fc57-47ad-83e1-18ffe863debb"
-		}
-	],
+  "vars": {
+    "MEDIA_PUBLIC_BASE_URL": "https://m.myoc.art"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "myoc-db",
+      "database_id": "909ada8f-fc57-47ad-83e1-18ffe863debb"
+    }
+  ],
   "kv_namespaces": [
     {
       "binding": "CACHE",
       "id": "3f4e8c4c7ed648ed9a699a0a67b727a7"
     }
   ],
-	"r2_buckets": [
-		{
-			"binding": "MEDIA_BUCKET",
-			"bucket_name": "myoc",
-			"preview_bucket_name": "myoc-dev",
-			"remote": true
-		}
-	]
+  "r2_buckets": [
+    {
+      "binding": "MEDIA_BUCKET",
+      "bucket_name": "myoc",
+      "preview_bucket_name": "myoc-dev",
+      "remote": true
+    }
+  ]
 }

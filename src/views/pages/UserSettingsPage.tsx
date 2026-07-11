@@ -1,12 +1,7 @@
 import type {CurrentUser} from '../../lib/auth/session'
 import type {PasskeySummary, SessionSummary} from '../../lib/auth/passkeys'
 import {profilePhotoUrl} from '../../lib/media/url'
-import {
-    createSettingsSocialLinks,
-    FIXED_SOCIAL_LINKS,
-    type FixedSocialPlatform,
-    type UserSocialLink,
-} from '../../lib/socialLinks'
+import {createSettingsSocialLinks, FIXED_SOCIAL_LINKS, type FixedSocialPlatform, type UserSocialLink} from '../../lib/socialLinks'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 import {PROFILE_CROPPER_BROWSER_HELPERS} from '../profileCropperScript'
@@ -51,33 +46,34 @@ function formatPasskeyTransports(transports: string[]): string {
         return 'Passkey'
     }
 
-    return transports.map((transport) => {
-        if (transport === 'internal') {
-            return 'This device'
-        }
+    return transports
+        .map((transport) => {
+            if (transport === 'internal') {
+                return 'This device'
+            }
 
-        if (transport === 'hybrid') {
-            return 'Phone or tablet'
-        }
+            if (transport === 'hybrid') {
+                return 'Phone or tablet'
+            }
 
-        if (transport === 'usb') {
-            return 'USB key'
-        }
+            if (transport === 'usb') {
+                return 'USB key'
+            }
 
-        if (transport === 'nfc') {
-            return 'NFC key'
-        }
+            if (transport === 'nfc') {
+                return 'NFC key'
+            }
 
-        return transport
-    }).join(', ')
+            return transport
+        })
+        .join(', ')
 }
 
-function SocialIcon({platform}: { platform: FixedSocialPlatform | 'custom' }) {
+function SocialIcon({platform}: {platform: FixedSocialPlatform | 'custom'}) {
     if (platform === 'twitter') {
         return (
             <svg aria-hidden="true" class="h-5 w-5 opacity-70" fill="currentColor" viewBox="0 0 24 24">
-                <path
-                    d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24h-6.657l-5.214-6.817-5.963 6.817H1.685l7.73-8.835L1.254 2.25h6.826l4.713 6.231 5.451-6.231Zm-1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77Z"/>
+                <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24h-6.657l-5.214-6.817-5.963 6.817H1.685l7.73-8.835L1.254 2.25h6.826l4.713 6.231 5.451-6.231Zm-1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77Z" />
             </svg>
         )
     }
@@ -85,8 +81,7 @@ function SocialIcon({platform}: { platform: FixedSocialPlatform | 'custom' }) {
     if (platform === 'telegram') {
         return (
             <svg aria-hidden="true" class="h-5 w-5 opacity-70" fill="currentColor" viewBox="0 0 24 24">
-                <path
-                    d="M9.04 15.47 8.7 20.2c.49 0 .7-.21.96-.46l2.3-2.2 4.77 3.49c.87.48 1.49.23 1.72-.8L21.58 5.6c.31-1.45-.52-2.02-1.37-1.7L1.8 11.02c-1.41.55-1.39 1.33-.24 1.68l4.71 1.47L17.2 7.33c.52-.34.99-.15.6.2l-8.76 7.94Z"/>
+                <path d="M9.04 15.47 8.7 20.2c.49 0 .7-.21.96-.46l2.3-2.2 4.77 3.49c.87.48 1.49.23 1.72-.8L21.58 5.6c.31-1.45-.52-2.02-1.37-1.7L1.8 11.02c-1.41.55-1.39 1.33-.24 1.68l4.71 1.47L17.2 7.33c.52-.34.99-.15.6.2l-8.76 7.94Z" />
             </svg>
         )
     }
@@ -94,8 +89,7 @@ function SocialIcon({platform}: { platform: FixedSocialPlatform | 'custom' }) {
     if (platform === 'discord') {
         return (
             <svg aria-hidden="true" class="h-5 w-5 opacity-70" fill="currentColor" viewBox="0 0 24 24">
-                <path
-                    d="M20.32 4.37A19.8 19.8 0 0 0 15.36 2.8a13.8 13.8 0 0 0-.63 1.3 18.4 18.4 0 0 0-5.48 0 13.8 13.8 0 0 0-.64-1.3 19.7 19.7 0 0 0-4.96 1.57C.52 9.03-.33 13.58.1 18.07a19.9 19.9 0 0 0 6.08 3.08c.49-.66.92-1.36 1.3-2.1a12.9 12.9 0 0 1-2.05-.98l.5-.39a14.2 14.2 0 0 0 12.15 0l.5.39c-.65.39-1.34.72-2.06.98.38.74.82 1.44 1.3 2.1a19.8 19.8 0 0 0 6.08-3.08c.5-5.2-.85-9.7-3.58-13.7ZM8.02 15.31c-1.18 0-2.16-1.08-2.16-2.41s.95-2.42 2.16-2.42c1.2 0 2.18 1.1 2.16 2.42 0 1.33-.96 2.41-2.16 2.41Zm7.96 0c-1.18 0-2.16-1.08-2.16-2.41s.95-2.42 2.16-2.42c1.2 0 2.18 1.1 2.16 2.42 0 1.33-.95 2.41-2.16 2.41Z"/>
+                <path d="M20.32 4.37A19.8 19.8 0 0 0 15.36 2.8a13.8 13.8 0 0 0-.63 1.3 18.4 18.4 0 0 0-5.48 0 13.8 13.8 0 0 0-.64-1.3 19.7 19.7 0 0 0-4.96 1.57C.52 9.03-.33 13.58.1 18.07a19.9 19.9 0 0 0 6.08 3.08c.49-.66.92-1.36 1.3-2.1a12.9 12.9 0 0 1-2.05-.98l.5-.39a14.2 14.2 0 0 0 12.15 0l.5.39c-.65.39-1.34.72-2.06.98.38.74.82 1.44 1.3 2.1a19.8 19.8 0 0 0 6.08-3.08c.5-5.2-.85-9.7-3.58-13.7ZM8.02 15.31c-1.18 0-2.16-1.08-2.16-2.41s.95-2.42 2.16-2.42c1.2 0 2.18 1.1 2.16 2.42 0 1.33-.96 2.41-2.16 2.41Zm7.96 0c-1.18 0-2.16-1.08-2.16-2.41s.95-2.42 2.16-2.42c1.2 0 2.18 1.1 2.16 2.42 0 1.33-.95 2.41-2.16 2.41Z" />
             </svg>
         )
     }
@@ -105,12 +99,12 @@ function SocialIcon({platform}: { platform: FixedSocialPlatform | 'custom' }) {
             <svg aria-hidden="true" class="h-5 w-5 opacity-70" fill="currentColor" viewBox="0 0 24 24">
                 <defs>
                     <mask id="instagram-settings-icon">
-                        <rect fill="white" height="24" width="24"/>
-                        <circle cx="12" cy="12" fill="black" r="4"/>
-                        <circle cx="17.5" cy="6.5" fill="black" r="1.4"/>
+                        <rect fill="white" height="24" width="24" />
+                        <circle cx="12" cy="12" fill="black" r="4" />
+                        <circle cx="17.5" cy="6.5" fill="black" r="1.4" />
                     </mask>
                 </defs>
-                <rect height="20" mask="url(#instagram-settings-icon)" rx="5" width="20" x="2" y="2"/>
+                <rect height="20" mask="url(#instagram-settings-icon)" rx="5" width="20" x="2" y="2" />
             </svg>
         )
     }
@@ -118,8 +112,7 @@ function SocialIcon({platform}: { platform: FixedSocialPlatform | 'custom' }) {
     if (platform === 'furaffinity') {
         return (
             <svg aria-hidden="true" class="h-6 w-6 opacity-70" fill="currentColor" viewBox="0 0 32 32">
-                <path
-                    d="M22.427 6.844l-0.344 2.656 3.245 0.958 0.042 2.865 2.974 0.057-0.073 3.005 2.891-0.188c0.005-1.010 0.068-6.724 0.839-9.354zM15.141 24.318c0.073-0.281 0-1.203 0-1.526l-0.063-1.948c-2.698-0.115-5.604 0.427-5.604 2.911 0 0.542 0.229 1.026 0.568 1.401h4.417c0.333-0.188 0.578-0.448 0.682-0.839zM27.188 17.422l0.068-2.995-2.938-0.057-0.047-3.229-3.37-1.151 0.453-3.146h-12.573c-5.094 0-8.781 4.339-8.781 9.089v9.224h5.49c-0.036-0.333-0.047-0.672-0.031-1.005 0.198-4.891 5.599-5.729 9.656-5.609v-1.406c-0.068-1.135-0.99-2.141-3.656-2.141-1.776 0-3.885 0.229-5.25 0.724l0.359-3.182c1.307-0.365 2.776-0.724 5.938-0.724 6.099 0 6.771 2.703 6.724 5.844l-0.031 7.5h3.307v-0.005l0.125 0.005c4.406 0 8.031-3.589 8.484-7.891z"/>
+                <path d="M22.427 6.844l-0.344 2.656 3.245 0.958 0.042 2.865 2.974 0.057-0.073 3.005 2.891-0.188c0.005-1.010 0.068-6.724 0.839-9.354zM15.141 24.318c0.073-0.281 0-1.203 0-1.526l-0.063-1.948c-2.698-0.115-5.604 0.427-5.604 2.911 0 0.542 0.229 1.026 0.568 1.401h4.417c0.333-0.188 0.578-0.448 0.682-0.839zM27.188 17.422l0.068-2.995-2.938-0.057-0.047-3.229-3.37-1.151 0.453-3.146h-12.573c-5.094 0-8.781 4.339-8.781 9.089v9.224h5.49c-0.036-0.333-0.047-0.672-0.031-1.005 0.198-4.891 5.599-5.729 9.656-5.609v-1.406c-0.068-1.135-0.99-2.141-3.656-2.141-1.776 0-3.885 0.229-5.25 0.724l0.359-3.182c1.307-0.365 2.776-0.724 5.938-0.724 6.099 0 6.771 2.703 6.724 5.844l-0.031 7.5h3.307v-0.005l0.125 0.005c4.406 0 8.031-3.589 8.484-7.891z" />
             </svg>
         )
     }
@@ -127,18 +120,25 @@ function SocialIcon({platform}: { platform: FixedSocialPlatform | 'custom' }) {
     if (platform === 'bluesky') {
         return (
             <svg aria-hidden="true" class="h-5 w-5 opacity-70" fill="currentColor" viewBox="0 0 600 530">
-                <path
-                    d="M135.72 44.03C202.22 93.89 273.63 194.94 300 249.16c26.37-54.22 97.78-155.27 164.28-205.13C512.28 8.05 590-19.79 590 68.8c0 17.7-10.15 148.72-16.11 169.98-20.7 73.96-96.14 92.85-163.25 81.43 117.3 19.95 147.14 86.09 82.68 152.23-122.39 125.59-175.91-31.51-189.63-71.77-2.52-7.39-3.69-10.83-3.69-7.89 0-2.94-1.17.5-3.69 7.89-13.72 40.26-67.24 197.36-189.63 71.77-64.46-66.14-34.62-132.28 82.68-152.23-67.11 11.42-142.55-7.47-163.25-81.43C20.15 217.52 10 86.5 10 68.8 10-19.79 87.72 8.05 135.72 44.03Z"/>
+                <path d="M135.72 44.03C202.22 93.89 273.63 194.94 300 249.16c26.37-54.22 97.78-155.27 164.28-205.13C512.28 8.05 590-19.79 590 68.8c0 17.7-10.15 148.72-16.11 169.98-20.7 73.96-96.14 92.85-163.25 81.43 117.3 19.95 147.14 86.09 82.68 152.23-122.39 125.59-175.91-31.51-189.63-71.77-2.52-7.39-3.69-10.83-3.69-7.89 0-2.94-1.17.5-3.69 7.89-13.72 40.26-67.24 197.36-189.63 71.77-64.46-66.14-34.62-132.28 82.68-152.23-67.11 11.42-142.55-7.47-163.25-81.43C20.15 217.52 10 86.5 10 68.8 10-19.79 87.72 8.05 135.72 44.03Z" />
             </svg>
         )
     }
 
     return (
         <svg aria-hidden="true" class="h-5 w-5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 4.43" stroke-linecap="round"
-                  stroke-linejoin="round" stroke-width="2"/>
-            <path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07l1.33-1.33" stroke-linecap="round"
-                  stroke-linejoin="round" stroke-width="2"/>
+            <path
+                d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 4.43"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+            />
+            <path
+                d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07l1.33-1.33"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+            />
         </svg>
     )
 }
@@ -935,18 +935,10 @@ function UserSettingsPageScript() {
         }
     `
 
-    return (
-        <script dangerouslySetInnerHTML={{__html: script}}></script>
-    )
+    return <script dangerouslySetInnerHTML={{__html: script}}></script>
 }
 
-export function UserSettingsPage({
-                                     currentUser,
-                                     passkeys = [],
-                                     sessions = [],
-                                     socialLinks = [],
-                                     mediaBaseUrl,
-                                 }: UserSettingsPageProps) {
+export function UserSettingsPage({currentUser, passkeys = [], sessions = [], socialLinks = [], mediaBaseUrl}: UserSettingsPageProps) {
     const socialValues = createSettingsSocialLinks(socialLinks)
     const hasPasskeys = passkeys.length > 0
     const recoveryPhraseConfirmed = currentUser.recoveryPhraseConfirmed === true
@@ -957,7 +949,7 @@ export function UserSettingsPage({
             head={<style>{`[data-profile-photo-cropper] cropper-canvas { height: min(22rem, 55vh); }`}</style>}
             title="User Settings | MyOC"
         >
-            <Navbar currentUser={currentUser} mediaBaseUrl={mediaBaseUrl}/>
+            <Navbar currentUser={currentUser} mediaBaseUrl={mediaBaseUrl} />
 
             <main class="container mx-auto max-w-3xl px-3 py-6 sm:px-0">
                 <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -968,7 +960,7 @@ export function UserSettingsPage({
                 </div>
 
                 <form action="/api/users/me" class="space-y-8" data-settings-form method="post">
-                    <input name="csrfToken" type="hidden" value={currentUser.csrfToken}/>
+                    <input name="csrfToken" type="hidden" value={currentUser.csrfToken} />
 
                     <section
                         class="space-y-5"
@@ -979,13 +971,14 @@ export function UserSettingsPage({
                     >
                         <div>
                             <h2 class="text-2xl font-bold">Account Login</h2>
-                            <p class="text-sm text-base-content/70">Manage email, sign-in methods, recovery, and active
-                                sessions.</p>
+                            <p class="text-sm text-base-content/70">Manage email, sign-in methods, recovery, and active sessions.</p>
                         </div>
 
                         <div class={hasPasskeys ? 'grid gap-3' : 'grid gap-3 sm:grid-cols-2'}>
                             <fieldset class="fieldset">
-                                <label class="fieldset-label" for="email">Email</label>
+                                <label class="fieldset-label" for="email">
+                                    Email
+                                </label>
                                 <input
                                     autocomplete="email"
                                     class="input input-bordered w-full"
@@ -998,7 +991,9 @@ export function UserSettingsPage({
                             </fieldset>
 
                             <fieldset class="fieldset" data-password-fieldset hidden={hasPasskeys}>
-                                <label class="fieldset-label" for="password">Password</label>
+                                <label class="fieldset-label" for="password">
+                                    Password
+                                </label>
                                 <input
                                     autocomplete="new-password"
                                     class="input input-bordered w-full"
@@ -1020,8 +1015,8 @@ export function UserSettingsPage({
                                 <div>
                                     <p class="font-bold">Secure your account</p>
                                     <p class="text-sm">
-                                        Add a fresh passkey, review active sessions, revoke anything unfamiliar, then
-                                        regenerate and confirm a recovery phrase.
+                                        Add a fresh passkey, review active sessions, revoke anything unfamiliar, then regenerate and confirm
+                                        a recovery phrase.
                                     </p>
                                 </div>
                             </div>
@@ -1044,7 +1039,8 @@ export function UserSettingsPage({
                                         Create a passkey, save a recovery phrase, and remove password sign-in.
                                     </p>
                                 </div>
-                                <button class="btn btn-primary" data-add-passkey-button type="button">Add Passkey
+                                <button class="btn btn-primary" data-add-passkey-button type="button">
+                                    Add Passkey
                                 </button>
                             </div>
                         </div>
@@ -1073,9 +1069,9 @@ export function UserSettingsPage({
                                                     )}
                                                 </div>
                                                 <p class="mt-1 text-sm text-base-content/70">
-                                                    {formatPasskeyTransports(passkey.transports)} ·
-                                                    Added {formatSecurityDate(passkey.createdAt)} · Last
-                                                    used {formatSecurityDate(passkey.lastUsedAt)}
+                                                    {formatPasskeyTransports(passkey.transports)} · Added{' '}
+                                                    {formatSecurityDate(passkey.createdAt)} · Last used{' '}
+                                                    {formatSecurityDate(passkey.lastUsedAt)}
                                                 </p>
                                             </div>
                                             <button
@@ -1124,35 +1120,35 @@ export function UserSettingsPage({
                                 <div class="mt-4 overflow-x-auto">
                                     <table class="table table-sm">
                                         <thead>
-                                        <tr>
-                                            <th>Session</th>
-                                            <th>Created</th>
-                                            <th>Expires</th>
-                                            <th></th>
-                                        </tr>
+                                            <tr>
+                                                <th>Session</th>
+                                                <th>Created</th>
+                                                <th>Expires</th>
+                                                <th></th>
+                                            </tr>
                                         </thead>
                                         <tbody>
-                                        {sessions.map((session) => (
-                                            <tr>
-                                                <td>{session.isCurrent ? 'Current' : 'Active'}</td>
-                                                <td>{formatSecurityDate(session.createdAt)}</td>
-                                                <td>{formatSecurityDate(session.expiresAt)}</td>
-                                                <td class="text-right">
-                                                    {session.isCurrent ? (
-                                                        <span class="badge badge-primary badge-sm">This session</span>
-                                                    ) : (
-                                                        <button
-                                                            class="btn btn-ghost btn-xs"
-                                                            data-revoke-session-button
-                                                            data-session-id={session.id}
-                                                            type="button"
-                                                        >
-                                                            Revoke
-                                                        </button>
-                                                    )}
-                                                </td>
-                                            </tr>
-                                        ))}
+                                            {sessions.map((session) => (
+                                                <tr>
+                                                    <td>{session.isCurrent ? 'Current' : 'Active'}</td>
+                                                    <td>{formatSecurityDate(session.createdAt)}</td>
+                                                    <td>{formatSecurityDate(session.expiresAt)}</td>
+                                                    <td class="text-right">
+                                                        {session.isCurrent ? (
+                                                            <span class="badge badge-primary badge-sm">This session</span>
+                                                        ) : (
+                                                            <button
+                                                                class="btn btn-ghost btn-xs"
+                                                                data-revoke-session-button
+                                                                data-session-id={session.id}
+                                                                type="button"
+                                                            >
+                                                                Revoke
+                                                            </button>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            ))}
                                         </tbody>
                                     </table>
                                 </div>
@@ -1171,12 +1167,13 @@ export function UserSettingsPage({
                     <section class="space-y-5">
                         <div>
                             <h2 class="text-2xl font-bold">Profile</h2>
-                            <p class="text-sm text-base-content/70">These details appear above your character
-                                folders.</p>
+                            <p class="text-sm text-base-content/70">These details appear above your character folders.</p>
                         </div>
 
                         <fieldset class="fieldset">
-                            <label class="fieldset-label" for="username">Username</label>
+                            <label class="fieldset-label" for="username">
+                                Username
+                            </label>
                             <label class="input input-bordered w-full">
                                 <span class="opacity-60">@</span>
                                 <input
@@ -1199,14 +1196,18 @@ export function UserSettingsPage({
                         </fieldset>
 
                         <fieldset class="fieldset">
-                            <label class="fieldset-label" for="bio">Bio</label>
+                            <label class="fieldset-label" for="bio">
+                                Bio
+                            </label>
                             <textarea
                                 class="textarea textarea-bordered min-h-32 w-full resize-y"
                                 id="bio"
                                 maxLength={255}
                                 name="bio"
                                 placeholder="Write a short profile bio..."
-                            >{currentUser.bio}</textarea>
+                            >
+                                {currentUser.bio}
+                            </textarea>
                             <div class="label justify-end">
                                 <span class="label-text-alt">255 characters max</span>
                             </div>
@@ -1224,14 +1225,18 @@ export function UserSettingsPage({
                                 <span>
                                     <span class="block font-bold">Display NSFW media</span>
                                     <span class="mt-1 block text-sm text-base-content/70">
-                                        Show NSFW variants while browsing media when they are available. NSFW media will always display when editing characters.
+                                        Show NSFW variants while browsing media when they are available. NSFW media will always display when
+                                        editing characters.
                                     </span>
                                 </span>
                             </label>
                         </section>
 
-                        <section class="rounded-box border border-base-300 bg-base-200 p-4"
-                                 data-csrf-token={currentUser.csrfToken} data-profile-photo-uploader>
+                        <section
+                            class="rounded-box border border-base-300 bg-base-200 p-4"
+                            data-csrf-token={currentUser.csrfToken}
+                            data-profile-photo-uploader
+                        >
                             <div class="flex flex-col gap-4 sm:flex-row sm:items-center">
                                 <img
                                     alt={`${currentUser.username} profile preview`}
@@ -1243,24 +1248,27 @@ export function UserSettingsPage({
 
                                 <div class="min-w-0 flex-1">
                                     <h3 class="text-xl font-bold">Profile Photo</h3>
-                                    <p class="mt-1 text-sm text-base-content/70">
-                                        You'll be able to crop the image before uploading.
-                                    </p>
+                                    <p class="mt-1 text-sm text-base-content/70">You'll be able to crop the image before uploading.</p>
 
                                     <div class="mt-4 flex flex-col gap-3 sm:flex-row">
-                                        <input accept="image/*" class="file-input file-input-bordered w-full"
-                                               data-profile-photo-input type="file"/>
-                                        <button class="btn btn-secondary" data-profile-photo-button disabled
-                                                type="button">Upload Photo
+                                        <input
+                                            accept="image/*"
+                                            class="file-input file-input-bordered w-full"
+                                            data-profile-photo-input
+                                            type="file"
+                                        />
+                                        <button class="btn btn-secondary" data-profile-photo-button disabled type="button">
+                                            Upload Photo
                                         </button>
                                     </div>
 
-                                    <div class="mt-4 hidden rounded-box border border-base-300 bg-base-100 p-4"
-                                         data-profile-photo-cropper>
+                                    <div class="mt-4 hidden rounded-box border border-base-300 bg-base-100 p-4" data-profile-photo-cropper>
                                         <div class="max-h-[22rem] overflow-hidden rounded-box bg-base-300">
-                                            <img alt="Selected avatar crop editor"
-                                                 class="block max-h-[22rem] w-full object-contain"
-                                                 data-profile-photo-crop-image/>
+                                            <img
+                                                alt="Selected avatar crop editor"
+                                                class="block max-h-[22rem] w-full object-contain"
+                                                data-profile-photo-crop-image
+                                            />
                                         </div>
                                         <p class="mt-3 text-xs text-base-content/60">
                                             Drag the image or crop box to choose the square area.
@@ -1274,8 +1282,7 @@ export function UserSettingsPage({
                     <section class="space-y-5">
                         <div>
                             <h2 class="text-2xl font-bold">Migration</h2>
-                            <p class="text-sm text-base-content/70">Bring characters and images over from other
-                                character gallery sites.</p>
+                            <p class="text-sm text-base-content/70">Bring characters and images over from other character gallery sites.</p>
                         </div>
 
                         <div class="rounded-box border border-base-300 bg-base-200 p-4">
@@ -1286,7 +1293,9 @@ export function UserSettingsPage({
                                         Start a Toyhou.se profile import from a public profile URL.
                                     </p>
                                 </div>
-                                <a class="btn btn-secondary" href="/migrate">Open Migration</a>
+                                <a class="btn btn-secondary" href="/migrate">
+                                    Open Migration
+                                </a>
                             </div>
                         </div>
                     </section>
@@ -1294,16 +1303,17 @@ export function UserSettingsPage({
                     <section class="space-y-5">
                         <div>
                             <h2 class="text-2xl font-bold">Social Links</h2>
-                            <p class="text-sm text-base-content/70">Add the public links that should appear with your
-                                profile.</p>
+                            <p class="text-sm text-base-content/70">Add the public links that should appear with your profile.</p>
                         </div>
 
                         <div class="grid gap-3 sm:grid-cols-2">
                             {FIXED_SOCIAL_LINKS.map((link) => (
                                 <fieldset class="fieldset">
-                                    <label class="fieldset-label" for={link.formName}>{link.label}</label>
+                                    <label class="fieldset-label" for={link.formName}>
+                                        {link.label}
+                                    </label>
                                     <label class="input input-bordered w-full">
-                                        <SocialIcon platform={link.platform}/>
+                                        <SocialIcon platform={link.platform} />
                                         <input
                                             data-social-label={link.label}
                                             data-social-url
@@ -1324,7 +1334,9 @@ export function UserSettingsPage({
                             <h3 class="font-semibold">Custom Link</h3>
                             <div class="mt-3 grid gap-3 sm:grid-cols-2">
                                 <fieldset class="fieldset">
-                                    <label class="fieldset-label" for="customLinkLabel">Label</label>
+                                    <label class="fieldset-label" for="customLinkLabel">
+                                        Label
+                                    </label>
                                     <input
                                         class="input input-bordered w-full"
                                         autocomplete="off"
@@ -1338,9 +1350,11 @@ export function UserSettingsPage({
                                 </fieldset>
 
                                 <fieldset class="fieldset">
-                                    <label class="fieldset-label" for="customLinkUrl">URL</label>
+                                    <label class="fieldset-label" for="customLinkUrl">
+                                        URL
+                                    </label>
                                     <label class="input input-bordered w-full">
-                                        <SocialIcon platform="custom"/>
+                                        <SocialIcon platform="custom" />
                                         <input
                                             class="grow"
                                             autocomplete="off"
@@ -1363,8 +1377,12 @@ export function UserSettingsPage({
                         </div>
 
                         <div class="flex w-full flex-wrap justify-end gap-2">
-                            <a class="btn btn-ghost" href="/">Cancel</a>
-                            <button class="btn btn-primary" type="submit">Save Changes</button>
+                            <a class="btn btn-ghost" href="/">
+                                Cancel
+                            </a>
+                            <button class="btn btn-primary" type="submit">
+                                Save Changes
+                            </button>
                         </div>
                     </div>
                 </form>
@@ -1377,7 +1395,9 @@ export function UserSettingsPage({
                                 This will create a passkey, then replace password sign-in with a recovery phrase.
                             </p>
                             <fieldset class="fieldset mt-4">
-                                <label class="fieldset-label" for="modalPasskeyName">Passkey name</label>
+                                <label class="fieldset-label" for="modalPasskeyName">
+                                    Passkey name
+                                </label>
                                 <input
                                     autocomplete="off"
                                     class="input input-bordered w-full"
@@ -1391,7 +1411,9 @@ export function UserSettingsPage({
                             <div class="modal-action">
                                 {secureAccountRequired ? null : (
                                     <form method="dialog">
-                                        <button class="btn btn-ghost" type="submit">Cancel</button>
+                                        <button class="btn btn-ghost" type="submit">
+                                            Cancel
+                                        </button>
                                     </form>
                                 )}
                                 <button class="btn btn-primary" data-passkey-setup-create-button type="button">
@@ -1418,11 +1440,12 @@ export function UserSettingsPage({
                         <div data-passkey-setup-step="confirm" hidden>
                             <h3 class="text-xl font-bold">Confirm Recovery Phrase</h3>
                             <p class="mt-2 text-sm text-base-content/70">
-                                Enter the phrase to confirm it is saved. Password sign-in will be removed after this
-                                step.
+                                Enter the phrase to confirm it is saved. Password sign-in will be removed after this step.
                             </p>
                             <fieldset class="fieldset mt-4">
-                                <label class="fieldset-label" for="passkeySetupRecoveryConfirm">Recovery phrase</label>
+                                <label class="fieldset-label" for="passkeySetupRecoveryConfirm">
+                                    Recovery phrase
+                                </label>
                                 <input
                                     autocomplete="off"
                                     class="input input-bordered w-full"
@@ -1441,11 +1464,11 @@ export function UserSettingsPage({
                         <div data-passkey-setup-step="done" hidden>
                             <h3 class="text-xl font-bold">Account Secured</h3>
                             <p class="mt-2 text-sm text-base-content/70">
-                                Your passkey is ready, your recovery phrase is confirmed, and password sign-in has been
-                                removed.
+                                Your passkey is ready, your recovery phrase is confirmed, and password sign-in has been removed.
                             </p>
                             <div class="modal-action">
-                                <button class="btn btn-primary" data-passkey-setup-done-button type="button">Done
+                                <button class="btn btn-primary" data-passkey-setup-done-button type="button">
+                                    Done
                                 </button>
                             </div>
                         </div>
@@ -1455,9 +1478,7 @@ export function UserSettingsPage({
                 <dialog class="modal" data-last-passkey-removed-modal>
                     <div class="modal-box">
                         <h3 class="text-xl font-bold">Keep A Sign-In Method</h3>
-                        <p class="mt-2 text-sm text-base-content/70">
-                            Choose another way to access this account.
-                        </p>
+                        <p class="mt-2 text-sm text-base-content/70">Choose another way to access this account.</p>
                         <div class="modal-action">
                             <button class="btn btn-ghost" data-last-passkey-password-button type="button">
                                 Set Password
@@ -1472,23 +1493,27 @@ export function UserSettingsPage({
                 <dialog class="modal" data-recovery-modal>
                     <div class="modal-box">
                         <h3 class="text-xl font-bold">Recovery Phrase</h3>
-                        <p class="mt-2 text-sm text-base-content/70">
-                            Save this phrase before continuing.
-                        </p>
+                        <p class="mt-2 text-sm text-base-content/70">Save this phrase before continuing.</p>
                         <div class="mt-4 rounded-box border border-base-300 bg-base-200 p-4">
                             <code class="block break-words text-lg font-bold" data-recovery-phrase></code>
                         </div>
 
                         <div class="modal-action">
                             <form method="dialog">
-                                <button class="btn btn-ghost" type="submit">Close</button>
+                                <button class="btn btn-ghost" type="submit">
+                                    Close
+                                </button>
                             </form>
-                            <button class="btn btn-primary" data-recovery-saved-button type="button">Saved</button>
+                            <button class="btn btn-primary" data-recovery-saved-button type="button">
+                                Saved
+                            </button>
                         </div>
 
                         <div class="mt-4" data-recovery-confirm-panel hidden>
                             <fieldset class="fieldset">
-                                <label class="fieldset-label" for="recoveryPhraseConfirm">Enter recovery phrase</label>
+                                <label class="fieldset-label" for="recoveryPhraseConfirm">
+                                    Enter recovery phrase
+                                </label>
                                 <input
                                     autocomplete="off"
                                     class="input input-bordered w-full"
@@ -1498,8 +1523,8 @@ export function UserSettingsPage({
                                 />
                             </fieldset>
                             <div class="mt-3 flex justify-end">
-                                <button class="btn btn-primary" data-recovery-confirm-button type="button">Confirm
-                                    Phrase
+                                <button class="btn btn-primary" data-recovery-confirm-button type="button">
+                                    Confirm Phrase
                                 </button>
                             </div>
                         </div>
@@ -1512,7 +1537,7 @@ export function UserSettingsPage({
 
             <script src="/vendor/cropperjs/cropper.min.js"></script>
             <script src="/vendor/simplewebauthn/index.umd.min.js"></script>
-            <UserSettingsPageScript/>
+            <UserSettingsPageScript />
         </BaseLayout>
     )
 }
