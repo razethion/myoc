@@ -2598,7 +2598,7 @@ async function putMediaPreviewImage(
 }
 
 async function putNsfwBlurImage(
-    images: ImagesBinding,
+    images: ImagesBinding | undefined,
     bucket: R2Bucket,
     userId: string,
     characterId: string,
@@ -2606,6 +2606,10 @@ async function putNsfwBlurImage(
     preview: ParsedPreviewImage,
     uploadedKeys: string[],
 ): Promise<string> {
+    if (!images) {
+        throw new Error('Cloudflare Images binding is not configured.')
+    }
+
     const imageKey = crypto.randomUUID()
     const objectKey = characterMediaNsfwBlurImageObjectKey(userId, characterId, mediaId, imageKey)
     const result = await images
