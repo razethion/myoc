@@ -47,6 +47,7 @@ function createProfilePageDb(options: {
     imageApprovalCount?: number
     imageApprovalHistory?: unknown[]
     adminReports?: unknown[]
+    userPasskeys?: unknown[]
 } = {}): D1Database {
     const firstForSql = async (sql: string) => {
         if (sql.includes('sfw_image_key IS NOT NULL') && sql.includes('nsfw_image_key IS NOT NULL') && sql.includes('AS count')) {
@@ -136,6 +137,10 @@ function createProfilePageDb(options: {
             return {results: options.socialLinks ?? []}
         }
 
+        if (sql.includes('FROM user_passkeys')) {
+            return {results: options.userPasskeys ?? []}
+        }
+
         if (sql.includes('FROM character_folder_placements')) {
             return {results: options.placements ?? []}
         }
@@ -204,7 +209,7 @@ async function getAppPath(
     });
 }
 
-function createCurrentUserRecord(username = 'demo') {
+function createCurrentUserRecord(username = 'demo', overrides: Record<string, unknown> = {}) {
     return {
         id: 'current-user',
         email: `${username}@example.test`,
@@ -214,6 +219,8 @@ function createCurrentUserRecord(username = 'demo') {
         bio: '',
         display_nsfw_media: 0,
         last_seen_version: null,
+        passkey_prompt_seen_at: '2026-07-10 00:00:00',
+        ...overrides,
     }
 }
 
@@ -657,6 +664,57 @@ describe('public page redirects', () => {
         expect(loginResponse.headers.get('location')).toBe('/u/demo_user')
         expect(registerResponse.status).toBe(302)
         expect(registerResponse.headers.get('location')).toBe('/u/demo_user')
+    })
+
+    it('redirects logged-in users without passkeys to the one-time passkey prompt', async () => {
+        const response = await getAppPath('/search?q=demo', createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo', {
+                passkey_prompt_seen_at: null,
+            }),
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+
+        expect(response.status).toBe(302)
+        expect(response.headers.get('location')).toBe('/passkey-setup?returnTo=%2Fsearch%3Fq%3Ddemo')
+    })
+
+    it('does not redirect users who already have passkeys', async () => {
+        const response = await getAppPath('/search?q=demo', createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo', {
+                passkey_prompt_seen_at: null,
+            }),
+            userPasskeys: [{id: 'passkey-1'}],
+        }), {
+            cookie: 'myoc_session=session-token',
+        })
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Results for &quot;demo&quot;')
+    })
+
+    it('renders the passkey setup prompt without marking it seen', async () => {
+        const db = createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo', {
+                passkey_prompt_seen_at: null,
+            }),
+        })
+        const response = await getAppPath('/passkey-setup?returnTo=/search?q=demo', db, {
+            cookie: 'myoc_session=session-token',
+        })
+        const html = await response.text()
+        const preparedSql = (db.prepare as unknown as { mock: { calls: [string][] } }).mock.calls
+            .map(([sql]) => sql)
+            .join('\n')
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('<title>Set Up A Passkey | MyOC</title>')
+        expect(html).toContain('Set up a passkey')
+        expect(html).toContain('name="choice" type="submit" value="setup"')
+        expect(html).toContain('name="choice" type="submit" value="later"')
+        expect(html).toContain('name="returnTo" type="hidden" value="/search?q=demo"')
+        expect(preparedSql).not.toContain('UPDATE users')
     })
 
     it('renders home, login, and register for logged-out users', async () => {

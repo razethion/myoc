@@ -9,6 +9,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
     {
+        version: '2026.07.10.01',
+        releasedOn: 'July 10, 2026',
+        title: 'Passkeys!',
+        summary: 'More secure or something.',
+        changes: [
+            'Passkeys can now be your preferred sign-in method.'
+        ],
+    },
+    {
         version: '2026.07.06.01',
         releasedOn: 'July 6, 2026',
         title: 'Various improvements',
