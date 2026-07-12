@@ -2047,14 +2047,16 @@ describe('GET /admin', () => {
         expect(html).toContain('<title>Image Approvals | Admin | MyOC</title>')
         expect(html).toContain('data-image-approvals')
         expect(html).toContain(
-            '"imageUrl":"https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp"',
+            '&quot;imageUrl&quot;:&quot;https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp&quot;',
         )
-        expect(html).toContain('"fullImageUrl":"https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/sfw-key.png"')
-        expect(html).toContain('"objectKey":"characters/owner-1/character-1/media/media-1/sfw/sfw-key.png"')
-        expect(html).toContain('"username":"uploader"')
-        expect(html).toContain('"pendingCount":1')
-        expect(html).toContain('"profileUrl":"/u/uploader"')
-        expect(html).toContain('"url":"/u/uploader/Quartz"')
+        expect(html).toContain(
+            '&quot;fullImageUrl&quot;:&quot;https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/sfw-key.png&quot;',
+        )
+        expect(html).toContain('&quot;objectKey&quot;:&quot;characters/owner-1/character-1/media/media-1/sfw/sfw-key.png&quot;')
+        expect(html).toContain('&quot;username&quot;:&quot;uploader&quot;')
+        expect(html).toContain('&quot;pendingCount&quot;:1')
+        expect(html).toContain('&quot;profileUrl&quot;:&quot;/u/uploader&quot;')
+        expect(html).toContain('&quot;url&quot;:&quot;/u/uploader/Quartz&quot;')
         expect(html).toContain('admin-approval-image-grid')
         expect(html).toContain('formatPendingCount')
         expect(html).toContain('handleKeyboardShortcuts')

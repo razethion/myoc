@@ -2,6 +2,7 @@
   "$schema": "./node_modules/knip/schema.json",
   "entry": ["scripts/*.mjs", "src/styles/app.css"],
   "project": ["src/**/*.{ts,tsx,css}", "scripts/*.mjs"],
+  "ignoreBinaries": ["py"],
   "ignoreDependencies": ["@simplewebauthn/browser", "cloudflare", "cropperjs"],
   "ignoreExportsUsedInFile": true
 }

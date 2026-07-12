@@ -2,6 +2,8 @@ import type {Context, Next} from 'hono'
 import {getCookie} from 'hono/cookie'
 import type {Bindings} from '../../types/bindings'
 import {getSessionCookieName, isValidCsrfToken} from '../auth/session'
+import {jsonResponse} from './jsonResponse'
+import {ErrorResponseSchema} from './responseSchemas'
 
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 const PUBLIC_UNSAFE_PATHS = new Set([
@@ -34,7 +36,7 @@ export async function csrfProtection(c: Context<{Bindings: Bindings}>, next: Nex
     const csrfToken = await getCsrfToken(c)
 
     if (!(await isValidCsrfToken(sessionToken, csrfToken))) {
-        return c.json({error: 'Invalid CSRF token'}, 403)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid CSRF token'}, 403)
     }
 
     return await next()
