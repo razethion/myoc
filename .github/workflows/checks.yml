@@ -227,7 +227,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Comment preview link
-        uses: actions/github-script@373c709c69115d41ff229c7e5df9f8788daa9553
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
           PREVIEW_URL: ${{ steps.upload-preview.outputs.preview_url }}
           PREVIEW_ALIAS: ${{ steps.preview.outputs.preview_alias }}
