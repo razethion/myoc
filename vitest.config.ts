@@ -13,6 +13,7 @@ export default defineConfig({
     ],
     test: {
         coverage: {
+            exclude: ['src/test/**'],
             provider: 'istanbul',
         },
         include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
