@@ -17,6 +17,7 @@ function hasCommand(command) {
 function run(command, args) {
     const extraPath = path.dirname(command) !== '.' ? `${path.dirname(command)}${path.delimiter}` : ''
     return (
+        // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process -- Local developer tooling wrapper runs only fixed Semgrep/Docker commands.
         spawnSync(command, args, {
             cwd: repoRoot,
             env: {...process.env, PATH: `${extraPath}${process.env.PATH ?? ''}`},
