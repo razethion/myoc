@@ -244,8 +244,15 @@ function createCurrentUserRecord(username = 'demo', overrides: Record<string, un
 }
 
 function expectPatternAllowsReportedCharacterNames(html: string, inputId: string): void {
-    const match = new RegExp(`id="${inputId}"[^>]*pattern="([^"]+)"`).exec(html)
-    const rawPattern = match?.[1]
+    const idAttribute = `id="${inputId}"`
+    const idIndex = html.indexOf(idAttribute)
+    const inputEndIndex = idIndex >= 0 ? html.indexOf('>', idIndex) : -1
+    const inputHtml = inputEndIndex >= 0 ? html.slice(idIndex, inputEndIndex) : ''
+    const patternAttribute = 'pattern="'
+    const patternStartIndex = inputHtml.indexOf(patternAttribute)
+    const patternValueStartIndex = patternStartIndex >= 0 ? patternStartIndex + patternAttribute.length : -1
+    const patternValueEndIndex = patternValueStartIndex >= 0 ? inputHtml.indexOf('"', patternValueStartIndex) : -1
+    const rawPattern = patternValueEndIndex >= 0 ? inputHtml.slice(patternValueStartIndex, patternValueEndIndex) : ''
 
     expect(rawPattern).toBeTruthy()
 
@@ -254,6 +261,7 @@ function expectPatternAllowsReportedCharacterNames(html: string, inputId: string
     }
 
     const pattern = rawPattern.replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- This test intentionally compiles the rendered HTML pattern attribute to verify browser validation behavior.
     const regex = new RegExp(`^(?:${pattern})$`, 'v')
 
     expect(regex.test('DRD-5548 "Ivo"')).toBe(true)
