@@ -9,31 +9,102 @@ DROP TABLE IF EXISTS __migration_0026_toyhouse_import_items_backup;
 DROP TABLE IF EXISTS __migration_0026_character_folder_placements_backup;
 
 CREATE TABLE __migration_0026_character_media_backup AS
-SELECT *
+SELECT id,
+       user_id,
+       character_id,
+       sfw_image_key,
+       nsfw_image_key,
+       sfw_artist,
+       nsfw_artist,
+       sfw_width,
+       sfw_height,
+       sfw_byte_size,
+       nsfw_width,
+       nsfw_height,
+       nsfw_byte_size,
+       created_at,
+       updated_at,
+       sfw_review_status,
+       sfw_reviewed_at,
+       sfw_approved_at,
+       sfw_homepage_allowed,
+       nsfw_review_status,
+       nsfw_reviewed_at,
+       nsfw_approved_at,
+       sfw_content_type,
+       nsfw_content_type,
+       sfw_preview_image_key,
+       sfw_preview_width,
+       sfw_preview_height,
+       sfw_preview_byte_size,
+       nsfw_preview_image_key,
+       nsfw_preview_width,
+       nsfw_preview_height,
+       nsfw_preview_byte_size,
+       nsfw_blur_image_key
 FROM character_media;
 
 CREATE TABLE __migration_0026_character_gallery_tabs_backup AS
-SELECT *
+SELECT id,
+       user_id,
+       character_id,
+       name,
+       sort_order,
+       created_at,
+       updated_at
 FROM character_gallery_tabs;
 
 CREATE TABLE __migration_0026_character_gallery_rows_backup AS
-SELECT *
+SELECT id,
+       user_id,
+       character_id,
+       tab_id,
+       sort_order,
+       created_at,
+       updated_at,
+       force_full_width
 FROM character_gallery_rows;
 
 CREATE TABLE __migration_0026_character_gallery_row_media_backup AS
-SELECT *
+SELECT row_id,
+       media_id,
+       sort_order
 FROM character_gallery_row_media;
 
 CREATE TABLE __migration_0026_character_media_review_events_backup AS
-SELECT *
+SELECT id,
+       media_id,
+       image_rating,
+       action,
+       homepage_allowed,
+       moderator_id,
+       created_at
 FROM character_media_review_events;
 
 CREATE TABLE __migration_0026_toyhouse_import_items_backup AS
-SELECT *
+SELECT id,
+       job_id,
+       user_id,
+       character_id,
+       toyhouse_character_id,
+       toyhouse_image_url,
+       import_mode,
+       rating,
+       status,
+       media_id,
+       error,
+       sort_order,
+       created_at,
+       updated_at
 FROM toyhouse_import_items;
 
 CREATE TABLE __migration_0026_character_folder_placements_backup AS
-SELECT *
+SELECT user_id,
+       folder_id,
+       character_id,
+       sort_order,
+       created_at,
+       updated_at
 FROM character_folder_placements;
 
 CREATE TABLE __migration_0026_character_size_chart_ids
@@ -117,32 +188,174 @@ DROP TABLE characters;
 ALTER TABLE characters_new
     RENAME TO characters;
 
-INSERT OR IGNORE INTO character_media
-SELECT *
+INSERT OR IGNORE INTO character_media (id,
+                                       user_id,
+                                       character_id,
+                                       sfw_image_key,
+                                       nsfw_image_key,
+                                       sfw_artist,
+                                       nsfw_artist,
+                                       sfw_width,
+                                       sfw_height,
+                                       sfw_byte_size,
+                                       nsfw_width,
+                                       nsfw_height,
+                                       nsfw_byte_size,
+                                       created_at,
+                                       updated_at,
+                                       sfw_review_status,
+                                       sfw_reviewed_at,
+                                       sfw_approved_at,
+                                       sfw_homepage_allowed,
+                                       nsfw_review_status,
+                                       nsfw_reviewed_at,
+                                       nsfw_approved_at,
+                                       sfw_content_type,
+                                       nsfw_content_type,
+                                       sfw_preview_image_key,
+                                       sfw_preview_width,
+                                       sfw_preview_height,
+                                       sfw_preview_byte_size,
+                                       nsfw_preview_image_key,
+                                       nsfw_preview_width,
+                                       nsfw_preview_height,
+                                       nsfw_preview_byte_size,
+                                       nsfw_blur_image_key)
+SELECT id,
+       user_id,
+       character_id,
+       sfw_image_key,
+       nsfw_image_key,
+       sfw_artist,
+       nsfw_artist,
+       sfw_width,
+       sfw_height,
+       sfw_byte_size,
+       nsfw_width,
+       nsfw_height,
+       nsfw_byte_size,
+       created_at,
+       updated_at,
+       sfw_review_status,
+       sfw_reviewed_at,
+       sfw_approved_at,
+       sfw_homepage_allowed,
+       nsfw_review_status,
+       nsfw_reviewed_at,
+       nsfw_approved_at,
+       sfw_content_type,
+       nsfw_content_type,
+       sfw_preview_image_key,
+       sfw_preview_width,
+       sfw_preview_height,
+       sfw_preview_byte_size,
+       nsfw_preview_image_key,
+       nsfw_preview_width,
+       nsfw_preview_height,
+       nsfw_preview_byte_size,
+       nsfw_blur_image_key
 FROM __migration_0026_character_media_backup;
 
-INSERT OR IGNORE INTO character_gallery_tabs
-SELECT *
+INSERT OR IGNORE INTO character_gallery_tabs (id,
+                                             user_id,
+                                             character_id,
+                                             name,
+                                             sort_order,
+                                             created_at,
+                                             updated_at)
+SELECT id,
+       user_id,
+       character_id,
+       name,
+       sort_order,
+       created_at,
+       updated_at
 FROM __migration_0026_character_gallery_tabs_backup;
 
-INSERT OR IGNORE INTO character_gallery_rows
-SELECT *
+INSERT OR IGNORE INTO character_gallery_rows (id,
+                                             user_id,
+                                             character_id,
+                                             tab_id,
+                                             sort_order,
+                                             created_at,
+                                             updated_at,
+                                             force_full_width)
+SELECT id,
+       user_id,
+       character_id,
+       tab_id,
+       sort_order,
+       created_at,
+       updated_at,
+       force_full_width
 FROM __migration_0026_character_gallery_rows_backup;
 
-INSERT OR IGNORE INTO character_gallery_row_media
-SELECT *
+INSERT OR IGNORE INTO character_gallery_row_media (row_id,
+                                                  media_id,
+                                                  sort_order)
+SELECT row_id,
+       media_id,
+       sort_order
 FROM __migration_0026_character_gallery_row_media_backup;
 
-INSERT OR IGNORE INTO character_media_review_events
-SELECT *
+INSERT OR IGNORE INTO character_media_review_events (id,
+                                                    media_id,
+                                                    image_rating,
+                                                    action,
+                                                    homepage_allowed,
+                                                    moderator_id,
+                                                    created_at)
+SELECT id,
+       media_id,
+       image_rating,
+       action,
+       homepage_allowed,
+       moderator_id,
+       created_at
 FROM __migration_0026_character_media_review_events_backup;
 
-INSERT OR IGNORE INTO toyhouse_import_items
-SELECT *
+INSERT OR IGNORE INTO toyhouse_import_items (id,
+                                            job_id,
+                                            user_id,
+                                            character_id,
+                                            toyhouse_character_id,
+                                            toyhouse_image_url,
+                                            import_mode,
+                                            rating,
+                                            status,
+                                            media_id,
+                                            error,
+                                            sort_order,
+                                            created_at,
+                                            updated_at)
+SELECT id,
+       job_id,
+       user_id,
+       character_id,
+       toyhouse_character_id,
+       toyhouse_image_url,
+       import_mode,
+       rating,
+       status,
+       media_id,
+       error,
+       sort_order,
+       created_at,
+       updated_at
 FROM __migration_0026_toyhouse_import_items_backup;
 
-INSERT OR IGNORE INTO character_folder_placements
-SELECT *
+INSERT OR IGNORE INTO character_folder_placements (user_id,
+                                                  folder_id,
+                                                  character_id,
+                                                  sort_order,
+                                                  created_at,
+                                                  updated_at)
+SELECT user_id,
+       folder_id,
+       character_id,
+       sort_order,
+       created_at,
+       updated_at
 FROM __migration_0026_character_folder_placements_backup;
 
 DROP TABLE __migration_0026_character_size_chart_ids;

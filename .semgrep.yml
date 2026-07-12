@@ -1,0 +1,37 @@
+rules:
+  - id: myoc.sql.no-select-star
+    message: Avoid SELECT *; list the needed columns explicitly.
+    severity: ERROR
+    languages:
+      - generic
+    paths:
+      include:
+        - "**/*.js"
+        - "**/*.mjs"
+        - "**/*.sql"
+        - "**/*.ts"
+        - "**/*.tsx"
+    pattern-regex: (?i)\bselect\s+\*
+
+  - id: myoc.api.no-direct-json-response
+    message: API JSON responses must go through jsonResponse with an explicit Zod response schema.
+    severity: ERROR
+    languages:
+      - javascript
+      - typescript
+    paths:
+      include:
+        - /src/routes/api/**/*.ts
+        - /src/routes/api/**/*.tsx
+        - /src/lib/auth/authorization.ts
+        - /src/lib/http/csrf.ts
+      exclude:
+        - "**/*.test.ts"
+        - "**/*.test.tsx"
+    pattern-either:
+      - pattern: c.json(...)
+      - pattern: Response.json(...)
+      - pattern: new Response(JSON.stringify(...), ...)
+      - pattern: new Response(JSON.stringify(...))
+      - pattern: c.body(JSON.stringify(...), ...)
+      - pattern: c.body(JSON.stringify(...))

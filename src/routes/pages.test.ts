@@ -244,8 +244,15 @@ function createCurrentUserRecord(username = 'demo', overrides: Record<string, un
 }
 
 function expectPatternAllowsReportedCharacterNames(html: string, inputId: string): void {
-    const match = new RegExp(`id="${inputId}"[^>]*pattern="([^"]+)"`).exec(html)
-    const rawPattern = match?.[1]
+    const idAttribute = `id="${inputId}"`
+    const idIndex = html.indexOf(idAttribute)
+    const inputEndIndex = idIndex >= 0 ? html.indexOf('>', idIndex) : -1
+    const inputHtml = inputEndIndex >= 0 ? html.slice(idIndex, inputEndIndex) : ''
+    const patternAttribute = 'pattern="'
+    const patternStartIndex = inputHtml.indexOf(patternAttribute)
+    const patternValueStartIndex = patternStartIndex >= 0 ? patternStartIndex + patternAttribute.length : -1
+    const patternValueEndIndex = patternValueStartIndex >= 0 ? inputHtml.indexOf('"', patternValueStartIndex) : -1
+    const rawPattern = patternValueEndIndex >= 0 ? inputHtml.slice(patternValueStartIndex, patternValueEndIndex) : ''
 
     expect(rawPattern).toBeTruthy()
 
@@ -254,6 +261,7 @@ function expectPatternAllowsReportedCharacterNames(html: string, inputId: string
     }
 
     const pattern = rawPattern.replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- This test intentionally compiles the rendered HTML pattern attribute to verify browser validation behavior.
     const regex = new RegExp(`^(?:${pattern})$`, 'v')
 
     expect(regex.test('DRD-5548 "Ivo"')).toBe(true)
@@ -2039,14 +2047,16 @@ describe('GET /admin', () => {
         expect(html).toContain('<title>Image Approvals | Admin | MyOC</title>')
         expect(html).toContain('data-image-approvals')
         expect(html).toContain(
-            '"imageUrl":"https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp"',
+            '&quot;imageUrl&quot;:&quot;https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp&quot;',
         )
-        expect(html).toContain('"fullImageUrl":"https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/sfw-key.png"')
-        expect(html).toContain('"objectKey":"characters/owner-1/character-1/media/media-1/sfw/sfw-key.png"')
-        expect(html).toContain('"username":"uploader"')
-        expect(html).toContain('"pendingCount":1')
-        expect(html).toContain('"profileUrl":"/u/uploader"')
-        expect(html).toContain('"url":"/u/uploader/Quartz"')
+        expect(html).toContain(
+            '&quot;fullImageUrl&quot;:&quot;https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/sfw-key.png&quot;',
+        )
+        expect(html).toContain('&quot;objectKey&quot;:&quot;characters/owner-1/character-1/media/media-1/sfw/sfw-key.png&quot;')
+        expect(html).toContain('&quot;username&quot;:&quot;uploader&quot;')
+        expect(html).toContain('&quot;pendingCount&quot;:1')
+        expect(html).toContain('&quot;profileUrl&quot;:&quot;/u/uploader&quot;')
+        expect(html).toContain('&quot;url&quot;:&quot;/u/uploader/Quartz&quot;')
         expect(html).toContain('admin-approval-image-grid')
         expect(html).toContain('formatPendingCount')
         expect(html).toContain('handleKeyboardShortcuts')

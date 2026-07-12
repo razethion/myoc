@@ -50,19 +50,21 @@ Seeded local accounts use `password123`; the `demo` user is available after load
 Before opening a pull request, run:
 
 ```sh
-npm run check
+npm run ci
+npm run security
 npm run build
 ```
 
 ## Common Commands
 
-| Command                    | Purpose                                                               |
-|----------------------------|-----------------------------------------------------------------------|
-| `npm run dev`              | Generate Cloudflare types, build assets, and start local development. |
-| `npm run check`            | Run type generation, TypeScript checks, and tests once.               |
-| `npm run build`            | Build public assets.                                                  |
-| `npm run db:prepare:local` | Apply local migrations and seed data.                                 |
-| `npm run deploy`           | Run checks, build assets, and deploy.                                 |
+| Command                    | Purpose                                                                    |
+|----------------------------|----------------------------------------------------------------------------|
+| `npm run dev`              | Generate Cloudflare types, build assets, and start local development.      |
+| `npm run ci`               | Run lint, type generation, TypeScript checks, tests, and dead-code checks. |
+| `npm run security`         | Run Semgrep using a local Semgrep install or Docker.                       |
+| `npm run build`            | Build public assets.                                                       |
+| `npm run db:prepare:local` | Apply local migrations and seed data.                                      |
+| `npm run deploy`           | Run checks, build assets, and deploy.                                      |
 
 ## Repository Guide
 

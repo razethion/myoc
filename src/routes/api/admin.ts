@@ -1,9 +1,20 @@
 import {type Context, Hono} from 'hono'
+import {z} from 'zod'
 import {getImageApprovalData, type ImageApprovalAction, isValidImageApprovalAction} from '../../lib/admin/imageApprovals'
 import {type AdminJobName, type AdminJobRunResult, getAdminJobRuns, isAdminJobName, runAdminJob} from '../../lib/admin/jobs'
 import {getAdminReportsData} from '../../lib/admin/reports'
 import {requireAdminApiUser} from '../../lib/auth/authorization'
 import {toSqlTimestamp} from '../../lib/auth/session'
+import {jsonResponse} from '../../lib/http/jsonResponse'
+import {
+    AdminImageReportSchema,
+    AdminJobRunResultSchema,
+    AdminJobRunSchema,
+    ErrorResponseSchema,
+    ImageApprovalDataSchema,
+    OkResponseSchema,
+    responseSchema,
+} from '../../lib/http/responseSchemas'
 import {
     characterMediaImageObjectKey,
     characterMediaNsfwBlurImageObjectKey,
@@ -20,6 +31,19 @@ const GALLERY_PREVIEW_CONTENT_TYPE = 'image/webp'
 const GALLERY_NSFW_BLUR_MAX_WIDTH = 960
 const GALLERY_NSFW_BLUR_AMOUNT = 250
 const GALLERY_NSFW_BLUR_QUALITY = 85
+const AdminJobsResponseSchema = responseSchema({
+    runs: z.array(AdminJobRunSchema),
+})
+const AdminJobActionResponseSchema = z.union([
+    responseSchema({
+        ok: z.literal(true),
+        run: AdminJobRunResultSchema,
+    }),
+    ErrorResponseSchema,
+])
+const AdminReportsDataSchema = responseSchema({
+    reports: z.array(AdminImageReportSchema),
+})
 
 type AdminRouteContext = Context<{Bindings: Bindings}>
 
@@ -116,7 +140,7 @@ adminRoutes.get('/', async (c) => {
         return authorization.response
     }
 
-    return c.json({ok: true})
+    return jsonResponse(c, OkResponseSchema, {ok: true})
 })
 
 adminRoutes.get('/image-approvals', async (c) => {
@@ -126,7 +150,11 @@ adminRoutes.get('/image-approvals', async (c) => {
         return authorization.response
     }
 
-    return c.json(await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, c.req.query('mediaId')))
+    return jsonResponse(
+        c,
+        ImageApprovalDataSchema,
+        await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, c.req.query('mediaId')),
+    )
 })
 
 adminRoutes.get('/jobs', async (c) => {
@@ -136,7 +164,7 @@ adminRoutes.get('/jobs', async (c) => {
         return authorization.response
     }
 
-    return c.json({
+    return jsonResponse(c, AdminJobsResponseSchema, {
         runs: await getAdminJobRuns(c.env.DB),
     })
 })
@@ -181,43 +209,43 @@ adminRoutes.post('/image-approvals/:mediaId', async (c) => {
     try {
         body = await c.req.json<ImageApprovalRequest>()
     } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
     const sfwAction = body.sfwAction === undefined ? null : body.sfwAction
     const nsfwAction = body.nsfwAction === undefined ? null : body.nsfwAction
 
     if (sfwAction !== null && !isValidImageApprovalAction(sfwAction)) {
-        return c.json({error: 'SFW action is invalid'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'SFW action is invalid'}, 400)
     }
 
     if (nsfwAction !== null && !isValidImageApprovalAction(nsfwAction)) {
-        return c.json({error: 'NSFW action is invalid'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'NSFW action is invalid'}, 400)
     }
 
     if (sfwAction && !isSfwAction(sfwAction)) {
-        return c.json({error: 'SFW action is invalid'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'SFW action is invalid'}, 400)
     }
 
     if (nsfwAction && !isNsfwAction(nsfwAction)) {
-        return c.json({error: 'NSFW action is invalid'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'NSFW action is invalid'}, 400)
     }
 
     if (!sfwAction && !nsfwAction) {
-        return c.json({error: 'At least one approval action is required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'At least one approval action is required'}, 400)
     }
 
     const media = await getModerationMedia(c.env.DB, c.req.param('mediaId'))
 
     if (!media) {
-        return c.json({error: 'Media not found'}, 404)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Media not found'}, 404)
     }
 
     const now = toSqlTimestamp(new Date())
     const update = buildMediaReviewUpdate(media, sfwAction, nsfwAction, now)
 
     if ('error' in update) {
-        return c.json({error: update.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: update.error}, 400)
     }
 
     const copiedObjectKeys: string[] = []
@@ -271,7 +299,7 @@ adminRoutes.post('/image-approvals/:mediaId', async (c) => {
 
     await deleteR2Objects(c.env.MEDIA_BUCKET, update.deletedObjectKeys)
 
-    return c.json(await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL))
+    return jsonResponse(c, ImageApprovalDataSchema, await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL))
 })
 
 adminRoutes.post('/reports/images/:mediaId/:rating/:action', async (c) => {
@@ -1067,10 +1095,10 @@ async function respondToReportAction(
     }
 
     if ('ok' in body) {
-        return c.json(await getAdminReportsData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL))
+        return jsonResponse(c, AdminReportsDataSchema, await getAdminReportsData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL))
     }
 
-    return c.json(body, status)
+    return jsonResponse(c, ErrorResponseSchema, body, status)
 }
 
 async function respondToJobAction(
@@ -1091,7 +1119,7 @@ async function respondToJobAction(
         return c.redirect(`/admin/admin-options?${search.toString()}`, 303)
     }
 
-    return c.json(body, status)
+    return jsonResponse(c, AdminJobActionResponseSchema, body, status)
 }
 
 function getJobErrorMessage(error: unknown): string {

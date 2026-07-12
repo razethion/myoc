@@ -1,7 +1,21 @@
 import type {Context} from 'hono'
 import {Hono} from 'hono'
+import {z} from 'zod'
 import {type CurrentUser, getCurrentUser, toSqlTimestamp} from '../../lib/auth/session'
 import {GALLERY_MAX_IMAGES_PER_ROW, shouldForceGalleryRowFullWidth} from '../../lib/gallery'
+import {jsonResponse} from '../../lib/http/jsonResponse'
+import {
+    CharacterFolderSchema,
+    CharacterHeightChartSchema,
+    ChunkedUploadSchema,
+    ErrorResponseSchema,
+    GalleryLayoutResponseSchema,
+    OkResponseSchema,
+    PublicCharacterSchema,
+    PublicMediaSchema,
+    R2UploadedPartSchema,
+    responseSchema,
+} from '../../lib/http/responseSchemas'
 import {getPngDimensions} from '../../lib/media/png'
 import {PROFILE_IMAGE_MAX_REQUEST_BYTES, validateProfileImagePayload} from '../../lib/media/profileImage'
 import {
@@ -22,6 +36,30 @@ import {getWebpDimensions} from '../../lib/media/webp'
 import type {Bindings} from '../../types/bindings'
 
 type CharacterRouteContext = Context<{Bindings: Bindings}>
+
+const CharacterResponseSchema = responseSchema({character: PublicCharacterSchema})
+const FolderResponseSchema = responseSchema({folder: CharacterFolderSchema})
+const CharacterProfileImageResponseSchema = responseSchema({
+    profileImageKey: z.string(),
+    profileImageUrl: z.string(),
+})
+const CharacterFolderImageResponseSchema = responseSchema({
+    folderImageKey: z.string(),
+    folderImageUrl: z.string(),
+})
+const HeightChartResponseSchema = responseSchema({heightChart: CharacterHeightChartSchema})
+const ChunkedUploadInitResponseSchema = responseSchema({
+    mediaId: z.string(),
+    uploads: responseSchema({
+        sfw: ChunkedUploadSchema.optional(),
+        nsfw: ChunkedUploadSchema.optional(),
+    }),
+})
+const MediaResponseSchema = responseSchema({media: PublicMediaSchema})
+const ToyhouseImportCompleteResponseSchema = responseSchema({
+    media: PublicMediaSchema,
+    skipped: z.boolean(),
+})
 
 type CreateCharacterRequest = {
     name?: unknown
@@ -281,7 +319,7 @@ characterRoutes.post('/folders/tree', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     let body: SortTreeRequest
@@ -289,21 +327,21 @@ characterRoutes.post('/folders/tree', async (c) => {
     try {
         body = await c.req.json<SortTreeRequest>()
     } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
     if (!Array.isArray(body.items)) {
-        return c.json({error: 'Folder tree items are required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Folder tree items are required'}, 400)
     }
 
     const flattened = flattenTreeItems(body.items)
 
     if ('error' in flattened) {
-        return c.json({error: flattened.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: flattened.error}, 400)
     }
 
     if (flattened.items.some((item) => item.type !== 'folder')) {
-        return c.json({error: 'Folder tree may contain only folders'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Folder tree may contain only folders'}, 400)
     }
 
     const folderIds = flattened.items.map((item) => item.id)
@@ -311,7 +349,7 @@ characterRoutes.post('/folders/tree', async (c) => {
 
     for (const folderId of folderIds) {
         if (!ownedFolderIds.has(folderId)) {
-            return c.json({error: 'Folder tree contains folders that do not belong to the current user'}, 400)
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Folder tree contains folders that do not belong to the current user'}, 400)
         }
     }
 
@@ -331,14 +369,14 @@ characterRoutes.post('/folders/tree', async (c) => {
         await c.env.DB.batch(statements)
     }
 
-    return c.json({ok: true})
+    return jsonResponse(c, OkResponseSchema, {ok: true})
 })
 
 characterRoutes.post('/order', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     let body: SortCharacterOrderRequest
@@ -346,20 +384,25 @@ characterRoutes.post('/order', async (c) => {
     try {
         body = await c.req.json<SortCharacterOrderRequest>()
     } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
     const orderedIds = normalizeOrderedIds(body.characterIds, 'Character order')
 
     if ('error' in orderedIds) {
-        return c.json({error: orderedIds.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: orderedIds.error}, 400)
     }
 
     const ownedCharacterIds = await getOwnedCharacterIds(c.env.DB, currentUser.id, orderedIds.ids)
 
     for (const characterId of orderedIds.ids) {
         if (!ownedCharacterIds.has(characterId)) {
-            return c.json({error: 'Character order contains characters that do not belong to the current user'}, 400)
+            return jsonResponse(
+                c,
+                ErrorResponseSchema,
+                {error: 'Character order contains characters that do not belong to the current user'},
+                400,
+            )
         }
     }
 
@@ -378,24 +421,24 @@ characterRoutes.post('/order', async (c) => {
         await c.env.DB.batch(statements)
     }
 
-    return c.json({ok: true})
+    return jsonResponse(c, OkResponseSchema, {ok: true})
 })
 
 characterRoutes.put('/folders/:id/placements', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const folderIdResult = normalizeFolderId(c.req.param('id'))
 
     if ('error' in folderIdResult || !folderIdResult.folderId) {
-        return c.json({error: 'Folder must be a valid folder id'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Folder must be a valid folder id'}, 400)
     }
 
     if (!(await folderExists(c.env.DB, currentUser.id, folderIdResult.folderId))) {
-        return c.json({error: 'Folder not found'}, 404)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Folder not found'}, 404)
     }
 
     let body: SaveFolderPlacementsRequest
@@ -403,20 +446,25 @@ characterRoutes.put('/folders/:id/placements', async (c) => {
     try {
         body = await c.req.json<SaveFolderPlacementsRequest>()
     } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
     const orderedIds = normalizeOrderedIds(body.characterIds, 'Folder placements')
 
     if ('error' in orderedIds) {
-        return c.json({error: orderedIds.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: orderedIds.error}, 400)
     }
 
     const ownedCharacterIds = await getOwnedCharacterIds(c.env.DB, currentUser.id, orderedIds.ids)
 
     for (const characterId of orderedIds.ids) {
         if (!ownedCharacterIds.has(characterId)) {
-            return c.json({error: 'Folder placements contain characters that do not belong to the current user'}, 400)
+            return jsonResponse(
+                c,
+                ErrorResponseSchema,
+                {error: 'Folder placements contain characters that do not belong to the current user'},
+                400,
+            )
         }
     }
 
@@ -440,14 +488,14 @@ characterRoutes.put('/folders/:id/placements', async (c) => {
 
     await c.env.DB.batch(statements)
 
-    return c.json({ok: true})
+    return jsonResponse(c, OkResponseSchema, {ok: true})
 })
 
 characterRoutes.post('/tree', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     let body: SortTreeRequest
@@ -455,23 +503,23 @@ characterRoutes.post('/tree', async (c) => {
     try {
         body = await c.req.json<SortTreeRequest>()
     } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
     if (!Array.isArray(body.items)) {
-        return c.json({error: 'Tree items are required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Tree items are required'}, 400)
     }
 
     const flattened = flattenTreeItems(body.items)
 
     if ('error' in flattened) {
-        return c.json({error: flattened.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: flattened.error}, 400)
     }
 
     const ownership = await validateTreeOwnership(c.env.DB, currentUser.id, flattened.items)
 
     if ('error' in ownership) {
-        return c.json({error: ownership.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: ownership.error}, 400)
     }
 
     const now = toSqlTimestamp(new Date())
@@ -507,42 +555,42 @@ characterRoutes.post('/tree', async (c) => {
         await c.env.DB.batch(statements)
     }
 
-    return c.json({ok: true})
+    return jsonResponse(c, OkResponseSchema, {ok: true})
 })
 
 characterRoutes.post('/folders', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const parsed = await parseCreateFolderRequest(c.req)
 
     if ('error' in parsed) {
-        return c.json({error: parsed.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: parsed.error}, 400)
     }
 
     const nameResult = normalizeFolderName(parsed.name)
 
     if ('error' in nameResult) {
-        return c.json({error: nameResult.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: nameResult.error}, 400)
     }
 
     const parentResult = normalizeFolderId(parsed.parentFolderId)
 
     if ('error' in parentResult) {
-        return c.json({error: parentResult.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: parentResult.error}, 400)
     }
 
     if (parentResult.folderId && !(await folderExists(c.env.DB, currentUser.id, parentResult.folderId))) {
-        return c.json({error: 'Parent folder not found'}, 404)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Parent folder not found'}, 404)
     }
 
     const folderImageResult = parsed.folderImage ? await validateProfileImage(parsed.folderImage, 'Folder image') : null
 
     if (folderImageResult && 'error' in folderImageResult) {
-        return c.json({error: folderImageResult.error}, folderImageResult.status)
+        return jsonResponse(c, ErrorResponseSchema, {error: folderImageResult.error}, folderImageResult.status)
     }
 
     const now = toSqlTimestamp(new Date())
@@ -595,20 +643,20 @@ characterRoutes.post('/folders', async (c) => {
         throw error
     }
 
-    return c.json({folder: toPublicFolder(c.env.MEDIA_PUBLIC_BASE_URL, folder)}, 201)
+    return jsonResponse(c, FolderResponseSchema, {folder: toPublicFolder(c.env.MEDIA_PUBLIC_BASE_URL, folder)}, 201)
 })
 
 characterRoutes.patch('/folders/:id', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const folder = await getOwnedFolder(c.env.DB, currentUser.id, c.req.param('id') ?? '')
 
     if (!folder) {
-        return c.json({error: 'Folder not found'}, 404)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Folder not found'}, 404)
     }
 
     let body: UpdateFolderRequest
@@ -616,13 +664,13 @@ characterRoutes.patch('/folders/:id', async (c) => {
     try {
         body = await c.req.json<UpdateFolderRequest>()
     } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
     const nameResult = normalizeFolderName(body.name ?? body['edit-folder-name'])
 
     if ('error' in nameResult) {
-        return c.json({error: nameResult.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: nameResult.error}, 400)
     }
 
     const updatedAt = toSqlTimestamp(new Date())
@@ -642,40 +690,40 @@ characterRoutes.patch('/folders/:id', async (c) => {
         .bind(updatedFolder.name, updatedFolder.updated_at, folder.id, currentUser.id)
         .run()
 
-    return c.json({folder: toPublicFolder(c.env.MEDIA_PUBLIC_BASE_URL, updatedFolder)})
+    return jsonResponse(c, FolderResponseSchema, {folder: toPublicFolder(c.env.MEDIA_PUBLIC_BASE_URL, updatedFolder)})
 })
 
 characterRoutes.post('/folders/:id/image', async (c) => {
     const contentLength = Number(c.req.header('content-length') ?? 0)
 
     if (contentLength > PROFILE_IMAGE_MAX_REQUEST_BYTES) {
-        return c.json({error: 'Folder image upload is too large'}, 413)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Folder image upload is too large'}, 413)
     }
 
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const contentType = c.req.header('content-type') ?? ''
 
     if (!contentType.includes('multipart/form-data')) {
-        return c.json({error: 'Multipart form data is required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Multipart form data is required'}, 400)
     }
 
     const form = await c.req.formData()
     const folder = await getOwnedFolder(c.env.DB, currentUser.id, c.req.param('id') ?? '')
 
     if (!folder) {
-        return c.json({error: 'Folder not found'}, 404)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Folder not found'}, 404)
     }
 
     const file = form.get('folderImage') ?? form.get('folder-image')
     const folderImageResult = await validateProfileImage(file instanceof File ? file : null, 'Folder image')
 
     if ('error' in folderImageResult) {
-        return c.json({error: folderImageResult.error}, folderImageResult.status)
+        return jsonResponse(c, ErrorResponseSchema, {error: folderImageResult.error}, folderImageResult.status)
     }
 
     const folderImageKey = crypto.randomUUID()
@@ -707,7 +755,7 @@ characterRoutes.post('/folders/:id/image', async (c) => {
         await deleteR2Objects(c.env.MEDIA_BUCKET, [characterFolderImageObjectKey(currentUser.id, folder.id, folder.folder_image_key)])
     }
 
-    return c.json({
+    return jsonResponse(c, CharacterFolderImageResponseSchema, {
         folderImageKey,
         folderImageUrl: characterFolderImageUrl(c.env.MEDIA_PUBLIC_BASE_URL, currentUser.id, folder.id, folderImageKey),
     })
@@ -717,13 +765,13 @@ characterRoutes.delete('/folders/:id/image', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const folder = await getOwnedFolder(c.env.DB, currentUser.id, c.req.param('id') ?? '')
 
     if (!folder) {
-        return c.json({error: 'Folder not found'}, 404)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Folder not found'}, 404)
     }
 
     await c.env.DB.prepare(
@@ -747,13 +795,13 @@ characterRoutes.delete('/folders/:id', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const folder = await getOwnedFolder(c.env.DB, currentUser.id, c.req.param('id') ?? '')
 
     if (!folder) {
-        return c.json({error: 'Folder not found'}, 404)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Folder not found'}, 404)
     }
 
     const now = toSqlTimestamp(new Date())
@@ -797,35 +845,35 @@ characterRoutes.post('/', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const parsed = await parseCreateCharacterRequest(c)
 
     if ('error' in parsed) {
-        return c.json({error: parsed.error}, parsed.status)
+        return jsonResponse(c, ErrorResponseSchema, {error: parsed.error}, parsed.status)
     }
 
     const nameResult = normalizeCharacterName(parsed.name)
 
     if ('error' in nameResult) {
-        return c.json({error: nameResult.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: nameResult.error}, 400)
     }
 
     const folderResult = normalizeFolderId(parsed.folderId)
 
     if ('error' in folderResult) {
-        return c.json({error: folderResult.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: folderResult.error}, 400)
     }
 
     if (folderResult.folderId && !(await folderExists(c.env.DB, currentUser.id, folderResult.folderId))) {
-        return c.json({error: 'Folder not found'}, 404)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Folder not found'}, 404)
     }
 
     const profileImageResult = await validateProfileImage(parsed.profileImage)
 
     if ('error' in profileImageResult) {
-        return c.json({error: profileImageResult.error}, profileImageResult.status)
+        return jsonResponse(c, ErrorResponseSchema, {error: profileImageResult.error}, profileImageResult.status)
     }
 
     const now = new Date()
@@ -886,20 +934,20 @@ characterRoutes.post('/', async (c) => {
         }
 
         if (isDuplicateCharacterNameError(error)) {
-            return c.json({error: DUPLICATE_CHARACTER_NAME_ERROR}, 409)
+            return jsonResponse(c, ErrorResponseSchema, {error: DUPLICATE_CHARACTER_NAME_ERROR}, 409)
         }
 
         throw error
     }
 
-    return c.json({character: toPublicCharacter(c.env.MEDIA_PUBLIC_BASE_URL, character)}, 201)
+    return jsonResponse(c, CharacterResponseSchema, {character: toPublicCharacter(c.env.MEDIA_PUBLIC_BASE_URL, character)}, 201)
 })
 
 characterRoutes.patch('/:id', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     let body: UpdateCharacterRequest
@@ -907,25 +955,25 @@ characterRoutes.patch('/:id', async (c) => {
     try {
         body = await c.req.json<UpdateCharacterRequest>()
     } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
     const character = await getOwnedCharacter(c.env.DB, currentUser.id, c.req.param('id') ?? '')
 
     if (!character) {
-        return c.json({error: 'Character not found'}, 404)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Character not found'}, 404)
     }
 
     const nameResult = normalizeCharacterName(body.name)
 
     if ('error' in nameResult) {
-        return c.json({error: nameResult.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: nameResult.error}, 400)
     }
 
     const descriptionResult = normalizeCharacterDescription(body.description)
 
     if ('error' in descriptionResult) {
-        return c.json({error: descriptionResult.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: descriptionResult.error}, 400)
     }
 
     const now = toSqlTimestamp(new Date())
@@ -943,13 +991,13 @@ characterRoutes.patch('/:id', async (c) => {
             .run()
     } catch (error) {
         if (isDuplicateCharacterNameError(error)) {
-            return c.json({error: DUPLICATE_CHARACTER_NAME_ERROR}, 409)
+            return jsonResponse(c, ErrorResponseSchema, {error: DUPLICATE_CHARACTER_NAME_ERROR}, 409)
         }
 
         throw error
     }
 
-    return c.json({
+    return jsonResponse(c, CharacterResponseSchema, {
         character: toPublicCharacter(c.env.MEDIA_PUBLIC_BASE_URL, {
             ...character,
             name: nameResult.name,
@@ -963,7 +1011,7 @@ characterRoutes.post('/:id/profile-image', async (c) => {
     const contentLength = Number(c.req.header('content-length') ?? 0)
 
     if (contentLength > PROFILE_IMAGE_MAX_REQUEST_BYTES) {
-        return c.json({error: 'Character profile image upload is too large'}, 413)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Character profile image upload is too large'}, 413)
     }
 
     const owned = await requireOwnedCharacterMultipartForm(c)
@@ -977,7 +1025,7 @@ characterRoutes.post('/:id/profile-image', async (c) => {
     const profileImageResult = await validateProfileImage(file instanceof File ? file : null)
 
     if ('error' in profileImageResult) {
-        return c.json({error: profileImageResult.error}, profileImageResult.status)
+        return jsonResponse(c, ErrorResponseSchema, {error: profileImageResult.error}, profileImageResult.status)
     }
 
     const profileImageKey = crypto.randomUUID()
@@ -1013,7 +1061,7 @@ characterRoutes.post('/:id/profile-image', async (c) => {
         }
     }
 
-    return c.json({
+    return jsonResponse(c, CharacterProfileImageResponseSchema, {
         profileImageKey,
         profileImageUrl: characterProfileImageUrl(c.env.MEDIA_PUBLIC_BASE_URL, currentUser.id, character.id, profileImageKey),
     })
@@ -1030,7 +1078,7 @@ characterRoutes.put('/:id/height-chart', async (c) => {
     const rawJson = form.get('heightChartJson')
 
     if (typeof rawJson !== 'string') {
-        return c.json({error: 'Height chart JSON is required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Height chart JSON is required'}, 400)
     }
 
     const existingHeightChart = parseCharacterHeightChartJson(character.height_chart_json)
@@ -1043,7 +1091,7 @@ characterRoutes.put('/:id/height-chart', async (c) => {
         const imageResult = await validateGalleryImage(imageFile, 'Height chart image')
 
         if ('error' in imageResult) {
-            return c.json({error: imageResult.error}, imageResult.status)
+            return jsonResponse(c, ErrorResponseSchema, {error: imageResult.error}, imageResult.status)
         }
 
         const imageKey = crypto.randomUUID()
@@ -1071,7 +1119,7 @@ characterRoutes.put('/:id/height-chart', async (c) => {
             await c.env.MEDIA_BUCKET.delete(uploadedObjectKey)
         }
 
-        return c.json({error: normalized.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: normalized.error}, 400)
     }
 
     const previousImage = existingHeightChart?.image ?? null
@@ -1102,7 +1150,7 @@ characterRoutes.put('/:id/height-chart', async (c) => {
         ])
     }
 
-    return c.json({
+    return jsonResponse(c, HeightChartResponseSchema, {
         heightChart: toPublicHeightChart(c.env.MEDIA_PUBLIC_BASE_URL, currentUser.id, character.id, normalized.heightChart),
     })
 })
@@ -1125,7 +1173,7 @@ characterRoutes.post('/:id/media/chunked/init', async (c) => {
     const mediaId = crypto.randomUUID()
     const chunkedUploads = await createChunkedGalleryUploads(c.env.MEDIA_BUCKET, currentUser.id, character.id, mediaId, uploads.uploads)
 
-    return c.json({mediaId, uploads: chunkedUploads})
+    return jsonResponse(c, ChunkedUploadInitResponseSchema, {mediaId, uploads: chunkedUploads})
 })
 
 characterRoutes.put('/:id/media/chunked/:mediaId/:rating/:uploadId/:partNumber', async (c) => {
@@ -1140,7 +1188,7 @@ characterRoutes.put('/:id/media/chunked/:mediaId/:rating/:uploadId/:partNumber',
     const rating = normalizeMediaRating(c.req.param('rating'))
 
     if (!rating) {
-        return c.json({error: 'Media rating must be sfw or nsfw'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Media rating must be sfw or nsfw'}, 400)
     }
 
     const mediaId = normalizeUploadIdentifier(c.req.param('mediaId'), 'Media id')
@@ -1150,23 +1198,23 @@ characterRoutes.put('/:id/media/chunked/:mediaId/:rating/:uploadId/:partNumber',
     const partNumber = Number(c.req.param('partNumber'))
 
     if ('error' in mediaId) {
-        return c.json({error: mediaId.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: mediaId.error}, 400)
     }
 
     if ('error' in imageKey) {
-        return c.json({error: imageKey.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: imageKey.error}, 400)
     }
 
     if ('error' in contentType) {
-        return c.json({error: contentType.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: contentType.error}, 400)
     }
 
     if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > 10000) {
-        return c.json({error: 'Part number must be between 1 and 10000'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Part number must be between 1 and 10000'}, 400)
     }
 
     if (!c.req.raw.body) {
-        return c.json({error: 'Chunk body is required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Chunk body is required'}, 400)
     }
 
     const objectKey = characterMediaImageObjectKey(
@@ -1180,7 +1228,7 @@ characterRoutes.put('/:id/media/chunked/:mediaId/:rating/:uploadId/:partNumber',
     const upload = c.env.MEDIA_BUCKET.resumeMultipartUpload(objectKey, uploadId)
     const uploadedPart = await upload.uploadPart(partNumber, c.req.raw.body)
 
-    return c.json(uploadedPart)
+    return jsonResponse(c, R2UploadedPartSchema, uploadedPart)
 })
 
 characterRoutes.delete('/:id/media/chunked/:mediaId/:rating/:uploadId', async (c) => {
@@ -1194,7 +1242,7 @@ characterRoutes.delete('/:id/media/chunked/:mediaId/:rating/:uploadId', async (c
     const rating = normalizeMediaRating(c.req.param('rating'))
 
     if (!rating) {
-        return c.json({error: 'Media rating must be sfw or nsfw'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Media rating must be sfw or nsfw'}, 400)
     }
 
     const mediaId = normalizeUploadIdentifier(c.req.param('mediaId'), 'Media id')
@@ -1203,15 +1251,15 @@ characterRoutes.delete('/:id/media/chunked/:mediaId/:rating/:uploadId', async (c
     const uploadId = c.req.param('uploadId')
 
     if ('error' in mediaId) {
-        return c.json({error: mediaId.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: mediaId.error}, 400)
     }
 
     if ('error' in imageKey) {
-        return c.json({error: imageKey.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: imageKey.error}, 400)
     }
 
     if ('error' in contentType) {
-        return c.json({error: contentType.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: contentType.error}, 400)
     }
 
     const objectKey = characterMediaImageObjectKey(
@@ -1232,13 +1280,13 @@ characterRoutes.post('/toyhouse-import-items/:itemId/fail', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const itemId = normalizeUploadIdentifier(c.req.param('itemId'), 'Import item id')
 
     if ('error' in itemId) {
-        return c.json({error: itemId.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: itemId.error}, 400)
     }
 
     let body: {error?: unknown}
@@ -1256,46 +1304,49 @@ characterRoutes.post('/toyhouse-import-items/:itemId/fail', async (c) => {
         typeof body.error === 'string' ? body.error : 'Import item failed',
     )
 
-    return c.json({ok: true})
+    return jsonResponse(c, OkResponseSchema, {ok: true})
 })
 
 characterRoutes.post('/toyhouse-import-items/:itemId/complete', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const itemId = normalizeUploadIdentifier(c.req.param('itemId'), 'Import item id')
 
     if ('error' in itemId) {
-        return c.json({error: itemId.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: itemId.error}, 400)
     }
 
     const complete = await parseChunkedMediaCompleteBody(c)
 
     if ('error' in complete) {
-        return c.json({error: complete.error}, complete.status)
+        return jsonResponse(c, ErrorResponseSchema, {error: complete.error}, complete.status)
     }
 
     const item = await getToyhouseImportItem(c.env.DB, currentUser.id, itemId.value)
 
     if (!item) {
-        return c.json({error: 'Import item not found'}, 404)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Import item not found'}, 404)
     }
 
     if (item.status === 'imported' && item.media_id) {
         const existingMedia = await getOwnedCharacterMedia(c.env.DB, currentUser.id, item.character_id, item.media_id)
 
         if (existingMedia) {
-            return c.json({media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, existingMedia), skipped: true})
+            return jsonResponse(c, ToyhouseImportCompleteResponseSchema, {
+                media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, existingMedia),
+                skipped: true,
+            })
         }
     }
 
     const mediaId = normalizeUploadIdentifier(complete.body.mediaId, 'Media id')
 
     if ('error' in mediaId) {
-        return c.json({error: mediaId.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: mediaId.error}, 400)
     }
 
     const upload = item.rating === 'sfw' ? complete.sfwUpload : complete.nsfwUpload
@@ -1304,19 +1355,24 @@ characterRoutes.post('/toyhouse-import-items/:itemId/complete', async (c) => {
     const oppositePreview = item.rating === 'sfw' ? complete.nsfwPreview : complete.sfwPreview
 
     if (!upload) {
-        return c.json({error: `${item.rating.toUpperCase()} upload is required for this import item`}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: `${item.rating.toUpperCase()} upload is required for this import item`}, 400)
     }
 
     if (!preview) {
-        return c.json({error: `${item.rating.toUpperCase()} preview is required for this import item`}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: `${item.rating.toUpperCase()} preview is required for this import item`}, 400)
     }
 
     if (oppositeUpload || oppositePreview) {
-        return c.json({error: 'Import item can only complete one media rating'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Import item can only complete one media rating'}, 400)
     }
 
     if (!(await characterHasMediaCapacity(c.env.DB, currentUser.id, item.character_id))) {
-        return c.json({error: `Characters can contain ${GALLERY_MAX_MEDIA_PER_CHARACTER} gallery images or fewer`}, 409)
+        return jsonResponse(
+            c,
+            ErrorResponseSchema,
+            {error: `Characters can contain ${GALLERY_MAX_MEDIA_PER_CHARACTER} gallery images or fewer`},
+            409,
+        )
     }
 
     const completedKeys: string[] = []
@@ -1459,13 +1515,18 @@ characterRoutes.post('/toyhouse-import-items/:itemId/complete', async (c) => {
 
         await updateToyhouseImportJobStatus(c.env.DB, currentUser.id, item.job_id)
 
-        return c.json({media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, media), skipped: false}, 201)
+        return jsonResponse(
+            c,
+            ToyhouseImportCompleteResponseSchema,
+            {media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, media), skipped: false},
+            201,
+        )
     } catch (error) {
         await deleteR2Objects(c.env.MEDIA_BUCKET, completedKeys)
         await markToyhouseImportItemFailed(c.env.DB, currentUser.id, item.id, error instanceof Error ? error.message : 'Import item failed')
 
         if (error instanceof Error && error.message) {
-            return c.json({error: error.message}, 400)
+            return jsonResponse(c, ErrorResponseSchema, {error: error.message}, 400)
         }
 
         throw error
@@ -1484,39 +1545,44 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
     const complete = await parseChunkedMediaCompleteBody(c)
 
     if ('error' in complete) {
-        return c.json({error: complete.error}, complete.status)
+        return jsonResponse(c, ErrorResponseSchema, {error: complete.error}, complete.status)
     }
 
     const mediaId = normalizeUploadIdentifier(complete.body.mediaId, 'Media id')
 
     if ('error' in mediaId) {
-        return c.json({error: mediaId.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: mediaId.error}, 400)
     }
 
     const {artists, sfwUpload, nsfwUpload, sfwPreview, nsfwPreview} = complete
 
     if (!sfwUpload && !nsfwUpload) {
-        return c.json({error: 'At least one image is required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'At least one image is required'}, 400)
     }
 
     if (sfwUpload && !sfwPreview) {
-        return c.json({error: 'SFW preview is required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'SFW preview is required'}, 400)
     }
 
     if (nsfwUpload && !nsfwPreview) {
-        return c.json({error: 'NSFW preview is required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'NSFW preview is required'}, 400)
     }
 
     if (!sfwUpload && sfwPreview) {
-        return c.json({error: 'SFW preview requires an SFW upload'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'SFW preview requires an SFW upload'}, 400)
     }
 
     if (!nsfwUpload && nsfwPreview) {
-        return c.json({error: 'NSFW preview requires an NSFW upload'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'NSFW preview requires an NSFW upload'}, 400)
     }
 
     if (!(await characterHasMediaCapacity(c.env.DB, currentUser.id, character.id))) {
-        return c.json({error: `Characters can contain ${GALLERY_MAX_MEDIA_PER_CHARACTER} gallery images or fewer`}, 409)
+        return jsonResponse(
+            c,
+            ErrorResponseSchema,
+            {error: `Characters can contain ${GALLERY_MAX_MEDIA_PER_CHARACTER} gallery images or fewer`},
+            409,
+        )
     }
 
     const completedKeys: string[] = []
@@ -1666,11 +1732,11 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
             )
             .run()
 
-        return c.json({media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, media)}, 201)
+        return jsonResponse(c, MediaResponseSchema, {media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, media)}, 201)
     } catch (error) {
         await deleteR2Objects(c.env.MEDIA_BUCKET, completedKeys)
         if (error instanceof Error && error.message) {
-            return c.json({error: error.message}, 400)
+            return jsonResponse(c, ErrorResponseSchema, {error: error.message}, 400)
         }
 
         throw error
@@ -1694,7 +1760,7 @@ characterRoutes.post('/:id/media/:mediaId/chunked/init', async (c) => {
 
     const chunkedUploads = await createChunkedGalleryUploads(c.env.MEDIA_BUCKET, currentUser.id, character.id, media.id, uploads.uploads)
 
-    return c.json({mediaId: media.id, uploads: chunkedUploads})
+    return jsonResponse(c, ChunkedUploadInitResponseSchema, {mediaId: media.id, uploads: chunkedUploads})
 })
 
 characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
@@ -1709,7 +1775,7 @@ characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
     const complete = await parseChunkedMediaCompleteBody(c)
 
     if ('error' in complete) {
-        return c.json({error: complete.error}, complete.status)
+        return jsonResponse(c, ErrorResponseSchema, {error: complete.error}, complete.status)
     }
 
     const {artists, sfwUpload, nsfwUpload, sfwPreview, nsfwPreview} = complete
@@ -1719,23 +1785,23 @@ characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
     const finalHasNsfw = Boolean((media.nsfw_image_key && !removeNsfw && !nsfwUpload) || nsfwUpload)
 
     if (!finalHasSfw && !finalHasNsfw) {
-        return c.json({error: 'At least one image must remain on media'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'At least one image must remain on media'}, 400)
     }
 
     if (sfwUpload && !sfwPreview) {
-        return c.json({error: 'SFW preview is required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'SFW preview is required'}, 400)
     }
 
     if (nsfwUpload && !nsfwPreview) {
-        return c.json({error: 'NSFW preview is required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'NSFW preview is required'}, 400)
     }
 
     if (!sfwUpload && sfwPreview) {
-        return c.json({error: 'SFW preview requires an SFW upload'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'SFW preview requires an SFW upload'}, 400)
     }
 
     if (!nsfwUpload && nsfwPreview) {
-        return c.json({error: 'NSFW preview requires an NSFW upload'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'NSFW preview requires an NSFW upload'}, 400)
     }
 
     const uploadedKeys: string[] = []
@@ -1791,11 +1857,11 @@ characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
 
         await deleteR2Objects(c.env.MEDIA_BUCKET, deletedKeys)
 
-        return c.json({media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, nextMedia)})
+        return jsonResponse(c, MediaResponseSchema, {media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, nextMedia)})
     } catch (error) {
         await deleteR2Objects(c.env.MEDIA_BUCKET, uploadedKeys)
         if (error instanceof Error && error.message) {
-            return c.json({error: error.message}, 400)
+            return jsonResponse(c, ErrorResponseSchema, {error: error.message}, 400)
         }
 
         throw error
@@ -1830,7 +1896,7 @@ characterRoutes.put('/:id/gallery', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     let body: GalleryLayoutRequest
@@ -1838,26 +1904,26 @@ characterRoutes.put('/:id/gallery', async (c) => {
     try {
         body = await c.req.json<GalleryLayoutRequest>()
     } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
     const character = await getOwnedCharacter(c.env.DB, currentUser.id, c.req.param('id') ?? '')
 
     if (!character) {
-        return c.json({error: 'Character not found'}, 404)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Character not found'}, 404)
     }
 
     const parsed = parseGalleryLayout(body)
 
     if ('error' in parsed) {
-        return c.json({error: parsed.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: parsed.error}, 400)
     }
 
     const ownedMediaIds = await getOwnedMediaIds(c.env.DB, currentUser.id, character.id, [...parsed.mediaIds])
 
     for (const mediaId of parsed.mediaIds) {
         if (!ownedMediaIds.has(mediaId)) {
-            return c.json({error: 'Gallery contains media that does not belong to this character'}, 400)
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Gallery contains media that does not belong to this character'}, 400)
         }
     }
 
@@ -1865,7 +1931,7 @@ characterRoutes.put('/:id/gallery', async (c) => {
     const completeGalleryValidation = validateCompleteGalleryLayout(parsed, allCharacterMediaIds)
 
     if (completeGalleryValidation) {
-        return c.json({error: completeGalleryValidation.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: completeGalleryValidation.error}, 400)
     }
 
     const now = toSqlTimestamp(new Date())
@@ -1914,7 +1980,7 @@ characterRoutes.put('/:id/gallery', async (c) => {
 
     await c.env.DB.batch(statements)
 
-    return c.json({
+    return jsonResponse(c, GalleryLayoutResponseSchema, {
         gallery: {
             tabs: parsed.tabs,
         },
@@ -1925,7 +1991,7 @@ characterRoutes.delete('/:id', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const body = await parseDeleteCharacterRequest(c.req)
@@ -1933,11 +1999,11 @@ characterRoutes.delete('/:id', async (c) => {
     const permanent = normalizePermanentConfirmation(body.permanent ?? body['delete-confirm-permanent'])
 
     if (!confirmName) {
-        return c.json({error: 'Character name confirmation is required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Character name confirmation is required'}, 400)
     }
 
     if (!permanent) {
-        return c.json({error: 'Permanent deletion confirmation is required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Permanent deletion confirmation is required'}, 400)
     }
 
     const character = await c.env.DB.prepare(
@@ -1959,11 +2025,11 @@ characterRoutes.delete('/:id', async (c) => {
         .first<CharacterRecord>()
 
     if (!character) {
-        return c.json({error: 'Character not found'}, 404)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Character not found'}, 404)
     }
 
     if (confirmName.toUpperCase() !== character.name.toUpperCase()) {
-        return c.json({error: 'Character name confirmation does not match'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Character name confirmation does not match'}, 400)
     }
 
     const galleryMedia = await getCharacterMedia(c.env.DB, currentUser.id, character.id)
@@ -2196,13 +2262,13 @@ async function requireOwnedCharacter(c: CharacterRouteContext): Promise<
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const character = await getOwnedCharacter(c.env.DB, currentUser.id, c.req.param('id') ?? '')
 
     if (!character) {
-        return c.json({error: 'Character not found'}, 404)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Character not found'}, 404)
     }
 
     return {currentUser, character}
@@ -2225,7 +2291,7 @@ async function requireOwnedCharacterMultipartForm(c: CharacterRouteContext): Pro
     const contentType = c.req.header('content-type') ?? ''
 
     if (!contentType.includes('multipart/form-data')) {
-        return c.json({error: 'Multipart form data is required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Multipart form data is required'}, 400)
     }
 
     return {
@@ -2251,7 +2317,7 @@ async function requireOwnedCharacterMedia(c: CharacterRouteContext): Promise<
     const media = await getOwnedCharacterMedia(c.env.DB, owned.currentUser.id, owned.character.id, c.req.param('mediaId') ?? '')
 
     if (!media) {
-        return c.json({error: 'Media not found'}, 404)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Media not found'}, 404)
     }
 
     return {...owned, media}
@@ -2268,13 +2334,13 @@ async function parseChunkedUploadInitRequest(c: CharacterRouteContext): Promise<
     try {
         body = await c.req.json<ChunkedMediaInitRequest>()
     } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
     const uploads = parseChunkedUploadInits(body.uploads ?? body.ratings)
 
     if ('error' in uploads) {
-        return c.json({error: uploads.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: uploads.error}, 400)
     }
 
     return uploads

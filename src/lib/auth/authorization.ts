@@ -1,5 +1,7 @@
 import type {Context} from 'hono'
 import type {Bindings} from '../../types/bindings'
+import {jsonResponse} from '../http/jsonResponse'
+import {ErrorResponseSchema} from '../http/responseSchemas'
 import {type CurrentUser, getCurrentUser, isAdminUser} from './session'
 
 type AuthorizedUser = {
@@ -18,11 +20,11 @@ export async function requireAdminApiUser(
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return {response: c.json({error: 'Authentication required'}, 401)}
+        return {response: jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)}
     }
 
     if (!isAdminUser(currentUser)) {
-        return {response: c.json({error: 'Admin access required'}, 403)}
+        return {response: jsonResponse(c, ErrorResponseSchema, {error: 'Admin access required'}, 403)}
     }
 
     return {currentUser}

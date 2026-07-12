@@ -1,5 +1,6 @@
 import {type RegistrationResponseJSON, verifyRegistrationResponse} from '@simplewebauthn/server'
 import {Hono} from 'hono'
+import {z} from 'zod'
 import {
     createCredentialPublicKeyValue,
     createDisabledPasswordHash,
@@ -15,6 +16,8 @@ import {
     verifyRecoveryPhrase,
 } from '../../lib/auth/passkeys'
 import {getCurrentUser, normalizeCredential, toSqlTimestamp} from '../../lib/auth/session'
+import {jsonResponse} from '../../lib/http/jsonResponse'
+import {ErrorResponseSchema, OkResponseSchema, responseSchema} from '../../lib/http/responseSchemas'
 import type {Bindings} from '../../types/bindings'
 
 type PasskeyVerifyRequest = {
@@ -40,24 +43,33 @@ type SecurityUserRecord = {
     secure_account_required_passkey_id: string | null
 }
 
+const PasskeyOptionsResponseSchema = responseSchema({
+    challengeId: z.string(),
+    options: z.unknown(),
+})
+const RecoveryPhraseResponseSchema = responseSchema({
+    recoveryPhrase: z.string(),
+    recoveryPhraseNeedsConfirmation: z.literal(true),
+})
+
 export const securityRoutes = new Hono<{Bindings: Bindings}>()
 
 securityRoutes.post('/passkeys/options', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const user = await getSecurityUser(c.env.DB, currentUser.id)
 
     if (!user) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const registration = await createPasskeyRegistrationOptions(c, user)
 
-    return c.json({
+    return jsonResponse(c, PasskeyOptionsResponseSchema, {
         challengeId: registration.challengeId,
         options: registration.options,
     })
@@ -67,7 +79,7 @@ securityRoutes.post('/passkeys/verify', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     let body: PasskeyVerifyRequest
@@ -75,19 +87,19 @@ securityRoutes.post('/passkeys/verify', async (c) => {
     try {
         body = await c.req.json<PasskeyVerifyRequest>()
     } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
     const challengeId = normalizeCredential(body.challengeId)
 
     if (!challengeId || !body.credential) {
-        return c.json({error: 'Challenge and passkey response are required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Challenge and passkey response are required'}, 400)
     }
 
     const challenge = await getWebAuthnChallenge(c.env.DB, challengeId, 'registration')
 
     if (!challenge || challenge.user_id !== currentUser.id || !challenge.webauthn_user_id) {
-        return c.json({error: 'Passkey registration expired'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Passkey registration expired'}, 400)
     }
 
     const {origin, rpID} = getWebAuthnRelyingParty(c)
@@ -101,7 +113,7 @@ securityRoutes.post('/passkeys/verify', async (c) => {
     })
 
     if (!verification.verified) {
-        return c.json({error: 'Passkey could not be verified'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Passkey could not be verified'}, 400)
     }
 
     const now = new Date()
@@ -149,31 +161,31 @@ securityRoutes.post('/passkeys/verify', async (c) => {
         c.env.DB.prepare('DELETE FROM webauthn_challenges WHERE id = ?').bind(challengeId),
     ])
 
-    return c.json({ok: true})
+    return jsonResponse(c, OkResponseSchema, {ok: true})
 })
 
 securityRoutes.delete('/passkeys/:id', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const passkeyId = c.req.param('id')
     const [user, passkeys] = await Promise.all([getSecurityUser(c.env.DB, currentUser.id), listUserPasskeys(c.env.DB, currentUser.id)])
 
     if (!user) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const passkey = await getUserPasskeyById(c.env.DB, currentUser.id, passkeyId)
 
     if (!passkey) {
-        return c.json({error: 'Passkey not found'}, 404)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Passkey not found'}, 404)
     }
 
     if (passkeys.length <= 1 && !hasUsablePassword(user.password_hash)) {
-        return c.json({error: 'Add another passkey before removing this one'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Add another passkey before removing this one'}, 400)
     }
 
     await c.env.DB.prepare(
@@ -184,14 +196,14 @@ securityRoutes.delete('/passkeys/:id', async (c) => {
         .bind(currentUser.id, passkeyId)
         .run()
 
-    return c.json({ok: true})
+    return jsonResponse(c, OkResponseSchema, {ok: true})
 })
 
 securityRoutes.post('/recovery/regenerate', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const phrase = generateRecoveryPhrase()
@@ -207,7 +219,7 @@ securityRoutes.post('/recovery/regenerate', async (c) => {
         .bind(phraseHash, toSqlTimestamp(new Date()), currentUser.id)
         .run()
 
-    return c.json({
+    return jsonResponse(c, RecoveryPhraseResponseSchema, {
         recoveryPhrase: phrase,
         recoveryPhraseNeedsConfirmation: true,
     })
@@ -217,7 +229,7 @@ securityRoutes.post('/recovery/confirm', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     let body: RecoveryPhraseRequest
@@ -225,23 +237,23 @@ securityRoutes.post('/recovery/confirm', async (c) => {
     try {
         body = await c.req.json<RecoveryPhraseRequest>()
     } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
     const recoveryPhrase = normalizeCredential(body.recoveryPhrase)
 
     if (!recoveryPhrase) {
-        return c.json({error: 'Recovery phrase is required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Recovery phrase is required'}, 400)
     }
 
     const user = await getSecurityUser(c.env.DB, currentUser.id)
 
     if (!user?.recovery_phrase_hash) {
-        return c.json({error: 'Regenerate a recovery phrase first'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Regenerate a recovery phrase first'}, 400)
     }
 
     if (!(await verifyRecoveryPhrase(recoveryPhrase, user.recovery_phrase_hash))) {
-        return c.json({error: 'Recovery phrase does not match'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Recovery phrase does not match'}, 400)
     }
 
     await c.env.DB.prepare(
@@ -252,14 +264,14 @@ securityRoutes.post('/recovery/confirm', async (c) => {
         .bind(toSqlTimestamp(new Date()), currentUser.id)
         .run()
 
-    return c.json({ok: true})
+    return jsonResponse(c, OkResponseSchema, {ok: true})
 })
 
 securityRoutes.post('/sessions/revoke-others', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser?.sessionId) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     await c.env.DB.prepare(
@@ -270,20 +282,20 @@ securityRoutes.post('/sessions/revoke-others', async (c) => {
         .bind(currentUser.id, currentUser.sessionId)
         .run()
 
-    return c.json({ok: true})
+    return jsonResponse(c, OkResponseSchema, {ok: true})
 })
 
 securityRoutes.post('/sessions/:id/revoke', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser?.sessionId) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const sessionId = c.req.param('id')
 
     if (sessionId === currentUser.sessionId) {
-        return c.json({error: 'Use logout to end your current session'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Use logout to end your current session'}, 400)
     }
 
     await c.env.DB.prepare(
@@ -294,20 +306,20 @@ securityRoutes.post('/sessions/:id/revoke', async (c) => {
         .bind(currentUser.id, sessionId)
         .run()
 
-    return c.json({ok: true})
+    return jsonResponse(c, OkResponseSchema, {ok: true})
 })
 
 securityRoutes.post('/complete', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const [user, passkeys] = await Promise.all([getSecurityUser(c.env.DB, currentUser.id), listUserPasskeys(c.env.DB, currentUser.id)])
 
     if (!user) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     if (user.secure_account_required) {
@@ -316,14 +328,14 @@ securityRoutes.post('/complete', async (c) => {
             passkeys.some((passkey) => passkey.id === user.secure_account_required_passkey_id)
 
         if (!hasRequiredPasskey) {
-            return c.json({error: 'Add a new passkey before completing account recovery'}, 400)
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Add a new passkey before completing account recovery'}, 400)
         }
     } else if (passkeys.length === 0) {
-        return c.json({error: 'Add a passkey before completing account recovery'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Add a passkey before completing account recovery'}, 400)
     }
 
     if (!user.recovery_phrase_confirmed_at) {
-        return c.json({error: 'Regenerate and confirm a recovery phrase first'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Regenerate and confirm a recovery phrase first'}, 400)
     }
 
     await c.env.DB.prepare(
@@ -337,7 +349,7 @@ securityRoutes.post('/complete', async (c) => {
         .bind(createDisabledPasswordHash(), currentUser.id)
         .run()
 
-    return c.json({ok: true})
+    return jsonResponse(c, OkResponseSchema, {ok: true})
 })
 
 async function getSecurityUser(db: D1Database, userId: string): Promise<SecurityUserRecord | null> {

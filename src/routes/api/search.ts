@@ -1,9 +1,21 @@
 import {Hono} from 'hono'
+import {z} from 'zod'
+import {jsonResponse} from '../../lib/http/jsonResponse'
+import {ErrorResponseSchema, responseSchema, SearchResponseSchema, SizeChartSearchItemSchema} from '../../lib/http/responseSchemas'
 import {characterHeightChartImageObjectKey, characterProfileImageUrl} from '../../lib/media/url'
 import {normalizeSearchOffset, normalizeSearchQuery, searchCharacters, searchUsers} from '../../lib/search'
 import type {Bindings} from '../../types/bindings'
 
 export const searchRoutes = new Hono<{Bindings: Bindings}>()
+
+const SizeChartSearchResponseSchema = responseSchema({
+    query: z.string(),
+    wasTruncated: z.boolean(),
+    items: z.array(SizeChartSearchItemSchema),
+})
+const SizeChartByIdResponseSchema = responseSchema({
+    items: z.array(SizeChartSearchItemSchema),
+})
 
 type SizeChartCharacterSearchRow = {
     id: string
@@ -43,7 +55,7 @@ searchRoutes.get('/', async (c) => {
     const offset = normalizeSearchOffset(c.req.query('offset'))
 
     if (type !== 'users' && type !== 'characters') {
-        return c.json({error: 'Search type must be users or characters'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Search type must be users or characters'}, 400)
     }
 
     const results =
@@ -51,7 +63,7 @@ searchRoutes.get('/', async (c) => {
             ? await searchUsers(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, query, undefined, offset)
             : await searchCharacters(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, query, undefined, offset)
 
-    return c.json({
+    return jsonResponse(c, SearchResponseSchema, {
         type,
         query,
         wasTruncated,
@@ -66,7 +78,7 @@ searchRoutes.get('/size-chart-characters', async (c) => {
     const {query, wasTruncated} = normalizeSearchQuery(c.req.query('q'))
 
     if (!query) {
-        return c.json({
+        return jsonResponse(c, SizeChartSearchResponseSchema, {
             query,
             wasTruncated,
             items: [],
@@ -115,7 +127,7 @@ searchRoutes.get('/size-chart-characters', async (c) => {
         .sort((a, b) => Number(b.hasSizeChart) - Number(a.hasSizeChart))
         .slice(0, 20)
 
-    return c.json({
+    return jsonResponse(c, SizeChartSearchResponseSchema, {
         query,
         wasTruncated,
         items,
@@ -126,7 +138,7 @@ searchRoutes.get('/size-chart-characters/by-id', async (c) => {
     const ids = normalizeSizeChartIds(c.req.query('ids'))
 
     if (ids.length === 0) {
-        return c.json({items: []})
+        return jsonResponse(c, SizeChartByIdResponseSchema, {items: []})
     }
 
     const sizeChartIds = ids.filter(isSizeChartId).map((id) => id.toLowerCase())
@@ -160,7 +172,7 @@ searchRoutes.get('/size-chart-characters/by-id', async (c) => {
         itemsById.set(row.size_chart_id, item)
     }
 
-    return c.json({
+    return jsonResponse(c, SizeChartByIdResponseSchema, {
         items: ids.map((id) => itemsById.get(id)).filter((item): item is NonNullable<typeof item> => Boolean(item)),
     })
 })
