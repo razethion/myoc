@@ -11,9 +11,10 @@
     "lint": "biome ci .",
     "format": "biome format . --write",
     "deadcode": "knip",
+    "security": "node scripts/run-semgrep.mjs",
     "test": "vitest",
     "coverage": "vitest run --coverage",
-    "ci": "npm run lint && npm run typecheck && vitest run && npm run deadcode",
+    "ci": "npm run lint && npm run typecheck && vitest run && npm run deadcode && npm run security",
     "db:prepare:local": "wrangler d1 migrations apply myoc-db --local && wrangler d1 execute myoc-db --local --file seeds/development.sql",
     "env:clone:prod-to-dev": "node scripts/clone-prod-to-dev.mjs",
     "deploy": "npm run ci && npm run build && wrangler deploy --minify"
@@ -24,7 +25,8 @@
     "@simplewebauthn/server": "^13.3.2",
     "bcryptjs": "^3.0.3",
     "cropperjs": "^2.1.1",
-    "hono": "^4.12.28"
+    "hono": "^4.12.28",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.3",

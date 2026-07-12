@@ -7,6 +7,7 @@ import {
 import {compare} from 'bcryptjs'
 import {Hono} from 'hono'
 import {getCookie} from 'hono/cookie'
+import {z} from 'zod'
 import {
     createCredentialPublicKeyValue,
     createDisabledPasswordHash,
@@ -34,6 +35,8 @@ import {
     toSqlTimestamp,
     type UserRecord,
 } from '../../lib/auth/session'
+import {jsonResponse} from '../../lib/http/jsonResponse'
+import {ErrorResponseSchema, OwnUserSchema, responseSchema} from '../../lib/http/responseSchemas'
 import type {Bindings} from '../../types/bindings'
 
 type LoginRequest = {
@@ -66,6 +69,22 @@ type RecoveryLoginRequest = {
     recoveryPhrase?: unknown
 }
 
+const AuthUserResponseSchema = responseSchema({user: OwnUserSchema})
+const PasskeyOptionsResponseSchema = responseSchema({
+    challengeId: z.string(),
+    options: z.unknown(),
+})
+const PasskeyRegistrationResponseSchema = responseSchema({
+    user: OwnUserSchema,
+    csrfToken: z.string(),
+    recoveryPhrase: z.string(),
+    recoveryPhraseNeedsConfirmation: z.literal(true),
+})
+const RecoveryLoginResponseSchema = responseSchema({
+    user: OwnUserSchema,
+    secureAccountRequired: z.literal(true),
+})
+
 export const authRoutes = new Hono<{Bindings: Bindings}>()
 
 authRoutes.post('/logout', async (c) => {
@@ -91,14 +110,14 @@ authRoutes.post('/login', async (c) => {
     try {
         body = await c.req.json<LoginRequest>()
     } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
     const username = normalizeCredential(body.username)
     const password = normalizeCredential(body.password)
 
     if (!username || !password) {
-        return c.json({error: 'Username and password are required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Username and password are required'}, 400)
     }
 
     const user = await c.env.DB.prepare(
@@ -121,17 +140,17 @@ authRoutes.post('/login', async (c) => {
         .first<UserRecord & {banned_at: string | null}>()
 
     if (!user || !hasUsablePassword(user.password_hash) || !(await compare(password, user.password_hash))) {
-        return c.json({error: 'Invalid username or password'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid username or password'}, 401)
     }
 
     if (user.banned_at) {
-        return c.json({error: 'Account is banned'}, 403)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Account is banned'}, 403)
     }
 
     const sessionToken = await createSession(c.env.DB, user.id)
     setSessionCookie(c, sessionToken)
 
-    return c.json({user: toPublicUser(user)})
+    return jsonResponse(c, AuthUserResponseSchema, {user: toPublicUser(user)})
 })
 
 authRoutes.post('/register/passkey/options', async (c) => {
@@ -140,22 +159,27 @@ authRoutes.post('/register/passkey/options', async (c) => {
     try {
         body = await c.req.json<PasskeyRegistrationOptionsRequest>()
     } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
     const email = normalizeCredential(body.email)?.toLowerCase() ?? null
     const username = normalizeCredential(body.username)
 
     if (!email || !username) {
-        return c.json({error: 'Email and username are required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Email and username are required'}, 400)
     }
 
     if (!isValidEmail(email)) {
-        return c.json({error: 'Email must be valid'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Email must be valid'}, 400)
     }
 
     if (!isValidUsername(username)) {
-        return c.json({error: 'Username must be 3-32 characters and contain only letters, numbers, and underscores'}, 400)
+        return jsonResponse(
+            c,
+            ErrorResponseSchema,
+            {error: 'Username must be 3-32 characters and contain only letters, numbers, and underscores'},
+            400,
+        )
     }
 
     const existingUser = await c.env.DB.prepare(
@@ -169,12 +193,12 @@ authRoutes.post('/register/passkey/options', async (c) => {
         .first<Pick<UserRecord, 'id'>>()
 
     if (existingUser) {
-        return c.json({error: 'Email or username is already in use'}, 409)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Email or username is already in use'}, 409)
     }
 
     const registration = await createNewAccountPasskeyRegistrationOptions(c, {email, username})
 
-    return c.json({
+    return jsonResponse(c, PasskeyOptionsResponseSchema, {
         challengeId: registration.challengeId,
         options: registration.options,
     })
@@ -186,19 +210,19 @@ authRoutes.post('/register/passkey/verify', async (c) => {
     try {
         body = await c.req.json<PasskeyRegistrationVerifyRequest>()
     } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
     const challengeId = normalizeCredential(body.challengeId)
 
     if (!challengeId || !body.credential) {
-        return c.json({error: 'Challenge and passkey response are required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Challenge and passkey response are required'}, 400)
     }
 
     const challenge = await getWebAuthnChallenge(c.env.DB, challengeId, 'registration')
 
     if (!challenge?.user_id || !challenge.email || !challenge.username || !challenge.webauthn_user_id) {
-        return c.json({error: 'Passkey registration expired'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Passkey registration expired'}, 400)
     }
 
     const {origin, rpID} = getWebAuthnRelyingParty(c)
@@ -212,7 +236,7 @@ authRoutes.post('/register/passkey/verify', async (c) => {
     })
 
     if (!verification.verified) {
-        return c.json({error: 'Passkey could not be verified'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Passkey could not be verified'}, 400)
     }
 
     const now = new Date()
@@ -302,7 +326,7 @@ authRoutes.post('/register/passkey/verify', async (c) => {
         ])
     } catch (error) {
         if (isUniqueConstraintError(error)) {
-            return c.json({error: 'Email or username is already in use'}, 409)
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Email or username is already in use'}, 409)
         }
 
         throw error
@@ -311,7 +335,9 @@ authRoutes.post('/register/passkey/verify', async (c) => {
     const sessionToken = await createSession(c.env.DB, user.id, now)
     setSessionCookie(c, sessionToken)
 
-    return c.json(
+    return jsonResponse(
+        c,
+        PasskeyRegistrationResponseSchema,
         {
             user: toPublicUser(user),
             csrfToken: await createCsrfToken(sessionToken),
@@ -328,7 +354,7 @@ authRoutes.post('/login/passkey/options', async (c) => {
     try {
         body = await c.req.json<PasskeyAuthenticationOptionsRequest>()
     } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
     const username = normalizeCredential(body.username)
@@ -347,13 +373,13 @@ authRoutes.post('/login/passkey/options', async (c) => {
             .first<{id: string}>()
 
         if (!user) {
-            return c.json({error: 'No passkey is registered for that username'}, 404)
+            return jsonResponse(c, ErrorResponseSchema, {error: 'No passkey is registered for that username'}, 404)
         }
     }
 
     const authentication = await createPasskeyAuthenticationOptions(c, user)
 
-    return c.json({
+    return jsonResponse(c, PasskeyOptionsResponseSchema, {
         challengeId: authentication.challengeId,
         options: authentication.options,
     })
@@ -365,26 +391,26 @@ authRoutes.post('/login/passkey/verify', async (c) => {
     try {
         body = await c.req.json<PasskeyAuthenticationVerifyRequest>()
     } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
     const challengeId = normalizeCredential(body.challengeId)
     const credentialResponse = body.credential as AuthenticationResponseJSON | undefined
 
     if (!challengeId || !credentialResponse?.id) {
-        return c.json({error: 'Challenge and passkey response are required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Challenge and passkey response are required'}, 400)
     }
 
     const challenge = await getWebAuthnChallenge(c.env.DB, challengeId, 'authentication')
 
     if (!challenge) {
-        return c.json({error: 'Passkey login expired'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Passkey login expired'}, 400)
     }
 
     const passkey = await getPasskeyByCredentialId(c.env.DB, credentialResponse.id)
 
     if (!passkey || (challenge.user_id && passkey.user_id !== challenge.user_id)) {
-        return c.json({error: 'Passkey is not registered for this login'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Passkey is not registered for this login'}, 401)
     }
 
     const {origin, rpID} = getWebAuthnRelyingParty(c)
@@ -398,13 +424,13 @@ authRoutes.post('/login/passkey/verify', async (c) => {
     })
 
     if (!verification.verified) {
-        return c.json({error: 'Passkey could not be verified'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Passkey could not be verified'}, 401)
     }
 
     const user = await getUserForLogin(c.env.DB, passkey.user_id)
 
     if (!user) {
-        return c.json({error: 'Passkey is not registered for an active account'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Passkey is not registered for an active account'}, 401)
     }
 
     const now = new Date()
@@ -429,7 +455,7 @@ authRoutes.post('/login/passkey/verify', async (c) => {
     const sessionToken = await createSession(c.env.DB, user.id, now)
     setSessionCookie(c, sessionToken)
 
-    return c.json({user: toPublicUser(user)})
+    return jsonResponse(c, AuthUserResponseSchema, {user: toPublicUser(user)})
 })
 
 authRoutes.post('/recovery/login', async (c) => {
@@ -438,14 +464,14 @@ authRoutes.post('/recovery/login', async (c) => {
     try {
         body = await c.req.json<RecoveryLoginRequest>()
     } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
     const username = normalizeCredential(body.username)
     const recoveryPhrase = normalizeCredential(body.recoveryPhrase)
 
     if (!username || !recoveryPhrase) {
-        return c.json({error: 'Username and recovery phrase are required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Username and recovery phrase are required'}, 400)
     }
 
     const user = await c.env.DB.prepare(
@@ -469,11 +495,11 @@ authRoutes.post('/recovery/login', async (c) => {
         .first<UserRecord & {recovery_phrase_hash: string | null; banned_at: string | null}>()
 
     if (!user?.recovery_phrase_hash || !(await verifyRecoveryPhrase(recoveryPhrase, user.recovery_phrase_hash))) {
-        return c.json({error: 'Invalid username or recovery phrase'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid username or recovery phrase'}, 401)
     }
 
     if (user.banned_at) {
-        return c.json({error: 'Account is banned'}, 403)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Account is banned'}, 403)
     }
 
     const now = new Date()
@@ -494,7 +520,7 @@ authRoutes.post('/recovery/login', async (c) => {
     const sessionToken = await createSession(c.env.DB, user.id, now)
     setSessionCookie(c, sessionToken)
 
-    return c.json({
+    return jsonResponse(c, RecoveryLoginResponseSchema, {
         user: toPublicUser({
             ...user,
             secure_account_required: 1,

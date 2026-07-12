@@ -1,6 +1,7 @@
 import {hash} from 'bcryptjs'
 import type {Context} from 'hono'
 import {Hono} from 'hono'
+import {z} from 'zod'
 import {
     createSession,
     getCurrentUser,
@@ -10,6 +11,8 @@ import {
     toSqlTimestamp,
     type UserRecord,
 } from '../../lib/auth/session'
+import {jsonResponse} from '../../lib/http/jsonResponse'
+import {ErrorResponseSchema, OkResponseSchema, OwnUserSchema, responseSchema} from '../../lib/http/responseSchemas'
 import {PROFILE_IMAGE_MAX_REQUEST_BYTES, validateProfileImagePayload} from '../../lib/media/profileImage'
 import {profilePhotoObjectKey, profilePhotoUrl} from '../../lib/media/url'
 import {APP_VERSION} from '../../lib/releases'
@@ -40,13 +43,28 @@ type PasskeyPromptChoice = 'setup' | 'later'
 
 const PASSWORD_HASH_ROUNDS = 10
 const BIO_MAX_LENGTH = 255
+const AuthUserResponseSchema = responseSchema({user: OwnUserSchema})
+const ReleaseViewResponseSchema = responseSchema({
+    ok: z.literal(true),
+    version: z.string(),
+})
+const PasskeyPromptResponseSchema = responseSchema({
+    ok: z.literal(true),
+    choice: z.enum(['setup', 'later']),
+    redirectTo: z.string(),
+})
+const ProfilePhotoResponseSchema = responseSchema({
+    profilePhotoKey: z.string(),
+    profilePhotoUrl: z.string(),
+})
+
 export const userRoutes = new Hono<{Bindings: Bindings}>()
 
 userRoutes.post('/me/release-view', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     await c.env.DB.prepare(
@@ -57,7 +75,7 @@ userRoutes.post('/me/release-view', async (c) => {
         .bind(APP_VERSION, currentUser.id)
         .run()
 
-    return c.json({
+    return jsonResponse(c, ReleaseViewResponseSchema, {
         ok: true,
         version: APP_VERSION,
     })
@@ -67,7 +85,7 @@ userRoutes.post('/me/passkey-prompt-response', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const body = await parsePasskeyPromptResponse(c.req.raw)
@@ -87,7 +105,7 @@ userRoutes.post('/me/passkey-prompt-response', async (c) => {
         return c.redirect(redirectTo)
     }
 
-    return c.json({
+    return jsonResponse(c, PasskeyPromptResponseSchema, {
         ok: true,
         choice,
         redirectTo,
@@ -98,20 +116,20 @@ userRoutes.post('/me/profile-photo', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const contentLength = Number(c.req.header('content-length') ?? 0)
 
     if (contentLength > PROFILE_IMAGE_MAX_REQUEST_BYTES) {
-        return c.json({error: 'Profile photo upload is too large'}, 413)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Profile photo upload is too large'}, 413)
     }
 
     const form = await c.req.formData()
     const file = form.get('profilePhoto')
 
     if (!(file instanceof File)) {
-        return c.json({error: 'Profile photo is required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Profile photo is required'}, 400)
     }
 
     const bytes = new Uint8Array(await file.arrayBuffer())
@@ -124,7 +142,7 @@ userRoutes.post('/me/profile-photo', async (c) => {
     )
 
     if ('error' in validation) {
-        return c.json({error: validation.error}, validation.status)
+        return jsonResponse(c, ErrorResponseSchema, {error: validation.error}, validation.status)
     }
 
     const profilePhotoKey = crypto.randomUUID()
@@ -158,7 +176,7 @@ userRoutes.post('/me/profile-photo', async (c) => {
         }
     }
 
-    return c.json({
+    return jsonResponse(c, ProfilePhotoResponseSchema, {
         profilePhotoKey,
         profilePhotoUrl: profilePhotoUrl(c.env.MEDIA_PUBLIC_BASE_URL, currentUser.id, profilePhotoKey),
     })
@@ -172,7 +190,7 @@ userRoutes.post('/me', async (c) => {
             return c.redirect('/login')
         }
 
-        return c.json({error: 'Authentication required'}, 401)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
     const body = await parseUpdateUserRequest(c.req)
@@ -280,7 +298,7 @@ userRoutes.post('/', async (c) => {
     try {
         body = await c.req.json<CreateUserRequest>()
     } catch {
-        return c.json({error: 'Invalid JSON body'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
     const email = normalizeCredential(body.email)?.toLowerCase() ?? null
@@ -288,19 +306,24 @@ userRoutes.post('/', async (c) => {
     const password = normalizeCredential(body.password)
 
     if (!email || !username || !password) {
-        return c.json({error: 'Email, username, and password are required'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Email, username, and password are required'}, 400)
     }
 
     if (!isValidEmail(email)) {
-        return c.json({error: 'Email must be valid'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Email must be valid'}, 400)
     }
 
     if (!isValidUsername(username)) {
-        return c.json({error: 'Username must be 3-32 characters and contain only letters, numbers, and underscores'}, 400)
+        return jsonResponse(
+            c,
+            ErrorResponseSchema,
+            {error: 'Username must be 3-32 characters and contain only letters, numbers, and underscores'},
+            400,
+        )
     }
 
     if (password.length < 8) {
-        return c.json({error: 'Password must be at least 8 characters'}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Password must be at least 8 characters'}, 400)
     }
 
     const existingUser = await c.env.DB.prepare(
@@ -314,7 +337,7 @@ userRoutes.post('/', async (c) => {
         .first<Pick<UserRecord, 'id'>>()
 
     if (existingUser) {
-        return c.json({error: 'Email or username is already in use'}, 409)
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Email or username is already in use'}, 409)
     }
 
     const now = new Date()
@@ -340,7 +363,7 @@ userRoutes.post('/', async (c) => {
             .run()
     } catch (error) {
         if (isUniqueConstraintError(error)) {
-            return c.json({error: 'Email or username is already in use'}, 409)
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Email or username is already in use'}, 409)
         }
 
         throw error
@@ -349,7 +372,7 @@ userRoutes.post('/', async (c) => {
     const sessionToken = await createSession(c.env.DB, user.id, now)
     setSessionCookie(c, sessionToken)
 
-    return c.json({user: toPublicUser(user)}, 201)
+    return jsonResponse(c, AuthUserResponseSchema, {user: toPublicUser(user)}, 201)
 })
 
 function isValidEmail(email: string): boolean {
@@ -534,5 +557,5 @@ function respondToUpdate(
         return c.redirect('/settings', status === 200 ? 302 : 303)
     }
 
-    return c.json(body, status)
+    return jsonResponse(c, 'ok' in body ? OkResponseSchema : ErrorResponseSchema, body, status)
 }

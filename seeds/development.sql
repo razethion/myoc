@@ -14,6 +14,7 @@ INSERT OR IGNORE INTO users (
         'seed-user-demo',
         'demo@example.test',
         'demo',
+        -- nosemgrep: generic.secrets.security.detected-bcrypt-hash.detected-bcrypt-hash -- Intentional fake local seed password hash for password123.
         '$2b$10$6bayY7DO0rJ1M/iiWU.sWudNEKLZQ038jPlsYOikyHbVElK0YcMF6',
         NULL,
         'Demo account for checking the basic logged-in experience.',
@@ -23,6 +24,7 @@ INSERT OR IGNORE INTO users (
         'seed-user-artist',
         'artist@example.test',
         'artist',
+        -- nosemgrep: generic.secrets.security.detected-bcrypt-hash.detected-bcrypt-hash -- Intentional fake local seed password hash for password123.
         '$2b$10$hq4T.TiE83zOQjLiOllLZutmh6zBLhpclyjZo0Ntg6Spx9jY6dWpC',
         NULL,
         'Fake artist account for gallery and character workflow previews.',
@@ -32,6 +34,7 @@ INSERT OR IGNORE INTO users (
         'seed-user-collector',
         'collector@example.test',
         'collector',
+        -- nosemgrep: generic.secrets.security.detected-bcrypt-hash.detected-bcrypt-hash -- Intentional fake local seed password hash for password123.
         '$2b$10$.WSmCng5L0KCHzF26wVjRebIaUT0WFn0MOg4Dr6jWM7TZ4s28VW9m',
         NULL,
         'Fake collector account for browsing and organization previews.',

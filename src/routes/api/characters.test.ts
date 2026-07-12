@@ -5176,6 +5176,7 @@ function createCharacterRecord(
         name: string
         profile_image_key: string | null
         folder_id: string | null
+        sort_order: number
         height_chart_json: string
         created_at: string
         updated_at: string
@@ -5187,6 +5188,7 @@ function createCharacterRecord(
         name: 'Vyn',
         profile_image_key: null,
         folder_id: null,
+        sort_order: 0,
         height_chart_json: '',
         created_at: '2026-06-11 12:00:00',
         updated_at: '2026-06-11 12:00:00',

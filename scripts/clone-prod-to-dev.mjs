@@ -663,8 +663,17 @@ function s3CopySource(bucket, key) {
 }
 
 function xmlTagValue(xml, tagName) {
-    const match = xml.match(new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`))
-    return match ? unescapeXml(match[1]) : ''
+    const openingTag = `<${tagName}>`
+    const closingTag = `</${tagName}>`
+    const openingIndex = xml.indexOf(openingTag)
+
+    if (openingIndex < 0) {
+        return ''
+    }
+
+    const valueStartIndex = openingIndex + openingTag.length
+    const closingIndex = xml.indexOf(closingTag, valueStartIndex)
+    return closingIndex >= 0 ? unescapeXml(xml.slice(valueStartIndex, closingIndex)) : ''
 }
 
 function decodeS3XmlValue(value) {
@@ -676,21 +685,27 @@ function stripEtagQuotes(etag) {
 }
 
 function escapeXml(value) {
-    return value
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&apos;')
+    const entities = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&apos;',
+    }
+
+    return value.replace(/[&<>"']/g, (character) => entities[character])
 }
 
 function unescapeXml(value) {
-    return value
-        .replaceAll('&apos;', "'")
-        .replaceAll('&quot;', '"')
-        .replaceAll('&gt;', '>')
-        .replaceAll('&lt;', '<')
-        .replaceAll('&amp;', '&')
+    const entities = {
+        '&apos;': "'",
+        '&quot;': '"',
+        '&gt;': '>',
+        '&lt;': '<',
+        '&amp;': '&',
+    }
+
+    return value.replace(/&(apos|quot|gt|lt|amp);/g, (entity) => entities[entity])
 }
 
 async function cloneR2WithWorker() {
