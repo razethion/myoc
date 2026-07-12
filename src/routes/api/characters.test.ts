@@ -182,6 +182,41 @@ async function postFolder(body: unknown, db: D1Database, options: CharacterReque
     )
 }
 
+async function postFolderImage(folderId: string, body: BodyInit, db: D1Database, options: CharacterRequestOptions = {}): Promise<Response> {
+    return apiRoutes.request(
+        `https://example.com/characters/folders/${folderId}/image`,
+        {
+            method: 'POST',
+            body,
+            headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
+}
+
+async function deleteFolderImage(folderId: string, db: D1Database, options: CharacterRequestOptions = {}): Promise<Response> {
+    return apiRoutes.request(
+        `https://example.com/characters/folders/${folderId}/image`,
+        {
+            method: 'DELETE',
+            headers: createRequestHeaders(undefined, options, false),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
+}
+
+async function postFolderTree(body: unknown, db: D1Database, options: CharacterRequestOptions = {}): Promise<Response> {
+    return apiRoutes.request(
+        'https://example.com/characters/folders/tree',
+        {
+            method: 'POST',
+            body: typeof body === 'string' ? body : JSON.stringify(body),
+            headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
+}
+
 async function postTree(body: unknown, db: D1Database, options: CharacterRequestOptions = {}): Promise<Response> {
     return apiRoutes.request(
         'https://example.com/characters/tree',
@@ -243,7 +278,7 @@ async function initChunkedMedia(
 async function putChunkedMediaPart(
     characterId: string,
     mediaId: string,
-    rating: 'sfw' | 'nsfw',
+    rating: string,
     uploadId: string,
     partNumber: number,
     imageKey: string,
@@ -263,6 +298,26 @@ async function putChunkedMediaPart(
     )
 }
 
+async function deleteChunkedMediaUpload(
+    characterId: string,
+    mediaId: string,
+    rating: string,
+    uploadId: string,
+    imageKey: string,
+    db: D1Database,
+    options: CharacterRequestOptions = {},
+    contentType = 'image/png',
+): Promise<Response> {
+    return apiRoutes.request(
+        `https://example.com/characters/${characterId}/media/chunked/${mediaId}/${rating}/${encodeURIComponent(uploadId)}?imageKey=${encodeURIComponent(imageKey)}&contentType=${encodeURIComponent(contentType)}`,
+        {
+            method: 'DELETE',
+            headers: createRequestHeaders(undefined, options, false),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
+}
+
 async function completeChunkedMedia(
     characterId: string,
     body: unknown,
@@ -275,6 +330,53 @@ async function completeChunkedMedia(
             method: 'POST',
             body: JSON.stringify(body),
             headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
+}
+
+async function initExistingChunkedMedia(
+    characterId: string,
+    mediaId: string,
+    body: unknown,
+    db: D1Database,
+    options: CharacterRequestOptions = {},
+): Promise<Response> {
+    return apiRoutes.request(
+        `https://example.com/characters/${characterId}/media/${mediaId}/chunked/init`,
+        {
+            method: 'POST',
+            body: typeof body === 'string' ? body : JSON.stringify(body),
+            headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
+}
+
+async function completeExistingChunkedMedia(
+    characterId: string,
+    mediaId: string,
+    body: unknown,
+    db: D1Database,
+    options: CharacterRequestOptions = {},
+): Promise<Response> {
+    return apiRoutes.request(
+        `https://example.com/characters/${characterId}/media/${mediaId}/chunked/complete`,
+        {
+            method: 'POST',
+            body: typeof body === 'string' ? body : JSON.stringify(body),
+            headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.imagesBinding),
+    )
+}
+
+async function deleteCharacterMedia(characterId: string, mediaId: string, db: D1Database, options: CharacterRequestOptions = {}) {
+    return apiRoutes.request(
+        `https://example.com/characters/${characterId}/media/${mediaId}`,
+        {
+            method: 'DELETE',
+            headers: createRequestHeaders(undefined, options, false),
         },
         requestEnv(db, options.mediaBucket, options.imagesBinding),
     )
@@ -316,7 +418,7 @@ async function failToyhouseImportItem(
 
 async function postProfileImage(
     characterId: string,
-    body: FormData,
+    body: BodyInit,
     db: D1Database,
     options: CharacterRequestOptions = {},
 ): Promise<Response> {
@@ -370,7 +472,7 @@ async function patchCharacter(
         `https://example.com/characters/${characterId}`,
         {
             method: 'PATCH',
-            body: JSON.stringify(body),
+            body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
         requestEnv(db, options.mediaBucket, options.imagesBinding),
@@ -416,6 +518,177 @@ async function deleteFolder(folderId: string, db: D1Database, options: Character
         requestEnv(db, options.mediaBucket, options.imagesBinding),
     )
 }
+
+describe('POST /characters/folders/tree', () => {
+    it('returns 401 when the user is not logged in', async () => {
+        const {db} = createMockDb()
+
+        const response = await postFolderTree(
+            {
+                items: [],
+            },
+            db,
+        )
+
+        expect(response.status).toBe(401)
+        expect(await response.json()).toEqual({
+            error: 'Authentication required',
+        })
+    })
+
+    it('returns 400 for invalid JSON', async () => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postFolderTree('{bad json', db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Invalid JSON body',
+        })
+    })
+
+    it('returns 400 when folder tree items are not an array', async () => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postFolderTree(
+            {
+                items: 'main',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Folder tree items are required',
+        })
+    })
+
+    it('rejects character items in the folder-only tree', async () => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postFolderTree(
+            {
+                items: [{type: 'character', id: 'razeth'}],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Folder tree may contain only folders',
+        })
+        expect(db.batch).not.toHaveBeenCalled()
+    })
+
+    it('rejects folders that are not owned by the current user', async () => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+            allResults: [[]],
+        })
+
+        const response = await postFolderTree(
+            {
+                items: [{type: 'folder', id: 'other-users-folder'}],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Folder tree contains folders that do not belong to the current user',
+        })
+        expect(db.batch).not.toHaveBeenCalled()
+    })
+
+    it('accepts an empty folder tree without issuing batch updates', async () => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postFolderTree(
+            {
+                items: [],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ok: true})
+        expect(db.batch).not.toHaveBeenCalled()
+    })
+
+    it('updates folder parents and sort order from the folder tree JSON', async () => {
+        const sessionToken = 'session-token'
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord],
+            allResults: [[{id: 'main'}, {id: 'story'}, {id: 'archive'}]],
+        })
+
+        const response = await postFolderTree(
+            {
+                items: [
+                    {
+                        type: 'folder',
+                        id: 'main',
+                        children: [{type: 'folder', id: 'story'}],
+                    },
+                    {type: 'folder', id: 'archive'},
+                ],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ok: true})
+        expect(db.batch).toHaveBeenCalledTimes(1)
+
+        const updateStatements = boundStatements.filter((statement) => statement.sql.includes('UPDATE character_folders'))
+        expect(updateStatements).toHaveLength(3)
+        expect(updateStatements[0]?.binds[0]).toBeNull()
+        expect(updateStatements[0]?.binds[1]).toBe(0)
+        expect(updateStatements[0]?.binds[3]).toBe('main')
+        expect(updateStatements[1]?.binds[0]).toBe('main')
+        expect(updateStatements[1]?.binds[1]).toBe(0)
+        expect(updateStatements[1]?.binds[3]).toBe('story')
+        expect(updateStatements[2]?.binds[0]).toBeNull()
+        expect(updateStatements[2]?.binds[1]).toBe(1)
+        expect(updateStatements[2]?.binds[3]).toBe('archive')
+    })
+})
 
 describe('POST /characters/tree', () => {
     it('returns 401 when the user is not logged in', async () => {
@@ -469,6 +742,86 @@ describe('POST /characters/tree', () => {
         expect(await response.json()).toEqual({
             error: 'Invalid JSON body',
         })
+    })
+
+    it.each([
+        {
+            name: 'missing item arrays',
+            body: {items: null},
+            error: 'Tree items are required',
+        },
+        {
+            name: 'non-object items',
+            body: {items: ['main']},
+            error: 'Tree item must be an object',
+        },
+        {
+            name: 'unknown item types',
+            body: {items: [{type: 'divider', id: 'main'}]},
+            error: 'Tree item type must be folder or character',
+        },
+        {
+            name: 'invalid item ids',
+            body: {items: [{type: 'folder', id: 'bad id'}]},
+            error: 'Tree item id is invalid',
+        },
+        {
+            name: 'non-array folder children',
+            body: {items: [{type: 'folder', id: 'main', children: 'story'}]},
+            error: 'Folder children must be an array',
+        },
+        {
+            name: 'character children',
+            body: {items: [{type: 'character', id: 'razeth', children: []}]},
+            error: 'Characters cannot contain children',
+        },
+    ])('returns 400 for $name', async ({body, error}) => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postTree(body, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error})
+        expect(db.batch).not.toHaveBeenCalled()
+    })
+
+    it('returns 400 when folder nesting is too deep', async () => {
+        const sessionToken = 'session-token'
+        const root: Record<string, unknown> = {type: 'folder', id: 'folder-0'}
+        let current = root
+
+        for (let index = 1; index <= 21; index += 1) {
+            const child: Record<string, unknown> = {type: 'folder', id: `folder-${index}`}
+            current.children = [child]
+            current = child
+        }
+
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postTree(
+            {
+                items: [root],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Folder nesting is too deep',
+        })
+        expect(db.batch).not.toHaveBeenCalled()
     })
 
     it('returns 400 for malformed tree items', async () => {
@@ -667,6 +1020,78 @@ describe('POST /characters/tree', () => {
 })
 
 describe('POST /characters/order', () => {
+    it('returns 400 for invalid JSON', async () => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postCharacterOrder('{bad json', db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Invalid JSON body',
+        })
+    })
+
+    it.each([
+        {
+            body: {characterIds: 'razeth'},
+            error: 'Character order must be an array',
+        },
+        {
+            body: {characterIds: ['bad id']},
+            error: 'Character order contains an invalid character id',
+        },
+        {
+            body: {characterIds: ['razeth', 'razeth']},
+            error: 'Character order contains duplicate characters',
+        },
+        {
+            body: {characterIds: Array.from({length: 501}, (_, index) => `character-${index}`)},
+            error: 'Character order contains too many items',
+        },
+    ])('returns 400 when character order validation fails with $error', async ({body, error}) => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postCharacterOrder(body, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error})
+        expect(db.batch).not.toHaveBeenCalled()
+    })
+
+    it('accepts an empty character order without issuing batch updates', async () => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postCharacterOrder(
+            {
+                characterIds: [],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ok: true})
+        expect(db.batch).not.toHaveBeenCalled()
+    })
+
     it('updates the independent all-characters profile order', async () => {
         const sessionToken = 'session-token'
         const {db, boundStatements} = createMockDb({
@@ -724,6 +1149,78 @@ describe('POST /characters/order', () => {
 })
 
 describe('PUT /characters/folders/:id/placements', () => {
+    it('returns 400 for invalid folder ids', async () => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await putFolderPlacements(
+            'bad.folder',
+            {
+                characterIds: [],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Folder must be a valid folder id',
+        })
+        expect(db.batch).not.toHaveBeenCalled()
+    })
+
+    it('returns 400 for invalid JSON', async () => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, {id: 'story'}],
+        })
+
+        const response = await putFolderPlacements('story', '{bad json', db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Invalid JSON body',
+        })
+        expect(db.batch).not.toHaveBeenCalled()
+    })
+
+    it.each([
+        {
+            body: {characterIds: 'razeth'},
+            error: 'Folder placements must be an array',
+        },
+        {
+            body: {characterIds: ['bad id']},
+            error: 'Folder placements contains an invalid character id',
+        },
+        {
+            body: {characterIds: ['razeth', 'razeth']},
+            error: 'Folder placements contains duplicate characters',
+        },
+    ])('returns 400 when folder placement validation fails with $error', async ({body, error}) => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, {id: 'story'}],
+        })
+
+        const response = await putFolderPlacements('story', body, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error})
+        expect(db.batch).not.toHaveBeenCalled()
+    })
+
     it('replaces the ordered character placements for one folder', async () => {
         const sessionToken = 'session-token'
         const {db, boundStatements} = createMockDb({
@@ -755,6 +1252,34 @@ describe('PUT /characters/folders/:id/placements', () => {
         expect(placementStatements[2]?.binds).toEqual([currentUserRecord.id, 'story', 'razeth', 1, expect.any(String), expect.any(String)])
     })
 
+    it('clears placements when the folder order is empty', async () => {
+        const sessionToken = 'session-token'
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, {id: 'story'}],
+        })
+
+        const response = await putFolderPlacements(
+            'story',
+            {
+                characterIds: [],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ok: true})
+        expect(db.batch).toHaveBeenCalledTimes(1)
+
+        const placementStatements = boundStatements.filter((statement) => statement.sql.includes('character_folder_placements'))
+        expect(placementStatements).toHaveLength(1)
+        expect(normalizedSql(placementStatements[0]?.sql)).toContain(sqlFragment('DELETE', 'FROM', 'character_folder_placements'))
+        expect(placementStatements[0]?.binds).toEqual([currentUserRecord.id, 'story'])
+    })
+
     it('rejects placements for a folder the current user does not own', async () => {
         const sessionToken = 'session-token'
         const {db} = createMockDb({
@@ -776,6 +1301,32 @@ describe('PUT /characters/folders/:id/placements', () => {
         expect(response.status).toBe(404)
         expect(await response.json()).toEqual({
             error: 'Folder not found',
+        })
+        expect(db.batch).not.toHaveBeenCalled()
+    })
+
+    it('rejects characters that are not owned by the current user', async () => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, {id: 'story'}],
+            allResults: [[{id: 'vyn'}]],
+        })
+
+        const response = await putFolderPlacements(
+            'story',
+            {
+                characterIds: ['vyn', 'other-users-character'],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Folder placements contain characters that do not belong to the current user',
         })
         expect(db.batch).not.toHaveBeenCalled()
     })
@@ -1198,6 +1749,249 @@ describe('PATCH /characters/folders/:id', () => {
         expect(boundStatements[2]?.binds[0]).toBe('Renamed Folder')
         expect(boundStatements[2]?.binds[2]).toBe(folder.id)
         expect(boundStatements[2]?.binds[3]).toBe(currentUserRecord.id)
+    })
+})
+
+describe('POST /characters/folders/:id/image', () => {
+    it('rejects folder image uploads that are larger than 3 MB', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const {db} = createMockDb()
+        const form = new FormData()
+        form.set('folderImage', createWebpFile())
+
+        const response = await postFolderImage('folder-id', form, db, {
+            contentLength: String(3 * 1024 * 1024 + 1),
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(413)
+        expect(await response.json()).toEqual({
+            error: 'Folder image upload is too large',
+        })
+        expect(db.prepare).not.toHaveBeenCalled()
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
+    it('returns 401 when the user is not logged in', async () => {
+        const {db} = createMockDb()
+        const form = new FormData()
+        form.set('folderImage', createWebpFile())
+
+        const response = await postFolderImage('folder-id', form, db)
+
+        expect(response.status).toBe(401)
+        expect(await response.json()).toEqual({
+            error: 'Authentication required',
+        })
+    })
+
+    it('returns 400 when multipart form data is missing', async () => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postFolderImage('folder-id', JSON.stringify({}), db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Multipart form data is required',
+        })
+    })
+
+    it('returns 404 when the folder does not belong to the current user', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, null],
+        })
+        const form = new FormData()
+        form.set('folderImage', createWebpFile())
+
+        const response = await postFolderImage('missing-folder', form, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(404)
+        expect(await response.json()).toEqual({
+            error: 'Folder not found',
+        })
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
+    it('returns 400 when the folder image file is missing', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const folder = createFolderRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, folder],
+        })
+        const form = new FormData()
+
+        const response = await postFolderImage(folder.id, form, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Folder image is required',
+        })
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
+    it('replaces the folder image and deletes the old object', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const folder = createFolderRecord({
+            folder_image_key: 'old-folder-image',
+        })
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, folder],
+        })
+        const form = new FormData()
+        form.set('folderImage', createWebpFile())
+
+        const response = await postFolderImage(folder.id, form, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+
+        const body = (await response.json()) as {
+            folderImageKey: string
+            folderImageUrl: string
+        }
+
+        expect(body.folderImageKey).toMatch(new RegExp(`^${uuidPattern}$`))
+        expect(body.folderImageUrl).toBe(
+            `${mediaPublicBaseUrl}/characters/current-user/folders/folder-id/image/${body.folderImageKey}.webp`,
+        )
+        expect(mediaBucket.put).toHaveBeenCalledWith(
+            `characters/current-user/folders/folder-id/image/${body.folderImageKey}.webp`,
+            expect.any(Uint8Array),
+            {
+                httpMetadata: {
+                    cacheControl: 'public, max-age=31536000, immutable',
+                    contentType: 'image/webp',
+                },
+            },
+        )
+        expect(boundStatements[2]?.sql).toContain('UPDATE character_folders')
+        expect(boundStatements[2]?.binds[0]).toBe(body.folderImageKey)
+        expect(boundStatements[2]?.binds[2]).toBe(folder.id)
+        expect(boundStatements[2]?.binds[3]).toBe(currentUserRecord.id)
+        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/current-user/folders/folder-id/image/old-folder-image.webp')
+    })
+
+    it('deletes the uploaded folder image when the D1 update fails', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        const folder = createFolderRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, folder],
+            runError: new Error('D1 update failed'),
+        })
+        const form = new FormData()
+        form.set('folderImage', createWebpFile())
+
+        try {
+            const response = await postFolderImage(folder.id, form, db, {
+                mediaBucket,
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            })
+
+            expect(response.status).toBe(500)
+            const uploadedKey = vi.mocked(mediaBucket.put).mock.calls[0]?.[0]
+            expect(uploadedKey).toMatch(new RegExp(`^characters/current-user/folders/folder-id/image/${uuidPattern}\\.webp$`))
+            expect(mediaBucket.delete).toHaveBeenCalledWith(uploadedKey)
+        } finally {
+            error.mockRestore()
+        }
+    })
+})
+
+describe('DELETE /characters/folders/:id/image', () => {
+    it('returns 401 when the user is not logged in', async () => {
+        const {db} = createMockDb()
+
+        const response = await deleteFolderImage('folder-id', db)
+
+        expect(response.status).toBe(401)
+        expect(await response.json()).toEqual({
+            error: 'Authentication required',
+        })
+    })
+
+    it('returns 404 when the folder does not belong to the current user', async () => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, null],
+        })
+
+        const response = await deleteFolderImage('missing-folder', db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(404)
+        expect(await response.json()).toEqual({
+            error: 'Folder not found',
+        })
+    })
+
+    it('clears the folder image and deletes the stored object', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const folder = createFolderRecord({
+            folder_image_key: 'folder-image-id',
+        })
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, folder],
+        })
+
+        const response = await deleteFolderImage(folder.id, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(204)
+        expect(boundStatements[2]?.sql).toContain('UPDATE character_folders')
+        expect(boundStatements[2]?.binds[1]).toBe(folder.id)
+        expect(boundStatements[2]?.binds[2]).toBe(currentUserRecord.id)
+        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/current-user/folders/folder-id/image/folder-image-id.webp')
+    })
+
+    it('clears an empty folder image without deleting an R2 object', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const folder = createFolderRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, folder],
+        })
+
+        const response = await deleteFolderImage(folder.id, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(204)
+        expect(mediaBucket.delete).not.toHaveBeenCalled()
     })
 })
 
@@ -1688,6 +2482,115 @@ describe('POST /characters', () => {
 })
 
 describe('PATCH /characters/:id', () => {
+    it('returns 401 when the user is not logged in', async () => {
+        const {db} = createMockDb()
+
+        const response = await patchCharacter(
+            'character-id',
+            {
+                name: 'Ren',
+            },
+            db,
+        )
+
+        expect(response.status).toBe(401)
+        expect(await response.json()).toEqual({
+            error: 'Authentication required',
+        })
+    })
+
+    it('returns 400 for invalid JSON', async () => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await patchCharacter('character-id', '{bad json', db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Invalid JSON body',
+        })
+    })
+
+    it('returns 404 when the character does not belong to the current user', async () => {
+        const sessionToken = 'session-token'
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, null],
+        })
+
+        const response = await patchCharacter(
+            'missing-character',
+            {
+                name: 'Ren',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(404)
+        expect(await response.json()).toEqual({
+            error: 'Character not found',
+        })
+    })
+
+    it('returns 400 when the character name is invalid', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+
+        const response = await patchCharacter(
+            character.id,
+            {
+                name: 'Bad#Name',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Character name may contain only letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses, and must include at least one letter or number',
+        })
+    })
+
+    it('returns 400 when the character description is too long', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+
+        const response = await patchCharacter(
+            character.id,
+            {
+                name: 'Ren',
+                description: 'a'.repeat(256),
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Character description must be 255 characters or fewer',
+        })
+    })
+
     it('updates a character name with quoted text and hyphenated numbers', async () => {
         const sessionToken = 'session-token'
         const character = createCharacterRecord()
@@ -1745,6 +2648,102 @@ describe('PATCH /characters/:id', () => {
 })
 
 describe('POST /characters/:id/profile-image', () => {
+    it('rejects profile image upload requests that are larger than 3 MB', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const {db} = createMockDb()
+        const form = new FormData()
+        form.set('profileImage', createWebpFile())
+
+        const response = await postProfileImage('character-id', form, db, {
+            contentLength: String(3 * 1024 * 1024 + 1),
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(413)
+        expect(await response.json()).toEqual({
+            error: 'Character profile image upload is too large',
+        })
+        expect(db.prepare).not.toHaveBeenCalled()
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
+    it('returns 401 when the user is not logged in', async () => {
+        const {db} = createMockDb()
+        const form = new FormData()
+        form.set('profileImage', createWebpFile())
+
+        const response = await postProfileImage('character-id', form, db)
+
+        expect(response.status).toBe(401)
+        expect(await response.json()).toEqual({
+            error: 'Authentication required',
+        })
+    })
+
+    it('returns 404 when the character does not belong to the current user', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, null],
+        })
+        const form = new FormData()
+        form.set('profileImage', createWebpFile())
+
+        const response = await postProfileImage('missing-character', form, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(404)
+        expect(await response.json()).toEqual({
+            error: 'Character not found',
+        })
+    })
+
+    it('returns 400 when multipart form data is missing', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+
+        const response = await postProfileImage(character.id, JSON.stringify({}), db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Multipart form data is required',
+        })
+    })
+
+    it('returns 400 when the profile image file is missing', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+        const form = new FormData()
+
+        const response = await postProfileImage(character.id, form, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Character profile image is required',
+        })
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
     it('replaces the character profile image and deletes the old object', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
@@ -1789,6 +2788,62 @@ describe('POST /characters/:id/profile-image', () => {
         expect(mediaBucket.delete).toHaveBeenCalledWith('characters/current-user/character-id/profile/old-profile-image.webp')
     })
 
+    it('deletes the uploaded profile image when the D1 update fails', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+            runError: new Error('D1 update failed'),
+        })
+        const form = new FormData()
+        form.set('profileImage', createWebpFile())
+
+        try {
+            const response = await postProfileImage(character.id, form, db, {
+                mediaBucket,
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            })
+
+            expect(response.status).toBe(500)
+            const uploadedKey = vi.mocked(mediaBucket.put).mock.calls[0]?.[0]
+            expect(uploadedKey).toMatch(new RegExp(`^characters/current-user/character-id/profile/${uuidPattern}\\.webp$`))
+            expect(mediaBucket.delete).toHaveBeenCalledWith(uploadedKey)
+        } finally {
+            error.mockRestore()
+        }
+    })
+
+    it('keeps responding successfully when deleting the old profile image fails', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        vi.mocked(mediaBucket.delete).mockRejectedValueOnce(new Error('R2 delete failed'))
+        const character = createCharacterRecord({
+            profile_image_key: 'old-profile-image',
+        })
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+        const form = new FormData()
+        form.set('profileImage', createWebpFile())
+
+        try {
+            const response = await postProfileImage(character.id, form, db, {
+                mediaBucket,
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            })
+
+            expect(response.status).toBe(200)
+            expect(warning).toHaveBeenCalledWith('Unable to delete old character profile image', expect.any(Error))
+        } finally {
+            warning.mockRestore()
+        }
+    })
+
     it('rejects profile images that are not 512x512 WebP files', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
@@ -1814,6 +2869,25 @@ describe('POST /characters/:id/profile-image', () => {
 })
 
 describe('PUT /characters/:id/height-chart', () => {
+    it('returns 400 when height chart JSON is missing', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+        const form = new FormData()
+
+        const response = await putHeightChart(character.id, form, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Height chart JSON is required',
+        })
+    })
+
     it('uses the character profile image column when loading the owned character', async () => {
         const sessionToken = 'session-token'
         const character = createCharacterRecord()
@@ -1846,6 +2920,85 @@ describe('PUT /characters/:id/height-chart', () => {
         expect(response.status).toBe(200)
         expect(boundStatements[1]?.sql).toContain('profile_image_key')
         expect(boundStatements[1]?.sql).not.toContain('folder_image_key')
+    })
+
+    it('rejects unsupported height chart image content types', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+        const form = new FormData()
+        form.set(
+            'heightChartJson',
+            JSON.stringify({
+                version: 1,
+                height: {
+                    meters: 1.82,
+                },
+                image: null,
+                calibration: {
+                    headYPercent: 5,
+                    footYPercent: 95,
+                    footIsVirtual: false,
+                    nameTagXPercent: 50,
+                },
+            }),
+        )
+        form.set('heightChartImage', new File(['not an image'], 'chart.txt', {type: 'text/plain'}))
+
+        const response = await putHeightChart(character.id, form, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Image must be PNG, JPG, GIF, WebP, or AVIF',
+        })
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
+    it('deletes an uploaded height chart image when JSON validation fails', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+        const form = new FormData()
+        form.set(
+            'heightChartJson',
+            JSON.stringify({
+                version: 1,
+                height: {
+                    meters: 0,
+                },
+                image: null,
+                calibration: {
+                    headYPercent: 5,
+                    footYPercent: 95,
+                    footIsVirtual: false,
+                    nameTagXPercent: 50,
+                },
+            }),
+        )
+        form.set('heightChartImage', createPngFile(320, 640))
+
+        const response = await putHeightChart(character.id, form, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Height must be between 0.01 and 100 meters',
+        })
+        const uploadedKey = vi.mocked(mediaBucket.put).mock.calls[0]?.[0]
+        expect(mediaBucket.delete).toHaveBeenCalledWith(uploadedKey)
     })
 
     it('saves normalized height chart data and stores the uploaded image', async () => {
@@ -1945,9 +3098,310 @@ describe('PUT /characters/:id/height-chart', () => {
         expect(boundStatements[2]?.binds[2]).toBe(character.id)
         expect(boundStatements[2]?.binds[3]).toBe(currentUserRecord.id)
     })
+
+    it('keeps the existing height chart image when the saved JSON references it', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord({
+            height_chart_json: JSON.stringify({
+                version: 1,
+                height: {
+                    meters: 1.75,
+                },
+                image: {
+                    key: 'existing-height-chart',
+                    contentType: 'image/png',
+                    naturalWidth: 300,
+                    naturalHeight: 600,
+                },
+                calibration: {
+                    headYPercent: 4,
+                    footYPercent: 96,
+                    footIsVirtual: false,
+                    nameTagXPercent: 50,
+                },
+            }),
+        })
+        const mediaBucket = createMockR2Bucket()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+        const form = new FormData()
+        form.set(
+            'heightChartJson',
+            JSON.stringify({
+                version: 1,
+                height: {
+                    meters: 1.8,
+                },
+                image: {
+                    key: 'existing-height-chart',
+                },
+                calibration: {
+                    headYPercent: 5,
+                    footYPercent: 95,
+                    footIsVirtual: true,
+                    nameTagXPercent: 55,
+                },
+            }),
+        )
+
+        const response = await putHeightChart(character.id, form, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+
+        const body = (await response.json()) as {
+            heightChart: {
+                image: {
+                    key: string
+                    url: string
+                }
+                calibration: {
+                    footIsVirtual: boolean
+                }
+            }
+        }
+
+        expect(body.heightChart.image.key).toBe('existing-height-chart')
+        expect(body.heightChart.image.url).toBe(
+            `${mediaPublicBaseUrl}/characters/current-user/character-id/height-chart/existing-height-chart.png`,
+        )
+        expect(body.heightChart.calibration.footIsVirtual).toBe(true)
+        expect(JSON.parse(boundStatements[2]?.binds[0] as string).image.key).toBe('existing-height-chart')
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+        expect(mediaBucket.delete).not.toHaveBeenCalled()
+    })
+
+    it('deletes the previous height chart image after replacing it', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord({
+            height_chart_json: JSON.stringify({
+                version: 1,
+                height: {
+                    meters: 1.75,
+                },
+                image: {
+                    key: 'old-height-chart',
+                    contentType: 'image/png',
+                    naturalWidth: 300,
+                    naturalHeight: 600,
+                },
+                calibration: {
+                    headYPercent: 4,
+                    footYPercent: 96,
+                    footIsVirtual: false,
+                    nameTagXPercent: 50,
+                },
+            }),
+        })
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+        const form = new FormData()
+        form.set(
+            'heightChartJson',
+            JSON.stringify({
+                version: 1,
+                height: {
+                    meters: 1.9,
+                },
+                image: null,
+                calibration: {
+                    headYPercent: 6,
+                    footYPercent: 94,
+                    footIsVirtual: false,
+                    nameTagXPercent: 50,
+                },
+            }),
+        )
+        form.set('heightChartImage', createPngFile(320, 640))
+
+        const response = await putHeightChart(character.id, form, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/current-user/character-id/height-chart/old-height-chart.png')
+    })
 })
 
 describe('character media uploads', () => {
+    it.each([
+        {
+            body: {},
+            error: 'Upload ratings are required',
+        },
+        {
+            body: {ratings: []},
+            error: 'At least one upload rating is required',
+        },
+        {
+            body: {ratings: ['private']},
+            error: 'Upload ratings must be sfw or nsfw',
+        },
+        {
+            body: {ratings: [{rating: 'sfw', contentType: 'text/plain'}]},
+            error: 'Image must be PNG, JPG, GIF, WebP, or AVIF',
+        },
+    ])('rejects invalid chunked upload init requests with $error', async ({body, error}) => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+
+        const response = await initChunkedMedia(character.id, body, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error})
+        expect(mediaBucket.createMultipartUpload).not.toHaveBeenCalled()
+    })
+
+    it.each([
+        {
+            rating: 'private',
+            mediaId: 'media-id',
+            imageKey: 'image-key',
+            contentType: 'image/png',
+            partNumber: 1,
+            body: new Uint8Array([1]),
+            error: 'Media rating must be sfw or nsfw',
+        },
+        {
+            rating: 'sfw',
+            mediaId: 'bad.media',
+            imageKey: 'image-key',
+            contentType: 'image/png',
+            partNumber: 1,
+            body: new Uint8Array([1]),
+            error: 'Media id is invalid',
+        },
+        {
+            rating: 'sfw',
+            mediaId: 'media-id',
+            imageKey: 'bad.image',
+            contentType: 'image/png',
+            partNumber: 1,
+            body: new Uint8Array([1]),
+            error: 'Image key is invalid',
+        },
+        {
+            rating: 'sfw',
+            mediaId: 'media-id',
+            imageKey: 'image-key',
+            contentType: 'text/plain',
+            partNumber: 1,
+            body: new Uint8Array([1]),
+            error: 'Image must be PNG, JPG, GIF, WebP, or AVIF',
+        },
+        {
+            rating: 'sfw',
+            mediaId: 'media-id',
+            imageKey: 'image-key',
+            contentType: 'image/png',
+            partNumber: 0,
+            body: new Uint8Array([1]),
+            error: 'Part number must be between 1 and 10000',
+        },
+    ])('rejects invalid chunked upload part requests with $error', async ({
+        rating,
+        mediaId,
+        imageKey,
+        contentType,
+        partNumber,
+        body,
+        error,
+    }) => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+
+        const response = await putChunkedMediaPart(
+            character.id,
+            mediaId,
+            rating,
+            'upload-id',
+            partNumber,
+            imageKey,
+            body,
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+            contentType,
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error})
+        expect(mediaBucket.resumeMultipartUpload).not.toHaveBeenCalled()
+    })
+
+    it('rejects chunked upload parts with no request body', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+
+        const response = await apiRoutes.request(
+            `https://example.com/characters/${character.id}/media/chunked/media-id/sfw/upload-id/1?imageKey=image-key&contentType=image%2Fpng`,
+            {
+                method: 'PUT',
+                headers: createRequestHeaders(undefined, {
+                    sessionToken,
+                    csrfToken: await createCsrfToken(sessionToken),
+                }),
+            },
+            requestEnv(db, mediaBucket),
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Chunk body is required',
+        })
+        expect(mediaBucket.resumeMultipartUpload).not.toHaveBeenCalled()
+    })
+
+    it('aborts chunked gallery media uploads', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+
+        const response = await deleteChunkedMediaUpload(character.id, 'media-id', 'sfw', 'upload-id', 'image-key', db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(204)
+        expect(mediaBucket.resumeMultipartUpload).toHaveBeenCalledWith(
+            'characters/current-user/character-id/media/media-id/sfw/image-key.png',
+            'upload-id',
+        )
+        const upload = vi.mocked(mediaBucket.resumeMultipartUpload).mock.results[0]?.value as R2MultipartUpload
+        expect(upload.abort).toHaveBeenCalledTimes(1)
+    })
+
     it('uploads gallery media through R2 multipart chunks', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
@@ -2664,6 +4118,232 @@ describe('character media uploads', () => {
         })
         expect(mediaBucket.resumeMultipartUpload).not.toHaveBeenCalled()
         expect(db.batch).not.toHaveBeenCalled()
+    })
+
+    it('initializes chunked replacement uploads for existing media', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const media = createMediaRecord({character_id: character.id})
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character, media],
+        })
+
+        const response = await initExistingChunkedMedia(
+            character.id,
+            media.id,
+            {
+                uploads: [{rating: 'nsfw', contentType: 'image/webp'}],
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(200)
+        const body = (await response.json()) as {
+            mediaId: string
+            uploads: {
+                nsfw: {
+                    imageKey: string
+                    contentType: string
+                }
+            }
+        }
+        expect(body.mediaId).toBe(media.id)
+        expect(body.uploads.nsfw.contentType).toBe('image/webp')
+        expect(mediaBucket.createMultipartUpload).toHaveBeenCalledWith(
+            `characters/current-user/character-id/media/${media.id}/nsfw/${body.uploads.nsfw.imageKey}.webp`,
+            {
+                httpMetadata: {
+                    cacheControl: 'public, max-age=31536000, immutable',
+                    contentType: 'image/webp',
+                },
+            },
+        )
+    })
+
+    it('returns 404 when initializing a replacement upload for missing media', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character, null],
+        })
+
+        const response = await initExistingChunkedMedia(
+            character.id,
+            'missing-media',
+            {
+                ratings: ['sfw'],
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(404)
+        expect(await response.json()).toEqual({
+            error: 'Media not found',
+        })
+    })
+
+    it.each([
+        {
+            body: {removeSfw: true},
+            error: 'At least one image must remain on media',
+        },
+        {
+            body: {
+                sfwUpload: {
+                    uploadId: 'upload-id',
+                    imageKey: 'sfw-image',
+                    contentType: 'image/png',
+                    width: 800,
+                    height: 600,
+                    parts: [{partNumber: 1, etag: 'etag-1'}],
+                },
+            },
+            error: 'SFW preview is required',
+        },
+        {
+            body: {
+                nsfwUpload: {
+                    uploadId: 'upload-id',
+                    imageKey: 'nsfw-image',
+                    contentType: 'image/png',
+                    width: 800,
+                    height: 600,
+                    parts: [{partNumber: 1, etag: 'etag-1'}],
+                },
+            },
+            error: 'NSFW preview is required',
+        },
+        {
+            body: {
+                sfwPreview: createPreviewPayload(800, 600),
+            },
+            error: 'SFW preview requires an SFW upload',
+        },
+        {
+            body: {
+                nsfwPreview: createPreviewPayload(800, 600),
+            },
+            error: 'NSFW preview requires an NSFW upload',
+        },
+    ])('rejects invalid existing media chunked completions with $error', async ({body, error}) => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const media = createMediaRecord({character_id: character.id})
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character, media],
+        })
+
+        const response = await completeExistingChunkedMedia(character.id, media.id, body, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error})
+        expect(db.prepare).toHaveBeenCalled()
+        expect(db.batch).not.toHaveBeenCalled()
+    })
+
+    it('removes the SFW variant from existing media while preserving NSFW media', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const media = createMediaRecord({
+            character_id: character.id,
+            nsfw_image_key: 'nsfw-image-key',
+            nsfw_content_type: 'image/png',
+            nsfw_artist: 'NSFW Artist',
+            nsfw_width: 700,
+            nsfw_height: 500,
+            nsfw_byte_size: 2048,
+            nsfw_preview_image_key: 'nsfw-preview-key',
+            nsfw_blur_image_key: 'nsfw-blur-key',
+            nsfw_preview_width: 700,
+            nsfw_preview_height: 500,
+            nsfw_preview_byte_size: 512,
+        })
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character, media],
+        })
+
+        const response = await completeExistingChunkedMedia(
+            character.id,
+            media.id,
+            {
+                removeSfw: true,
+                nsfwArtist: 'Kept Artist',
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(200)
+        const body = (await response.json()) as {
+            media: {
+                sfwImageKey: string | null
+                nsfwImageKey: string | null
+                nsfwArtist: string
+            }
+        }
+        expect(body.media.sfwImageKey).toBeNull()
+        expect(body.media.nsfwImageKey).toBe('nsfw-image-key')
+        expect(body.media.nsfwArtist).toBe('Kept Artist')
+        expect(boundStatements.at(-1)?.sql).toContain('UPDATE character_media')
+        expect(boundStatements.at(-1)?.binds[0]).toBeNull()
+        expect(boundStatements.at(-1)?.binds[21]).toBe(1)
+        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/current-user/character-id/media/media-id/sfw/sfw-image-key.png')
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            'characters/current-user/character-id/media/media-id/sfw/preview/sfw-preview-key.webp',
+        )
+    })
+
+    it('deletes a media item and all of its stored objects', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const media = createMediaRecord({
+            character_id: character.id,
+            nsfw_image_key: 'nsfw-image-key',
+            nsfw_content_type: 'image/png',
+            nsfw_preview_image_key: 'nsfw-preview-key',
+            nsfw_blur_image_key: 'nsfw-blur-key',
+        })
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character, media],
+        })
+
+        const response = await deleteCharacterMedia(character.id, media.id, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(204)
+        expect(boundStatements.at(-1)?.sql).toContain('DELETE')
+        expect(boundStatements.at(-1)?.sql).toContain('FROM character_media')
+        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/current-user/character-id/media/media-id/sfw/sfw-image-key.png')
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            'characters/current-user/character-id/media/media-id/sfw/preview/sfw-preview-key.webp',
+        )
+        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/current-user/character-id/media/media-id/nsfw/nsfw-image-key.png')
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            'characters/current-user/character-id/media/media-id/nsfw/preview/nsfw-preview-key.webp',
+        )
+        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/current-user/character-id/media/media-id/nsfw/blur/nsfw-blur-key.webp')
     })
 })
 
@@ -3496,6 +5176,7 @@ function createCharacterRecord(
         name: string
         profile_image_key: string | null
         folder_id: string | null
+        height_chart_json: string
         created_at: string
         updated_at: string
     }> = {},
@@ -3506,6 +5187,7 @@ function createCharacterRecord(
         name: 'Vyn',
         profile_image_key: null,
         folder_id: null,
+        height_chart_json: '',
         created_at: '2026-06-11 12:00:00',
         updated_at: '2026-06-11 12:00:00',
         ...overrides,
@@ -3529,6 +5211,15 @@ function createMediaRecord(
         nsfw_width: number | null
         nsfw_height: number | null
         nsfw_byte_size: number | null
+        sfw_preview_image_key: string | null
+        sfw_preview_width: number | null
+        sfw_preview_height: number | null
+        sfw_preview_byte_size: number | null
+        nsfw_preview_image_key: string | null
+        nsfw_blur_image_key: string | null
+        nsfw_preview_width: number | null
+        nsfw_preview_height: number | null
+        nsfw_preview_byte_size: number | null
         created_at: string
         updated_at: string
     }> = {},
@@ -3549,6 +5240,15 @@ function createMediaRecord(
         nsfw_width: null,
         nsfw_height: null,
         nsfw_byte_size: null,
+        sfw_preview_image_key: 'sfw-preview-key',
+        sfw_preview_width: 800,
+        sfw_preview_height: 600,
+        sfw_preview_byte_size: 512,
+        nsfw_preview_image_key: null,
+        nsfw_blur_image_key: null,
+        nsfw_preview_width: null,
+        nsfw_preview_height: null,
+        nsfw_preview_byte_size: null,
         created_at: '2026-06-11 12:00:00',
         updated_at: '2026-06-11 12:00:00',
         ...overrides,
