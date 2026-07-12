@@ -1,5 +1,5 @@
-import {getCookie, setCookie} from 'hono/cookie'
 import type {Context} from 'hono'
+import {getCookie, setCookie} from 'hono/cookie'
 import type {Bindings} from '../../types/bindings'
 
 export type UserRecord = {

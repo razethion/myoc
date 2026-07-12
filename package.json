@@ -8,7 +8,7 @@
     "dev": "wrangler types && npm run build && wrangler dev",
     "build": "node scripts/copy-vendor-assets.mjs && tailwindcss -i ./src/styles/app.css -o ./public/app.css --minify",
     "typecheck": "wrangler types && tsc --noEmit",
-    "lint": "biome lint .",
+    "lint": "biome ci .",
     "format": "biome format .",
     "deadcode": "knip",
     "test": "vitest",

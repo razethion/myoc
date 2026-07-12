@@ -1,7 +1,7 @@
 import {describe, expect, it, vi} from 'vitest'
-import {cleanupStaleR2Media, parseManagedR2MediaKey} from './r2Cleanup'
 import {createMockDb} from '../../test/mockD1'
 import {createMockR2Bucket} from '../../test/mockR2'
+import {cleanupStaleR2Media, parseManagedR2MediaKey} from './r2Cleanup'
 
 describe('parseManagedR2MediaKey', () => {
     it('recognizes only managed MyOC media object keys', () => {

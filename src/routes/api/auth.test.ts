@@ -1,10 +1,10 @@
 import {hash} from 'bcryptjs'
 import {describe, expect, it} from 'vitest'
-import {apiRoutes} from '../api'
-import {createMockDb} from '../../test/mockD1'
-import {createCsrfToken, type UserRecord} from '../../lib/auth/session'
 import {hashRecoveryPhrase} from '../../lib/auth/passkeys'
+import {createCsrfToken, type UserRecord} from '../../lib/auth/session'
 import {expectSessionCookie} from '../../test/assertions'
+import {createMockDb} from '../../test/mockD1'
+import {apiRoutes} from '../api'
 
 type SecurityTestUser = UserRecord & {
     webauthn_user_id: string | null

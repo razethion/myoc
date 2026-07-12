@@ -1,9 +1,9 @@
 import {describe, expect, it, vi} from 'vitest'
-import {apiRoutes} from '../api'
 import {createCsrfToken} from '../../lib/auth/session'
 import {createMockDb} from '../../test/mockD1'
 import {createMockImagesBinding} from '../../test/mockImages'
 import {createMockR2Bucket} from '../../test/mockR2'
+import {apiRoutes} from '../api'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
 

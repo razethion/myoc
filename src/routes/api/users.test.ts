@@ -1,13 +1,13 @@
 import {compare} from 'bcryptjs'
 import {describe, expect, it, vi} from 'vitest'
-import {apiRoutes} from '../api'
 import {createCsrfToken} from '../../lib/auth/session'
 import {APP_VERSION} from '../../lib/releases'
-import {createMockDb} from '../../test/mockD1'
-import {createMockR2Bucket} from '../../test/mockR2'
 import {expectSessionCookie} from '../../test/assertions'
 import {createMalformedWebpFile, createOversizedWebpFile, createWebpFile} from '../../test/imageFixtures'
+import {createMockDb} from '../../test/mockD1'
+import {createMockR2Bucket} from '../../test/mockR2'
 import {createRequestHeaders, type TestRequestOptions} from '../../test/request'
+import {apiRoutes} from '../api'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
 const profilePhotoKeyPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/

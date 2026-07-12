@@ -1,5 +1,5 @@
-import type {CurrentUser} from '../../lib/auth/session'
 import type {PasskeySummary, SessionSummary} from '../../lib/auth/passkeys'
+import type {CurrentUser} from '../../lib/auth/session'
 import {profilePhotoUrl} from '../../lib/media/url'
 import {createSettingsSocialLinks, FIXED_SOCIAL_LINKS, type FixedSocialPlatform, type UserSocialLink} from '../../lib/socialLinks'
 import {Navbar} from '../components/Navbar'

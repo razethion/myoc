@@ -1,17 +1,17 @@
-import {compare, hash} from 'bcryptjs'
 import {wordlist} from '@scure/bip39/wordlists/english.js'
 import {
-    generateAuthenticationOptions,
-    generateRegistrationOptions,
     type AuthenticatorTransportFuture,
     type Base64URLString,
+    generateAuthenticationOptions,
+    generateRegistrationOptions,
     type PublicKeyCredentialCreationOptionsJSON,
     type PublicKeyCredentialRequestOptionsJSON,
     type WebAuthnCredential,
 } from '@simplewebauthn/server'
+import {compare, hash} from 'bcryptjs'
 import type {Context} from 'hono'
 import type {Bindings} from '../../types/bindings'
-import {toSqlTimestamp, type CurrentUser} from './session'
+import {type CurrentUser, toSqlTimestamp} from './session'
 
 export type PasskeyRecord = {
     id: string

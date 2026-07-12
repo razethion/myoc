@@ -1,6 +1,6 @@
 import type {CurrentUser} from '../../lib/auth/session'
-import {APP_VERSION, RELEASE_NOTES} from '../../lib/releases'
 import {profilePhotoUrl} from '../../lib/media/url'
+import {APP_VERSION, RELEASE_NOTES} from '../../lib/releases'
 
 type NavbarProps = {
     currentUser?: CurrentUser | null

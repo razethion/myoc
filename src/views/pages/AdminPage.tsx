@@ -1,5 +1,5 @@
-import type {CurrentUser} from '../../lib/auth/session'
 import type {Child} from 'hono/jsx'
+import type {CurrentUser} from '../../lib/auth/session'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 

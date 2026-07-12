@@ -7,10 +7,10 @@ import {
     characterProfileImageUrl,
     profilePhotoUrl,
 } from '../../lib/media/url'
-import type {ProfilePageUser} from './ProfilePage'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 import {absoluteUrl, compactDescription} from '../meta'
+import type {ProfilePageUser} from './ProfilePage'
 
 export type CharacterPageCharacter = {
     id: string

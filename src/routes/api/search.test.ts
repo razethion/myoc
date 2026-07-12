@@ -1,7 +1,7 @@
 import {describe, expect, it} from 'vitest'
-import {apiRoutes} from '../api'
 import {createMockDb} from '../../test/mockD1'
 import {createMockR2Bucket} from '../../test/mockR2'
+import {apiRoutes} from '../api'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
 

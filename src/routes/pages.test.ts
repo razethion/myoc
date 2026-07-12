@@ -1,10 +1,10 @@
 import {afterEach, describe, expect, it, vi} from 'vitest'
-import {pageRoutes} from './pages'
 import app from '../index'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
+import {createWebpDataUrl} from '../test/imageFixtures'
 import {createMockKVNamespace} from '../test/mockKV'
 import {createMockR2Bucket} from '../test/mockR2'
-import {createWebpDataUrl} from '../test/imageFixtures'
+import {pageRoutes} from './pages'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
 
