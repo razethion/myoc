@@ -4,8 +4,8 @@ import {apiRoutes} from './routes/api'
 import {pageRoutes, renderNotFoundPage} from './routes/pages'
 import type {Bindings} from './types/bindings'
 
-export const D1_BACKUP_CRON = '0 8 * * *'
-export const R2_MEDIA_CLEANUP_CRON = '0 9 * * *'
+const D1_BACKUP_CRON = '0 8 * * *'
+const R2_MEDIA_CLEANUP_CRON = '0 9 * * *'
 
 const app = new Hono<{Bindings: Bindings}>()
 
