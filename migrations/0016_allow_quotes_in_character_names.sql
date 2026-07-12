@@ -7,23 +7,66 @@ DROP TABLE IF EXISTS __migration_0016_character_gallery_row_media_backup;
 DROP TABLE IF EXISTS __migration_0016_character_media_review_events_backup;
 
 CREATE TABLE __migration_0016_character_media_backup AS
-SELECT *
+SELECT id,
+       user_id,
+       character_id,
+       sfw_image_key,
+       nsfw_image_key,
+       sfw_artist,
+       nsfw_artist,
+       sfw_width,
+       sfw_height,
+       sfw_byte_size,
+       nsfw_width,
+       nsfw_height,
+       nsfw_byte_size,
+       created_at,
+       updated_at,
+       sfw_review_status,
+       sfw_reviewed_at,
+       sfw_approved_at,
+       sfw_homepage_allowed,
+       nsfw_review_status,
+       nsfw_reviewed_at,
+       nsfw_approved_at,
+       sfw_content_type,
+       nsfw_content_type
 FROM character_media;
 
 CREATE TABLE __migration_0016_character_gallery_tabs_backup AS
-SELECT *
+SELECT id,
+       user_id,
+       character_id,
+       name,
+       sort_order,
+       created_at,
+       updated_at
 FROM character_gallery_tabs;
 
 CREATE TABLE __migration_0016_character_gallery_rows_backup AS
-SELECT *
+SELECT id,
+       user_id,
+       character_id,
+       tab_id,
+       sort_order,
+       created_at,
+       updated_at
 FROM character_gallery_rows;
 
 CREATE TABLE __migration_0016_character_gallery_row_media_backup AS
-SELECT *
+SELECT row_id,
+       media_id,
+       sort_order
 FROM character_gallery_row_media;
 
 CREATE TABLE __migration_0016_character_media_review_events_backup AS
-SELECT *
+SELECT id,
+       media_id,
+       image_rating,
+       action,
+       homepage_allowed,
+       moderator_id,
+       created_at
 FROM character_media_review_events;
 
 DROP INDEX IF EXISTS idx_characters_user_name_unique;
@@ -85,24 +128,110 @@ DROP TABLE characters;
 ALTER TABLE characters_new
     RENAME TO characters;
 
-INSERT OR IGNORE INTO character_media
-SELECT *
+INSERT OR IGNORE INTO character_media (id,
+                                       user_id,
+                                       character_id,
+                                       sfw_image_key,
+                                       nsfw_image_key,
+                                       sfw_artist,
+                                       nsfw_artist,
+                                       sfw_width,
+                                       sfw_height,
+                                       sfw_byte_size,
+                                       nsfw_width,
+                                       nsfw_height,
+                                       nsfw_byte_size,
+                                       created_at,
+                                       updated_at,
+                                       sfw_review_status,
+                                       sfw_reviewed_at,
+                                       sfw_approved_at,
+                                       sfw_homepage_allowed,
+                                       nsfw_review_status,
+                                       nsfw_reviewed_at,
+                                       nsfw_approved_at,
+                                       sfw_content_type,
+                                       nsfw_content_type)
+SELECT id,
+       user_id,
+       character_id,
+       sfw_image_key,
+       nsfw_image_key,
+       sfw_artist,
+       nsfw_artist,
+       sfw_width,
+       sfw_height,
+       sfw_byte_size,
+       nsfw_width,
+       nsfw_height,
+       nsfw_byte_size,
+       created_at,
+       updated_at,
+       sfw_review_status,
+       sfw_reviewed_at,
+       sfw_approved_at,
+       sfw_homepage_allowed,
+       nsfw_review_status,
+       nsfw_reviewed_at,
+       nsfw_approved_at,
+       sfw_content_type,
+       nsfw_content_type
 FROM __migration_0016_character_media_backup;
 
-INSERT OR IGNORE INTO character_gallery_tabs
-SELECT *
+INSERT OR IGNORE INTO character_gallery_tabs (id,
+                                             user_id,
+                                             character_id,
+                                             name,
+                                             sort_order,
+                                             created_at,
+                                             updated_at)
+SELECT id,
+       user_id,
+       character_id,
+       name,
+       sort_order,
+       created_at,
+       updated_at
 FROM __migration_0016_character_gallery_tabs_backup;
 
-INSERT OR IGNORE INTO character_gallery_rows
-SELECT *
+INSERT OR IGNORE INTO character_gallery_rows (id,
+                                             user_id,
+                                             character_id,
+                                             tab_id,
+                                             sort_order,
+                                             created_at,
+                                             updated_at)
+SELECT id,
+       user_id,
+       character_id,
+       tab_id,
+       sort_order,
+       created_at,
+       updated_at
 FROM __migration_0016_character_gallery_rows_backup;
 
-INSERT OR IGNORE INTO character_gallery_row_media
-SELECT *
+INSERT OR IGNORE INTO character_gallery_row_media (row_id,
+                                                  media_id,
+                                                  sort_order)
+SELECT row_id,
+       media_id,
+       sort_order
 FROM __migration_0016_character_gallery_row_media_backup;
 
-INSERT OR IGNORE INTO character_media_review_events
-SELECT *
+INSERT OR IGNORE INTO character_media_review_events (id,
+                                                    media_id,
+                                                    image_rating,
+                                                    action,
+                                                    homepage_allowed,
+                                                    moderator_id,
+                                                    created_at)
+SELECT id,
+       media_id,
+       image_rating,
+       action,
+       homepage_allowed,
+       moderator_id,
+       created_at
 FROM __migration_0016_character_media_review_events_backup;
 
 DROP TABLE __migration_0016_character_media_backup;

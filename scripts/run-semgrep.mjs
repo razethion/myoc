@@ -4,7 +4,8 @@ import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const semgrepArgs = ['scan', '--config', 'auto', '.']
+const semgrepAutoArgs = ['scan', '--config', 'auto', '.']
+const semgrepCustomArgs = ['scan', '--config', '.semgrep.yml', '--error', '.']
 
 function hasCommand(command) {
     const probe = process.platform === 'win32' ? 'where.exe' : 'which'
@@ -44,16 +45,20 @@ function getPythonUserScript(command) {
 }
 
 if (hasCommand('semgrep')) {
-    process.exit(run('semgrep', semgrepArgs))
+    const autoStatus = run('semgrep', semgrepAutoArgs)
+    process.exit(autoStatus === 0 ? run('semgrep', semgrepCustomArgs) : autoStatus)
 }
 
 const pythonSemgrep = getPythonUserScript('semgrep')
 if (pythonSemgrep) {
-    process.exit(run(pythonSemgrep, semgrepArgs))
+    const autoStatus = run(pythonSemgrep, semgrepAutoArgs)
+    process.exit(autoStatus === 0 ? run(pythonSemgrep, semgrepCustomArgs) : autoStatus)
 }
 
 if (hasCommand('docker')) {
-    process.exit(run('docker', ['run', '--rm', '-v', `${repoRoot}:/src`, '-w', '/src', 'semgrep/semgrep', 'semgrep', ...semgrepArgs]))
+    const dockerArgs = ['run', '--rm', '-v', `${repoRoot}:/src`, '-w', '/src', 'semgrep/semgrep', 'semgrep']
+    const autoStatus = run('docker', [...dockerArgs, ...semgrepAutoArgs])
+    process.exit(autoStatus === 0 ? run('docker', [...dockerArgs, ...semgrepCustomArgs]) : autoStatus)
 }
 
 console.error(

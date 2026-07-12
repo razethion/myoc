@@ -33,4 +33,6 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Run Semgrep
-        run: semgrep scan --config auto .
+        run: |
+          semgrep scan --config auto .
+          semgrep scan --config .semgrep.yml --error .

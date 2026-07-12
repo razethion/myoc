@@ -1,0 +1,14 @@
+rules:
+  - id: myoc.sql.no-select-star
+    message: Avoid SELECT *; list the needed columns explicitly.
+    severity: ERROR
+    languages:
+      - generic
+    paths:
+      include:
+        - "**/*.js"
+        - "**/*.mjs"
+        - "**/*.sql"
+        - "**/*.ts"
+        - "**/*.tsx"
+    pattern-regex: (?i)\bselect\s+\*
