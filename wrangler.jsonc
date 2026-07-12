@@ -21,6 +21,8 @@
     "remote": true
   },
   "vars": {
+    "CLOUDFLARE_ACCOUNT_ID": "9b7b3de391cdb5368247e2c468ad1643",
+    "D1_DATABASE_ID": "909ada8f-fc57-47ad-83e1-18ffe863debb",
     "MEDIA_PUBLIC_BASE_URL": "https://m.myoc.art"
   },
   "d1_databases": [

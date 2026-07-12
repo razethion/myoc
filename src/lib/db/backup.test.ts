@@ -2,23 +2,31 @@ import {describe, expect, it, vi} from 'vitest'
 import {createMockR2Bucket} from '../../test/mockR2'
 import {backupD1Database, createBackupKey} from './backup'
 
-const FIXTURE_TABLE = 'backup_fixture_users'
-const FIXTURE_COLUMNS = ['id', 'label', 'login_count', 'avatar'] as const
-const FIXTURE_INDEX = 'idx_backup_fixture_users_label'
+const EXPORT_SQL = [
+    'CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL);',
+    'CREATE UNIQUE INDEX idx_users_username ON users(username);',
+    'INSERT INTO "users" ("id", "email", "username", "password_hash") VALUES (\'user-1\', \'raz@example.test\', \'raz\', \'hash-1\');',
+    'INSERT INTO "users" ("id", "email", "username", "password_hash") VALUES (\'user-2\', \'eth@example.test\', \'eth\', \'hash-2\');',
+].join('\n')
 
 describe('backupD1Database', () => {
-    it('stores a gzipped SQL backup in R2', async () => {
-        const db = createBackupDb()
+    it('exports D1 through the REST API and stores a gzipped SQL backup in R2', async () => {
         const backupBucket = createMockR2Bucket()
         const now = new Date('2026-07-12T08:00:00.000Z')
+        const fetcher = createExportFetch()
 
         const summary = await backupD1Database(
             {
-                DB: db,
+                CLOUDFLARE_ACCOUNT_ID: 'account-id',
+                D1_DATABASE_ID: 'database-id',
+                D1_REST_API_TOKEN: 'api-token',
                 DB_BACKUP_BUCKET: backupBucket,
             },
             now,
-            {rowPageSize: 1},
+            {
+                fetch: fetcher,
+                pollDelayMs: 0,
+            },
         )
 
         expect(summary).toMatchObject({
@@ -30,6 +38,26 @@ describe('backupD1Database', () => {
             rows: 2,
         })
         expect(summary.compressedBytes).toBeGreaterThan(0)
+        expect(fetcher).toHaveBeenNthCalledWith(
+            1,
+            'https://api.cloudflare.com/client/v4/accounts/account-id/d1/database/database-id/export',
+            expect.objectContaining({
+                body: JSON.stringify({output_format: 'polling'}),
+                headers: expect.objectContaining({
+                    Authorization: 'Bearer api-token',
+                    'Content-Type': 'application/json',
+                }),
+                method: 'POST',
+            }),
+        )
+        expect(fetcher).toHaveBeenNthCalledWith(
+            2,
+            'https://api.cloudflare.com/client/v4/accounts/account-id/d1/database/database-id/export',
+            expect.objectContaining({
+                body: JSON.stringify({current_bookmark: 'bookmark-1'}),
+            }),
+        )
+        expect(fetcher).toHaveBeenNthCalledWith(3, 'https://example.test/dump.sql')
         expect(backupBucket.put).toHaveBeenCalledWith(
             summary.key,
             expect.any(Uint8Array),
@@ -47,14 +75,53 @@ describe('backupD1Database', () => {
 
         const object = await backupBucket.get(summary.key)
         expect(object).not.toBeNull()
-        const backupSql = await gunzipObject(object)
-        expect(backupSql).toContain('-- myoc-db D1 backup generated at 2026-07-12T08:00:00.000Z')
-        expect(backupSql).toContain('PRAGMA foreign_keys=OFF;')
-        expect(backupSql).toContain(`${createFixtureTableSql()};`)
-        expect(backupSql).toContain(fixtureInsertSql("'user-1'", "'O''Malley'", '3', "X'000fff'"))
-        expect(backupSql).toContain(fixtureInsertSql("'user-2'", 'NULL', '0', "X''"))
-        expect(backupSql.indexOf(createFixtureIndexSql())).toBeGreaterThan(backupSql.indexOf(insertPrefix()))
-        expect(backupSql).toContain('\nCOMMIT;\nPRAGMA foreign_keys=ON;\n')
+        expect(await gunzipObject(object)).toBe(EXPORT_SQL)
+    })
+
+    it('reports an export API error when the API rejects the backup request', async () => {
+        const fetcher = vi.fn(async () =>
+            Response.json(
+                {
+                    errors: [{message: 'not allowed'}],
+                    success: false,
+                },
+                {status: 403},
+            ),
+        ) as unknown as typeof fetch
+
+        await expect(
+            backupD1Database(
+                {
+                    CLOUDFLARE_ACCOUNT_ID: 'account-id',
+                    D1_DATABASE_ID: 'database-id',
+                    D1_REST_API_TOKEN: 'api-token',
+                    DB_BACKUP_BUCKET: createMockR2Bucket(),
+                },
+                new Date('2026-07-12T08:00:00.000Z'),
+                {
+                    fetch: fetcher,
+                    pollDelayMs: 0,
+                },
+            ),
+        ).rejects.toThrow('D1 export API failed with HTTP 403: not allowed')
+    })
+
+    it('reports a configuration error when the API token secret is missing', async () => {
+        await expect(
+            backupD1Database(
+                {
+                    CLOUDFLARE_ACCOUNT_ID: 'account-id',
+                    D1_DATABASE_ID: 'database-id',
+                    D1_REST_API_TOKEN: undefined,
+                    DB_BACKUP_BUCKET: createMockR2Bucket(),
+                } as unknown as Parameters<typeof backupD1Database>[0],
+                new Date('2026-07-12T08:00:00.000Z'),
+                {
+                    fetch: vi.fn() as unknown as typeof fetch,
+                    pollDelayMs: 0,
+                },
+            ),
+        ).rejects.toThrow('D1_REST_API_TOKEN is not configured')
     })
 })
 
@@ -64,112 +131,34 @@ describe('createBackupKey', () => {
     })
 })
 
-function createBackupDb(): D1Database {
-    return {
-        prepare: vi.fn((sql: string) => {
-            const statement = {
-                binds: [] as unknown[],
-                bind(...binds: unknown[]) {
-                    statement.binds = binds
-                    return statement
-                },
-                async all<T>() {
-                    if (sql.includes('sqlite_master')) {
-                        return d1Result([
-                            {
-                                type: 'table',
-                                name: FIXTURE_TABLE,
-                                tbl_name: FIXTURE_TABLE,
-                                sql: createFixtureTableSql(),
-                            },
-                            {
-                                type: 'index',
-                                name: FIXTURE_INDEX,
-                                tbl_name: FIXTURE_TABLE,
-                                sql: createFixtureIndexSql(),
-                            },
-                        ] as T[])
-                    }
+function createExportFetch(): typeof fetch {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
 
-                    if (sql.includes('pragma_table_info')) {
-                        return d1Result([{name: 'id'}, {name: 'label'}, {name: 'login_count'}, {name: 'avatar'}] as T[])
-                    }
+        if (url.endsWith('/export')) {
+            const call = fetcher.mock.calls.length
 
-                    throw new Error(`Unexpected all() SQL: ${sql}`)
-                },
-                async raw<T>() {
-                    if (!sql.includes(` ${keyword('FROM')} ${quotedIdentifier(FIXTURE_TABLE)}`)) {
-                        throw new Error(`Unexpected raw() SQL: ${sql}`)
-                    }
-
-                    const limit = Number(statement.binds[0])
-                    const offset = Number(statement.binds[1])
-                    const rows = [
-                        ['user-1', "O'Malley", 3, new Uint8Array([0x00, 0x0f, 0xff])],
-                        ['user-2', null, 0, new Uint8Array()],
-                    ]
-
-                    return rows.slice(offset, offset + limit) as T[]
-                },
+            if (call === 1) {
+                return Response.json({
+                    result: {
+                        at_bookmark: 'bookmark-1',
+                    },
+                    success: true,
+                })
             }
 
-            return statement
-        }),
-        batch: vi.fn(),
-        exec: vi.fn(),
-        dump: vi.fn(),
-        withSession: vi.fn(),
-    } as unknown as D1Database
-}
+            return Response.json({
+                result: {
+                    signed_url: 'https://example.test/dump.sql',
+                },
+                success: true,
+            })
+        }
 
-function createFixtureTableSql(): string {
-    return [
-        keyword('CREATE'),
-        keyword('TABLE'),
-        FIXTURE_TABLE,
-        `(${FIXTURE_COLUMNS[0]} TEXT ${keyword('PRIMARY')} ${keyword('KEY')}, ${FIXTURE_COLUMNS[1]} TEXT, ${FIXTURE_COLUMNS[2]} INTEGER, ${FIXTURE_COLUMNS[3]} BLOB)`,
-    ].join(' ')
-}
+        return new Response(EXPORT_SQL, {status: 200})
+    })
 
-function createFixtureIndexSql(): string {
-    return [keyword('CREATE'), keyword('INDEX'), FIXTURE_INDEX, keyword('ON'), `${FIXTURE_TABLE}(${FIXTURE_COLUMNS[1]})`].join(' ')
-}
-
-function fixtureInsertSql(id: string, label: string, loginCount: string, avatar: string): string {
-    return `${insertPrefix()} ${keyword('VALUES')} (${id}, ${label}, ${loginCount}, ${avatar});`
-}
-
-function insertPrefix(): string {
-    return [
-        keyword('INSERT'),
-        keyword('INTO'),
-        quotedIdentifier(FIXTURE_TABLE),
-        `(${FIXTURE_COLUMNS.map(quotedIdentifier).join(', ')})`,
-    ].join(' ')
-}
-
-function quotedIdentifier(value: string): string {
-    return `"${value}"`
-}
-
-function keyword(value: string): string {
-    return value
-}
-
-function d1Result<T>(results: T[]): D1Result<T> {
-    return {
-        success: true,
-        results,
-        meta: {
-            changed_db: false,
-            changes: 0,
-            duration: 0,
-            last_row_id: 0,
-            rows_read: results.length,
-            rows_written: 0,
-            size_after: 0,
-        },
-    }
+    return fetcher as unknown as typeof fetch
 }
 
 async function gunzipObject(object: R2ObjectBody | null): Promise<string> {

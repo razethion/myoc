@@ -2,26 +2,30 @@ import type {Bindings} from '../../types/bindings'
 
 const DATABASE_NAME = 'myoc-db'
 const BACKUP_PREFIX = 'd1/myoc-db'
-const ROW_PAGE_SIZE = 500
+const EXPORT_POLL_ATTEMPTS = 10
+const EXPORT_POLL_DELAY_MS = 2_000
 
-type D1BackupEnv = Pick<Bindings, 'DB' | 'DB_BACKUP_BUCKET'>
+type D1BackupEnv = Pick<Bindings, 'CLOUDFLARE_ACCOUNT_ID' | 'D1_DATABASE_ID' | 'D1_REST_API_TOKEN' | 'DB_BACKUP_BUCKET'>
 
 type BackupOptions = {
-    rowPageSize?: number
+    fetch?: typeof fetch
+    pollAttempts?: number
+    pollDelayMs?: number
 }
 
-type SchemaObjectRow = {
-    type: 'table' | 'index' | 'trigger' | 'view'
-    name: string
-    tbl_name: string
-    sql: string
+type ExportStartResult = {
+    at_bookmark?: unknown
 }
 
-type TableColumnRow = {
-    name: string
+type ExportPollResult = {
+    signed_url?: unknown
 }
 
-type SqlValue = ArrayBuffer | ArrayBufferView | boolean | number | string | null
+type D1ExportApiResponse<TResult> = {
+    errors?: Array<{message?: string}>
+    result?: TResult
+    success?: boolean
+}
 
 export type D1BackupSummary = {
     key: string
@@ -42,14 +46,10 @@ type BackupStats = {
 export async function backupD1Database(env: D1BackupEnv, now = new Date(), options: BackupOptions = {}): Promise<D1BackupSummary> {
     const generatedAt = now.toISOString()
     const key = createBackupKey(now)
-    const stats: BackupStats = {
-        schemaObjects: 0,
-        tables: 0,
-        rows: 0,
-    }
-    const sqlStream = streamFromAsyncIterable(createD1BackupSqlChunks(env.DB, generatedAt, stats, options))
-    const gzipStream = sqlStream.pipeThrough(new TextEncoderStream()).pipeThrough(new CompressionStream('gzip'))
-    const gzipBytes = new Uint8Array(await new Response(gzipStream).arrayBuffer())
+    const fetcher = options.fetch ?? fetch
+    const dumpSql = await exportD1DatabaseSql(env, fetcher, options)
+    const stats = countSqlDumpStats(dumpSql)
+    const gzipBytes = await gzipText(dumpSql)
     const backupObject = await env.DB_BACKUP_BUCKET.put(key, gzipBytes, {
         httpMetadata: {
             contentType: 'application/sql',
@@ -92,160 +92,120 @@ export function createBackupKey(now: Date): string {
     return `${BACKUP_PREFIX}/${year}/${month}/${day}/${DATABASE_NAME}-${timestamp}.sql.gz`
 }
 
-async function* createD1BackupSqlChunks(
-    db: D1Database,
-    generatedAt: string,
-    stats: BackupStats,
+async function exportD1DatabaseSql(env: D1BackupEnv, fetcher: typeof fetch, options: BackupOptions): Promise<string> {
+    const exportUrl = createD1ExportUrl(env)
+    const apiToken = requireEnvString(env.D1_REST_API_TOKEN, 'D1_REST_API_TOKEN')
+    const bookmark = await startD1Export(exportUrl, apiToken, fetcher)
+    const signedUrl = await pollD1Export(exportUrl, apiToken, bookmark, fetcher, options)
+    const dumpResponse = await fetcher(signedUrl)
+
+    if (!dumpResponse.ok) {
+        throw new Error(`D1 export dump download failed with HTTP ${dumpResponse.status}`)
+    }
+
+    return await dumpResponse.text()
+}
+
+function createD1ExportUrl(env: D1BackupEnv): string {
+    const accountId = encodeURIComponent(requireEnvString(env.CLOUDFLARE_ACCOUNT_ID, 'CLOUDFLARE_ACCOUNT_ID'))
+    const databaseId = encodeURIComponent(requireEnvString(env.D1_DATABASE_ID, 'D1_DATABASE_ID'))
+    return `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/${databaseId}/export`
+}
+
+function requireEnvString(value: string | undefined, name: string): string {
+    if (typeof value !== 'string' || value.length === 0) {
+        throw new Error(`${name} is not configured`)
+    }
+
+    return value
+}
+
+async function startD1Export(exportUrl: string, apiToken: string, fetcher: typeof fetch): Promise<string> {
+    const response = await postD1Export<ExportStartResult>(exportUrl, apiToken, fetcher, {output_format: 'polling'})
+    const bookmark = response.result?.at_bookmark
+
+    if (typeof bookmark !== 'string' || bookmark.length === 0) {
+        throw new Error('D1 export did not return an export bookmark')
+    }
+
+    return bookmark
+}
+
+async function pollD1Export(
+    exportUrl: string,
+    apiToken: string,
+    bookmark: string,
+    fetcher: typeof fetch,
     options: BackupOptions,
-): AsyncGenerator<string> {
-    const schemaObjects = await listSchemaObjects(db)
-    const tableObjects = schemaObjects.filter((object) => object.type === 'table')
-    const deferredSchemaObjects = schemaObjects.filter((object) => object.type !== 'table')
-    const rowPageSize = options.rowPageSize ?? ROW_PAGE_SIZE
+): Promise<string> {
+    const pollAttempts = options.pollAttempts ?? EXPORT_POLL_ATTEMPTS
+    const pollDelayMs = options.pollDelayMs ?? EXPORT_POLL_DELAY_MS
 
-    stats.schemaObjects = schemaObjects.length
-    stats.tables = tableObjects.length
+    for (let attempt = 1; attempt <= pollAttempts; attempt += 1) {
+        const response = await postD1Export<ExportPollResult>(exportUrl, apiToken, fetcher, {current_bookmark: bookmark})
+        const signedUrl = response.result?.signed_url
 
-    yield `-- ${DATABASE_NAME} D1 backup generated at ${generatedAt}\n`
-    yield 'PRAGMA foreign_keys=OFF;\n'
-    yield 'BEGIN TRANSACTION;\n\n'
-
-    for (const table of tableObjects) {
-        yield `${ensureSqlStatementTerminator(table.sql)}\n`
-    }
-
-    if (tableObjects.length > 0) {
-        yield '\n'
-    }
-
-    for (const table of tableObjects) {
-        const columns = await listTableColumns(db, table.name)
-
-        if (columns.length === 0) {
-            continue
+        if (typeof signedUrl === 'string' && signedUrl.length > 0) {
+            return signedUrl
         }
 
-        const quotedTableName = quoteIdentifier(table.name)
-        const quotedColumnList = columns.map(quoteIdentifier).join(', ')
-        const selectSql = `SELECT ${quotedColumnList} FROM ${quotedTableName} ORDER BY rowid LIMIT ? OFFSET ?`
-        let offset = 0
-
-        while (true) {
-            const rows = await db.prepare(selectSql).bind(rowPageSize, offset).raw<SqlValue[]>()
-
-            if (rows.length === 0) {
-                break
-            }
-
-            for (const row of rows) {
-                stats.rows += 1
-                yield `INSERT INTO ${quotedTableName} (${quotedColumnList}) VALUES (${row.map(sqlLiteral).join(', ')});\n`
-            }
-
-            if (rows.length < rowPageSize) {
-                break
-            }
-
-            offset += rowPageSize
+        if (attempt < pollAttempts) {
+            await wait(pollDelayMs)
         }
-
-        yield '\n'
     }
 
-    for (const schemaObject of deferredSchemaObjects) {
-        yield `${ensureSqlStatementTerminator(schemaObject.sql)}\n`
-    }
-
-    yield '\nCOMMIT;\n'
-    yield 'PRAGMA foreign_keys=ON;\n'
+    throw new Error(`D1 export did not return a signed dump URL after ${pollAttempts} attempts`)
 }
 
-async function listSchemaObjects(db: D1Database): Promise<SchemaObjectRow[]> {
-    const result = await db
-        .prepare(
-            `SELECT type, name, tbl_name, sql
-             FROM sqlite_master
-             WHERE sql IS NOT NULL
-               AND name NOT LIKE 'sqlite_%'
-             ORDER BY
-               CASE type
-                 WHEN 'table' THEN 0
-                 WHEN 'index' THEN 1
-                 WHEN 'trigger' THEN 2
-                 WHEN 'view' THEN 3
-                 ELSE 4
-               END,
-               name`,
-        )
-        .all<SchemaObjectRow>()
-
-    return result.results
-}
-
-async function listTableColumns(db: D1Database, tableName: string): Promise<string[]> {
-    const result = await db.prepare(`SELECT name FROM pragma_table_info(${sqlLiteral(tableName)}) ORDER BY cid`).all<TableColumnRow>()
-    return result.results.map((column) => column.name)
-}
-
-function streamFromAsyncIterable<T>(iterable: AsyncIterable<T>): ReadableStream<T> {
-    const iterator = iterable[Symbol.asyncIterator]()
-
-    return new ReadableStream<T>({
-        async pull(controller) {
-            const next = await iterator.next()
-
-            if (next.done) {
-                controller.close()
-                return
-            }
-
-            controller.enqueue(next.value)
+async function postD1Export<TResult>(
+    exportUrl: string,
+    apiToken: string,
+    fetcher: typeof fetch,
+    body: Record<string, string>,
+): Promise<D1ExportApiResponse<TResult>> {
+    const response = await fetcher(exportUrl, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${apiToken}`,
+            'Content-Type': 'application/json',
         },
-        async cancel() {
-            await iterator.return?.()
-        },
+        body: JSON.stringify(body),
     })
+    const payload = (await response.json()) as D1ExportApiResponse<TResult>
+
+    if (!response.ok || payload.success === false) {
+        throw new Error(`D1 export API failed with HTTP ${response.status}: ${d1ApiErrorMessage(payload)}`)
+    }
+
+    return payload
 }
 
-function ensureSqlStatementTerminator(sql: string): string {
-    const trimmed = sql.trimEnd()
-    return trimmed.endsWith(';') ? trimmed : `${trimmed};`
+function d1ApiErrorMessage(payload: D1ExportApiResponse<unknown>): string {
+    const messages = payload.errors?.flatMap((error) => (error.message ? [error.message] : [])) ?? []
+    return messages.length > 0 ? messages.join('; ') : 'Unknown error'
 }
 
-function quoteIdentifier(identifier: string): string {
-    return `"${identifier.replace(/"/g, '""')}"`
+async function gzipText(text: string): Promise<Uint8Array> {
+    const gzipStream = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'))
+    return new Uint8Array(await new Response(gzipStream).arrayBuffer())
 }
 
-function sqlLiteral(value: SqlValue): string {
-    if (value === null) {
-        return 'NULL'
+function countSqlDumpStats(sql: string): BackupStats {
+    return {
+        schemaObjects: countMatches(sql, /^\s*CREATE\s+(?:UNIQUE\s+)?(?:TABLE|INDEX|TRIGGER|VIEW)\b/gim),
+        tables: countMatches(sql, /^\s*CREATE\s+TABLE\b/gim),
+        rows: countMatches(sql, /^\s*INSERT\s+INTO\b/gim),
     }
-
-    if (typeof value === 'boolean') {
-        return value ? '1' : '0'
-    }
-
-    if (typeof value === 'number') {
-        return Number.isFinite(value) ? String(value) : sqlLiteral(String(value))
-    }
-
-    if (typeof value === 'string') {
-        return `'${value.replace(/'/g, "''")}'`
-    }
-
-    if (value instanceof ArrayBuffer) {
-        return blobLiteral(new Uint8Array(value))
-    }
-
-    return blobLiteral(new Uint8Array(value.buffer, value.byteOffset, value.byteLength))
 }
 
-function blobLiteral(bytes: Uint8Array): string {
-    let hex = ''
+function countMatches(value: string, pattern: RegExp): number {
+    return [...value.matchAll(pattern)].length
+}
 
-    for (const byte of bytes) {
-        hex += byte.toString(16).padStart(2, '0')
+async function wait(ms: number): Promise<void> {
+    if (ms <= 0) {
+        return
     }
 
-    return `X'${hex}'`
+    await new Promise((resolve) => setTimeout(resolve, ms))
 }

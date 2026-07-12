@@ -19,7 +19,10 @@ export type AdminJobTriggerSource = 'cron' | 'manual'
 export type AdminJobRunStatus = 'running' | 'success' | 'error'
 export type AdminJobSummary = D1BackupSummary | R2CleanupSummary
 
-type AdminJobEnv = Pick<Bindings, 'DB' | 'DB_BACKUP_BUCKET' | 'MEDIA_BUCKET'>
+type AdminJobEnv = Pick<
+    Bindings,
+    'CLOUDFLARE_ACCOUNT_ID' | 'D1_DATABASE_ID' | 'D1_REST_API_TOKEN' | 'DB' | 'DB_BACKUP_BUCKET' | 'MEDIA_BUCKET'
+>
 
 type AdminJobRunOptions = {
     cron?: string | null
