@@ -1,8 +1,12 @@
-import {Hono} from 'hono'
 import type {Context} from 'hono'
-import {getCurrentUser, toSqlTimestamp, type CurrentUser} from '../../lib/auth/session'
+import {Hono} from 'hono'
+import {type CurrentUser, getCurrentUser, toSqlTimestamp} from '../../lib/auth/session'
 import {GALLERY_MAX_IMAGES_PER_ROW, shouldForceGalleryRowFullWidth} from '../../lib/gallery'
+import {getPngDimensions} from '../../lib/media/png'
+import {PROFILE_IMAGE_MAX_REQUEST_BYTES, validateProfileImagePayload} from '../../lib/media/profileImage'
 import {
+    characterFolderImageObjectKey,
+    characterFolderImageUrl,
     characterHeightChartImageObjectKey,
     characterHeightChartImageUrl,
     characterMediaImageObjectKey,
@@ -11,14 +15,10 @@ import {
     characterMediaNsfwBlurImageUrl,
     characterMediaPreviewImageObjectKey,
     characterMediaPreviewImageUrl,
-    characterFolderImageObjectKey,
-    characterFolderImageUrl,
     characterProfileImageObjectKey,
     characterProfileImageUrl,
 } from '../../lib/media/url'
-import {getPngDimensions} from '../../lib/media/png'
 import {getWebpDimensions} from '../../lib/media/webp'
-import {PROFILE_IMAGE_MAX_REQUEST_BYTES, validateProfileImagePayload} from '../../lib/media/profileImage'
 import type {Bindings} from '../../types/bindings'
 
 type CharacterRouteContext = Context<{Bindings: Bindings}>

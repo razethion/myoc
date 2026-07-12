@@ -1,10 +1,10 @@
 import type {CurrentUser} from '../../lib/auth/session'
 import {characterFolderImageUrl, characterProfileImageUrl, profilePhotoUrl} from '../../lib/media/url'
 import {FIXED_SOCIAL_LINKS, type SocialPlatform, type UserSocialLink} from '../../lib/socialLinks'
-import type {CharacterFolderPlacement, CharacterManagementCharacter, CharacterManagementFolder} from './CharacterManagementPage'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 import {absoluteUrl, compactDescription} from '../meta'
+import type {CharacterFolderPlacement, CharacterManagementCharacter, CharacterManagementFolder} from './CharacterManagementPage'
 
 export type ProfilePageUser = {
     id: string

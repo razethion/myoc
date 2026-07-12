@@ -14,6 +14,10 @@ type MockDbOptions = {
     runError?: Error
 }
 
+export function sqlFragment(...tokens: string[]): string {
+    return tokens.join(' ')
+}
+
 export function createMockDb(options: MockDbOptions = {}): {
     db: D1Database
     boundStatements: BoundStatement[]

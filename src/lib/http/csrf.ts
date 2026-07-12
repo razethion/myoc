@@ -1,7 +1,7 @@
 import type {Context, Next} from 'hono'
 import {getCookie} from 'hono/cookie'
-import {getSessionCookieName, isValidCsrfToken} from '../auth/session'
 import type {Bindings} from '../../types/bindings'
+import {getSessionCookieName, isValidCsrfToken} from '../auth/session'
 
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 const PUBLIC_UNSAFE_PATHS = new Set([

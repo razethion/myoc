@@ -1,6 +1,6 @@
+import type {CurrentUser} from '../../lib/auth/session'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
-import type {CurrentUser} from '../../lib/auth/session'
 
 type AuthMode = 'login' | 'register'
 

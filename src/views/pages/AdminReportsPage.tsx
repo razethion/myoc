@@ -1,4 +1,4 @@
-import type {AdminReportsData, AdminImageReport} from '../../lib/admin/reports'
+import type {AdminImageReport, AdminReportsData} from '../../lib/admin/reports'
 
 type AdminReportsPageProps = {
     csrfToken: string

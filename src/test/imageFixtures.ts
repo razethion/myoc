@@ -1,3 +1,5 @@
+import {writeAscii, writeUint16Le, writeUint24Le, writeUint32Be, writeUint32Le} from './binaryWriters'
+
 export function createWebpFile(width = 512, height = 512, type = 'image/webp', name = 'profile-image.webp'): File {
     return new File([createVp8xWebpBytes(width, height)], name, {
         type,
@@ -79,35 +81,4 @@ function createVp8xWebpBytes(width: number, height: number): Uint8Array {
     writeUint24Le(bytes, 24, width - 1)
     writeUint24Le(bytes, 27, height - 1)
     return bytes
-}
-
-function writeAscii(bytes: Uint8Array, offset: number, value: string): void {
-    for (let index = 0; index < value.length; index += 1) {
-        bytes[offset + index] = value.charCodeAt(index)
-    }
-}
-
-function writeUint24Le(bytes: Uint8Array, offset: number, value: number): void {
-    bytes[offset] = value & 0xff
-    bytes[offset + 1] = (value >> 8) & 0xff
-    bytes[offset + 2] = (value >> 16) & 0xff
-}
-
-function writeUint16Le(bytes: Uint8Array, offset: number, value: number): void {
-    bytes[offset] = value & 0xff
-    bytes[offset + 1] = (value >> 8) & 0xff
-}
-
-function writeUint32Le(bytes: Uint8Array, offset: number, value: number): void {
-    bytes[offset] = value & 0xff
-    bytes[offset + 1] = (value >> 8) & 0xff
-    bytes[offset + 2] = (value >> 16) & 0xff
-    bytes[offset + 3] = (value >> 24) & 0xff
-}
-
-function writeUint32Be(bytes: Uint8Array, offset: number, value: number): void {
-    bytes[offset] = (value >> 24) & 0xff
-    bytes[offset + 1] = (value >> 16) & 0xff
-    bytes[offset + 2] = (value >> 8) & 0xff
-    bytes[offset + 3] = value & 0xff
 }
