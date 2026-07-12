@@ -4,13 +4,15 @@ import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import {createWebpDataUrl} from '../test/imageFixtures'
 import {createMockKVNamespace} from '../test/mockKV'
 import {createMockR2Bucket} from '../test/mockR2'
+import {resetWorkerBindings, workerEnv} from '../test/workerBindings'
 import {pageRoutes} from './pages'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
 
-afterEach(() => {
+afterEach(async () => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    await resetWorkerBindings()
 })
 
 type QueryResult = {
@@ -193,9 +195,9 @@ async function getProfilePath(path: string, db: D1Database): Promise<Response> {
         `https://example.com${path}`,
         {},
         {
-            CACHE: createMockKVNamespace(),
+            CACHE: workerEnv.CACHE,
             DB: db,
-            MEDIA_BUCKET: createMockR2Bucket(),
+            MEDIA_BUCKET: workerEnv.MEDIA_BUCKET,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         },
     )
@@ -205,7 +207,7 @@ async function getAppPath(
     path: string,
     db = createProfilePageDb(),
     headers: Record<string, string> = {},
-    cache = createMockKVNamespace(),
+    cache = workerEnv.CACHE,
 ): Promise<Response> {
     return app.request(
         `https://example.com${path}`,
@@ -213,7 +215,7 @@ async function getAppPath(
         {
             CACHE: cache,
             DB: db,
-            MEDIA_BUCKET: createMockR2Bucket(),
+            MEDIA_BUCKET: workerEnv.MEDIA_BUCKET,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         },
     )
