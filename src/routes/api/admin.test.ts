@@ -353,7 +353,7 @@ describe('POST /admin/jobs/:jobName/run', () => {
         })
     })
 
-    it('runs R2 media cleanup and records the job result', async () => {
+    it('starts R2 media cleanup and records a running job result', async () => {
         const {db, boundStatements} = createMockDb({
             firstResults: [createCurrentUserRecord('admin')],
         })
@@ -362,7 +362,7 @@ describe('POST /admin/jobs/:jobName/run', () => {
         const response = await postAdminJobRun('r2-media-cleanup', db, mediaBucket)
         const body = (await response.json()) as {
             ok: true
-            run: {jobName: string; status: string; summary: {scanned: number; deleted: number; errors: number}}
+            run: {jobName: string; status: string}
         }
 
         expect(response.status).toBe(200)
@@ -370,12 +370,7 @@ describe('POST /admin/jobs/:jobName/run', () => {
         expect(body.run).toEqual(
             expect.objectContaining({
                 jobName: 'r2-media-cleanup',
-                status: 'success',
-                summary: expect.objectContaining({
-                    deleted: 0,
-                    errors: 0,
-                    scanned: 0,
-                }),
+                status: 'running',
             }),
         )
         expect(boundStatements).toEqual(
@@ -383,10 +378,6 @@ describe('POST /admin/jobs/:jobName/run', () => {
                 expect.objectContaining({
                     binds: expect.arrayContaining(['r2-media-cleanup', 'manual', 'current-user', 'running']),
                     sql: expect.stringMatching(/INSERT\s+INTO\s+admin_job_runs/),
-                }),
-                expect.objectContaining({
-                    binds: expect.arrayContaining(['success']),
-                    sql: expect.stringContaining('UPDATE admin_job_runs'),
                 }),
             ]),
         )
@@ -401,7 +392,7 @@ describe('POST /admin/jobs/:jobName/run', () => {
         const response = await postAdminJobRun('r2-media-cleanup', db, mediaBucket, 'session-token', 'text/html')
 
         expect(response.status).toBe(303)
-        expect(response.headers.get('location')).toBe('/admin/admin-options?status=success&job=r2-media-cleanup')
+        expect(response.headers.get('location')).toBe('/admin/admin-options?status=started&job=r2-media-cleanup')
     })
 })
 

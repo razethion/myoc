@@ -483,7 +483,7 @@ async function renderAdminPage(c: PageRouteContext, activeSection: AdminSection)
 function getAdminOptionsFeedback(c: PageRouteContext): AdminOptionsFeedback | null {
     const status = c.req.query('status')
 
-    if (status !== 'success' && status !== 'error') {
+    if (status !== 'success' && status !== 'error' && status !== 'started') {
         return null
     }
 

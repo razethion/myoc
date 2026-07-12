@@ -42,7 +42,14 @@ describe('backupD1Database', () => {
             1,
             'https://api.cloudflare.com/client/v4/accounts/account-id/d1/database/database-id/export',
             expect.objectContaining({
-                body: JSON.stringify({output_format: 'polling'}),
+                body: JSON.stringify({
+                    output_format: 'polling',
+                    dump_options: {
+                        no_data: false,
+                        no_schema: false,
+                        tables: [],
+                    },
+                }),
                 headers: expect.objectContaining({
                     Authorization: 'Bearer api-token',
                     'Content-Type': 'application/json',
@@ -54,7 +61,15 @@ describe('backupD1Database', () => {
             2,
             'https://api.cloudflare.com/client/v4/accounts/account-id/d1/database/database-id/export',
             expect.objectContaining({
-                body: JSON.stringify({current_bookmark: 'bookmark-1'}),
+                body: JSON.stringify({
+                    output_format: 'polling',
+                    dump_options: {
+                        no_data: false,
+                        no_schema: false,
+                        tables: [],
+                    },
+                    current_bookmark: 'bookmark-1',
+                }),
             }),
         )
         expect(fetcher).toHaveBeenNthCalledWith(3, 'https://example.test/dump.sql')
@@ -142,6 +157,8 @@ function createExportFetch(): typeof fetch {
                 return Response.json({
                     result: {
                         at_bookmark: 'bookmark-1',
+                        success: true,
+                        type: 'export',
                     },
                     success: true,
                 })
@@ -149,7 +166,12 @@ function createExportFetch(): typeof fetch {
 
             return Response.json({
                 result: {
-                    signed_url: 'https://example.test/dump.sql',
+                    result: {
+                        signed_url: 'https://example.test/dump.sql',
+                    },
+                    status: 'complete',
+                    success: true,
+                    type: 'export',
                 },
                 success: true,
             })

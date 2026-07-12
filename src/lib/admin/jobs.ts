@@ -65,8 +65,12 @@ export type AdminJobRun = {
 export type AdminJobRunResult<TSummary extends AdminJobSummary = AdminJobSummary> = {
     jobName: AdminJobName
     runId: string
-    status: Exclude<AdminJobRunStatus, 'running'>
+    status: AdminJobRunStatus
     summary?: TSummary
+}
+
+export type StartedAdminJobRun = AdminJobRunResult & {
+    completion: Promise<AdminJobRunResult>
 }
 
 export type AdminOptionsData = {
@@ -120,13 +124,19 @@ export function getAdminJobLabel(jobName: AdminJobName): string {
 }
 
 export async function runAdminJob(env: AdminJobEnv, jobName: AdminJobName, options: AdminJobRunOptions): Promise<AdminJobRunResult> {
-    return await recordAdminJobRun(env.DB, jobName, options, async () => {
-        if (jobName === 'd1-backup') {
-            return await backupD1Database(env)
-        }
+    return await recordAdminJobRun(env.DB, jobName, options, async () => runAdminJobTask(env, jobName))
+}
 
-        return await cleanupStaleR2Media(env)
-    })
+export async function startAdminJob(env: AdminJobEnv, jobName: AdminJobName, options: AdminJobRunOptions): Promise<StartedAdminJobRun> {
+    const started = await startAdminJobRun(env.DB, jobName, options)
+    const completion = finishStartedAdminJobRun(env, jobName, started.runId, started.startedAtMs)
+
+    return {
+        jobName,
+        runId: started.runId,
+        status: 'running',
+        completion,
+    }
 }
 
 export async function recordAdminJobRun<TSummary extends AdminJobSummary>(
@@ -135,48 +145,34 @@ export async function recordAdminJobRun<TSummary extends AdminJobSummary>(
     options: AdminJobRunOptions,
     run: () => Promise<TSummary>,
 ): Promise<AdminJobRunResult<TSummary>> {
-    const runId = crypto.randomUUID()
-    const startedAt = toSqlTimestamp(options.now ?? new Date())
-    const startedAtMs = Date.now()
-    let shouldUpdateRun = true
-
-    try {
-        await db
-            .prepare(
-                `INSERT INTO admin_job_runs (
-                    id, job_name, trigger_source, triggered_by_user_id, cron, status, started_at,
-                    finished_at, duration_ms, summary_json, error_message
-                )
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            )
-            .bind(
-                runId,
-                jobName,
-                options.triggerSource,
-                options.triggeredByUserId ?? null,
-                options.cron ?? null,
-                'running',
-                startedAt,
-                null,
-                null,
-                null,
-                null,
-            )
-            .run()
-    } catch (error) {
-        shouldUpdateRun = false
-        console.warn('Unable to record admin job start', {
-            jobName,
-            error,
-        })
-    }
+    const started = await startAdminJobRun(db, jobName, options)
 
     try {
         const summary = await run()
+        await tryFinishAdminJobRun(db, started.runId, 'success', started.startedAtMs, summary, null)
 
-        if (shouldUpdateRun) {
-            await tryFinishAdminJobRun(db, runId, 'success', startedAtMs, summary, null)
+        return {
+            jobName,
+            runId: started.runId,
+            status: 'success',
+            summary,
         }
+    } catch (error) {
+        await tryFinishAdminJobRun(db, started.runId, 'error', started.startedAtMs, null, errorMessage(error))
+
+        throw error
+    }
+}
+
+async function finishStartedAdminJobRun(
+    env: AdminJobEnv,
+    jobName: AdminJobName,
+    runId: string,
+    startedAtMs: number,
+): Promise<AdminJobRunResult> {
+    try {
+        const summary = await runAdminJobTask(env, jobName)
+        await tryFinishAdminJobRun(env.DB, runId, 'success', startedAtMs, summary, null)
 
         return {
             jobName,
@@ -185,12 +181,57 @@ export async function recordAdminJobRun<TSummary extends AdminJobSummary>(
             summary,
         }
     } catch (error) {
-        if (shouldUpdateRun) {
-            await tryFinishAdminJobRun(db, runId, 'error', startedAtMs, null, errorMessage(error))
-        }
+        await tryFinishAdminJobRun(env.DB, runId, 'error', startedAtMs, null, errorMessage(error))
 
-        throw error
+        return {
+            jobName,
+            runId,
+            status: 'error',
+        }
     }
+}
+
+async function startAdminJobRun(
+    db: D1Database,
+    jobName: AdminJobName,
+    options: AdminJobRunOptions,
+): Promise<{runId: string; startedAtMs: number}> {
+    const runId = crypto.randomUUID()
+    const startedAt = toSqlTimestamp(options.now ?? new Date())
+    const startedAtMs = Date.now()
+
+    await db
+        .prepare(
+            `INSERT INTO admin_job_runs (
+                id, job_name, trigger_source, triggered_by_user_id, cron, status, started_at,
+                finished_at, duration_ms, summary_json, error_message
+            )
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+            runId,
+            jobName,
+            options.triggerSource,
+            options.triggeredByUserId ?? null,
+            options.cron ?? null,
+            'running',
+            startedAt,
+            null,
+            null,
+            null,
+            null,
+        )
+        .run()
+
+    return {runId, startedAtMs}
+}
+
+async function runAdminJobTask(env: AdminJobEnv, jobName: AdminJobName): Promise<AdminJobSummary> {
+    if (jobName === 'd1-backup') {
+        return await backupD1Database(env)
+    }
+
+    return await cleanupStaleR2Media(env)
 }
 
 async function tryFinishAdminJobRun(

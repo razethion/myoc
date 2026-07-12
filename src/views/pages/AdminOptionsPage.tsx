@@ -8,7 +8,7 @@ type AdminOptionsPageProps = {
 
 export type AdminOptionsFeedback = {
     jobLabel: string | null
-    status: 'success' | 'error'
+    status: 'error' | 'started' | 'success'
 }
 
 const statusBadgeClasses: Record<AdminJobRun['status'], string> = {
@@ -92,11 +92,17 @@ export function AdminOptionsPage({csrfToken, data, feedback}: AdminOptionsPagePr
 
 function AdminJobFeedback({feedback}: {feedback: AdminOptionsFeedback}) {
     const jobName = feedback.jobLabel ?? 'Admin job'
-    const isSuccess = feedback.status === 'success'
+    const alertClass = feedback.status === 'error' ? 'alert-error' : feedback.status === 'started' ? 'alert-info' : 'alert-success'
+    const message =
+        feedback.status === 'error'
+            ? `${jobName} failed. Check Job History for details.`
+            : feedback.status === 'started'
+              ? `${jobName} started. Refresh Job History to check progress.`
+              : `${jobName} finished.`
 
     return (
-        <div class={`alert mb-4 ${isSuccess ? 'alert-success' : 'alert-error'}`}>
-            <span>{isSuccess ? `${jobName} finished.` : `${jobName} failed. Check Job History for details.`}</span>
+        <div class={`alert mb-4 ${alertClass}`}>
+            <span>{message}</span>
         </div>
     )
 }

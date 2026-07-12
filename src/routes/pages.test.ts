@@ -2104,7 +2104,7 @@ describe('GET /admin', () => {
 
     it('renders admin options with job controls and history', async () => {
         const response = await getAppPath(
-            '/admin/admin-options',
+            '/admin/admin-options?status=started&job=d1-backup',
             createProfilePageDb({
                 currentUser: {
                     ...createCurrentUserRecord('admin_user'),
@@ -2143,6 +2143,7 @@ describe('GET /admin', () => {
 
         expect(response.status).toBe(200)
         expect(html).toContain('<title>Admin Options | Admin | MyOC</title>')
+        expect(html).toContain('D1 Database Backup started. Refresh Job History to check progress.')
         expect(html).toContain('action="/api/admin/jobs/d1-backup/run"')
         expect(html).toContain('Run D1 Database Backup')
         expect(html).toContain('action="/api/admin/jobs/r2-media-cleanup/run"')

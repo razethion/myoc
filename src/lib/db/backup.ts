@@ -15,10 +15,22 @@ type BackupOptions = {
 
 type ExportStartResult = {
     at_bookmark?: unknown
+    error?: unknown
+    result?: {
+        signed_url?: unknown
+    }
+    status?: unknown
+    success?: unknown
 }
 
-type ExportPollResult = {
-    signed_url?: unknown
+type D1ExportRequestBody = {
+    current_bookmark?: string
+    dump_options: {
+        no_data: boolean
+        no_schema: boolean
+        tables: string[]
+    }
+    output_format: 'polling'
 }
 
 type D1ExportApiResponse<TResult> = {
@@ -95,8 +107,7 @@ export function createBackupKey(now: Date): string {
 async function exportD1DatabaseSql(env: D1BackupEnv, fetcher: typeof fetch, options: BackupOptions): Promise<string> {
     const exportUrl = createD1ExportUrl(env)
     const apiToken = requireEnvString(env.D1_REST_API_TOKEN, 'D1_REST_API_TOKEN')
-    const bookmark = await startD1Export(exportUrl, apiToken, fetcher)
-    const signedUrl = await pollD1Export(exportUrl, apiToken, bookmark, fetcher, options)
+    const signedUrl = await createD1ExportSignedUrl(exportUrl, apiToken, fetcher, options)
     const dumpResponse = await fetcher(signedUrl)
 
     if (!dumpResponse.ok) {
@@ -120,33 +131,30 @@ function requireEnvString(value: string | undefined, name: string): string {
     return value
 }
 
-async function startD1Export(exportUrl: string, apiToken: string, fetcher: typeof fetch): Promise<string> {
-    const response = await postD1Export<ExportStartResult>(exportUrl, apiToken, fetcher, {output_format: 'polling'})
-    const bookmark = response.result?.at_bookmark
-
-    if (typeof bookmark !== 'string' || bookmark.length === 0) {
-        throw new Error('D1 export did not return an export bookmark')
-    }
-
-    return bookmark
-}
-
-async function pollD1Export(
+async function createD1ExportSignedUrl(
     exportUrl: string,
     apiToken: string,
-    bookmark: string,
     fetcher: typeof fetch,
     options: BackupOptions,
 ): Promise<string> {
     const pollAttempts = options.pollAttempts ?? EXPORT_POLL_ATTEMPTS
     const pollDelayMs = options.pollDelayMs ?? EXPORT_POLL_DELAY_MS
+    let currentBookmark: string | undefined
 
     for (let attempt = 1; attempt <= pollAttempts; attempt += 1) {
-        const response = await postD1Export<ExportPollResult>(exportUrl, apiToken, fetcher, {current_bookmark: bookmark})
+        const response = await postD1Export<ExportStartResult>(exportUrl, apiToken, fetcher, createD1ExportRequestBody(currentBookmark))
         const signedUrl = response.result?.signed_url
 
         if (typeof signedUrl === 'string' && signedUrl.length > 0) {
             return signedUrl
+        }
+
+        if (response.status === 'error') {
+            throw new Error(`D1 export failed: ${typeof response.error === 'string' ? response.error : 'Unknown error'}`)
+        }
+
+        if (typeof response.at_bookmark === 'string' && response.at_bookmark.length > 0) {
+            currentBookmark = response.at_bookmark
         }
 
         if (attempt < pollAttempts) {
@@ -157,12 +165,24 @@ async function pollD1Export(
     throw new Error(`D1 export did not return a signed dump URL after ${pollAttempts} attempts`)
 }
 
+function createD1ExportRequestBody(currentBookmark: string | undefined): D1ExportRequestBody {
+    return {
+        output_format: 'polling',
+        dump_options: {
+            no_data: false,
+            no_schema: false,
+            tables: [],
+        },
+        current_bookmark: currentBookmark,
+    }
+}
+
 async function postD1Export<TResult>(
     exportUrl: string,
     apiToken: string,
     fetcher: typeof fetch,
-    body: Record<string, string>,
-): Promise<D1ExportApiResponse<TResult>> {
+    body: D1ExportRequestBody,
+): Promise<TResult> {
     const response = await fetcher(exportUrl, {
         method: 'POST',
         headers: {
@@ -177,7 +197,11 @@ async function postD1Export<TResult>(
         throw new Error(`D1 export API failed with HTTP ${response.status}: ${d1ApiErrorMessage(payload)}`)
     }
 
-    return payload
+    if (payload.result === undefined) {
+        throw new Error('D1 export API did not return a result')
+    }
+
+    return payload.result
 }
 
 function d1ApiErrorMessage(payload: D1ExportApiResponse<unknown>): string {
