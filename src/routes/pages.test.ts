@@ -52,6 +52,7 @@ function createProfilePageDb(
         adminReports?: unknown[]
         adminJobRuns?: unknown[]
         userPasskeys?: unknown[]
+        userSessions?: unknown[]
     } = {},
 ): D1Database {
     const firstForSql = async (sql: string) => {
@@ -148,6 +149,10 @@ function createProfilePageDb(
 
         if (sql.includes('FROM user_passkeys')) {
             return {results: options.userPasskeys ?? []}
+        }
+
+        if (sql.includes('FROM sessions')) {
+            return {results: options.userSessions ?? []}
         }
 
         if (sql.includes('FROM character_folder_placements')) {
@@ -964,6 +969,73 @@ describe('GET /settings', () => {
         expect(html).toContain('<title>User Settings | MyOC</title>')
         expect(html).toContain('Migrate from Toyhou.se')
         expect(html).toContain('href="/migrate"')
+    })
+
+    it('renders passkeys, sessions, profile photos, and secure-account state', async () => {
+        const response = await getAppPath(
+            '/settings',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo', {
+                    profile_photo_key: 'profile-key',
+                    recovery_phrase_confirmed_at: '2026-07-01 00:00:00',
+                    secure_account_required: 1,
+                    session_id: 'session-current',
+                }),
+                userPasskeys: [
+                    {
+                        id: 'passkey-1',
+                        name: 'Laptop passkey',
+                        device_type: 'multiDevice',
+                        backed_up: 1,
+                        transports: 'internal,hybrid,usb,nfc,ble',
+                        created_at: '2026-07-01 12:00:00',
+                        last_used_at: '2026-07-02 12:00:00',
+                    },
+                    {
+                        id: 'passkey-2',
+                        name: null,
+                        device_type: 'singleDevice',
+                        backed_up: 0,
+                        transports: null,
+                        created_at: 'not-a-date',
+                        last_used_at: null,
+                    },
+                ],
+                userSessions: [
+                    {
+                        id: 'session-current',
+                        created_at: '2026-07-01 10:00:00',
+                        expires_at: '2026-08-01 10:00:00',
+                    },
+                    {
+                        id: 'session-other',
+                        created_at: 'not-a-date',
+                        expires_at: '2026-08-02 10:00:00',
+                    },
+                ],
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('https://m.myoc.art/users/current-user/profile/profile-key.webp')
+        expect(html).toContain('data-force-passkey-setup="true"')
+        expect(html).toContain('Secure your account')
+        expect(html).toContain('Complete Security Review')
+        expect(html).toContain('<span data-passkey-count-text="true">2</span> registered')
+        expect(html).toContain('Laptop passkey')
+        expect(html).toContain('This device, Phone or tablet, USB key, NFC key, ble')
+        expect(html).toContain('Synced')
+        expect(html).toContain('Security key')
+        expect(html).toContain('not-a-date')
+        expect(html).toContain('Never')
+        expect(html).toContain('Status: Confirmed')
+        expect(html).toContain('2 active')
+        expect(html).toContain('This session')
+        expect(html).toContain('data-session-id="session-other"')
     })
 })
 
@@ -1831,6 +1903,74 @@ describe('GET /edit/:characterId', () => {
         expectPatternAllowsReportedCharacterNames(html, 'character-name')
     })
 
+    it('renders the height chart editor with saved chart data', async () => {
+        const response = await getAppPath(
+            '/edit/character-1/height-chart',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+                characterSettings: {
+                    id: 'character-1',
+                    user_id: 'current-user',
+                    name: 'Raz </script> & Lux',
+                    height_chart_json: JSON.stringify({
+                        version: 1,
+                        height: {
+                            meters: 1.8288,
+                        },
+                        image: {
+                            key: 'height-key',
+                            contentType: 'image/png',
+                            naturalWidth: 320,
+                            naturalHeight: 640,
+                        },
+                        calibration: {
+                            headYPercent: 4.5,
+                            footYPercent: 118,
+                            footIsVirtual: true,
+                            nameTagXPercent: 52,
+                        },
+                    }),
+                },
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Height Chart Editor')
+        expect(html).toContain('Raz &lt;/script&gt; &amp; Lux')
+        expect(html).toContain('href="/edit/character-1"')
+        expect(html).toContain('https://m.myoc.art/characters/current-user/character-1/height-chart/height-key.png')
+        expect(html).toContain('Raz \\u003c/script\\u003e \\u0026 Lux')
+        expect(html).toContain('"footIsVirtual":true')
+        expect(html).not.toContain('"name":"Raz </script>')
+    })
+
+    it('renders the height chart editor without saved chart data', async () => {
+        const response = await getAppPath(
+            '/edit/character-1/height-chart',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+                characterSettings: {
+                    id: 'character-1',
+                    user_id: 'current-user',
+                    name: 'RAZETH',
+                    height_chart_json: null,
+                },
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('No height data')
+        expect(html).toContain('const character = {"id":"character-1","userId":"current-user","name":"RAZETH","heightChart":null};')
+    })
+
     it('redirects logged-out users to login', async () => {
         const response = await getAppPath('/edit/character-1')
 
@@ -1874,6 +2014,78 @@ describe('GET /characters', () => {
         expect(html).toContain('Images Uploaded')
         expect(html).toContain('12 images')
         expectPatternAllowsReportedCharacterNames(html, 'new-character-name')
+    })
+
+    it('renders sorted folders, folder images, and sorted characters', async () => {
+        const response = await getAppPath(
+            '/characters',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+                uploadedImageCount: 1,
+                folders: [
+                    {
+                        id: 'folder-beta',
+                        name: 'Beta Folder',
+                        parent_folder_id: null,
+                        folder_image_key: null,
+                        sort_order: 0,
+                    },
+                    {
+                        id: 'folder-alpha',
+                        name: 'Alpha Folder',
+                        parent_folder_id: null,
+                        folder_image_key: 'folder-alpha-image',
+                        sort_order: 0,
+                    },
+                    {
+                        id: 'folder-child',
+                        name: 'Child Folder',
+                        parent_folder_id: 'folder-beta',
+                        folder_image_key: null,
+                        sort_order: 0,
+                    },
+                ],
+                characters: [
+                    {
+                        id: 'character-zed',
+                        name: 'Zed',
+                        profile_image_key: 'zed-profile',
+                        folder_id: null,
+                        sort_order: 0,
+                    },
+                    {
+                        id: 'character-alpha',
+                        name: 'Alpha',
+                        profile_image_key: 'alpha-profile',
+                        folder_id: 'folder-alpha',
+                        sort_order: 0,
+                    },
+                ],
+                placements: [
+                    {
+                        folder_id: 'folder-alpha',
+                        character_id: 'character-alpha',
+                        sort_order: 0,
+                    },
+                ],
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('1 image')
+        expect(html).toContain('Alpha Folder')
+        expect(html).toContain('Beta Folder')
+        expect(html).toContain('Alpha')
+        expect(html).toContain('Zed')
+        expect(html).toContain('Child Folder')
+        expect(html).not.toContain('No folders yet.')
+        expect(html).toContain('https://m.myoc.art/characters/current-user/folders/folder-alpha/image/folder-alpha-image.webp')
+        expect(html).toContain('https://m.myoc.art/characters/current-user/character-alpha/profile/alpha-profile.webp')
+        expect(html).toContain('"folderId":"folder-alpha","characterId":"character-alpha","sortOrder":0')
     })
 
     it('renders pointer-based drag sorting for mobile character management', async () => {
@@ -2112,6 +2324,65 @@ describe('GET /admin', () => {
         expect(html).toContain('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png')
     })
 
+    it('renders report empty state and full-image fallback reports', async () => {
+        const emptyResponse = await getAppPath(
+            '/admin/reports',
+            createProfilePageDb({
+                currentUser: {
+                    ...createCurrentUserRecord('admin_user'),
+                    role: 'admin',
+                },
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+        const emptyHtml = await emptyResponse.text()
+
+        expect(emptyResponse.status).toBe(200)
+        expect(emptyHtml).toContain('No reports')
+
+        const response = await getAppPath(
+            '/admin/reports',
+            createProfilePageDb({
+                currentUser: {
+                    ...createCurrentUserRecord('admin_user'),
+                    role: 'admin',
+                },
+                adminReports: [
+                    {
+                        id: 'media-2',
+                        user_id: 'owner-2',
+                        username: 'uploader',
+                        character_id: 'character-2',
+                        character_name: 'Quartz',
+                        sfw_image_key: null,
+                        nsfw_image_key: 'nsfw-key',
+                        sfw_preview_image_key: null,
+                        nsfw_preview_image_key: null,
+                        sfw_content_type: null,
+                        nsfw_content_type: 'image/gif',
+                        sfw_review_status: 'pending',
+                        nsfw_review_status: 'reported',
+                        sfw_reviewed_at: null,
+                        nsfw_reviewed_at: '2026-06-11 12:00:00',
+                        sfw_reported_by_username: null,
+                        nsfw_reported_by_username: null,
+                    },
+                ],
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('NSFW image report')
+        expect(html).toContain('Reported by an admin in Image Approvals.')
+        expect(html).toContain('src="https://m.myoc.art/characters/owner-2/character-2/media/media-2/nsfw/nsfw-key.gif"')
+    })
+
     it('renders admin options with job controls and history', async () => {
         const response = await getAppPath(
             '/admin/admin-options?status=started&job=d1-backup',
@@ -2163,6 +2434,157 @@ describe('GET /admin', () => {
         expect(html).toContain('d1/myoc-db/2026/07/11/myoc-db.sql.gz')
         expect(html).toContain('42 rows')
         expect(html).toContain('2.0 KB')
+    })
+
+    it('renders admin options success and error feedback states', async () => {
+        const successResponse = await getAppPath(
+            '/admin/admin-options?status=success&job=r2-media-cleanup',
+            createProfilePageDb({
+                currentUser: {
+                    ...createCurrentUserRecord('admin_user'),
+                    role: 'admin',
+                },
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+        const successHtml = await successResponse.text()
+
+        expect(successResponse.status).toBe(200)
+        expect(successHtml).toContain('R2 Media Cleanup finished.')
+
+        const errorResponse = await getAppPath(
+            '/admin/admin-options?status=error&job=unknown-job',
+            createProfilePageDb({
+                currentUser: {
+                    ...createCurrentUserRecord('admin_user'),
+                    role: 'admin',
+                },
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+        const errorHtml = await errorResponse.text()
+
+        expect(errorResponse.status).toBe(200)
+        expect(errorHtml).toContain('Admin job failed. Check Job History for details.')
+        expect(errorHtml).toContain('No job runs')
+    })
+
+    it('renders admin job run status, source, duration, and summary variants', async () => {
+        const response = await getAppPath(
+            '/admin/admin-options',
+            createProfilePageDb({
+                currentUser: {
+                    ...createCurrentUserRecord('admin_user'),
+                    role: 'admin',
+                },
+                adminJobRuns: [
+                    {
+                        id: 'run-running',
+                        job_name: 'r2-media-cleanup',
+                        trigger_source: 'manual',
+                        triggered_by_user_id: 'admin-user',
+                        triggered_by_username: 'admin_user',
+                        cron: null,
+                        status: 'running',
+                        started_at: '2026-07-11 09:00:00',
+                        finished_at: null,
+                        duration_ms: null,
+                        summary_json: null,
+                        error_message: null,
+                    },
+                    {
+                        id: 'run-error',
+                        job_name: 'r2-media-cleanup',
+                        trigger_source: 'manual',
+                        triggered_by_user_id: null,
+                        triggered_by_username: null,
+                        cron: null,
+                        status: 'error',
+                        started_at: '2026-07-11 09:01:00',
+                        finished_at: '2026-07-11 09:01:00',
+                        duration_ms: 125,
+                        summary_json: null,
+                        error_message: 'cleanup failed',
+                    },
+                    {
+                        id: 'run-r2-limit',
+                        job_name: 'r2-media-cleanup',
+                        trigger_source: 'cron',
+                        triggered_by_user_id: null,
+                        triggered_by_username: null,
+                        cron: null,
+                        status: 'success',
+                        started_at: '2026-07-11 09:02:00',
+                        finished_at: '2026-07-11 09:02:01',
+                        duration_ms: 1000,
+                        summary_json: JSON.stringify({
+                            deleted: 2,
+                            errors: 1,
+                            keptReferenced: 7,
+                            recognized: 10,
+                            scanned: 10,
+                            skippedRecent: 0,
+                            skippedUnknown: 0,
+                            stoppedAtDeleteLimit: true,
+                        }),
+                        error_message: null,
+                    },
+                    {
+                        id: 'run-d1-json',
+                        job_name: 'd1-backup',
+                        trigger_source: 'cron',
+                        triggered_by_user_id: null,
+                        triggered_by_username: null,
+                        cron: null,
+                        status: 'success',
+                        started_at: '2026-07-11 09:03:00',
+                        finished_at: '2026-07-11 09:03:02',
+                        duration_ms: 2048,
+                        summary_json: JSON.stringify({note: 'missing key'}),
+                        error_message: null,
+                    },
+                    {
+                        id: 'run-r2-json',
+                        job_name: 'r2-media-cleanup',
+                        trigger_source: 'manual',
+                        triggered_by_user_id: null,
+                        triggered_by_username: null,
+                        cron: null,
+                        status: 'success',
+                        started_at: '2026-07-11 09:04:00',
+                        finished_at: '2026-07-11 09:04:02',
+                        duration_ms: 2048,
+                        summary_json: JSON.stringify({note: 'custom summary'}),
+                        error_message: null,
+                    },
+                ],
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('@admin_user')
+        expect(html).toContain('Manual')
+        expect(html).toContain('Cron')
+        expect(html).toContain('badge-info')
+        expect(html).toContain('badge-error')
+        expect(html).toContain('Pending')
+        expect(html).toContain('cleanup failed')
+        expect(html).toContain('125 ms')
+        expect(html).toContain('1.0 s')
+        expect(html).toContain('10 scanned')
+        expect(html).toContain('2 deleted')
+        expect(html).toContain('1 errors')
+        expect(html).toContain('delete limit reached')
+        expect(html).toContain('missing key')
+        expect(html).toContain('custom summary')
     })
 
     it('returns not found for unknown admin sections', async () => {
