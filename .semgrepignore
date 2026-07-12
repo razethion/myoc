@@ -1,0 +1,18 @@
+# Dependencies and generated artifacts
+node_modules/
+coverage/
+dist/
+.wrangler/
+.tmp/
+
+# Built frontend assets
+public/app.css
+public/vendor/
+
+# Generated Cloudflare types
+worker-configuration.d.ts
+
+# Local IDE and agent state
+.idea/
+.ai/
+.agents/
