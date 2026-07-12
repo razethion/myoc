@@ -1,5 +1,6 @@
 import {type Context, Hono} from 'hono'
 import {getImageApprovalData, type ImageApprovalAction, isValidImageApprovalAction} from '../../lib/admin/imageApprovals'
+import {type AdminJobName, type AdminJobRunResult, getAdminJobRuns, isAdminJobName, runAdminJob} from '../../lib/admin/jobs'
 import {getAdminReportsData} from '../../lib/admin/reports'
 import {requireAdminApiUser} from '../../lib/auth/authorization'
 import {toSqlTimestamp} from '../../lib/auth/session'
@@ -126,6 +127,46 @@ adminRoutes.get('/image-approvals', async (c) => {
     }
 
     return c.json(await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, c.req.query('mediaId')))
+})
+
+adminRoutes.get('/jobs', async (c) => {
+    const authorization = await requireAdminApiUser(c)
+
+    if ('response' in authorization) {
+        return authorization.response
+    }
+
+    return c.json({
+        runs: await getAdminJobRuns(c.env.DB),
+    })
+})
+
+adminRoutes.post('/jobs/:jobName/run', async (c) => {
+    const authorization = await requireAdminApiUser(c)
+
+    if ('response' in authorization) {
+        return authorization.response
+    }
+
+    const jobName = c.req.param('jobName')
+
+    if (!isAdminJobName(jobName)) {
+        return respondToJobAction(c, null, {error: 'Admin job is invalid'}, 400)
+    }
+
+    try {
+        const run = await runAdminJob(c.env, jobName, {
+            triggeredByUserId: authorization.currentUser.id,
+            triggerSource: 'manual',
+        })
+
+        return respondToJobAction(c, jobName, {
+            ok: true,
+            run,
+        })
+    } catch (error) {
+        return respondToJobAction(c, jobName, {error: getJobErrorMessage(error)}, 500)
+    }
 })
 
 adminRoutes.post('/image-approvals/:mediaId', async (c) => {
@@ -1030,6 +1071,35 @@ async function respondToReportAction(
     }
 
     return c.json(body, status)
+}
+
+async function respondToJobAction(
+    c: AdminRouteContext,
+    jobName: AdminJobName | null,
+    body: {ok: true; run: AdminJobRunResult} | {error: string},
+    status: 200 | 400 | 500 = 200,
+): Promise<Response> {
+    if (c.req.header('accept')?.includes('text/html')) {
+        const search = new URLSearchParams({
+            status: 'ok' in body ? 'success' : 'error',
+        })
+
+        if (jobName) {
+            search.set('job', jobName)
+        }
+
+        return c.redirect(`/admin/admin-options?${search.toString()}`, 303)
+    }
+
+    return c.json(body, status)
+}
+
+function getJobErrorMessage(error: unknown): string {
+    if (error instanceof Error && error.message) {
+        return error.message
+    }
+
+    return 'Admin job failed'
 }
 
 async function copyR2Object(bucket: R2Bucket, sourceObjectKey: string, targetObjectKey: string, contentType: string | null): Promise<void> {

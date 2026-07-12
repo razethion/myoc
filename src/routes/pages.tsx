@@ -1,5 +1,6 @@
 import {type Context, Hono} from 'hono'
 import {getImageApprovalData} from '../lib/admin/imageApprovals'
+import {getAdminJobLabel, getAdminOptionsData, parseAdminJobName} from '../lib/admin/jobs'
 import {getAdminReportsData} from '../lib/admin/reports'
 import {listUserPasskeys, listUserSessions, toPasskeySummary} from '../lib/auth/passkeys'
 import {getCurrentUser, isAdminUser, toSqlTimestamp} from '../lib/auth/session'
@@ -16,6 +17,7 @@ import {searchAll} from '../lib/search'
 import type {UserSocialLink} from '../lib/socialLinks'
 import type {Bindings} from '../types/bindings'
 import {AdminImageApprovalsPage} from '../views/pages/AdminImageApprovalsPage'
+import {type AdminOptionsFeedback, AdminOptionsPage} from '../views/pages/AdminOptionsPage'
 import {AdminPage, type AdminSection, isAdminSection} from '../views/pages/AdminPage'
 import {AdminReportsPage} from '../views/pages/AdminReportsPage'
 import {AuthPage} from '../views/pages/AuthPage'
@@ -463,6 +465,12 @@ async function renderAdminPage(c: PageRouteContext, activeSection: AdminSection)
             />
         ) : activeSection === 'reports' ? (
             <AdminReportsPage csrfToken={currentUser.csrfToken} data={await getAdminReportsData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL)} />
+        ) : activeSection === 'admin-options' ? (
+            <AdminOptionsPage
+                csrfToken={currentUser.csrfToken}
+                data={await getAdminOptionsData(c.env.DB)}
+                feedback={getAdminOptionsFeedback(c)}
+            />
         ) : null
 
     return c.html(
@@ -470,6 +478,21 @@ async function renderAdminPage(c: PageRouteContext, activeSection: AdminSection)
             {content}
         </AdminPage>,
     )
+}
+
+function getAdminOptionsFeedback(c: PageRouteContext): AdminOptionsFeedback | null {
+    const status = c.req.query('status')
+
+    if (status !== 'success' && status !== 'error') {
+        return null
+    }
+
+    const jobName = parseAdminJobName(c.req.query('job') ?? '')
+
+    return {
+        jobLabel: jobName ? getAdminJobLabel(jobName) : null,
+        status,
+    }
 }
 
 pageRoutes.get('/edit/:characterId/height-chart', async (c) => {

@@ -3,7 +3,7 @@ import type {CurrentUser} from '../../lib/auth/session'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 
-export type AdminSection = 'image-approvals' | 'moderate-images' | 'moderate-characters' | 'moderate-users' | 'reports'
+export type AdminSection = 'image-approvals' | 'moderate-images' | 'moderate-characters' | 'moderate-users' | 'reports' | 'admin-options'
 
 type AdminPageProps = {
     activeSection: AdminSection
@@ -18,6 +18,7 @@ const adminNavItems: Array<{label: string; section: AdminSection}> = [
     {label: 'Moderate Characters', section: 'moderate-characters'},
     {label: 'Moderate Users', section: 'moderate-users'},
     {label: 'Reports', section: 'reports'},
+    {label: 'Admin Options', section: 'admin-options'},
 ]
 
 export function isAdminSection(section: string): section is AdminSection {

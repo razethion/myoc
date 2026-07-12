@@ -11,7 +11,7 @@
     }
   },
   "triggers": {
-    "crons": ["0 9 * * *"]
+    "crons": ["0 8 * * *", "0 9 * * *"]
   },
   "assets": {
     "directory": "./public"
@@ -41,6 +41,11 @@
       "binding": "MEDIA_BUCKET",
       "bucket_name": "myoc",
       "preview_bucket_name": "myoc-dev",
+      "remote": true
+    },
+    {
+      "binding": "DB_BACKUP_BUCKET",
+      "bucket_name": "myoc-db-bak",
       "remote": true
     }
   ]

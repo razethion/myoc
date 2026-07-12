@@ -50,6 +50,7 @@ function createProfilePageDb(
         imageApprovalCount?: number
         imageApprovalHistory?: unknown[]
         adminReports?: unknown[]
+        adminJobRuns?: unknown[]
         userPasskeys?: unknown[]
     } = {},
 ): D1Database {
@@ -111,6 +112,10 @@ function createProfilePageDb(
 
         if (sql.includes('sfw_reported_by_username')) {
             return {results: options.adminReports ?? []}
+        }
+
+        if (sql.includes('FROM admin_job_runs')) {
+            return {results: options.adminJobRuns ?? []}
         }
 
         if (sql.includes('FROM character_media_review_events')) {
@@ -197,6 +202,7 @@ async function getProfilePath(path: string, db: D1Database): Promise<Response> {
         {
             CACHE: workerEnv.CACHE,
             DB: db,
+            DB_BACKUP_BUCKET: workerEnv.DB_BACKUP_BUCKET,
             MEDIA_BUCKET: workerEnv.MEDIA_BUCKET,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         },
@@ -215,6 +221,7 @@ async function getAppPath(
         {
             CACHE: cache,
             DB: db,
+            DB_BACKUP_BUCKET: workerEnv.DB_BACKUP_BUCKET,
             MEDIA_BUCKET: workerEnv.MEDIA_BUCKET,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         },
@@ -1943,6 +1950,8 @@ describe('GET /admin', () => {
         expect(html).toContain('Moderate Users')
         expect(html).toContain('href="/admin/reports"')
         expect(html).toContain('Reports')
+        expect(html).toContain('href="/admin/admin-options"')
+        expect(html).toContain('Admin Options')
         expect(html).toContain('aria-label="Image Approvals content"')
     })
 
@@ -2091,6 +2100,58 @@ describe('GET /admin', () => {
         expect(html).toContain('Ban User')
         expect(html).toContain('src="https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp"')
         expect(html).toContain('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png')
+    })
+
+    it('renders admin options with job controls and history', async () => {
+        const response = await getAppPath(
+            '/admin/admin-options',
+            createProfilePageDb({
+                currentUser: {
+                    ...createCurrentUserRecord('admin_user'),
+                    role: 'admin',
+                },
+                adminJobRuns: [
+                    {
+                        id: 'run-1',
+                        job_name: 'd1-backup',
+                        trigger_source: 'cron',
+                        triggered_by_user_id: null,
+                        triggered_by_username: null,
+                        cron: '0 8 * * *',
+                        status: 'success',
+                        started_at: '2026-07-11 08:00:00',
+                        finished_at: '2026-07-11 08:00:02',
+                        duration_ms: 2200,
+                        summary_json: JSON.stringify({
+                            compressedBytes: 2048,
+                            databaseName: 'myoc-db',
+                            generatedAt: '2026-07-11T08:00:00.000Z',
+                            key: 'd1/myoc-db/2026/07/11/myoc-db.sql.gz',
+                            rows: 42,
+                            schemaObjects: 5,
+                            tables: 4,
+                        }),
+                        error_message: null,
+                    },
+                ],
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('<title>Admin Options | Admin | MyOC</title>')
+        expect(html).toContain('action="/api/admin/jobs/d1-backup/run"')
+        expect(html).toContain('Run D1 Database Backup')
+        expect(html).toContain('action="/api/admin/jobs/r2-media-cleanup/run"')
+        expect(html).toContain('Run R2 Media Cleanup')
+        expect(html).toContain('Job History')
+        expect(html).toContain('Cron 0 8 * * *')
+        expect(html).toContain('d1/myoc-db/2026/07/11/myoc-db.sql.gz')
+        expect(html).toContain('42 rows')
+        expect(html).toContain('2.0 KB')
     })
 
     it('returns not found for unknown admin sections', async () => {

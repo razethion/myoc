@@ -30,6 +30,7 @@ function createCurrentUserRecord(role: 'user' | 'admin') {
 function requestEnv(db: D1Database, mediaBucket = createMockR2Bucket(), imagesBinding = createMockImagesBinding()) {
     return {
         DB: db,
+        DB_BACKUP_BUCKET: createMockR2Bucket(),
         MEDIA_BUCKET: mediaBucket,
         IMAGES: imagesBinding,
         MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
@@ -101,6 +102,29 @@ async function postReportAction(
             headers: {
                 'content-type': 'application/json',
                 accept,
+                cookie: `myoc_session=${sessionToken}`,
+                'x-csrf-token': await createCsrfToken(sessionToken),
+            },
+        },
+        requestEnv(db, mediaBucket),
+    )
+}
+
+async function postAdminJobRun(
+    jobName: string,
+    db: D1Database,
+    mediaBucket: R2Bucket,
+    sessionToken = 'session-token',
+    accept = 'application/json',
+): Promise<Response> {
+    return apiRoutes.request(
+        `https://example.com/admin/jobs/${jobName}/run`,
+        {
+            method: 'POST',
+            body: JSON.stringify({}),
+            headers: {
+                accept,
+                'content-type': 'application/json',
                 cookie: `myoc_session=${sessionToken}`,
                 'x-csrf-token': await createCsrfToken(sessionToken),
             },
@@ -253,6 +277,131 @@ describe('GET /admin/image-approvals', () => {
         expect(body.current.id).toBe('history-media')
         expect(body.pending).toHaveLength(0)
         expect(body.history[0]?.mediaId).toBe('history-media')
+    })
+})
+
+describe('GET /admin/jobs', () => {
+    it('returns 401 when job history is requested without a session', async () => {
+        const {db} = createMockDb()
+
+        const response = await getAdminApi(db, undefined, '/admin/jobs')
+
+        expect(response.status).toBe(401)
+        expect(await response.json()).toEqual({
+            error: 'Authentication required',
+        })
+    })
+
+    it('returns recent job runs for admin users', async () => {
+        const {db} = createMockDb({
+            firstResults: [createCurrentUserRecord('admin')],
+            allResults: [
+                [
+                    {
+                        id: 'run-1',
+                        job_name: 'r2-media-cleanup',
+                        trigger_source: 'manual',
+                        triggered_by_user_id: 'current-user',
+                        triggered_by_username: 'current_user',
+                        cron: null,
+                        status: 'success',
+                        started_at: '2026-07-11 09:00:00',
+                        finished_at: '2026-07-11 09:00:01',
+                        duration_ms: 1000,
+                        summary_json: JSON.stringify({
+                            deleted: 0,
+                            errors: 0,
+                            keptReferenced: 0,
+                            recognized: 0,
+                            scanned: 0,
+                            skippedRecent: 0,
+                            skippedUnknown: 0,
+                            stoppedAtDeleteLimit: false,
+                        }),
+                        error_message: null,
+                    },
+                ],
+            ],
+        })
+
+        const response = await getAdminApi(db, 'myoc_session=session-token', '/admin/jobs')
+        const body = (await response.json()) as {runs: Array<{jobName: string; label: string; triggerSource: string}>}
+
+        expect(response.status).toBe(200)
+        expect(body.runs).toEqual([
+            expect.objectContaining({
+                jobName: 'r2-media-cleanup',
+                label: 'R2 Media Cleanup',
+                triggerSource: 'manual',
+            }),
+        ])
+    })
+})
+
+describe('POST /admin/jobs/:jobName/run', () => {
+    it('rejects invalid job names', async () => {
+        const {db} = createMockDb({
+            firstResults: [createCurrentUserRecord('admin')],
+        })
+        const mediaBucket = createMockR2Bucket()
+
+        const response = await postAdminJobRun('unknown-job', db, mediaBucket)
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Admin job is invalid',
+        })
+    })
+
+    it('runs R2 media cleanup and records the job result', async () => {
+        const {db, boundStatements} = createMockDb({
+            firstResults: [createCurrentUserRecord('admin')],
+        })
+        const mediaBucket = createMockR2Bucket()
+
+        const response = await postAdminJobRun('r2-media-cleanup', db, mediaBucket)
+        const body = (await response.json()) as {
+            ok: true
+            run: {jobName: string; status: string; summary: {scanned: number; deleted: number; errors: number}}
+        }
+
+        expect(response.status).toBe(200)
+        expect(body.ok).toBe(true)
+        expect(body.run).toEqual(
+            expect.objectContaining({
+                jobName: 'r2-media-cleanup',
+                status: 'success',
+                summary: expect.objectContaining({
+                    deleted: 0,
+                    errors: 0,
+                    scanned: 0,
+                }),
+            }),
+        )
+        expect(boundStatements).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    binds: expect.arrayContaining(['r2-media-cleanup', 'manual', 'current-user', 'running']),
+                    sql: expect.stringMatching(/INSERT\s+INTO\s+admin_job_runs/),
+                }),
+                expect.objectContaining({
+                    binds: expect.arrayContaining(['success']),
+                    sql: expect.stringContaining('UPDATE admin_job_runs'),
+                }),
+            ]),
+        )
+    })
+
+    it('redirects HTML job run requests back to admin options', async () => {
+        const {db} = createMockDb({
+            firstResults: [createCurrentUserRecord('admin')],
+        })
+        const mediaBucket = createMockR2Bucket()
+
+        const response = await postAdminJobRun('r2-media-cleanup', db, mediaBucket, 'session-token', 'text/html')
+
+        expect(response.status).toBe(303)
+        expect(response.headers.get('location')).toBe('/admin/admin-options?status=success&job=r2-media-cleanup')
     })
 })
 
