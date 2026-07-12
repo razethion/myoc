@@ -1,6 +1,5 @@
+import {type RegistrationResponseJSON, verifyRegistrationResponse} from '@simplewebauthn/server'
 import {Hono} from 'hono'
-import {verifyRegistrationResponse, type RegistrationResponseJSON} from '@simplewebauthn/server'
-import {getCurrentUser, normalizeCredential, toSqlTimestamp} from '../../lib/auth/session'
 import {
     createCredentialPublicKeyValue,
     createDisabledPasswordHash,
@@ -15,6 +14,7 @@ import {
     serializeTransports,
     verifyRecoveryPhrase,
 } from '../../lib/auth/passkeys'
+import {getCurrentUser, normalizeCredential, toSqlTimestamp} from '../../lib/auth/session'
 import type {Bindings} from '../../types/bindings'
 
 type PasskeyVerifyRequest = {

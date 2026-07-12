@@ -1,8 +1,11 @@
 import {Hono} from 'hono'
-import {cleanupStaleR2Media} from './lib/media/r2Cleanup'
+import {runAdminJob} from './lib/admin/jobs'
 import {apiRoutes} from './routes/api'
 import {pageRoutes, renderNotFoundPage} from './routes/pages'
 import type {Bindings} from './types/bindings'
+
+const D1_BACKUP_CRON = '0 8 * * *'
+const R2_MEDIA_CLEANUP_CRON = '0 9 * * *'
 
 const app = new Hono<{Bindings: Bindings}>()
 
@@ -15,8 +18,30 @@ const worker = app as typeof app & {
     scheduled: (event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) => void
 }
 
-worker.scheduled = (_event, env, ctx) => {
-    ctx.waitUntil(cleanupStaleR2Media(env))
+worker.scheduled = (event, env, ctx) => {
+    if (event.cron === D1_BACKUP_CRON) {
+        ctx.waitUntil(
+            runAdminJob(env, 'd1-backup', {
+                cron: event.cron,
+                triggerSource: 'cron',
+            }),
+        )
+        return
+    }
+
+    if (event.cron === R2_MEDIA_CLEANUP_CRON) {
+        ctx.waitUntil(
+            runAdminJob(env, 'r2-media-cleanup', {
+                cron: event.cron,
+                triggerSource: 'cron',
+            }),
+        )
+        return
+    }
+
+    console.warn('Unhandled scheduled cron trigger', {
+        cron: event.cron,
+    })
 }
 
 // Cloudflare Workers loads this default export from wrangler.jsonc.

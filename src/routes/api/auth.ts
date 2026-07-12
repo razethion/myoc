@@ -1,24 +1,12 @@
+import {
+    type AuthenticationResponseJSON,
+    type RegistrationResponseJSON,
+    verifyAuthenticationResponse,
+    verifyRegistrationResponse,
+} from '@simplewebauthn/server'
 import {compare} from 'bcryptjs'
 import {Hono} from 'hono'
 import {getCookie} from 'hono/cookie'
-import {
-    verifyAuthenticationResponse,
-    verifyRegistrationResponse,
-    type AuthenticationResponseJSON,
-    type RegistrationResponseJSON,
-} from '@simplewebauthn/server'
-import {
-    clearSessionCookie,
-    createCsrfToken,
-    createSession,
-    deleteSession,
-    getSessionCookieName,
-    normalizeCredential,
-    setSessionCookie,
-    toPublicUser,
-    toSqlTimestamp,
-    type UserRecord,
-} from '../../lib/auth/session'
 import {
     createCredentialPublicKeyValue,
     createDisabledPasswordHash,
@@ -34,6 +22,18 @@ import {
     toWebAuthnCredential,
     verifyRecoveryPhrase,
 } from '../../lib/auth/passkeys'
+import {
+    clearSessionCookie,
+    createCsrfToken,
+    createSession,
+    deleteSession,
+    getSessionCookieName,
+    normalizeCredential,
+    setSessionCookie,
+    toPublicUser,
+    toSqlTimestamp,
+    type UserRecord,
+} from '../../lib/auth/session'
 import type {Bindings} from '../../types/bindings'
 
 type LoginRequest = {

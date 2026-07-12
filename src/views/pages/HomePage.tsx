@@ -1,7 +1,7 @@
-import {Navbar} from '../components/Navbar'
-import {BaseLayout} from '../layouts/BaseLayout'
 import type {CurrentUser} from '../../lib/auth/session'
 import {characterMediaImageUrl, characterMediaPreviewImageUrl, characterProfileImageUrl} from '../../lib/media/url'
+import {Navbar} from '../components/Navbar'
+import {BaseLayout} from '../layouts/BaseLayout'
 import {absoluteUrl} from '../meta'
 
 export type HomePageStats = {

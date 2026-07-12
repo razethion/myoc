@@ -1,40 +1,51 @@
-import {Hono, type Context} from 'hono'
-import {getCurrentUser, isAdminUser, toSqlTimestamp} from '../lib/auth/session'
-import {listUserPasskeys, listUserSessions, toPasskeySummary} from '../lib/auth/passkeys'
+import {type Context, Hono} from 'hono'
 import {getImageApprovalData} from '../lib/admin/imageApprovals'
+import {getAdminJobLabel, getAdminOptionsData, parseAdminJobName} from '../lib/admin/jobs'
 import {getAdminReportsData} from '../lib/admin/reports'
+import {listUserPasskeys, listUserSessions, toPasskeySummary} from '../lib/auth/passkeys'
+import {getCurrentUser, isAdminUser, toSqlTimestamp} from '../lib/auth/session'
 import {chunkGalleryItems, shouldForceGalleryRowFullWidth} from '../lib/gallery'
+import {validateProfileImagePayload} from '../lib/media/profileImage'
+import {
+    characterHeightChartImageUrl,
+    characterMediaImageUrl,
+    characterMediaPreviewImageUrl,
+    characterProfileImageObjectKey,
+} from '../lib/media/url'
+import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
+import {searchAll} from '../lib/search'
 import type {UserSocialLink} from '../lib/socialLinks'
 import type {Bindings} from '../types/bindings'
-import {AuthPage} from '../views/pages/AuthPage'
-import {AdminPage, isAdminSection, type AdminSection} from '../views/pages/AdminPage'
 import {AdminImageApprovalsPage} from '../views/pages/AdminImageApprovalsPage'
+import {type AdminOptionsFeedback, AdminOptionsPage} from '../views/pages/AdminOptionsPage'
+import {AdminPage, type AdminSection, isAdminSection} from '../views/pages/AdminPage'
 import {AdminReportsPage} from '../views/pages/AdminReportsPage'
+import {AuthPage} from '../views/pages/AuthPage'
+import {
+    type CharacterHeightChartEditorCharacter,
+    type CharacterHeightChartEditorData,
+    CharacterHeightChartEditorPage,
+} from '../views/pages/CharacterHeightChartEditorPage'
+import {
+    type CharacterFolderPlacement,
+    type CharacterManagementCharacter,
+    type CharacterManagementFolder,
+    CharacterManagementPage,
+} from '../views/pages/CharacterManagementPage'
 import {CharacterPage, type CharacterPageCharacter} from '../views/pages/CharacterPage'
 import {
-    CharacterSettingsPage,
     type CharacterSettingsCharacter,
     type CharacterSettingsGalleryTab,
     type CharacterSettingsMedia,
+    CharacterSettingsPage,
 } from '../views/pages/CharacterSettingsPage'
 import {
-    CharacterHeightChartEditorPage,
-    type CharacterHeightChartEditorCharacter,
-    type CharacterHeightChartEditorData,
-} from '../views/pages/CharacterHeightChartEditorPage'
-import {
-    CharacterManagementPage,
-    type CharacterManagementCharacter,
-    type CharacterFolderPlacement,
-    type CharacterManagementFolder,
-} from '../views/pages/CharacterManagementPage'
-import {
     HomePage,
-    homePageDescription,
     type HomePageDiscoverCharacter,
     type HomePageGalleryImage,
     type HomePageHeightChartCharacter,
     type HomePageStats,
+    homePageDescription,
 } from '../views/pages/HomePage'
 import {
     MigratePage,
@@ -51,15 +62,6 @@ import {SitePoliciesPage} from '../views/pages/SitePoliciesPage'
 import {SizeChartViewerPage} from '../views/pages/SizeChartViewerPage'
 import {UserSettingsPage} from '../views/pages/UserSettingsPage'
 import {WhatsNewPage} from '../views/pages/WhatsNewPage'
-import {searchAll} from '../lib/search'
-import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
-import {
-    characterHeightChartImageUrl,
-    characterMediaImageUrl,
-    characterMediaPreviewImageUrl,
-    characterProfileImageObjectKey,
-} from '../lib/media/url'
-import {validateProfileImagePayload} from '../lib/media/profileImage'
 
 export const pageRoutes = new Hono<{Bindings: Bindings}>()
 
@@ -463,6 +465,12 @@ async function renderAdminPage(c: PageRouteContext, activeSection: AdminSection)
             />
         ) : activeSection === 'reports' ? (
             <AdminReportsPage csrfToken={currentUser.csrfToken} data={await getAdminReportsData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL)} />
+        ) : activeSection === 'admin-options' ? (
+            <AdminOptionsPage
+                csrfToken={currentUser.csrfToken}
+                data={await getAdminOptionsData(c.env.DB)}
+                feedback={getAdminOptionsFeedback(c)}
+            />
         ) : null
 
     return c.html(
@@ -470,6 +478,21 @@ async function renderAdminPage(c: PageRouteContext, activeSection: AdminSection)
             {content}
         </AdminPage>,
     )
+}
+
+function getAdminOptionsFeedback(c: PageRouteContext): AdminOptionsFeedback | null {
+    const status = c.req.query('status')
+
+    if (status !== 'success' && status !== 'error' && status !== 'started') {
+        return null
+    }
+
+    const jobName = parseAdminJobName(c.req.query('job') ?? '')
+
+    return {
+        jobLabel: jobName ? getAdminJobLabel(jobName) : null,
+        status,
+    }
 }
 
 pageRoutes.get('/edit/:characterId/height-chart', async (c) => {

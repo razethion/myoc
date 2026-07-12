@@ -1,13 +1,13 @@
 // noinspection JSUnresolvedReference
 
-import {mkdir, readFile, readdir, rm, writeFile} from 'node:fs/promises'
-import {existsSync, readFileSync} from 'node:fs'
-import {dirname, resolve} from 'node:path'
-import {fileURLToPath} from 'node:url'
 import {execFile, spawn} from 'node:child_process'
 import {createHash, createHmac} from 'node:crypto'
-import readline from 'node:readline/promises'
+import {existsSync, readFileSync} from 'node:fs'
+import {mkdir, readdir, readFile, rm, writeFile} from 'node:fs/promises'
+import {dirname, resolve} from 'node:path'
 import {stdin as input, stdout as output} from 'node:process'
+import readline from 'node:readline/promises'
+import {fileURLToPath} from 'node:url'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const tmpDir = resolve(rootDir, '.tmp')

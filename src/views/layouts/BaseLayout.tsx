@@ -1,5 +1,5 @@
-import type {Child} from 'hono/jsx'
 import {raw} from 'hono/html'
+import type {Child} from 'hono/jsx'
 
 type BaseLayoutProps = {
     title: string

@@ -1,6 +1,6 @@
 import type {Context} from 'hono'
 import type {Bindings} from '../../types/bindings'
-import {getCurrentUser, isAdminUser, type CurrentUser} from './session'
+import {type CurrentUser, getCurrentUser, isAdminUser} from './session'
 
 type AuthorizedUser = {
     currentUser: CurrentUser

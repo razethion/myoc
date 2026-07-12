@@ -11,7 +11,7 @@
     }
   },
   "triggers": {
-    "crons": ["0 9 * * *"]
+    "crons": ["0 8 * * *", "0 9 * * *"]
   },
   "assets": {
     "directory": "./public"
@@ -21,7 +21,12 @@
     "remote": true
   },
   "vars": {
+    "CLOUDFLARE_ACCOUNT_ID": "9b7b3de391cdb5368247e2c468ad1643",
+    "D1_DATABASE_ID": "909ada8f-fc57-47ad-83e1-18ffe863debb",
     "MEDIA_PUBLIC_BASE_URL": "https://m.myoc.art"
+  },
+  "secrets": {
+    "required": ["D1_REST_API_TOKEN"]
   },
   "d1_databases": [
     {
@@ -41,6 +46,11 @@
       "binding": "MEDIA_BUCKET",
       "bucket_name": "myoc",
       "preview_bucket_name": "myoc-dev",
+      "remote": true
+    },
+    {
+      "binding": "DB_BACKUP_BUCKET",
+      "bucket_name": "myoc-db-bak",
       "remote": true
     }
   ]

@@ -1,6 +1,6 @@
 import {hash} from 'bcryptjs'
-import {Hono} from 'hono'
 import type {Context} from 'hono'
+import {Hono} from 'hono'
 import {
     createSession,
     getCurrentUser,
@@ -10,9 +10,9 @@ import {
     toSqlTimestamp,
     type UserRecord,
 } from '../../lib/auth/session'
-import {APP_VERSION} from '../../lib/releases'
-import {profilePhotoObjectKey, profilePhotoUrl} from '../../lib/media/url'
 import {PROFILE_IMAGE_MAX_REQUEST_BYTES, validateProfileImagePayload} from '../../lib/media/profileImage'
+import {profilePhotoObjectKey, profilePhotoUrl} from '../../lib/media/url'
+import {APP_VERSION} from '../../lib/releases'
 import {FIXED_SOCIAL_LINKS, type UserSocialLink} from '../../lib/socialLinks'
 import type {Bindings} from '../../types/bindings'
 
