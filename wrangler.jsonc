@@ -25,6 +25,9 @@
     "D1_DATABASE_ID": "909ada8f-fc57-47ad-83e1-18ffe863debb",
     "MEDIA_PUBLIC_BASE_URL": "https://m.myoc.art"
   },
+  "secrets": {
+    "required": ["D1_REST_API_TOKEN"]
+  },
   "d1_databases": [
     {
       "binding": "DB",
