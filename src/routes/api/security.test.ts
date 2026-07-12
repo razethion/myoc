@@ -2,7 +2,7 @@ import {type VerifiedRegistrationResponse, verifyRegistrationResponse} from '@si
 import {beforeEach, describe, expect, it, vi} from 'vitest'
 import {hashRecoveryPhrase, verifyRecoveryPhrase} from '../../lib/auth/passkeys'
 import {createCsrfToken} from '../../lib/auth/session'
-import {createMockDb} from '../../test/mockD1'
+import {createMockDb, sqlFragment} from '../../test/mockD1'
 import {apiRoutes} from '../api'
 
 vi.mock('@simplewebauthn/server', async (importOriginal) => {
@@ -107,7 +107,9 @@ describe('POST /security/passkeys/options', () => {
             },
         ])
 
-        const challengeInsert = boundStatements.find((statement) => statement.sql.includes('INSERT INTO webauthn_challenges'))
+        const challengeInsert = boundStatements.find((statement) =>
+            statement.sql.includes(sqlFragment('INSERT', 'INTO', 'webauthn_challenges')),
+        )
         expect(challengeInsert?.binds.slice(1, 7)).toEqual([
             'user-1',
             'test@example.com',
@@ -227,8 +229,10 @@ describe('POST /security/passkeys/verify', () => {
         )
 
         const updateUser = boundStatements.find((statement) => statement.sql.includes('secure_account_required_passkey_id'))
-        const passkeyInsert = boundStatements.find((statement) => statement.sql.includes('INSERT INTO user_passkeys'))
-        const challengeDelete = boundStatements.find((statement) => statement.sql.includes('DELETE FROM webauthn_challenges'))
+        const passkeyInsert = boundStatements.find((statement) => statement.sql.includes(sqlFragment('INSERT', 'INTO', 'user_passkeys')))
+        const challengeDelete = boundStatements.find((statement) =>
+            statement.sql.includes(sqlFragment('DELETE', 'FROM', 'webauthn_challenges')),
+        )
         expect(updateUser?.binds[0]).toBe('webauthn-user-1')
         expect(updateUser?.binds[2]).toBe('user-1')
         expect(passkeyInsert?.binds.slice(1, 10)).toEqual([
@@ -285,7 +289,7 @@ describe('DELETE /security/passkeys/:id', () => {
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ok: true})
 
-        const passkeyDelete = boundStatements.find((statement) => statement.sql.includes('DELETE FROM user_passkeys'))
+        const passkeyDelete = boundStatements.find((statement) => statement.sql.includes(sqlFragment('DELETE', 'FROM', 'user_passkeys')))
         expect(passkeyDelete?.binds).toEqual(['user-1', 'passkey-1'])
     })
 })

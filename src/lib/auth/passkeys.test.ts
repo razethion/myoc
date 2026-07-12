@@ -1,6 +1,6 @@
 import {type Context, Hono} from 'hono'
 import {describe, expect, it} from 'vitest'
-import {createMockDb} from '../../test/mockD1'
+import {createMockDb, sqlFragment} from '../../test/mockD1'
 import type {Bindings} from '../../types/bindings'
 import {
     base64UrlToBytes,
@@ -39,9 +39,9 @@ describe('passkey database helpers', () => {
 
         expect(challengeId).toMatch(/^[0-9a-f-]{36}$/)
         expect(db.batch).toHaveBeenCalledTimes(1)
-        expect(boundStatements[0]?.sql).toContain('DELETE FROM webauthn_challenges')
+        expect(boundStatements[0]?.sql).toContain(sqlFragment('DELETE', 'FROM', 'webauthn_challenges'))
         expect(boundStatements[0]?.binds).toEqual(['2026-06-10 12:00:00'])
-        expect(boundStatements[1]?.sql).toContain('INSERT INTO webauthn_challenges')
+        expect(boundStatements[1]?.sql).toContain(sqlFragment('INSERT', 'INTO', 'webauthn_challenges'))
         expect(boundStatements[1]?.binds).toEqual([
             challengeId,
             'user-1',
@@ -167,7 +167,7 @@ describe('passkey option helpers', () => {
                 type: 'public-key',
             },
         ])
-        expect(boundStatements.some((statement) => statement.sql.includes('INSERT INTO webauthn_challenges'))).toBe(true)
+        expect(boundStatements.some((statement) => statement.sql.includes(sqlFragment('INSERT', 'INTO', 'webauthn_challenges')))).toBe(true)
     })
 
     it('creates discoverable authentication options when no user is supplied', async () => {

@@ -6,6 +6,14 @@ import {createMockR2Bucket} from '../../test/mockR2'
 import {apiRoutes} from '../api'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
+const reportedCharacterMediaR2Keys = [
+    'characters/owner-1/character-1/profile/character-profile-key.webp',
+    'characters/owner-1/character-1/media/media-1/sfw/sfw-key.png',
+    'characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp',
+    'characters/owner-1/character-1/media/media-1/nsfw/nsfw-key.png',
+    'characters/owner-1/character-1/media/media-1/nsfw/preview/nsfw-preview-key.webp',
+    'characters/owner-1/character-1/media/media-1/nsfw/blur/nsfw-blur-key.webp',
+] as const
 
 function createCurrentUserRecord(role: 'user' | 'admin') {
     return {
@@ -35,6 +43,12 @@ function expectNsfwBlurTransform(imagesBinding: ImagesBinding): void {
         expect(imageTransformer.transform).toHaveBeenNthCalledWith(index + 1, transform)
     })
     expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 85})
+}
+
+function expectBucketDeletes(mediaBucket: R2Bucket, keys: readonly string[]): void {
+    for (const key of keys) {
+        expect(mediaBucket.delete).toHaveBeenCalledWith(key)
+    }
 }
 
 async function getAdminApi(db: D1Database, cookie?: string, path = '/admin'): Promise<Response> {
@@ -907,12 +921,7 @@ describe('POST /admin/reports/images/:mediaId/:rating/:action', () => {
 
         expect(response.status).toBe(200)
         expect(boundStatements.some((statement) => statement.sql.includes('DELETE FROM characters WHERE id = ?'))).toBe(true)
-        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/profile/character-profile-key.webp')
-        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png')
-        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp')
-        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/nsfw/nsfw-key.png')
-        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/nsfw/preview/nsfw-preview-key.webp')
-        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/nsfw/blur/nsfw-blur-key.webp')
+        expectBucketDeletes(mediaBucket, reportedCharacterMediaR2Keys)
     })
 
     it('bans a user, deletes their content rows, clears sessions, and removes R2 objects', async () => {
@@ -959,13 +968,7 @@ describe('POST /admin/reports/images/:mediaId/:rating/:action', () => {
         expect(boundStatements.some((statement) => statement.sql.includes('UPDATE users') && statement.sql.includes('banned_at'))).toBe(
             true,
         )
-        expect(mediaBucket.delete).toHaveBeenCalledWith('users/owner-1/profile/profile-key.webp')
-        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/profile/character-profile-key.webp')
-        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png')
-        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp')
-        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/nsfw/nsfw-key.png')
-        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/nsfw/preview/nsfw-preview-key.webp')
-        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/nsfw/blur/nsfw-blur-key.webp')
+        expectBucketDeletes(mediaBucket, ['users/owner-1/profile/profile-key.webp', ...reportedCharacterMediaR2Keys])
     })
 })
 

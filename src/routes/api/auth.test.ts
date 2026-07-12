@@ -9,7 +9,7 @@ import {beforeEach, describe, expect, it, vi} from 'vitest'
 import {hashRecoveryPhrase, verifyRecoveryPhrase} from '../../lib/auth/passkeys'
 import {createCsrfToken, type UserRecord} from '../../lib/auth/session'
 import {expectSessionCookie} from '../../test/assertions'
-import {createMockDb} from '../../test/mockD1'
+import {createMockDb, sqlFragment} from '../../test/mockD1'
 import {apiRoutes} from '../api'
 
 vi.mock('@simplewebauthn/server', async (importOriginal) => {
@@ -341,8 +341,8 @@ describe('POST /login', () => {
         expect(db.batch).toHaveBeenCalledTimes(1)
         expect(boundStatements).toHaveLength(3)
         expect(boundStatements[0]?.binds).toEqual(['testuser'])
-        expect(boundStatements[1]?.sql).toContain(['DELETE FROM', 'sessions'].join(' '))
-        expect(boundStatements[2]?.sql).toContain(['INSERT INTO', 'sessions'].join(' '))
+        expect(boundStatements[1]?.sql).toContain(sqlFragment('DELETE', 'FROM', 'sessions'))
+        expect(boundStatements[2]?.sql).toContain(sqlFragment('INSERT', 'INTO', 'sessions'))
         expect(boundStatements[2]?.binds[1]).toBe(user.id)
     })
 
@@ -465,7 +465,7 @@ describe('POST /register/passkey/options', () => {
         expect(body.options.user.name).toBe('testuser')
         expect(db.batch).toHaveBeenCalledTimes(1)
         expect(boundStatements[0]?.binds).toEqual(['test@example.com', 'testuser'])
-        expect(boundStatements[2]?.sql).toContain(['INSERT INTO', 'webauthn_challenges'].join(' '))
+        expect(boundStatements[2]?.sql).toContain(sqlFragment('INSERT', 'INTO', 'webauthn_challenges'))
         expect(boundStatements[2]?.binds[2]).toBe('test@example.com')
         expect(boundStatements[2]?.binds[3]).toBe('testuser')
     })
@@ -607,9 +607,11 @@ describe('POST /register/passkey/verify', () => {
         expect(body.recoveryPhraseNeedsConfirmation).toBe(true)
         expectSessionCookie(response)
 
-        const userInsert = boundStatements.find((statement) => statement.sql.includes('INSERT INTO users'))
-        const passkeyInsert = boundStatements.find((statement) => statement.sql.includes('INSERT INTO user_passkeys'))
-        const challengeDelete = boundStatements.find((statement) => statement.sql.includes('DELETE FROM webauthn_challenges'))
+        const userInsert = boundStatements.find((statement) => statement.sql.includes(sqlFragment('INSERT', 'INTO', 'users')))
+        const passkeyInsert = boundStatements.find((statement) => statement.sql.includes(sqlFragment('INSERT', 'INTO', 'user_passkeys')))
+        const challengeDelete = boundStatements.find((statement) =>
+            statement.sql.includes(sqlFragment('DELETE', 'FROM', 'webauthn_challenges')),
+        )
         expect(userInsert?.binds[0]).toBe('new-user-id')
         expect(userInsert?.binds[1]).toBe('new@example.com')
         expect(userInsert?.binds[2]).toBe('newuser')
@@ -661,7 +663,7 @@ describe('POST /login/passkey/options', () => {
         expect(await response.json()).toEqual({
             error: 'No passkey is registered for that username',
         })
-        expect(boundStatements[0]?.sql).toContain('INNER JOIN user_passkeys')
+        expect(boundStatements[0]?.sql).toContain(sqlFragment('INNER', 'JOIN', 'user_passkeys'))
         expect(boundStatements[0]?.binds).toEqual(['missinguser'])
     })
 
@@ -704,7 +706,9 @@ describe('POST /login/passkey/options', () => {
             },
         ])
 
-        const challengeInsert = boundStatements.find((statement) => statement.sql.includes('INSERT INTO webauthn_challenges'))
+        const challengeInsert = boundStatements.find((statement) =>
+            statement.sql.includes(sqlFragment('INSERT', 'INTO', 'webauthn_challenges')),
+        )
         expect(challengeInsert?.binds[1]).toBe('user-1')
         expect(challengeInsert?.binds[5]).toBe('authentication')
         expect(challengeInsert?.binds[6]).toBe(body.options.challenge)
@@ -724,7 +728,9 @@ describe('POST /login/passkey/options', () => {
         }
         expect(body.options.rpId).toBe('example.com')
         expect(body.options.allowCredentials).toBeUndefined()
-        const challengeInsert = boundStatements.find((statement) => statement.sql.includes('INSERT INTO webauthn_challenges'))
+        const challengeInsert = boundStatements.find((statement) =>
+            statement.sql.includes(sqlFragment('INSERT', 'INTO', 'webauthn_challenges')),
+        )
         expect(challengeInsert?.binds[1]).toBeNull()
     })
 })
@@ -880,8 +886,10 @@ describe('POST /login/passkey/verify', () => {
         })
         expectSessionCookie(response)
 
-        const passkeyUpdate = boundStatements.find((statement) => statement.sql.includes('UPDATE user_passkeys'))
-        const challengeDelete = boundStatements.find((statement) => statement.sql.includes('DELETE FROM webauthn_challenges'))
+        const passkeyUpdate = boundStatements.find((statement) => statement.sql.includes(sqlFragment('UPDATE', 'user_passkeys')))
+        const challengeDelete = boundStatements.find((statement) =>
+            statement.sql.includes(sqlFragment('DELETE', 'FROM', 'webauthn_challenges')),
+        )
         expect(passkeyUpdate?.binds[0]).toBe(12)
         expect(passkeyUpdate?.binds[1]).toBe('multiDevice')
         expect(passkeyUpdate?.binds[2]).toBe(1)
@@ -995,10 +1003,10 @@ describe('POST /recovery/login', () => {
         expect(boundStatements[1]?.sql).toContain('secure_account_required_passkey_id = NULL')
         expect(boundStatements[1]?.binds).toHaveLength(2)
         expect(boundStatements[1]?.binds[1]).toBe(user.id)
-        expect(boundStatements.some((statement) => statement.sql.includes(['DELETE FROM', 'user_passkeys'].join(' ')))).toBe(false)
+        expect(boundStatements.some((statement) => statement.sql.includes(sqlFragment('DELETE', 'FROM', 'user_passkeys')))).toBe(false)
         expect(
             boundStatements.some(
-                (statement) => statement.sql.includes(['DELETE FROM', 'sessions'].join(' ')) && statement.sql.includes('user_id'),
+                (statement) => statement.sql.includes(sqlFragment('DELETE', 'FROM', 'sessions')) && statement.sql.includes('user_id'),
             ),
         ).toBe(false)
         expect(db.batch).toHaveBeenCalledTimes(1)
@@ -1089,7 +1097,7 @@ describe('POST /logout', () => {
 
         expect(response.status).toBe(204)
         expect(boundStatements).toHaveLength(1)
-        expect(boundStatements[0]?.sql).toContain(['DELETE FROM', 'sessions'].join(' '))
+        expect(boundStatements[0]?.sql).toContain(sqlFragment('DELETE', 'FROM', 'sessions'))
         expect(boundStatements[0]?.binds).toHaveLength(1)
         expect(boundStatements[0]?.binds[0]).not.toBe(sessionToken)
         expect(boundStatements[0]?.binds[0]).toBe(await sha256Hex(sessionToken))
