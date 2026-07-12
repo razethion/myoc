@@ -69,10 +69,6 @@ export type AdminJobRunResult<TSummary extends AdminJobSummary = AdminJobSummary
     summary?: TSummary
 }
 
-export type StartedAdminJobRun = AdminJobRunResult & {
-    completion: Promise<AdminJobRunResult>
-}
-
 export type AdminOptionsData = {
     jobs: typeof ADMIN_JOBS
     runs: AdminJobRun[]
@@ -127,18 +123,6 @@ export async function runAdminJob(env: AdminJobEnv, jobName: AdminJobName, optio
     return await recordAdminJobRun(env.DB, jobName, options, async () => runAdminJobTask(env, jobName))
 }
 
-export async function startAdminJob(env: AdminJobEnv, jobName: AdminJobName, options: AdminJobRunOptions): Promise<StartedAdminJobRun> {
-    const started = await startAdminJobRun(env.DB, jobName, options)
-    const completion = finishStartedAdminJobRun(env, jobName, started.runId, started.startedAtMs)
-
-    return {
-        jobName,
-        runId: started.runId,
-        status: 'running',
-        completion,
-    }
-}
-
 export async function recordAdminJobRun<TSummary extends AdminJobSummary>(
     db: D1Database,
     jobName: AdminJobName,
@@ -161,33 +145,6 @@ export async function recordAdminJobRun<TSummary extends AdminJobSummary>(
         await tryFinishAdminJobRun(db, started.runId, 'error', started.startedAtMs, null, errorMessage(error))
 
         throw error
-    }
-}
-
-async function finishStartedAdminJobRun(
-    env: AdminJobEnv,
-    jobName: AdminJobName,
-    runId: string,
-    startedAtMs: number,
-): Promise<AdminJobRunResult> {
-    try {
-        const summary = await runAdminJobTask(env, jobName)
-        await tryFinishAdminJobRun(env.DB, runId, 'success', startedAtMs, summary, null)
-
-        return {
-            jobName,
-            runId,
-            status: 'success',
-            summary,
-        }
-    } catch (error) {
-        await tryFinishAdminJobRun(env.DB, runId, 'error', startedAtMs, null, errorMessage(error))
-
-        return {
-            jobName,
-            runId,
-            status: 'error',
-        }
     }
 }
 

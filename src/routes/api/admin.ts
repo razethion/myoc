@@ -1,6 +1,6 @@
 import {type Context, Hono} from 'hono'
 import {getImageApprovalData, type ImageApprovalAction, isValidImageApprovalAction} from '../../lib/admin/imageApprovals'
-import {type AdminJobName, type AdminJobRunResult, getAdminJobRuns, isAdminJobName, startAdminJob} from '../../lib/admin/jobs'
+import {type AdminJobName, type AdminJobRunResult, getAdminJobRuns, isAdminJobName, runAdminJob} from '../../lib/admin/jobs'
 import {getAdminReportsData} from '../../lib/admin/reports'
 import {requireAdminApiUser} from '../../lib/auth/authorization'
 import {toSqlTimestamp} from '../../lib/auth/session'
@@ -155,11 +155,10 @@ adminRoutes.post('/jobs/:jobName/run', async (c) => {
     }
 
     try {
-        const {completion, ...run} = await startAdminJob(c.env, jobName, {
+        const run = await runAdminJob(c.env, jobName, {
             triggeredByUserId: authorization.currentUser.id,
             triggerSource: 'manual',
         })
-        waitUntilJobCompletion(c, completion)
 
         return respondToJobAction(c, jobName, {
             ok: true,
@@ -1101,21 +1100,6 @@ function getJobErrorMessage(error: unknown): string {
     }
 
     return 'Admin job failed'
-}
-
-function waitUntilJobCompletion(c: AdminRouteContext, completion: Promise<AdminJobRunResult>): void {
-    try {
-        const waitUntil = c.executionCtx?.waitUntil
-
-        if (typeof waitUntil === 'function') {
-            waitUntil.call(c.executionCtx, completion)
-            return
-        }
-    } catch (error) {
-        console.warn('Unable to attach admin job to waitUntil', error)
-    }
-
-    void completion
 }
 
 async function copyR2Object(bucket: R2Bucket, sourceObjectKey: string, targetObjectKey: string, contentType: string | null): Promise<void> {
