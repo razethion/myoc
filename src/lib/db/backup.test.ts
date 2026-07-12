@@ -32,7 +32,7 @@ describe('backupD1Database', () => {
         expect(summary.compressedBytes).toBeGreaterThan(0)
         expect(backupBucket.put).toHaveBeenCalledWith(
             summary.key,
-            expect.any(ReadableStream),
+            expect.any(Uint8Array),
             expect.objectContaining({
                 httpMetadata: {
                     contentEncoding: 'gzip',

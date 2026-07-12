@@ -49,7 +49,8 @@ export async function backupD1Database(env: D1BackupEnv, now = new Date(), optio
     }
     const sqlStream = streamFromAsyncIterable(createD1BackupSqlChunks(env.DB, generatedAt, stats, options))
     const gzipStream = sqlStream.pipeThrough(new TextEncoderStream()).pipeThrough(new CompressionStream('gzip'))
-    const backupObject = await env.DB_BACKUP_BUCKET.put(key, gzipStream, {
+    const gzipBytes = new Uint8Array(await new Response(gzipStream).arrayBuffer())
+    const backupObject = await env.DB_BACKUP_BUCKET.put(key, gzipBytes, {
         httpMetadata: {
             contentType: 'application/sql',
             contentEncoding: 'gzip',
