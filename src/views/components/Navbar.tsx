@@ -94,6 +94,9 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
                                     <span>Library</span>
                                 </li>
                                 <li>
+                                    <a href="/leaderboard">Leaderboard</a>
+                                </li>
+                                <li>
                                     <a href="/characters">Characters</a>
                                 </li>
                                 <li>
@@ -152,6 +155,40 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
                         </details>
                     ) : (
                         <div class="flex items-center gap-2">
+                            <details class="dropdown dropdown-end">
+                                <summary aria-label="Open navigation menu" class="btn btn-ghost btn-square btn-sm sm:btn-md">
+                                    <svg
+                                        aria-hidden="true"
+                                        class="h-5 w-5"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                    >
+                                        <path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round" stroke-width="2" />
+                                    </svg>
+                                </summary>
+                                <ul class="menu dropdown-content bg-base-100 rounded-box z-50 mt-3 w-52 p-2 shadow">
+                                    <li class="menu-title">
+                                        <span>Explore</span>
+                                    </li>
+                                    <li>
+                                        <a href="/leaderboard">Leaderboard</a>
+                                    </li>
+                                    <li>
+                                        <a href="/characters">Characters</a>
+                                    </li>
+                                    <li>
+                                        <a href="/size-chart">Size Chart</a>
+                                    </li>
+                                    <li class="my-1">
+                                        <hr class="border-base-300" />
+                                    </li>
+                                    <li>
+                                        <a href="/whats-new">What's New</a>
+                                    </li>
+                                </ul>
+                            </details>
                             <a class="btn btn-ghost btn-sm sm:btn-md" href="/login">
                                 Login
                             </a>

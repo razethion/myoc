@@ -6,6 +6,7 @@ import type {Bindings} from './types/bindings'
 
 const D1_BACKUP_CRON = '0 8 * * *'
 const R2_MEDIA_CLEANUP_CRON = '0 9 * * *'
+const LEADERBOARD_REFRESH_CRON = '0 10 * * *'
 
 const app = new Hono<{Bindings: Bindings}>()
 
@@ -32,6 +33,16 @@ worker.scheduled = (event, env, ctx) => {
     if (event.cron === R2_MEDIA_CLEANUP_CRON) {
         ctx.waitUntil(
             runAdminJob(env, 'r2-media-cleanup', {
+                cron: event.cron,
+                triggerSource: 'cron',
+            }),
+        )
+        return
+    }
+
+    if (event.cron === LEADERBOARD_REFRESH_CRON) {
+        ctx.waitUntil(
+            runAdminJob(env, 'leaderboard-refresh', {
                 cron: event.cron,
                 triggerSource: 'cron',
             }),
