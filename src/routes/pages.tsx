@@ -5,6 +5,7 @@ import {getAdminReportsData} from '../lib/admin/reports'
 import {listUserPasskeys, listUserSessions, toPasskeySummary} from '../lib/auth/passkeys'
 import {getCurrentUser, isAdminUser, toSqlTimestamp} from '../lib/auth/session'
 import {chunkGalleryItems, shouldForceGalleryRowFullWidth} from '../lib/gallery'
+import {getLeaderboardSnapshot} from '../lib/leaderboard'
 import {validateProfileImagePayload} from '../lib/media/profileImage'
 import {
     characterHeightChartImageUrl,
@@ -47,6 +48,7 @@ import {
     type HomePageStats,
     homePageDescription,
 } from '../views/pages/HomePage'
+import {LeaderboardPage} from '../views/pages/LeaderboardPage'
 import {
     MigratePage,
     type ToyhouseClientImportPlan,
@@ -557,6 +559,19 @@ pageRoutes.get('/search', async (c) => {
             guestInitial={getRandomLetter()}
             mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
             results={results}
+        />,
+    )
+})
+
+pageRoutes.get('/leaderboard', async (c) => {
+    const [currentUser, snapshot] = await Promise.all([getCurrentUser(c), getLeaderboardSnapshot(c.env.CACHE)])
+
+    return c.html(
+        <LeaderboardPage
+            currentUser={currentUser}
+            guestInitial={currentUser?.username.charAt(0).toUpperCase() ?? getRandomLetter()}
+            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+            snapshot={snapshot}
         />,
     )
 })

@@ -1,6 +1,7 @@
 import type {Bindings} from '../../types/bindings'
 import {toSqlTimestamp} from '../auth/session'
 import {backupD1Database, type D1BackupSummary} from '../db/backup'
+import {type LeaderboardRefreshSummary, refreshLeaderboard} from '../leaderboard'
 import {cleanupStaleR2Media, type R2CleanupSummary} from '../media/r2Cleanup'
 
 export const ADMIN_JOBS = [
@@ -12,16 +13,20 @@ export const ADMIN_JOBS = [
         name: 'r2-media-cleanup',
         label: 'R2 Media Cleanup',
     },
+    {
+        name: 'leaderboard-refresh',
+        label: 'Leaderboard Refresh',
+    },
 ] as const
 
 export type AdminJobName = (typeof ADMIN_JOBS)[number]['name']
 export type AdminJobTriggerSource = 'cron' | 'manual'
 export type AdminJobRunStatus = 'running' | 'success' | 'error'
-export type AdminJobSummary = D1BackupSummary | R2CleanupSummary
+export type AdminJobSummary = D1BackupSummary | R2CleanupSummary | LeaderboardRefreshSummary
 
 type AdminJobEnv = Pick<
     Bindings,
-    'CLOUDFLARE_ACCOUNT_ID' | 'D1_DATABASE_ID' | 'D1_REST_API_TOKEN' | 'DB' | 'DB_BACKUP_BUCKET' | 'MEDIA_BUCKET'
+    'CLOUDFLARE_ACCOUNT_ID' | 'D1_DATABASE_ID' | 'D1_REST_API_TOKEN' | 'DB' | 'DB_BACKUP_BUCKET' | 'MEDIA_BUCKET' | 'CACHE'
 >
 
 type AdminJobRunOptions = {
@@ -188,7 +193,11 @@ async function runAdminJobTask(env: AdminJobEnv, jobName: AdminJobName): Promise
         return await backupD1Database(env)
     }
 
-    return await cleanupStaleR2Media(env)
+    if (jobName === 'r2-media-cleanup') {
+        return await cleanupStaleR2Media(env)
+    }
+
+    return await refreshLeaderboard(env)
 }
 
 async function tryFinishAdminJobRun(

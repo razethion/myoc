@@ -229,7 +229,7 @@ export const SizeChartSearchItemSchema = z
     })
     .strict()
 
-export const AdminJobNameSchema = z.enum(['d1-backup', 'r2-media-cleanup'])
+export const AdminJobNameSchema = z.enum(['d1-backup', 'r2-media-cleanup', 'leaderboard-refresh'])
 export const AdminJobStatusSchema = z.enum(['running', 'success', 'error'])
 export const AdminJobTriggerSourceSchema = z.enum(['cron', 'manual'])
 
@@ -258,7 +258,24 @@ export const R2CleanupSummarySchema = z
     })
     .strict()
 
-export const AdminJobSummarySchema = z.union([D1BackupSummarySchema, R2CleanupSummarySchema])
+export const LeaderboardRefreshSummarySchema = z
+    .object({
+        key: z.string(),
+        generatedAt: z.string(),
+        scannedObjects: PositiveIntegerSchema,
+        recognizedObjects: PositiveIntegerSchema,
+        skippedUnknownObjects: PositiveIntegerSchema,
+        totalManagedBytes: PositiveIntegerSchema,
+        totalMonthlyStorageCostUsd: z.number().nonnegative(),
+        rankedTopUsers: PositiveIntegerSchema,
+        rankedUsersByCharacters: PositiveIntegerSchema,
+        rankedUsersByImages: PositiveIntegerSchema,
+        rankedUsersByData: PositiveIntegerSchema,
+        rankedCharactersByData: PositiveIntegerSchema,
+    })
+    .strict()
+
+export const AdminJobSummarySchema = z.union([D1BackupSummarySchema, R2CleanupSummarySchema, LeaderboardRefreshSummarySchema])
 
 export const AdminJobRunSchema = z
     .object({

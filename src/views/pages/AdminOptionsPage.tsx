@@ -120,11 +120,15 @@ function RunSummary({run}: {run: AdminJobRun}) {
         return <D1BackupSummary summary={run.summary} />
     }
 
+    if (run.jobName === 'leaderboard-refresh') {
+        return <LeaderboardRefreshSummary summary={run.summary} />
+    }
+
     return <R2CleanupSummary summary={run.summary} />
 }
 
 function D1BackupSummary({summary}: {summary: AdminJobSummary}) {
-    if (!('key' in summary)) {
+    if (!('compressedBytes' in summary) || !('rows' in summary)) {
         return <JsonSummary summary={summary} />
     }
 
@@ -160,8 +164,32 @@ function R2CleanupSummary({summary}: {summary: AdminJobSummary}) {
     )
 }
 
+function LeaderboardRefreshSummary({summary}: {summary: AdminJobSummary}) {
+    if (!('rankedUsersByCharacters' in summary) || !('rankedTopUsers' in summary)) {
+        return <JsonSummary summary={summary} />
+    }
+
+    return (
+        <div class="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+            <span>{summary.recognizedObjects} objects</span>
+            <span>{formatBytes(summary.totalManagedBytes)}</span>
+            <span>{formatCurrency(summary.totalMonthlyStorageCostUsd)}/mo</span>
+            <span>{summary.rankedTopUsers} users ranked</span>
+            <span>{summary.rankedCharactersByData} characters ranked</span>
+        </div>
+    )
+}
+
 function JsonSummary({summary}: {summary: AdminJobSummary}) {
     return <pre class="max-w-xl whitespace-pre-wrap break-words text-xs">{JSON.stringify(summary, null, 2)}</pre>
+}
+
+function formatCurrency(value: number): string {
+    if (!Number.isFinite(value)) {
+        return '$0.00'
+    }
+
+    return `$${value >= 1 ? value.toFixed(2) : value.toFixed(4)}`
 }
 
 function formatRunSource(run: AdminJobRun): string {
