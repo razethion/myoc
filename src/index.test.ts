@@ -30,6 +30,7 @@ describe('worker scheduled handler', () => {
     it.each([
         ['0 8 * * *', 'd1-backup'],
         ['0 9 * * *', 'r2-media-cleanup'],
+        ['0 10 * * *', 'leaderboard-refresh'],
     ] as const)('runs the %s cron as %s', async (cron, jobName) => {
         const {ctx, waitUntilPromises} = createExecutionContext()
 

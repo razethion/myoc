@@ -1,5 +1,6 @@
 import {afterEach, describe, expect, it, vi} from 'vitest'
 import app from '../index'
+import {LEADERBOARD_CACHE_KEY, type LeaderboardSnapshot} from '../lib/leaderboard'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import {createWebpDataUrl} from '../test/imageFixtures'
 import {createMockKVNamespace} from '../test/mockKV'
@@ -310,6 +311,102 @@ describe('public page redirects', () => {
         expect(html).toContain('24')
         expect(html).toContain('128')
         expect(html).toContain('4,096')
+    })
+
+    it('renders the latest leaderboard snapshot from KV', async () => {
+        const snapshot = {
+            version: 1,
+            generatedAt: '2026-07-12T10:00:00.000Z',
+            costPerGbMonthUsd: 0.015,
+            totalManagedBytes: 5 * 1024 * 1024 * 1024,
+            totalUsers: 987,
+            totalCharacters: 1234,
+            totalImages: 5678,
+            topUsers: [
+                {
+                    rank: 1,
+                    userId: 'user-1',
+                    username: 'alice',
+                    profilePhotoKey: null,
+                    characterCount: 12,
+                    imageCount: 128,
+                    bytes: 1024 * 1024 * 1024,
+                    monthlyStorageCostUsd: 0.015,
+                },
+            ],
+            usersByCharacters: [
+                {
+                    rank: 1,
+                    userId: 'user-1',
+                    username: 'alice',
+                    profilePhotoKey: null,
+                    characterCount: 12,
+                },
+            ],
+            usersByImages: [
+                {
+                    rank: 1,
+                    userId: 'user-2',
+                    username: 'bob',
+                    profilePhotoKey: 'bob-photo',
+                    imageCount: 345,
+                },
+            ],
+            usersByData: [
+                {
+                    rank: 1,
+                    userId: 'user-2',
+                    username: 'bob',
+                    profilePhotoKey: 'bob-photo',
+                    bytes: 2 * 1024 * 1024 * 1024,
+                    monthlyStorageCostUsd: 0.03,
+                },
+            ],
+            charactersByData: [
+                {
+                    rank: 1,
+                    characterId: 'char-2',
+                    userId: 'user-2',
+                    name: 'Beryl',
+                    ownerUsername: 'bob',
+                    profileImageKey: 'beryl-profile',
+                    bytes: 3 * 1024 * 1024 * 1024,
+                    monthlyStorageCostUsd: 0.045,
+                },
+            ],
+        } satisfies LeaderboardSnapshot
+        const cache = createMockKVNamespace({
+            values: {
+                [LEADERBOARD_CACHE_KEY]: snapshot,
+            },
+        })
+        const response = await getAppPath('/leaderboard', createProfilePageDb(), {}, cache)
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('<title>Leaderboard | MyOC</title>')
+        expect(html).toContain('Daily rankings')
+        expect(html).toContain('Total data stored')
+        expect(html).toContain('Total characters')
+        expect(html).toContain('Total users')
+        expect(html).toContain('Total images')
+        expect(html).toContain('Users with the most characters')
+        expect(html).toContain('Users with the most images')
+        expect(html).toContain('Users consuming the most data')
+        expect(html).toContain('Characters with the most data uploaded')
+        expect(html).toContain('987')
+        expect(html).toContain('1,234')
+        expect(html).toContain('5,678')
+        expect(html).toContain('alice')
+        expect(html).toContain('bob')
+        expect(html).toContain('Beryl')
+        expect(html).toContain('12')
+        expect(html).toContain('345')
+        expect(html).toContain('5.00 GB')
+        expect(html).toContain('3.00 GB')
+        expect(html).toContain('$0.0450/mo')
+        expect(html).toContain('href="/u/bob/Beryl"')
+        expect(html).toContain('https://m.myoc.art/characters/user-2/char-2/profile/beryl-profile.webp')
     })
 
     it('renders approved homepage gallery thumbnails below the hero', async () => {
@@ -2429,6 +2526,8 @@ describe('GET /admin', () => {
         expect(html).toContain('Run D1 Database Backup')
         expect(html).toContain('action="/api/admin/jobs/r2-media-cleanup/run"')
         expect(html).toContain('Run R2 Media Cleanup')
+        expect(html).toContain('action="/api/admin/jobs/leaderboard-refresh/run"')
+        expect(html).toContain('Run Leaderboard Refresh')
         expect(html).toContain('Job History')
         expect(html).toContain('Cron 0 8 * * *')
         expect(html).toContain('d1/myoc-db/2026/07/11/myoc-db.sql.gz')
@@ -2548,6 +2647,33 @@ describe('GET /admin', () => {
                         error_message: null,
                     },
                     {
+                        id: 'run-leaderboard',
+                        job_name: 'leaderboard-refresh',
+                        trigger_source: 'cron',
+                        triggered_by_user_id: null,
+                        triggered_by_username: null,
+                        cron: null,
+                        status: 'success',
+                        started_at: '2026-07-11 09:04:00',
+                        finished_at: '2026-07-11 09:04:02',
+                        duration_ms: 2048,
+                        summary_json: JSON.stringify({
+                            generatedAt: '2026-07-11T10:00:00.000Z',
+                            key: LEADERBOARD_CACHE_KEY,
+                            rankedCharactersByData: 3,
+                            rankedTopUsers: 3,
+                            rankedUsersByCharacters: 3,
+                            rankedUsersByData: 3,
+                            rankedUsersByImages: 3,
+                            recognizedObjects: 8,
+                            scannedObjects: 8,
+                            skippedUnknownObjects: 0,
+                            totalManagedBytes: 4096,
+                            totalMonthlyStorageCostUsd: 0.000000057,
+                        }),
+                        error_message: null,
+                    },
+                    {
                         id: 'run-r2-json',
                         job_name: 'r2-media-cleanup',
                         trigger_source: 'manual',
@@ -2584,6 +2710,11 @@ describe('GET /admin', () => {
         expect(html).toContain('1 errors')
         expect(html).toContain('delete limit reached')
         expect(html).toContain('missing key')
+        expect(html).toContain('8 objects')
+        expect(html).toContain('4.0 KB')
+        expect(html).toContain('$0.0000/mo')
+        expect(html).toContain('3 users ranked')
+        expect(html).toContain('3 characters ranked')
         expect(html).toContain('custom summary')
     })
 

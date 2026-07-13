@@ -2,6 +2,7 @@ import {describe, expect, it, vi} from 'vitest'
 import {createCsrfToken} from '../../lib/auth/session'
 import {createMockDb} from '../../test/mockD1'
 import {createMockImagesBinding} from '../../test/mockImages'
+import {createMockKVNamespace} from '../../test/mockKV'
 import {createMockR2Bucket} from '../../test/mockR2'
 import {apiRoutes} from '../api'
 
@@ -29,6 +30,7 @@ function createCurrentUserRecord(role: 'user' | 'admin') {
 
 function requestEnv(db: D1Database, mediaBucket = createMockR2Bucket(), imagesBinding = createMockImagesBinding()) {
     return {
+        CACHE: createMockKVNamespace(),
         DB: db,
         DB_BACKUP_BUCKET: createMockR2Bucket(),
         MEDIA_BUCKET: mediaBucket,
