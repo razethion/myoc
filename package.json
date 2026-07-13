@@ -1,8 +1,9 @@
 {
   "name": "myoc",
   "type": "module",
+  "packageManager": "npm@11.16.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=24 <25"
   },
   "scripts": {
     "dev": "wrangler types && npm run build && wrangler dev",
@@ -39,5 +40,11 @@
     "typescript": "^6.0.3",
     "vitest": "^4.1.10",
     "wrangler": "^4.108.0"
+  },
+  "allowScripts": {
+    "@parcel/watcher": true,
+    "esbuild": true,
+    "sharp": true,
+    "workerd": true
   }
 }
