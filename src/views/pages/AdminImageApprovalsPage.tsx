@@ -1,5 +1,4 @@
 import type {ImageApprovalData} from '../../lib/admin/imageApprovals'
-import {adminImageApprovalsScript} from './adminImageApprovalsScript'
 
 type AdminImageApprovalsPageProps = {
     csrfToken: string
@@ -20,7 +19,7 @@ export function AdminImageApprovalsPage({csrfToken, data}: AdminImageApprovalsPa
                 <ShortcutHint keys={['Enter']} label="Submit" />
             </div>
             <div class="min-h-0 min-w-0 flex-1 overflow-hidden p-2" data-approval-current></div>
-            <script dangerouslySetInnerHTML={{__html: adminImageApprovalsScript}}></script>
+            <script src="/admin-image-approvals.js"></script>
         </div>
     )
 }

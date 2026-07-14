@@ -2501,12 +2501,8 @@ describe('GET /admin', () => {
         expect(html).toContain('<kbd class="kbd kbd-xs">Enter</kbd>')
         expect(html).toContain('admin-approval-image-grid')
         expect(html).toContain('admin-approval-media-frame')
-        expect(html).toContain('handleKeyboardShortcuts')
-        expect(html).toContain('a: ["sfw", "approve_sfw_homepage"]')
-        expect(html.indexOf('key === "Enter"')).toBeLessThan(html.indexOf('!isKeyboardShortcutTarget(event.target)'))
-        expect(html).toContain('openVariantInNewTab("nsfw")')
+        expect(html).toContain('<script src="/admin-image-approvals.js"')
         expect(html).not.toContain('tooltip')
-        expect(html).not.toContain('/admin-image-approvals.js')
         expect(html).not.toContain('data-approval-sidebar')
     })
 

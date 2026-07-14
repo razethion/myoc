@@ -506,7 +506,7 @@ async function renderAdminPage(c: PageRouteContext, activeSection: AdminSection)
 function getImageApprovalLogPage(c: PageRouteContext): number {
     const value = Number(c.req.query('page') ?? 1)
 
-    return Number.isInteger(value) && value > 0 ? value : 1
+    return Number.isFinite(value) && Number.isInteger(value) && value > 0 ? value : 1
 }
 
 function canAccessAdminSection(currentUser: CurrentUser, activeSection: AdminSection): boolean {
