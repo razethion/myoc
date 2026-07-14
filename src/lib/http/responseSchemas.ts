@@ -19,7 +19,7 @@ export const OkResponseSchema = z
     })
     .strict()
 
-export const UserRoleSchema = z.enum(['user', 'admin'])
+export const UserRoleSchema = z.enum(['user', 'moderator', 'admin'])
 
 export const OwnUserSchema = z
     .object({
@@ -352,34 +352,8 @@ export const ImageApprovalDataSchema = z
             })
             .strict()
             .nullable(),
-        pending: z.array(
-            z
-                .object({
-                    id: z.string(),
-                    createdAt: z.string(),
-                    username: z.string(),
-                    characterName: z.string(),
-                    pendingSfw: z.boolean(),
-                    pendingNsfw: z.boolean(),
-                })
-                .strict(),
-        ),
         pendingCount: PositiveIntegerSchema,
-        history: z.array(
-            z
-                .object({
-                    id: z.string(),
-                    mediaId: z.string(),
-                    imageRating: z.enum(['sfw', 'nsfw']),
-                    action: z.string(),
-                    homepageAllowed: z.boolean(),
-                    moderatorUsername: z.string(),
-                    ownerUsername: z.string(),
-                    characterName: z.string(),
-                    createdAt: z.string(),
-                })
-                .strict(),
-        ),
+        leaseExpiresAt: NullableStringSchema,
     })
     .strict()
 

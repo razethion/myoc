@@ -16,7 +16,7 @@ type CreateUserResponse = {
     user: {
         email: string
         username: string
-        role: 'user' | 'admin'
+        role: 'user' | 'moderator' | 'admin'
         profilePhotoKey: string | null
         bio: string
         displayNsfwMedia: boolean

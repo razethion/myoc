@@ -1,9 +1,10 @@
 import {type Context, Hono} from 'hono'
-import {getImageApprovalData} from '../lib/admin/imageApprovals'
+import type {Child} from 'hono/jsx'
+import {getImageApprovalData, getImageApprovalHistory, getImageApprovalPendingCount} from '../lib/admin/imageApprovals'
 import {getAdminJobLabel, getAdminOptionsData, parseAdminJobName} from '../lib/admin/jobs'
 import {getAdminReportsData} from '../lib/admin/reports'
 import {listUserPasskeys, listUserSessions, toPasskeySummary} from '../lib/auth/passkeys'
-import {getCurrentUser, isAdminUser, toSqlTimestamp} from '../lib/auth/session'
+import {type CurrentUser, canModerateImages, getCurrentUser, isAdminUser, toSqlTimestamp} from '../lib/auth/session'
 import {chunkGalleryItems, shouldForceGalleryRowFullWidth} from '../lib/gallery'
 import {getLeaderboardSnapshot} from '../lib/leaderboard'
 import {validateProfileImagePayload} from '../lib/media/profileImage'
@@ -17,6 +18,7 @@ import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import {searchAll} from '../lib/search'
 import type {UserSocialLink} from '../lib/socialLinks'
 import type {Bindings} from '../types/bindings'
+import {AdminImageApprovalLogPage} from '../views/pages/AdminImageApprovalLogPage'
 import {AdminImageApprovalsPage} from '../views/pages/AdminImageApprovalsPage'
 import {type AdminOptionsFeedback, AdminOptionsPage} from '../views/pages/AdminOptionsPage'
 import {AdminPage, type AdminSection, isAdminSection} from '../views/pages/AdminPage'
@@ -455,31 +457,60 @@ async function renderAdminPage(c: PageRouteContext, activeSection: AdminSection)
         return c.redirect('/login')
     }
 
-    if (!isAdminUser(currentUser)) {
+    if (!canModerateImages(currentUser)) {
         return renderNotFoundPage(c)
     }
 
-    const content =
-        activeSection === 'image-approvals' ? (
-            <AdminImageApprovalsPage
-                csrfToken={currentUser.csrfToken}
-                data={await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, c.req.query('mediaId'))}
-            />
-        ) : activeSection === 'reports' ? (
-            <AdminReportsPage csrfToken={currentUser.csrfToken} data={await getAdminReportsData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL)} />
-        ) : activeSection === 'admin-options' ? (
-            <AdminOptionsPage
-                csrfToken={currentUser.csrfToken}
-                data={await getAdminOptionsData(c.env.DB)}
-                feedback={getAdminOptionsFeedback(c)}
-            />
-        ) : null
+    if (!canAccessAdminSection(currentUser, activeSection)) {
+        return renderNotFoundPage(c)
+    }
+
+    let imageApprovalPendingCount: number
+    let content: Child
+
+    if (activeSection === 'image-approvals') {
+        const data = await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, currentUser.id)
+        imageApprovalPendingCount = data.pendingCount
+        content = <AdminImageApprovalsPage csrfToken={currentUser.csrfToken} data={data} />
+    } else {
+        imageApprovalPendingCount = await getImageApprovalPendingCount(c.env.DB)
+        content =
+            activeSection === 'image-approval-log' ? (
+                <AdminImageApprovalLogPage history={await getImageApprovalHistory(c.env.DB, getImageApprovalLogPage(c))} />
+            ) : activeSection === 'reports' ? (
+                <AdminReportsPage
+                    csrfToken={currentUser.csrfToken}
+                    data={await getAdminReportsData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL)}
+                />
+            ) : activeSection === 'admin-options' ? (
+                <AdminOptionsPage
+                    csrfToken={currentUser.csrfToken}
+                    data={await getAdminOptionsData(c.env.DB)}
+                    feedback={getAdminOptionsFeedback(c)}
+                />
+            ) : null
+    }
 
     return c.html(
-        <AdminPage activeSection={activeSection} currentUser={currentUser} mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}>
+        <AdminPage
+            activeSection={activeSection}
+            currentUser={currentUser}
+            imageApprovalPendingCount={imageApprovalPendingCount}
+            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+        >
             {content}
         </AdminPage>,
     )
+}
+
+function getImageApprovalLogPage(c: PageRouteContext): number {
+    const value = Number(c.req.query('page') ?? 1)
+
+    return Number.isFinite(value) && Number.isInteger(value) && value > 0 ? value : 1
+}
+
+function canAccessAdminSection(currentUser: CurrentUser, activeSection: AdminSection): boolean {
+    return activeSection === 'image-approvals' || isAdminUser(currentUser)
 }
 
 function getAdminOptionsFeedback(c: PageRouteContext): AdminOptionsFeedback | null {
