@@ -476,7 +476,7 @@ async function renderAdminPage(c: PageRouteContext, activeSection: AdminSection)
         imageApprovalPendingCount = await getImageApprovalPendingCount(c.env.DB)
         content =
             activeSection === 'image-approval-log' ? (
-                <AdminImageApprovalLogPage history={await getImageApprovalHistory(c.env.DB)} />
+                <AdminImageApprovalLogPage history={await getImageApprovalHistory(c.env.DB, getImageApprovalLogPage(c))} />
             ) : activeSection === 'reports' ? (
                 <AdminReportsPage
                     csrfToken={currentUser.csrfToken}
@@ -501,6 +501,12 @@ async function renderAdminPage(c: PageRouteContext, activeSection: AdminSection)
             {content}
         </AdminPage>,
     )
+}
+
+function getImageApprovalLogPage(c: PageRouteContext): number {
+    const value = Number(c.req.query('page') ?? 1)
+
+    return Number.isInteger(value) && value > 0 ? value : 1
 }
 
 function canAccessAdminSection(currentUser: CurrentUser, activeSection: AdminSection): boolean {

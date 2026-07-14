@@ -1,7 +1,7 @@
-import type {ImageApprovalHistoryItem} from '../../lib/admin/imageApprovals'
+import type {ImageApprovalHistoryPage} from '../../lib/admin/imageApprovals'
 
 type AdminImageApprovalLogPageProps = {
-    history: ImageApprovalHistoryItem[]
+    history: ImageApprovalHistoryPage
 }
 
 export function AdminImageApprovalLogPage({history}: AdminImageApprovalLogPageProps) {
@@ -10,13 +10,17 @@ export function AdminImageApprovalLogPage({history}: AdminImageApprovalLogPagePr
             <div class="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
                     <h2 class="text-2xl font-bold">Image Approval Log</h2>
+                    <p class="text-sm text-base-content/70">Showing up to {history.pageSize} review events per page.</p>
                 </div>
-                <a class="btn btn-sm btn-outline" href="/admin/image-approval-log">
-                    Refresh
-                </a>
+                <div class="flex flex-wrap gap-2">
+                    <HistoryPagination history={history} />
+                    <a class="btn btn-sm btn-outline" href={`/admin/image-approval-log?page=${history.page}`}>
+                        Refresh
+                    </a>
+                </div>
             </div>
 
-            {history.length > 0 ? (
+            {history.items.length > 0 ? (
                 <div class="overflow-x-auto rounded border border-base-300">
                     <table class="table table-sm">
                         <thead>
@@ -30,7 +34,7 @@ export function AdminImageApprovalLogPage({history}: AdminImageApprovalLogPagePr
                             </tr>
                         </thead>
                         <tbody>
-                            {history.map((item) => (
+                            {history.items.map((item) => (
                                 <tr>
                                     <td class="whitespace-nowrap font-mono text-xs">{formatTimestamp(item.createdAt)}</td>
                                     <td>
@@ -47,8 +51,40 @@ export function AdminImageApprovalLogPage({history}: AdminImageApprovalLogPagePr
                 </div>
             ) : (
                 <div class="rounded border border-dashed border-base-300 bg-base-200 p-8 text-center">
-                    <h3 class="text-lg font-bold">No image approval events</h3>
+                    <h3 class="text-lg font-bold">
+                        {history.page > 1 ? 'No image approval events on this page' : 'No image approval events'}
+                    </h3>
                 </div>
+            )}
+        </div>
+    )
+}
+
+function HistoryPagination({history}: {history: ImageApprovalHistoryPage}) {
+    if (!history.hasPrevious && !history.hasNext) {
+        return null
+    }
+
+    return (
+        <div class="join">
+            {history.hasPrevious ? (
+                <a class="btn btn-sm join-item" href={`/admin/image-approval-log?page=${history.page - 1}`}>
+                    Previous
+                </a>
+            ) : (
+                <button class="btn btn-sm join-item" type="button" disabled>
+                    Previous
+                </button>
+            )}
+            <span class="btn btn-sm join-item no-animation">Page {history.page}</span>
+            {history.hasNext ? (
+                <a class="btn btn-sm join-item" href={`/admin/image-approval-log?page=${history.page + 1}`}>
+                    Next
+                </a>
+            ) : (
+                <button class="btn btn-sm join-item" type="button" disabled>
+                    Next
+                </button>
             )}
         </div>
     )

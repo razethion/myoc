@@ -60,6 +60,14 @@ export type ImageApprovalHistoryItem = {
     createdAt: string
 }
 
+export type ImageApprovalHistoryPage = {
+    items: ImageApprovalHistoryItem[]
+    page: number
+    pageSize: number
+    hasPrevious: boolean
+    hasNext: boolean
+}
+
 export type ImageApprovalData = {
     current: ImageApprovalItem | null
     pendingCount: number
@@ -442,7 +450,9 @@ async function getImageApprovalCount(db: D1Database): Promise<number> {
     return row?.count ?? 0
 }
 
-export async function getImageApprovalHistory(db: D1Database): Promise<ImageApprovalHistoryItem[]> {
+export async function getImageApprovalHistory(db: D1Database, page = 1): Promise<ImageApprovalHistoryPage> {
+    const pageNumber = Math.max(1, Math.trunc(page))
+    const offset = (pageNumber - 1) * HISTORY_LIMIT
     const result = await db
         .prepare(
             `SELECT character_media_review_events.id,
@@ -461,22 +471,31 @@ export async function getImageApprovalHistory(db: D1Database): Promise<ImageAppr
                   INNER JOIN characters ON characters.id = character_media.character_id
          ORDER BY character_media_review_events.created_at DESC,
                   character_media_review_events.id DESC
-         LIMIT ?`,
+         LIMIT ?
+         OFFSET ?`,
         )
-        .bind(HISTORY_LIMIT)
+        .bind(HISTORY_LIMIT + 1, offset)
         .all<HistoryRow>()
 
-    return (result.results ?? []).map((row) => ({
-        id: row.id,
-        mediaId: row.media_id,
-        imageRating: row.image_rating,
-        action: row.action,
-        homepageAllowed: Boolean(row.homepage_allowed),
-        moderatorUsername: row.moderator_username,
-        ownerUsername: row.owner_username,
-        characterName: row.character_name,
-        createdAt: row.created_at,
-    }))
+    const rows = result.results ?? []
+
+    return {
+        items: rows.slice(0, HISTORY_LIMIT).map((row) => ({
+            id: row.id,
+            mediaId: row.media_id,
+            imageRating: row.image_rating,
+            action: row.action,
+            homepageAllowed: Boolean(row.homepage_allowed),
+            moderatorUsername: row.moderator_username,
+            ownerUsername: row.owner_username,
+            characterName: row.character_name,
+            createdAt: row.created_at,
+        })),
+        page: pageNumber,
+        pageSize: HISTORY_LIMIT,
+        hasPrevious: pageNumber > 1,
+        hasNext: rows.length > HISTORY_LIMIT,
+    }
 }
 
 function toImageApprovalItem(row: ImageApprovalRow, mediaBaseUrl: string): ImageApprovalItem {
