@@ -1,9 +1,16 @@
 import {type Context, Hono} from 'hono'
 import {z} from 'zod'
-import {getImageApprovalData, type ImageApprovalAction, isValidImageApprovalAction} from '../../lib/admin/imageApprovals'
+import {
+    completeImageApprovalLease,
+    getImageApprovalData,
+    hasActiveImageApprovalLease,
+    type ImageApprovalAction,
+    isValidImageApprovalAction,
+    queueImageReview,
+} from '../../lib/admin/imageApprovals'
 import {type AdminJobName, type AdminJobRunResult, getAdminJobRuns, isAdminJobName, runAdminJob} from '../../lib/admin/jobs'
 import {getAdminReportsData} from '../../lib/admin/reports'
-import {requireAdminApiUser} from '../../lib/auth/authorization'
+import {requireAdminApiUser, requireImageModeratorApiUser} from '../../lib/auth/authorization'
 import {toSqlTimestamp} from '../../lib/auth/session'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {
@@ -144,7 +151,7 @@ adminRoutes.get('/', async (c) => {
 })
 
 adminRoutes.get('/image-approvals', async (c) => {
-    const authorization = await requireAdminApiUser(c)
+    const authorization = await requireImageModeratorApiUser(c)
 
     if ('response' in authorization) {
         return authorization.response
@@ -153,7 +160,7 @@ adminRoutes.get('/image-approvals', async (c) => {
     return jsonResponse(
         c,
         ImageApprovalDataSchema,
-        await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, c.req.query('mediaId')),
+        await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, authorization.currentUser.id),
     )
 })
 
@@ -198,7 +205,7 @@ adminRoutes.post('/jobs/:jobName/run', async (c) => {
 })
 
 adminRoutes.post('/image-approvals/:mediaId', async (c) => {
-    const authorization = await requireAdminApiUser(c)
+    const authorization = await requireImageModeratorApiUser(c)
 
     if ('response' in authorization) {
         return authorization.response
@@ -233,6 +240,10 @@ adminRoutes.post('/image-approvals/:mediaId', async (c) => {
 
     if (!sfwAction && !nsfwAction) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'At least one approval action is required'}, 400)
+    }
+
+    if (!(await hasActiveImageApprovalLease(c.env.DB, c.req.param('mediaId'), authorization.currentUser.id))) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Image review lease is no longer active'}, 409)
     }
 
     const media = await getModerationMedia(c.env.DB, c.req.param('mediaId'))
@@ -289,6 +300,8 @@ adminRoutes.post('/image-approvals/:mediaId', async (c) => {
         throw error
     }
 
+    await completeImageApprovalLease(c.env.DB, media.id, authorization.currentUser.id)
+
     for (const move of update.moves) {
         try {
             await c.env.MEDIA_BUCKET.delete(move.sourceObjectKey)
@@ -299,7 +312,11 @@ adminRoutes.post('/image-approvals/:mediaId', async (c) => {
 
     await deleteR2Objects(c.env.MEDIA_BUCKET, update.deletedObjectKeys)
 
-    return jsonResponse(c, ImageApprovalDataSchema, await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL))
+    return jsonResponse(
+        c,
+        ImageApprovalDataSchema,
+        await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, authorization.currentUser.id),
+    )
 })
 
 adminRoutes.post('/reports/images/:mediaId/:rating/:action', async (c) => {
@@ -334,6 +351,7 @@ adminRoutes.post('/reports/images/:mediaId/:rating/:action', async (c) => {
 
     if (action === 'ignore') {
         await ignoreImageReport(c.env.DB, media.id, rating, authorization.currentUser.id, now)
+        await queueImageReview(c.env.DB, media.id)
     } else if (action === 'delete-image') {
         await deleteReportedImage(c.env.DB, c.env.MEDIA_BUCKET, media, rating)
     } else if (action === 'delete-character') {

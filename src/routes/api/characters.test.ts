@@ -3536,13 +3536,13 @@ describe('character media uploads', () => {
                 },
             },
         )
-        expect(boundStatements.at(-1)?.sql).toContain(['INSERT INTO', 'character_media'].join(' '))
-        expect(boundStatements.at(-1)?.binds[5]).toBe('image/png')
-        expect(boundStatements.at(-1)?.binds[9]).toBe(10000)
-        expect(boundStatements.at(-1)?.binds[10]).toBe(10000)
-        expect(boundStatements.at(-1)?.binds[12]).toBe(body.media.sfwPreviewImageKey)
-        expect(boundStatements.at(-1)?.binds[13]).toBe(1600)
-        expect(boundStatements.at(-1)?.binds[14]).toBe(1600)
+        const mediaInsert = boundStatements.find((statement) => statement.sql.includes(['INSERT INTO', 'character_media'].join(' ')))
+        expect(mediaInsert?.binds[5]).toBe('image/png')
+        expect(mediaInsert?.binds[9]).toBe(10000)
+        expect(mediaInsert?.binds[10]).toBe(10000)
+        expect(mediaInsert?.binds[12]).toBe(body.media.sfwPreviewImageKey)
+        expect(mediaInsert?.binds[13]).toBe(1600)
+        expect(mediaInsert?.binds[14]).toBe(1600)
     })
 
     it('rejects completed gallery uploads when the character is already at the media limit', async () => {
@@ -3683,7 +3683,8 @@ describe('character media uploads', () => {
                 },
             },
         )
-        expect(boundStatements.at(-1)?.binds[23]).toBe(body.media.nsfwBlurImageKey)
+        const mediaInsert = boundStatements.find((statement) => statement.sql.includes(['INSERT INTO', 'character_media'].join(' ')))
+        expect(mediaInsert?.binds[23]).toBe(body.media.nsfwBlurImageKey)
     })
 
     it('rejects chunked gallery media when declared original dimensions do not match the stored image', async () => {
@@ -3938,7 +3939,8 @@ describe('character media uploads', () => {
         expect(body.media.sfwByteSize).toBe(gifFile.size)
         expect(body.media.sfwPreviewWidth).toBe(320)
         expect(body.media.sfwPreviewHeight).toBe(240)
-        expect(boundStatements.at(-1)?.binds[5]).toBe('image/gif')
+        const mediaInsert = boundStatements.find((statement) => statement.sql.includes(['INSERT INTO', 'character_media'].join(' ')))
+        expect(mediaInsert?.binds[5]).toBe('image/gif')
     })
 
     it('marks Toyhou.se import items and their jobs as failed', async () => {
@@ -4302,9 +4304,9 @@ describe('character media uploads', () => {
         expect(body.media.sfwImageKey).toBeNull()
         expect(body.media.nsfwImageKey).toBe('nsfw-image-key')
         expect(body.media.nsfwArtist).toBe('Kept Artist')
-        expect(boundStatements.at(-1)?.sql).toContain('UPDATE character_media')
-        expect(boundStatements.at(-1)?.binds[0]).toBeNull()
-        expect(boundStatements.at(-1)?.binds[21]).toBe(1)
+        const mediaUpdate = boundStatements.find((statement) => statement.sql.includes('UPDATE character_media'))
+        expect(mediaUpdate?.binds[0]).toBeNull()
+        expect(mediaUpdate?.binds[21]).toBe(1)
         expect(mediaBucket.delete).toHaveBeenCalledWith('characters/current-user/character-id/media/media-id/sfw/sfw-image-key.png')
         expect(mediaBucket.delete).toHaveBeenCalledWith(
             'characters/current-user/character-id/media/media-id/sfw/preview/sfw-preview-key.webp',

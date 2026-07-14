@@ -1,5 +1,4 @@
 import type {ImageApprovalData} from '../../lib/admin/imageApprovals'
-import {adminImageApprovalsScript} from './adminImageApprovalsScript'
 
 type AdminImageApprovalsPageProps = {
     csrfToken: string
@@ -10,16 +9,30 @@ export function AdminImageApprovalsPage({csrfToken, data}: AdminImageApprovalsPa
     const initialState = safeJson(data)
 
     return (
-        <div class="min-h-[calc(100vh-4rem)]" data-csrf-token={csrfToken} data-image-approvals>
+        <div class="flex h-full min-h-0 min-w-0 flex-col overflow-hidden" data-csrf-token={csrfToken} data-image-approvals>
             <AdminImageApprovalsStyles />
             <div data-image-approval-state={initialState} hidden id="image-approval-data"></div>
-            <div class="grid min-h-[calc(100vh-4rem)] xl:grid-cols-[1fr_22rem]">
-                <div class="min-w-0 p-4 sm:p-6" data-approval-current></div>
-                <aside class="border-t border-base-300 bg-base-200/60 xl:border-l xl:border-t-0">
-                    <div class="grid gap-5 p-4" data-approval-sidebar></div>
-                </aside>
+            <div class="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-base-300 px-2 py-1 text-xs sm:px-3">
+                <ShortcutHint keys={['A', 'S', 'D', 'F']} label="SFW" />
+                <ShortcutHint keys={['J', 'K', 'L', ';']} label="NSFW" />
+                <ShortcutHint keys={['R', 'U']} label="Open" />
+                <ShortcutHint keys={['Enter']} label="Submit" />
             </div>
-            <script dangerouslySetInnerHTML={{__html: adminImageApprovalsScript}}></script>
+            <div class="min-h-0 min-w-0 flex-1 overflow-hidden p-2" data-approval-current></div>
+            <script src="/admin-image-approvals.js"></script>
+        </div>
+    )
+}
+
+function ShortcutHint({keys, label}: {keys: string[]; label: string}) {
+    return (
+        <div class="flex items-center gap-1.5">
+            <span class="whitespace-nowrap font-medium">{label}</span>
+            <span class="flex items-center gap-1">
+                {keys.map((key) => (
+                    <kbd class="kbd kbd-xs">{key}</kbd>
+                ))}
+            </span>
         </div>
     )
 }
@@ -29,24 +42,40 @@ function AdminImageApprovalsStyles() {
         <style>{`
             .admin-approval-image-grid {
                 display: grid;
-                grid-template-columns: 1fr;
-                gap: 1rem;
+                grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+                gap: 0.5rem;
+                height: 100%;
+                min-height: 0;
                 min-width: 0;
+                flex: 1 1 auto;
             }
 
-            @media (min-width: 768px) {
+            @media (max-width: 639px) {
                 .admin-approval-image-grid {
-                    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+                    gap: 0.375rem;
                 }
             }
 
             .admin-approval-panel {
+                display: flex;
+                flex-direction: column;
+                min-height: 0;
+                min-width: 0;
+                overflow: hidden;
+            }
+
+            .admin-approval-media-frame {
+                flex: 1 1 auto;
+                min-height: 0;
                 min-width: 0;
             }
 
             .admin-approval-panel img {
                 display: block;
+                height: 100%;
                 max-width: 100%;
+                width: 100%;
+                object-fit: contain;
             }
 
             .admin-approval-link {
@@ -63,27 +92,6 @@ function AdminImageApprovalsStyles() {
 
             .admin-approval-link:hover {
                 background: color-mix(in oklab, var(--color-warning) 34%, transparent);
-            }
-
-            .admin-approval-sidebar-card {
-                display: block;
-                width: 100%;
-                min-width: 0;
-                border: 1px solid var(--color-base-300);
-                border-radius: var(--radius-box);
-                background: var(--color-base-100);
-                text-align: left;
-                box-shadow: 0 1px 2px rgb(0 0 0 / 0.18);
-                transition: border-color 150ms ease, background-color 150ms ease;
-            }
-
-            .admin-approval-sidebar-card:hover,
-            .admin-approval-sidebar-card.is-active {
-                border-color: var(--color-primary);
-            }
-
-            .admin-approval-sidebar-card.is-active {
-                background: color-mix(in oklab, var(--color-primary) 10%, var(--color-base-100));
             }
         `}</style>
     )

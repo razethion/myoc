@@ -1,4 +1,4 @@
-import type {CurrentUser} from '../../lib/auth/session'
+import {type CurrentUser, canModerateImages} from '../../lib/auth/session'
 import {profilePhotoUrl} from '../../lib/media/url'
 import {APP_VERSION, RELEASE_NOTES} from '../../lib/releases'
 
@@ -127,7 +127,7 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
                                         Ask a question
                                     </a>
                                 </li>
-                                {currentUser.role === 'admin' && (
+                                {canModerateImages(currentUser) && (
                                     <>
                                         <li class="my-1">
                                             <hr class="border-base-300" />

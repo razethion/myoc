@@ -52,6 +52,7 @@ function createProfilePageDb(
         imageApprovalQueue?: unknown[]
         imageApprovalCount?: number
         imageApprovalHistory?: unknown[]
+        imageApprovalLease?: unknown
         adminReports?: unknown[]
         adminJobRuns?: unknown[]
         userPasskeys?: unknown[]
@@ -61,6 +62,21 @@ function createProfilePageDb(
     const firstForSql = async (sql: string) => {
         if (sql.includes('sfw_image_key IS NOT NULL') && sql.includes('nsfw_image_key IS NOT NULL') && sql.includes('AS count')) {
             return {count: options.imageApprovalCount ?? options.imageApprovalQueue?.length ?? 0}
+        }
+
+        if (
+            sql.trim().startsWith('SELECT media_id') &&
+            sql.includes('FROM admin_image_review_queue') &&
+            sql.includes('leased_by_user_id')
+        ) {
+            return null
+        }
+
+        if (sql.includes('UPDATE admin_image_review_queue') && sql.includes('RETURNING media_id')) {
+            return (
+                options.imageApprovalLease ??
+                (options.imageApprovalItem ? {media_id: 'media-1', lease_expires_at: '2026-06-10 12:30:00'} : null)
+            )
         }
 
         if (sql.includes('COUNT(*) AS count') && sql.includes('FROM character_media')) {
@@ -2323,6 +2339,8 @@ describe('GET /admin', () => {
         expect(html).toContain('aria-label="Admin sections"')
         expect(html).toContain('href="/admin/image-approvals"')
         expect(html).toContain('Image Approvals')
+        expect(html).toContain('href="/admin/image-approval-log"')
+        expect(html).toContain('Image Approval Log')
         expect(html).toContain('href="/admin/moderate-images"')
         expect(html).toContain('Moderate Images')
         expect(html).toContain('href="/admin/moderate-characters"')
@@ -2334,6 +2352,52 @@ describe('GET /admin', () => {
         expect(html).toContain('href="/admin/admin-options"')
         expect(html).toContain('Admin Options')
         expect(html).toContain('aria-label="Image Approvals content"')
+    })
+
+    it('renders only image approvals navigation for moderator users', async () => {
+        const response = await getAppPath(
+            '/admin/image-approvals',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('mod_user', {
+                    role: 'moderator',
+                }),
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('<title>Image Approvals | Admin | MyOC</title>')
+        expect(html).toContain('href="/admin"')
+        expect(html).toContain('href="/admin/image-approvals"')
+        expect(html).toContain('Image Approvals')
+        expect(html).not.toContain('href="/admin/moderate-images"')
+        expect(html).not.toContain('href="/admin/image-approval-log"')
+        expect(html).not.toContain('href="/admin/moderate-characters"')
+        expect(html).not.toContain('href="/admin/moderate-users"')
+        expect(html).not.toContain('href="/admin/reports"')
+        expect(html).not.toContain('href="/admin/admin-options"')
+    })
+
+    it('returns not found for moderator users on other admin sections', async () => {
+        const response = await getAppPath(
+            '/admin/reports',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('mod_user', {
+                    role: 'moderator',
+                }),
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(404)
+        expect(html).toContain('404')
+        expect(html).not.toContain('Reports | Admin | MyOC')
     })
 
     it('renders admin section routes with the matching section active', async () => {
@@ -2428,14 +2492,74 @@ describe('GET /admin', () => {
         expect(html).toContain('&quot;objectKey&quot;:&quot;characters/owner-1/character-1/media/media-1/sfw/sfw-key.png&quot;')
         expect(html).toContain('&quot;username&quot;:&quot;uploader&quot;')
         expect(html).toContain('&quot;pendingCount&quot;:1')
+        expect(html).toContain('&quot;leaseExpiresAt&quot;:&quot;2026-06-10 12:30:00&quot;')
         expect(html).toContain('&quot;profileUrl&quot;:&quot;/u/uploader&quot;')
         expect(html).toContain('&quot;url&quot;:&quot;/u/uploader/Quartz&quot;')
+        expect(html).toContain('grid h-[calc(100vh-4rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden')
+        expect(html).toContain('flex h-full min-h-0 min-w-0 flex-col overflow-hidden')
+        expect(html).toContain('<kbd class="kbd kbd-xs">A</kbd>')
+        expect(html).toContain('<kbd class="kbd kbd-xs">Enter</kbd>')
         expect(html).toContain('admin-approval-image-grid')
-        expect(html).toContain('formatPendingCount')
-        expect(html).toContain('handleKeyboardShortcuts')
-        expect(html).toContain("a: ['sfw', 'approve_sfw_homepage']")
-        expect(html).toContain("openVariantInNewTab('nsfw')")
-        expect(html).not.toContain('/admin-image-approvals.js')
+        expect(html).toContain('admin-approval-media-frame')
+        expect(html).toContain('<script src="/admin-image-approvals.js"')
+        expect(html).not.toContain('tooltip')
+        expect(html).not.toContain('data-approval-sidebar')
+    })
+
+    it('renders image approval audit logs for admin users', async () => {
+        const response = await getAppPath(
+            '/admin/image-approval-log',
+            createProfilePageDb({
+                currentUser: {
+                    ...createCurrentUserRecord('admin_user'),
+                    role: 'admin',
+                },
+                imageApprovalHistory: [
+                    {
+                        id: 'event-1',
+                        media_id: 'media-1',
+                        image_rating: 'sfw',
+                        action: 'approve_sfw_no_homepage',
+                        homepage_allowed: 0,
+                        moderator_username: 'admin_user',
+                        owner_username: 'uploader',
+                        character_name: 'Quartz',
+                        created_at: '2026-06-11 12:00:00',
+                    },
+                ],
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('<title>Image Approval Log | Admin | MyOC</title>')
+        expect(html).toContain('Image Approval Log')
+        expect(html).toContain('Approve Sfw No Homepage')
+        expect(html).toContain('@admin_user')
+        expect(html).toContain('@uploader')
+        expect(html).toContain('Quartz')
+    })
+
+    it('returns not found for moderators on the image approval audit log', async () => {
+        const response = await getAppPath(
+            '/admin/image-approval-log',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('mod_user', {
+                    role: 'moderator',
+                }),
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(404)
+        expect(html).toContain('404')
+        expect(html).not.toContain('Image Approval Log | Admin | MyOC')
     })
 
     it('renders reported images on the reports page', async () => {
