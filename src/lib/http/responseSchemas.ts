@@ -357,20 +357,6 @@ export const ImageApprovalDataSchema = z
     })
     .strict()
 
-export const ImageApprovalHistoryItemSchema = z
-    .object({
-        id: z.string(),
-        mediaId: z.string(),
-        imageRating: z.enum(['sfw', 'nsfw']),
-        action: z.string(),
-        homepageAllowed: z.boolean(),
-        moderatorUsername: z.string(),
-        ownerUsername: z.string(),
-        characterName: z.string(),
-        createdAt: z.string(),
-    })
-    .strict()
-
 export const AdminImageReportSchema = z
     .object({
         type: z.literal('image'),

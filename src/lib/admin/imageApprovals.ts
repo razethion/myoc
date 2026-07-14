@@ -48,15 +48,6 @@ export type ImageApprovalItem = {
     nsfw: ImageApprovalVariant | null
 }
 
-export type ImageApprovalQueueItem = {
-    id: string
-    createdAt: string
-    username: string
-    characterName: string
-    pendingSfw: boolean
-    pendingNsfw: boolean
-}
-
 export type ImageApprovalHistoryItem = {
     id: string
     mediaId: string
