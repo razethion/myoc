@@ -1,7 +1,7 @@
 import {afterEach, describe, expect, it, vi} from 'vitest'
 import app from '../index'
-import {LEADERBOARD_CACHE_KEY, type LeaderboardSnapshot} from '../lib/leaderboard'
 import {NON_HTML_CONTENT_SECURITY_POLICY} from '../lib/http/securityHeaders'
+import {LEADERBOARD_CACHE_KEY, type LeaderboardSnapshot} from '../lib/leaderboard'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import {expectSecurityHeaders} from '../test/assertions'
 import {createWebpDataUrl} from '../test/imageFixtures'
@@ -302,7 +302,7 @@ describe('security headers', () => {
         const contentSecurityPolicy = expectSecurityHeaders(response)
         const scriptDirective = getContentSecurityPolicyDirective(contentSecurityPolicy, 'script-src')
         const nonce = getNonceFromDirective(scriptDirective)
-        const scriptTags = html.match(/<script\b[^>]*>/g) ?? []
+        const scriptTags = html.match(/<script\b[^>]*>/gi) ?? []
 
         expect(scriptDirective).toBe(`script-src 'self' 'nonce-${nonce}'`)
         expect(scriptDirective).not.toContain("'unsafe-inline'")
