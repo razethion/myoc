@@ -1,18 +1,15 @@
-// @ts-nocheck
-export const adminImageApprovalsScript = `((__name) => {(${adminImageApprovalsClient.toString()})();})((target) => target);`
-
-function adminImageApprovalsClient() {
-    const root = document.querySelector<HTMLElement>('[data-image-approvals]')
+;(() => {
+    const root = document.querySelector('[data-image-approvals]')
     const dataScript = document.getElementById('image-approval-data')
 
     if (!root || !dataScript) {
         return
     }
 
-    const currentContainer = root.querySelector<HTMLElement>('[data-approval-current]')
+    const currentContainer = root.querySelector('[data-approval-current]')
     const csrfToken = root.dataset.csrfToken || ''
     let state = JSON.parse(dataScript.dataset.imageApprovalState || '{}')
-    let selectedActions: Record<string, string> = {}
+    let selectedActions = {}
 
     const sfwActions = [
         ['approve_sfw_homepage', 'Approve SFW, Allow Homepage'],
@@ -27,7 +24,7 @@ function adminImageApprovalsClient() {
         ['report_nsfw', 'Report'],
     ]
 
-    function escapeHtml(value: unknown) {
+    function escapeHtml(value) {
         return String(value == null ? '' : value)
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
@@ -36,7 +33,7 @@ function adminImageApprovalsClient() {
             .replace(/'/g, '&#39;')
     }
 
-    function formatBytes(value: unknown) {
+    function formatBytes(value) {
         if (!Number.isFinite(Number(value))) {
             return 'Unknown size'
         }
@@ -53,7 +50,7 @@ function adminImageApprovalsClient() {
         return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
     }
 
-    function formatDimensions(variant: {width?: unknown; height?: unknown} | null) {
+    function formatDimensions(variant) {
         if (!variant?.width || !variant.height) {
             return 'Unknown dimensions'
         }
@@ -61,7 +58,7 @@ function adminImageApprovalsClient() {
         return `${variant.width} x ${variant.height}`
     }
 
-    function formatDate(value: unknown) {
+    function formatDate(value) {
         if (!value) {
             return 'Never'
         }
@@ -75,7 +72,7 @@ function adminImageApprovalsClient() {
         return date.toLocaleString()
     }
 
-    function getMovedVariant(rating: 'sfw' | 'nsfw') {
+    function getMovedVariant(rating) {
         if (!state.current) {
             return null
         }
@@ -95,14 +92,14 @@ function adminImageApprovalsClient() {
         return null
     }
 
-    function sourceWillMove(rating: 'sfw' | 'nsfw') {
+    function sourceWillMove(rating) {
         return (
             (rating === 'sfw' && selectedActions.sfw === 'mark_nsfw') ||
             (rating === 'nsfw' && (selectedActions.nsfw === 'mark_sfw_homepage' || selectedActions.nsfw === 'mark_sfw_no_homepage'))
         )
     }
 
-    function renderVariant(rating: 'sfw' | 'nsfw') {
+    function renderVariant(rating) {
         const current = state.current
         const original = current?.[rating]
         const moved = getMovedVariant(rating)
@@ -155,7 +152,7 @@ function adminImageApprovalsClient() {
         `
     }
 
-    function renderActions(rating: string, actions: string[][], selected: string, moveWouldConflict: boolean) {
+    function renderActions(rating, actions, selected, moveWouldConflict) {
         return `
             <fieldset class="mt-2 grid shrink-0 grid-cols-2 gap-1">
                 ${actions
@@ -213,7 +210,7 @@ function adminImageApprovalsClient() {
             </div>
         `
 
-        for (const input of currentContainer.querySelectorAll<HTMLInputElement>('[data-action-input]')) {
+        for (const input of currentContainer.querySelectorAll('[data-action-input]')) {
             input.addEventListener('change', () => {
                 selectedActions[input.dataset.actionInput || ''] = input.value
                 renderCurrent()
@@ -281,7 +278,7 @@ function adminImageApprovalsClient() {
         renderCurrent()
     }
 
-    function selectShortcutAction(rating: 'sfw' | 'nsfw', action: string) {
+    function selectShortcutAction(rating, action) {
         if (!state.current?.[rating]) {
             return
         }
@@ -290,7 +287,7 @@ function adminImageApprovalsClient() {
         renderCurrent()
     }
 
-    function getVisibleVariant(rating: 'sfw' | 'nsfw') {
+    function getVisibleVariant(rating) {
         if (!state.current || sourceWillMove(rating)) {
             return null
         }
@@ -298,7 +295,7 @@ function adminImageApprovalsClient() {
         return getMovedVariant(rating) || state.current[rating]
     }
 
-    function openVariantInNewTab(rating: 'sfw' | 'nsfw') {
+    function openVariantInNewTab(rating) {
         const variant = getVisibleVariant(rating)
 
         if (!variant?.imageUrl) {
@@ -312,7 +309,7 @@ function adminImageApprovalsClient() {
         }
     }
 
-    function isKeyboardShortcutTarget(target: EventTarget | null) {
+    function isKeyboardShortcutTarget(target) {
         if (!(target instanceof Element)) {
             return true
         }
@@ -320,7 +317,7 @@ function adminImageApprovalsClient() {
         return !target.closest('input, textarea, select, button, a, [contenteditable=true]')
     }
 
-    function handleKeyboardShortcuts(event: KeyboardEvent) {
+    function handleKeyboardShortcuts(event) {
         if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) {
             return
         }
@@ -341,7 +338,7 @@ function adminImageApprovalsClient() {
             return
         }
 
-        const actionShortcuts: Record<string, ['sfw' | 'nsfw', string]> = {
+        const actionShortcuts = {
             a: ['sfw', 'approve_sfw_homepage'],
             s: ['sfw', 'approve_sfw_no_homepage'],
             d: ['sfw', 'mark_nsfw'],
@@ -376,4 +373,4 @@ function adminImageApprovalsClient() {
 
     document.addEventListener('keydown', handleKeyboardShortcuts)
     renderCurrent()
-}
+})()
