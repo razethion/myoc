@@ -1,5 +1,5 @@
 import {type Context, Hono} from 'hono'
-import {getImageApprovalData} from '../lib/admin/imageApprovals'
+import {getImageApprovalData, getImageApprovalHistory, getImageApprovalPendingCount} from '../lib/admin/imageApprovals'
 import {getAdminJobLabel, getAdminOptionsData, parseAdminJobName} from '../lib/admin/jobs'
 import {getAdminReportsData} from '../lib/admin/reports'
 import {listUserPasskeys, listUserSessions, toPasskeySummary} from '../lib/auth/passkeys'
@@ -17,6 +17,7 @@ import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import {searchAll} from '../lib/search'
 import type {UserSocialLink} from '../lib/socialLinks'
 import type {Bindings} from '../types/bindings'
+import {AdminImageApprovalLogPage} from '../views/pages/AdminImageApprovalLogPage'
 import {AdminImageApprovalsPage} from '../views/pages/AdminImageApprovalsPage'
 import {type AdminOptionsFeedback, AdminOptionsPage} from '../views/pages/AdminOptionsPage'
 import {AdminPage, type AdminSection, isAdminSection} from '../views/pages/AdminPage'
@@ -467,8 +468,10 @@ async function renderAdminPage(c: PageRouteContext, activeSection: AdminSection)
         activeSection === 'image-approvals' ? (
             <AdminImageApprovalsPage
                 csrfToken={currentUser.csrfToken}
-                data={await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, c.req.query('mediaId'))}
+                data={await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, currentUser.id)}
             />
+        ) : activeSection === 'image-approval-log' ? (
+            <AdminImageApprovalLogPage history={await getImageApprovalHistory(c.env.DB)} />
         ) : activeSection === 'reports' ? (
             <AdminReportsPage csrfToken={currentUser.csrfToken} data={await getAdminReportsData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL)} />
         ) : activeSection === 'admin-options' ? (
@@ -479,8 +482,15 @@ async function renderAdminPage(c: PageRouteContext, activeSection: AdminSection)
             />
         ) : null
 
+    const imageApprovalPendingCount = await getImageApprovalPendingCount(c.env.DB)
+
     return c.html(
-        <AdminPage activeSection={activeSection} currentUser={currentUser} mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}>
+        <AdminPage
+            activeSection={activeSection}
+            currentUser={currentUser}
+            imageApprovalPendingCount={imageApprovalPendingCount}
+            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+        >
             {content}
         </AdminPage>,
     )

@@ -201,30 +201,32 @@ describe('GET /admin/image-approvals', () => {
 
     it('returns pending image approval data for admin users', async () => {
         const {db} = createMockDb({
-            firstResults: [createCurrentUserRecord('admin'), {count: 1}, createImageApprovalItemRow()],
-            allResults: [[createImageApprovalQueueRow()], []],
+            firstResults: [createCurrentUserRecord('admin'), null, createImageApprovalLeaseRow(), {count: 1}, createImageApprovalItemRow()],
         })
 
         const response = await getAdminApi(db, 'myoc_session=session-token', '/admin/image-approvals')
         const body = (await response.json()) as {
             current: {id: string; sfw: {objectKey: string}}
-            pending: unknown[]
             pendingCount: number
-            history: unknown[]
+            leaseExpiresAt: string | null
         }
 
         expect(response.status).toBe(200)
         expect(body.current.id).toBe('media-1')
         expect(body.current.sfw.objectKey).toBe('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png')
-        expect(body.pending).toHaveLength(1)
         expect(body.pendingCount).toBe(1)
-        expect(body.history).toHaveLength(0)
+        expect(body.leaseExpiresAt).toBe('2026-06-10 12:30:00')
     })
 
     it('returns pending image approval data for moderator users', async () => {
         const {db} = createMockDb({
-            firstResults: [createCurrentUserRecord('moderator'), {count: 1}, createImageApprovalItemRow()],
-            allResults: [[createImageApprovalQueueRow()], []],
+            firstResults: [
+                createCurrentUserRecord('moderator'),
+                null,
+                createImageApprovalLeaseRow(),
+                {count: 1},
+                createImageApprovalItemRow(),
+            ],
         })
 
         const response = await getAdminApi(db, 'myoc_session=session-token', '/admin/image-approvals')
@@ -239,76 +241,44 @@ describe('GET /admin/image-approvals', () => {
     })
 
     it('returns an exact pending approval count when the queue exceeds the sidebar page size', async () => {
-        const queueRows = Array.from({length: 50}, (_, index) => ({
-            ...createImageApprovalQueueRow(),
-            id: `media-${index}`,
-        }))
         const {db, boundStatements} = createMockDb({
             firstResults: [
                 createCurrentUserRecord('admin'),
+                null,
+                createImageApprovalLeaseRow({media_id: 'media-0'}),
                 {count: 125},
                 {
                     ...createImageApprovalItemRow(),
                     id: 'media-0',
                 },
             ],
-            allResults: [queueRows, []],
         })
 
         const response = await getAdminApi(db, 'myoc_session=session-token', '/admin/image-approvals')
         const body = (await response.json()) as {
-            pending: unknown[]
             pendingCount: number
         }
-        const queueStatement = boundStatements.find(
-            (statement) => statement.sql.includes('ORDER BY character_media.created_at') && statement.sql.includes('LIMIT ?'),
-        )
+        const leaseStatement = boundStatements.find((statement) => statement.sql.includes('RETURNING media_id'))
 
         expect(response.status).toBe(200)
-        expect(body.pending).toHaveLength(50)
         expect(body.pendingCount).toBe(125)
-        expect(queueStatement?.binds).toEqual([50])
+        expect(leaseStatement?.binds[1]).toBe('current-user')
     })
 
-    it('loads a selected historical media row even when it is not pending', async () => {
+    it('returns no current review when no lease is available', async () => {
         const {db} = createMockDb({
-            firstResults: [
-                createCurrentUserRecord('admin'),
-                {count: 0},
-                {
-                    ...createImageApprovalItemRow(),
-                    id: 'history-media',
-                },
-            ],
-            allResults: [
-                [],
-                [
-                    {
-                        id: 'event-1',
-                        media_id: 'history-media',
-                        image_rating: 'sfw',
-                        action: 'approve_sfw_no_homepage',
-                        homepage_allowed: 0,
-                        moderator_username: 'admin_user',
-                        owner_username: 'uploader',
-                        character_name: 'Quartz',
-                        created_at: '2026-06-11 12:00:00',
-                    },
-                ],
-            ],
+            firstResults: [createCurrentUserRecord('admin'), null, null, {count: 0}],
         })
 
         const response = await getAdminApi(db, 'myoc_session=session-token', '/admin/image-approvals?mediaId=history-media')
         const body = (await response.json()) as {
-            current: {id: string}
-            pending: unknown[]
-            history: Array<{mediaId: string}>
+            current: unknown
+            pendingCount: number
         }
 
         expect(response.status).toBe(200)
-        expect(body.current.id).toBe('history-media')
-        expect(body.pending).toHaveLength(0)
-        expect(body.history[0]?.mediaId).toBe('history-media')
+        expect(body.current).toBeNull()
+        expect(body.pendingCount).toBe(0)
     })
 })
 
@@ -535,7 +505,7 @@ describe('POST /admin/image-approvals/:mediaId', () => {
 
     it('returns 404 when the media row does not exist', async () => {
         const {db} = createMockDb({
-            firstResults: [createCurrentUserRecord('admin'), null],
+            firstResults: [createCurrentUserRecord('admin'), createImageApprovalLeaseRow(), null],
         })
         const mediaBucket = createMockR2Bucket()
 
@@ -583,7 +553,7 @@ describe('POST /admin/image-approvals/:mediaId', () => {
         },
     ])('returns 400 when the media shape cannot support the requested action', async ({media, body, error}) => {
         const {db} = createMockDb({
-            firstResults: [createCurrentUserRecord('admin'), media],
+            firstResults: [createCurrentUserRecord('admin'), createImageApprovalLeaseRow(), media],
         })
         const mediaBucket = createMockR2Bucket()
 
@@ -596,7 +566,7 @@ describe('POST /admin/image-approvals/:mediaId', () => {
 
     it('approves an SFW image for homepage display', async () => {
         const {db, boundStatements} = createMockDb({
-            firstResults: [createCurrentUserRecord('admin'), createModerationMediaRow()],
+            firstResults: [createCurrentUserRecord('admin'), createImageApprovalLeaseRow(), createModerationMediaRow()],
             allResults: [[], []],
         })
         const mediaBucket = createMockR2Bucket()
@@ -612,19 +582,20 @@ describe('POST /admin/image-approvals/:mediaId', () => {
 
         expect(response.status).toBe(200)
         expect(db.batch).toHaveBeenCalledTimes(1)
-        expect(boundStatements[2]?.sql).toContain('UPDATE character_media')
-        expect(boundStatements[2]?.binds[20]).toBe(1)
-        expect(boundStatements[2]?.binds[21]).toBe('approved')
-        expect(boundStatements[2]?.binds[26]).toBe(1)
-        expect(boundStatements[2]?.binds[27]).toBe(1)
-        expect(boundStatements[3]?.sql).toContain(['INSERT INTO', 'character_media_review_events'].join(' '))
-        expect(boundStatements[3]?.binds[3]).toBe('approve_sfw_homepage')
+        expect(boundStatements[3]?.sql).toContain('UPDATE character_media')
+        expect(boundStatements[3]?.binds[20]).toBe(1)
+        expect(boundStatements[3]?.binds[21]).toBe('approved')
+        expect(boundStatements[3]?.binds[26]).toBe(1)
+        expect(boundStatements[3]?.binds[27]).toBe(1)
+        expect(boundStatements[4]?.sql).toContain(['INSERT INTO', 'character_media_review_events'].join(' '))
+        expect(boundStatements[4]?.binds[3]).toBe('approve_sfw_homepage')
     })
 
     it('records reported SFW and approved NSFW review actions together', async () => {
         const {db, boundStatements} = createMockDb({
             firstResults: [
                 createCurrentUserRecord('admin'),
+                createImageApprovalLeaseRow(),
                 createModerationMediaRow({
                     nsfw_image_key: 'nsfw-key',
                     nsfw_content_type: 'image/png',
@@ -652,17 +623,17 @@ describe('POST /admin/image-approvals/:mediaId', () => {
         )
 
         expect(response.status).toBe(200)
-        expect(boundStatements[2]?.binds[21]).toBe('reported')
-        expect(boundStatements[2]?.binds[29]).toBe('approved')
-        expect(boundStatements[3]?.binds[2]).toBe('sfw')
-        expect(boundStatements[3]?.binds[3]).toBe('report_sfw')
-        expect(boundStatements[4]?.binds[2]).toBe('nsfw')
-        expect(boundStatements[4]?.binds[3]).toBe('approve_nsfw')
+        expect(boundStatements[3]?.binds[21]).toBe('reported')
+        expect(boundStatements[3]?.binds[29]).toBe('approved')
+        expect(boundStatements[4]?.binds[2]).toBe('sfw')
+        expect(boundStatements[4]?.binds[3]).toBe('report_sfw')
+        expect(boundStatements[5]?.binds[2]).toBe('nsfw')
+        expect(boundStatements[5]?.binds[3]).toBe('approve_nsfw')
     })
 
     it('moves an SFW image to the NSFW path when marked NSFW', async () => {
         const {db, boundStatements} = createMockDb({
-            firstResults: [createCurrentUserRecord('admin'), createModerationMediaRow()],
+            firstResults: [createCurrentUserRecord('admin'), createImageApprovalLeaseRow(), createModerationMediaRow()],
             allResults: [[], []],
         })
         const mediaBucket = createMockR2Bucket()
@@ -705,20 +676,21 @@ describe('POST /admin/image-approvals/:mediaId', () => {
         )
         expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png')
         expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp')
-        expect(boundStatements[2]?.binds[0]).toBeNull()
-        expect(boundStatements[2]?.binds[1]).toBe('sfw-key')
-        expect(boundStatements[2]?.binds[9]).toBeNull()
-        expect(boundStatements[2]?.binds[16]).toBe('sfw-preview-key')
-        expect(boundStatements[2]?.binds[34]).toMatch(/^[0-9a-f-]+$/)
-        expect(boundStatements[2]?.binds[28]).toBe(1)
-        expect(boundStatements[2]?.binds[29]).toBe('approved')
-        expect(boundStatements[3]?.binds[3]).toBe('mark_nsfw')
+        expect(boundStatements[3]?.binds[0]).toBeNull()
+        expect(boundStatements[3]?.binds[1]).toBe('sfw-key')
+        expect(boundStatements[3]?.binds[9]).toBeNull()
+        expect(boundStatements[3]?.binds[16]).toBe('sfw-preview-key')
+        expect(boundStatements[3]?.binds[34]).toMatch(/^[0-9a-f-]+$/)
+        expect(boundStatements[3]?.binds[28]).toBe(1)
+        expect(boundStatements[3]?.binds[29]).toBe('approved')
+        expect(boundStatements[4]?.binds[3]).toBe('mark_nsfw')
     })
 
     it('moves an SFW image to NSFW without preview objects when no preview key exists', async () => {
         const {db, boundStatements} = createMockDb({
             firstResults: [
                 createCurrentUserRecord('admin'),
+                createImageApprovalLeaseRow(),
                 createModerationMediaRow({
                     sfw_preview_image_key: null,
                     sfw_preview_width: null,
@@ -747,14 +719,15 @@ describe('POST /admin/image-approvals/:mediaId', () => {
             expect.any(Object),
         )
         expect(mediaBucket.put).not.toHaveBeenCalledWith(expect.stringContaining('/preview/'), expect.anything(), expect.anything())
-        expect(boundStatements[2]?.binds[16]).toBeNull()
-        expect(boundStatements[2]?.binds[34]).toBeNull()
+        expect(boundStatements[3]?.binds[16]).toBeNull()
+        expect(boundStatements[3]?.binds[34]).toBeNull()
     })
 
     it('moves an NSFW image to SFW and deletes the old blur image', async () => {
         const {db, boundStatements} = createMockDb({
             firstResults: [
                 createCurrentUserRecord('admin'),
+                createImageApprovalLeaseRow(),
                 createModerationMediaRow({
                     sfw_image_key: null,
                     sfw_content_type: null,
@@ -808,11 +781,11 @@ describe('POST /admin/image-approvals/:mediaId', () => {
         expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/nsfw/nsfw-key.png')
         expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/nsfw/preview/nsfw-preview-key.webp')
         expect(mediaBucket.delete).toHaveBeenCalledWith('characters/owner-1/character-1/media/media-1/nsfw/blur/nsfw-blur-key.webp')
-        expect(boundStatements[2]?.binds[0]).toBe('nsfw-key')
-        expect(boundStatements[2]?.binds[1]).toBeNull()
-        expect(boundStatements[2]?.binds[9]).toBe('nsfw-preview-key')
-        expect(boundStatements[2]?.binds[27]).toBe(1)
-        expect(boundStatements[3]?.binds[3]).toBe('mark_sfw_homepage')
+        expect(boundStatements[3]?.binds[0]).toBe('nsfw-key')
+        expect(boundStatements[3]?.binds[1]).toBeNull()
+        expect(boundStatements[3]?.binds[9]).toBe('nsfw-preview-key')
+        expect(boundStatements[3]?.binds[27]).toBe(1)
+        expect(boundStatements[4]?.binds[3]).toBe('mark_sfw_homepage')
     })
 
     it('removes copied moderation objects when the approval transaction fails', async () => {
@@ -820,6 +793,7 @@ describe('POST /admin/image-approvals/:mediaId', () => {
         const {db} = createMockDb({
             firstResults: [
                 createCurrentUserRecord('admin'),
+                createImageApprovalLeaseRow(),
                 createModerationMediaRow({
                     sfw_preview_image_key: null,
                     sfw_preview_width: null,
@@ -854,6 +828,7 @@ describe('POST /admin/image-approvals/:mediaId', () => {
         const {db} = createMockDb({
             firstResults: [
                 createCurrentUserRecord('admin'),
+                createImageApprovalLeaseRow(),
                 createModerationMediaRow({
                     sfw_preview_image_key: null,
                     sfw_preview_width: null,
@@ -1179,24 +1154,6 @@ describe('POST /admin/reports/images/:mediaId/:rating/:action', () => {
     })
 })
 
-function createImageApprovalQueueRow() {
-    return {
-        id: 'media-1',
-        username: 'uploader',
-        character_name: 'Quartz',
-        sfw_image_key: 'sfw-key',
-        nsfw_image_key: null,
-        sfw_content_type: 'image/png',
-        nsfw_content_type: null,
-        sfw_review_status: 'pending',
-        sfw_reviewed_at: null,
-        nsfw_review_status: 'pending',
-        nsfw_reviewed_at: null,
-        created_at: '2026-06-10 12:00:00',
-        updated_at: '2026-06-10 12:00:00',
-    }
-}
-
 function createImageApprovalItemRow() {
     return {
         id: 'media-1',
@@ -1230,6 +1187,14 @@ function createImageApprovalItemRow() {
         nsfw_approved_at: null,
         created_at: '2026-06-10 12:00:00',
         updated_at: '2026-06-10 12:00:00',
+    }
+}
+
+function createImageApprovalLeaseRow(overrides: Record<string, unknown> = {}) {
+    return {
+        media_id: 'media-1',
+        lease_expires_at: '2026-06-10 12:30:00',
+        ...overrides,
     }
 }
 

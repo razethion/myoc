@@ -71,9 +71,8 @@ export type ImageApprovalHistoryItem = {
 
 export type ImageApprovalData = {
     current: ImageApprovalItem | null
-    pending: ImageApprovalQueueItem[]
     pendingCount: number
-    history: ImageApprovalHistoryItem[]
+    leaseExpiresAt: string | null
 }
 
 type ImageApprovalRow = {
@@ -108,20 +107,6 @@ type ImageApprovalRow = {
     updated_at: string
 }
 
-type QueueRow = {
-    id: string
-    username: string
-    character_name: string
-    sfw_image_key: string | null
-    nsfw_image_key: string | null
-    sfw_review_status: string
-    sfw_reviewed_at: string | null
-    nsfw_review_status: string
-    nsfw_reviewed_at: string | null
-    created_at: string
-    updated_at: string
-}
-
 type HistoryRow = {
     id: string
     media_id: string
@@ -134,31 +119,99 @@ type HistoryRow = {
     created_at: string
 }
 
-const QUEUE_LIMIT = 50
 const HISTORY_LIMIT = 50
+const REVIEW_LEASE_MINUTES = 30
 
-export async function getImageApprovalData(
-    db: D1Database,
-    mediaBaseUrl: string,
-    selectedMediaId?: string | null,
-): Promise<ImageApprovalData> {
-    const [pending, pendingCount, history] = await Promise.all([
-        getImageApprovalQueue(db),
-        getImageApprovalCount(db),
-        getImageApprovalHistory(db),
-    ])
-    let current = selectedMediaId ? await getImageApprovalItem(db, mediaBaseUrl, selectedMediaId) : null
+export async function getImageApprovalData(db: D1Database, mediaBaseUrl: string, reviewerId: string): Promise<ImageApprovalData> {
+    const now = new Date()
+    await syncPendingImageReviewQueue(db, now)
 
-    if (!current && pending[0]) {
-        current = await getImageApprovalItem(db, mediaBaseUrl, pending[0].id)
+    const lease = await acquireImageApprovalLease(db, reviewerId, now)
+    const pendingCount = await getImageApprovalCount(db)
+    const current = lease ? await getImageApprovalItem(db, mediaBaseUrl, lease.mediaId) : null
+
+    if (!current && lease) {
+        await releaseImageApprovalLease(db, lease.mediaId, reviewerId)
     }
 
     return {
         current,
-        pending,
         pendingCount,
-        history,
+        leaseExpiresAt: current ? (lease?.leaseExpiresAt ?? null) : null,
     }
+}
+
+type LeaseRow = {
+    media_id: string
+    lease_expires_at: string
+}
+
+export async function queueImageReview(db: D1Database, mediaId: string): Promise<void> {
+    const now = toSqlTimestamp(new Date())
+    await db
+        .prepare(
+            `INSERT OR IGNORE INTO admin_image_review_queue (media_id, created_at, queued_at)
+             SELECT id, created_at, ?
+             FROM character_media
+             WHERE id = ?
+               AND (
+                   (
+                       sfw_image_key IS NOT NULL
+                       AND (
+                           sfw_review_status = 'pending'
+                           OR sfw_reviewed_at IS NULL
+                           OR updated_at > sfw_reviewed_at
+                       )
+                   )
+                   OR (
+                       nsfw_image_key IS NOT NULL
+                       AND (
+                           nsfw_review_status = 'pending'
+                           OR nsfw_reviewed_at IS NULL
+                           OR updated_at > nsfw_reviewed_at
+                       )
+                   )
+               )`,
+        )
+        .bind(now, mediaId)
+        .run()
+}
+
+export async function completeImageApprovalLease(db: D1Database, mediaId: string, reviewerId: string): Promise<void> {
+    await db
+        .prepare(
+            `DELETE FROM admin_image_review_queue
+             WHERE media_id = ?
+               AND leased_by_user_id = ?`,
+        )
+        .bind(mediaId, reviewerId)
+        .run()
+}
+
+export async function hasActiveImageApprovalLease(
+    db: D1Database,
+    mediaId: string,
+    reviewerId: string,
+    date = new Date(),
+): Promise<boolean> {
+    const row = await db
+        .prepare(
+            `SELECT media_id
+             FROM admin_image_review_queue
+             WHERE media_id = ?
+               AND leased_by_user_id = ?
+               AND lease_expires_at > ?
+             LIMIT 1`,
+        )
+        .bind(mediaId, reviewerId, toSqlTimestamp(date))
+        .first<{media_id: string}>()
+
+    return Boolean(row)
+}
+
+export async function getImageApprovalPendingCount(db: D1Database): Promise<number> {
+    await syncPendingImageReviewQueue(db, new Date())
+    return await getImageApprovalCount(db)
 }
 
 export async function getImageApprovalItem(db: D1Database, mediaBaseUrl: string, mediaId: string): Promise<ImageApprovalItem | null> {
@@ -221,53 +274,152 @@ export function isValidImageApprovalAction(value: unknown): value is ImageApprov
     )
 }
 
-async function getImageApprovalQueue(db: D1Database): Promise<ImageApprovalQueueItem[]> {
-    const result = await db
-        .prepare(
-            `SELECT character_media.id,
-                users.username,
-                characters.name AS character_name,
-                character_media.sfw_image_key,
-                character_media.nsfw_image_key,
-                character_media.sfw_review_status,
-                character_media.sfw_reviewed_at,
-                character_media.nsfw_review_status,
-                character_media.nsfw_reviewed_at,
-                character_media.created_at,
-                character_media.updated_at
-         FROM character_media
-                  INNER JOIN users ON users.id = character_media.user_id
-                  INNER JOIN characters ON characters.id = character_media.character_id
-         WHERE (
-             character_media.sfw_image_key IS NOT NULL
-                 AND (
-                 character_media.sfw_review_status = 'pending'
-                     OR character_media.sfw_reviewed_at IS NULL
-                     OR character_media.updated_at > character_media.sfw_reviewed_at
-                 )
-             )
-            OR (
-             character_media.nsfw_image_key IS NOT NULL
-                 AND (
-                 character_media.nsfw_review_status = 'pending'
-                     OR character_media.nsfw_reviewed_at IS NULL
-                     OR character_media.updated_at > character_media.nsfw_reviewed_at
-                 )
-             )
-         ORDER BY character_media.created_at, character_media.id
-         LIMIT ?`,
-        )
-        .bind(QUEUE_LIMIT)
-        .all<QueueRow>()
+async function syncPendingImageReviewQueue(db: D1Database, date: Date): Promise<void> {
+    const now = toSqlTimestamp(date)
 
-    return (result.results ?? []).map((row) => ({
-        id: row.id,
-        createdAt: row.created_at,
-        username: row.username,
-        characterName: row.character_name,
-        pendingSfw: Boolean(row.sfw_image_key) && variantNeedsReview(row.sfw_review_status, row.sfw_reviewed_at, row.updated_at),
-        pendingNsfw: Boolean(row.nsfw_image_key) && variantNeedsReview(row.nsfw_review_status, row.nsfw_reviewed_at, row.updated_at),
-    }))
+    await db
+        .prepare(
+            `INSERT OR IGNORE INTO admin_image_review_queue (media_id, created_at, queued_at)
+             SELECT id, created_at, ?
+             FROM character_media
+             WHERE (
+                 sfw_image_key IS NOT NULL
+                     AND (
+                     sfw_review_status = 'pending'
+                         OR sfw_reviewed_at IS NULL
+                         OR updated_at > sfw_reviewed_at
+                     )
+                 )
+                OR (
+                 nsfw_image_key IS NOT NULL
+                     AND (
+                     nsfw_review_status = 'pending'
+                         OR nsfw_reviewed_at IS NULL
+                         OR updated_at > nsfw_reviewed_at
+                     )
+                 )`,
+        )
+        .bind(now)
+        .run()
+
+    await db
+        .prepare(
+            `DELETE FROM admin_image_review_queue
+             WHERE media_id NOT IN (
+                 SELECT id
+                 FROM character_media
+                 WHERE (
+                     sfw_image_key IS NOT NULL
+                         AND (
+                         sfw_review_status = 'pending'
+                             OR sfw_reviewed_at IS NULL
+                             OR updated_at > sfw_reviewed_at
+                         )
+                     )
+                    OR (
+                     nsfw_image_key IS NOT NULL
+                         AND (
+                         nsfw_review_status = 'pending'
+                             OR nsfw_reviewed_at IS NULL
+                             OR updated_at > nsfw_reviewed_at
+                         )
+                     )
+             )`,
+        )
+        .bind()
+        .run()
+}
+
+async function acquireImageApprovalLease(
+    db: D1Database,
+    reviewerId: string,
+    date: Date,
+): Promise<{mediaId: string; leaseExpiresAt: string} | null> {
+    const now = toSqlTimestamp(date)
+    const leaseExpiresAt = toSqlTimestamp(new Date(date.getTime() + REVIEW_LEASE_MINUTES * 60 * 1000))
+    const existingLease = await db
+        .prepare(
+            `SELECT media_id, lease_expires_at
+             FROM admin_image_review_queue
+             WHERE leased_by_user_id = ?
+               AND lease_expires_at > ?
+             ORDER BY leased_at DESC,
+                      media_id
+             LIMIT 1`,
+        )
+        .bind(reviewerId, now)
+        .first<LeaseRow>()
+
+    if (existingLease) {
+        return {
+            mediaId: existingLease.media_id,
+            leaseExpiresAt: existingLease.lease_expires_at,
+        }
+    }
+
+    const lease = await db
+        .prepare(
+            `UPDATE admin_image_review_queue
+             SET lease_id = ?,
+                 leased_by_user_id = ?,
+                 leased_at = ?,
+                 lease_expires_at = ?
+             WHERE media_id = (
+                 SELECT admin_image_review_queue.media_id
+                 FROM admin_image_review_queue
+                 INNER JOIN character_media ON character_media.id = admin_image_review_queue.media_id
+                 WHERE (
+                     admin_image_review_queue.lease_expires_at IS NULL
+                     OR admin_image_review_queue.lease_expires_at <= ?
+                 )
+                   AND (
+                       (
+                           character_media.sfw_image_key IS NOT NULL
+                           AND (
+                               character_media.sfw_review_status = 'pending'
+                               OR character_media.sfw_reviewed_at IS NULL
+                               OR character_media.updated_at > character_media.sfw_reviewed_at
+                           )
+                       )
+                       OR (
+                           character_media.nsfw_image_key IS NOT NULL
+                           AND (
+                               character_media.nsfw_review_status = 'pending'
+                               OR character_media.nsfw_reviewed_at IS NULL
+                               OR character_media.updated_at > character_media.nsfw_reviewed_at
+                           )
+                       )
+                   )
+                 ORDER BY admin_image_review_queue.created_at,
+                          admin_image_review_queue.media_id
+                 LIMIT 1
+             )
+             RETURNING media_id, lease_expires_at`,
+        )
+        .bind(crypto.randomUUID(), reviewerId, now, leaseExpiresAt, now)
+        .first<LeaseRow>()
+
+    return lease
+        ? {
+              mediaId: lease.media_id,
+              leaseExpiresAt: lease.lease_expires_at,
+          }
+        : null
+}
+
+async function releaseImageApprovalLease(db: D1Database, mediaId: string, reviewerId: string): Promise<void> {
+    await db
+        .prepare(
+            `UPDATE admin_image_review_queue
+             SET lease_id = NULL,
+                 leased_by_user_id = NULL,
+                 leased_at = NULL,
+                 lease_expires_at = NULL
+             WHERE media_id = ?
+               AND leased_by_user_id = ?`,
+        )
+        .bind(mediaId, reviewerId)
+        .run()
 }
 
 async function getImageApprovalCount(db: D1Database): Promise<number> {
@@ -299,7 +451,7 @@ async function getImageApprovalCount(db: D1Database): Promise<number> {
     return row?.count ?? 0
 }
 
-async function getImageApprovalHistory(db: D1Database): Promise<ImageApprovalHistoryItem[]> {
+export async function getImageApprovalHistory(db: D1Database): Promise<ImageApprovalHistoryItem[]> {
     const result = await db
         .prepare(
             `SELECT character_media_review_events.id,
@@ -424,4 +576,8 @@ function toImageApprovalItem(row: ImageApprovalRow, mediaBaseUrl: string): Image
 
 function variantNeedsReview(reviewStatus: string, reviewedAt: string | null, updatedAt: string): boolean {
     return reviewStatus === 'pending' || !reviewedAt || updatedAt > reviewedAt
+}
+
+function toSqlTimestamp(date: Date): string {
+    return date.toISOString().replace('T', ' ').slice(0, 19)
 }

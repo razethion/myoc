@@ -1,6 +1,7 @@
 import type {Context} from 'hono'
 import {Hono} from 'hono'
 import {z} from 'zod'
+import {queueImageReview} from '../../lib/admin/imageApprovals'
 import {type CurrentUser, getCurrentUser, toSqlTimestamp} from '../../lib/auth/session'
 import {GALLERY_MAX_IMAGES_PER_ROW, shouldForceGalleryRowFullWidth} from '../../lib/gallery'
 import {jsonResponse} from '../../lib/http/jsonResponse'
@@ -1512,6 +1513,7 @@ characterRoutes.post('/toyhouse-import-items/:itemId/complete', async (c) => {
                    AND user_id = ?`,
             ).bind('imported', media.id, now, item.id, currentUser.id),
         ])
+        await queueImageReview(c.env.DB, media.id)
 
         await updateToyhouseImportJobStatus(c.env.DB, currentUser.id, item.job_id)
 
@@ -1731,6 +1733,7 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
                 media.updated_at,
             )
             .run()
+        await queueImageReview(c.env.DB, media.id)
 
         return jsonResponse(c, MediaResponseSchema, {media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, media)}, 201)
     } catch (error) {
@@ -1854,6 +1857,9 @@ characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
             sfwWasModified,
             nsfwWasModified,
         })
+        if (sfwWasModified || nsfwWasModified) {
+            await queueImageReview(c.env.DB, media.id)
+        }
 
         await deleteR2Objects(c.env.MEDIA_BUCKET, deletedKeys)
 
