@@ -1,5 +1,5 @@
 import type {Child} from 'hono/jsx'
-import type {CurrentUser} from '../../lib/auth/session'
+import {type CurrentUser, isAdminUser} from '../../lib/auth/session'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 
@@ -26,12 +26,13 @@ export function isAdminSection(section: string): section is AdminSection {
 }
 
 export function AdminPage({activeSection, children, currentUser, mediaBaseUrl}: AdminPageProps) {
-    const fallbackItem = adminNavItems[0]
+    const visibleNavItems = isAdminUser(currentUser) ? adminNavItems : adminNavItems.filter((item) => item.section === 'image-approvals')
+    const fallbackItem = visibleNavItems[0]
     if (!fallbackItem) {
         throw new Error('Admin navigation is empty.')
     }
 
-    const activeItem = adminNavItems.find((item) => item.section === activeSection) ?? fallbackItem
+    const activeItem = visibleNavItems.find((item) => item.section === activeSection) ?? fallbackItem
 
     return (
         <BaseLayout title={`${activeItem.label} | Admin | MyOC`}>
@@ -40,7 +41,7 @@ export function AdminPage({activeSection, children, currentUser, mediaBaseUrl}: 
                 <aside class="border-b border-base-300 bg-base-200/70 lg:border-b-0 lg:border-r">
                     <nav aria-label="Admin sections" class="p-3">
                         <ul class="menu gap-1 p-0">
-                            {adminNavItems.map((item) => {
+                            {visibleNavItems.map((item) => {
                                 const isActive = item.section === activeSection
 
                                 return (

@@ -2,7 +2,7 @@ import type {Context} from 'hono'
 import type {Bindings} from '../../types/bindings'
 import {jsonResponse} from '../http/jsonResponse'
 import {ErrorResponseSchema} from '../http/responseSchemas'
-import {type CurrentUser, getCurrentUser, isAdminUser} from './session'
+import {type CurrentUser, canModerateImages, getCurrentUser, isAdminUser} from './session'
 
 type AuthorizedUser = {
     currentUser: CurrentUser
@@ -25,6 +25,24 @@ export async function requireAdminApiUser(
 
     if (!isAdminUser(currentUser)) {
         return {response: jsonResponse(c, ErrorResponseSchema, {error: 'Admin access required'}, 403)}
+    }
+
+    return {currentUser}
+}
+
+export async function requireImageModeratorApiUser(
+    c: Context<{
+        Bindings: Bindings
+    }>,
+): Promise<AuthorizedUser | AuthorizationFailure> {
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return {response: jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)}
+    }
+
+    if (!canModerateImages(currentUser)) {
+        return {response: jsonResponse(c, ErrorResponseSchema, {error: 'Image moderation access required'}, 403)}
     }
 
     return {currentUser}

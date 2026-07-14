@@ -19,7 +19,7 @@ export const OkResponseSchema = z
     })
     .strict()
 
-export const UserRoleSchema = z.enum(['user', 'admin'])
+export const UserRoleSchema = z.enum(['user', 'moderator', 'admin'])
 
 export const OwnUserSchema = z
     .object({

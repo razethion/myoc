@@ -19,7 +19,7 @@ export type UserRecord = {
     passkey_prompt_seen_at?: string | null
 }
 
-export type UserRole = 'user' | 'admin'
+export type UserRole = 'user' | 'moderator' | 'admin'
 
 export type CurrentUser = {
     id: string
@@ -198,8 +198,12 @@ export function isAdminUser(user: CurrentUser | null): user is CurrentUser & {ro
     return user?.role === 'admin'
 }
 
+export function canModerateImages(user: CurrentUser | null): user is CurrentUser & {role: 'moderator' | 'admin'} {
+    return user?.role === 'moderator' || user?.role === 'admin'
+}
+
 export function normalizeUserRole(role: unknown): UserRole {
-    return role === 'admin' ? 'admin' : 'user'
+    return role === 'moderator' || role === 'admin' ? role : 'user'
 }
 
 function createSessionToken(): string {

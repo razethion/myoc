@@ -3,7 +3,7 @@ import {z} from 'zod'
 import {getImageApprovalData, type ImageApprovalAction, isValidImageApprovalAction} from '../../lib/admin/imageApprovals'
 import {type AdminJobName, type AdminJobRunResult, getAdminJobRuns, isAdminJobName, runAdminJob} from '../../lib/admin/jobs'
 import {getAdminReportsData} from '../../lib/admin/reports'
-import {requireAdminApiUser} from '../../lib/auth/authorization'
+import {requireAdminApiUser, requireImageModeratorApiUser} from '../../lib/auth/authorization'
 import {toSqlTimestamp} from '../../lib/auth/session'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {
@@ -144,7 +144,7 @@ adminRoutes.get('/', async (c) => {
 })
 
 adminRoutes.get('/image-approvals', async (c) => {
-    const authorization = await requireAdminApiUser(c)
+    const authorization = await requireImageModeratorApiUser(c)
 
     if ('response' in authorization) {
         return authorization.response
@@ -198,7 +198,7 @@ adminRoutes.post('/jobs/:jobName/run', async (c) => {
 })
 
 adminRoutes.post('/image-approvals/:mediaId', async (c) => {
-    const authorization = await requireAdminApiUser(c)
+    const authorization = await requireImageModeratorApiUser(c)
 
     if ('response' in authorization) {
         return authorization.response

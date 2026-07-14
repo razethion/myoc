@@ -3,7 +3,7 @@ import {getImageApprovalData} from '../lib/admin/imageApprovals'
 import {getAdminJobLabel, getAdminOptionsData, parseAdminJobName} from '../lib/admin/jobs'
 import {getAdminReportsData} from '../lib/admin/reports'
 import {listUserPasskeys, listUserSessions, toPasskeySummary} from '../lib/auth/passkeys'
-import {getCurrentUser, isAdminUser, toSqlTimestamp} from '../lib/auth/session'
+import {type CurrentUser, canModerateImages, getCurrentUser, isAdminUser, toSqlTimestamp} from '../lib/auth/session'
 import {chunkGalleryItems, shouldForceGalleryRowFullWidth} from '../lib/gallery'
 import {getLeaderboardSnapshot} from '../lib/leaderboard'
 import {validateProfileImagePayload} from '../lib/media/profileImage'
@@ -455,7 +455,11 @@ async function renderAdminPage(c: PageRouteContext, activeSection: AdminSection)
         return c.redirect('/login')
     }
 
-    if (!isAdminUser(currentUser)) {
+    if (!canModerateImages(currentUser)) {
+        return renderNotFoundPage(c)
+    }
+
+    if (!canAccessAdminSection(currentUser, activeSection)) {
         return renderNotFoundPage(c)
     }
 
@@ -480,6 +484,10 @@ async function renderAdminPage(c: PageRouteContext, activeSection: AdminSection)
             {content}
         </AdminPage>,
     )
+}
+
+function canAccessAdminSection(currentUser: CurrentUser, activeSection: AdminSection): boolean {
+    return activeSection === 'image-approvals' || isAdminUser(currentUser)
 }
 
 function getAdminOptionsFeedback(c: PageRouteContext): AdminOptionsFeedback | null {

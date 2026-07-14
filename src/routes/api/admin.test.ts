@@ -16,7 +16,7 @@ const reportedCharacterMediaR2Keys = [
     'characters/owner-1/character-1/media/media-1/nsfw/blur/nsfw-blur-key.webp',
 ] as const
 
-function createCurrentUserRecord(role: 'user' | 'admin') {
+function createCurrentUserRecord(role: 'user' | 'moderator' | 'admin') {
     return {
         id: 'current-user',
         email: 'current@example.test',
@@ -160,6 +160,19 @@ describe('GET /admin', () => {
         })
     })
 
+    it('returns 403 for moderator users', async () => {
+        const {db} = createMockDb({
+            firstResults: [createCurrentUserRecord('moderator')],
+        })
+
+        const response = await getAdminApi(db, 'myoc_session=session-token')
+
+        expect(response.status).toBe(403)
+        expect(await response.json()).toEqual({
+            error: 'Admin access required',
+        })
+    })
+
     it('returns 200 for admin users', async () => {
         const {db} = createMockDb({
             firstResults: [createCurrentUserRecord('admin')],
@@ -206,6 +219,23 @@ describe('GET /admin/image-approvals', () => {
         expect(body.pending).toHaveLength(1)
         expect(body.pendingCount).toBe(1)
         expect(body.history).toHaveLength(0)
+    })
+
+    it('returns pending image approval data for moderator users', async () => {
+        const {db} = createMockDb({
+            firstResults: [createCurrentUserRecord('moderator'), {count: 1}, createImageApprovalItemRow()],
+            allResults: [[createImageApprovalQueueRow()], []],
+        })
+
+        const response = await getAdminApi(db, 'myoc_session=session-token', '/admin/image-approvals')
+        const body = (await response.json()) as {
+            current: {id: string}
+            pendingCount: number
+        }
+
+        expect(response.status).toBe(200)
+        expect(body.current.id).toBe('media-1')
+        expect(body.pendingCount).toBe(1)
     })
 
     it('returns an exact pending approval count when the queue exceeds the sidebar page size', async () => {
@@ -338,6 +368,19 @@ describe('GET /admin/jobs', () => {
             }),
         ])
     })
+
+    it('returns 403 for moderator users', async () => {
+        const {db} = createMockDb({
+            firstResults: [createCurrentUserRecord('moderator')],
+        })
+
+        const response = await getAdminApi(db, 'myoc_session=session-token', '/admin/jobs')
+
+        expect(response.status).toBe(403)
+        expect(await response.json()).toEqual({
+            error: 'Admin access required',
+        })
+    })
 })
 
 describe('POST /admin/jobs/:jobName/run', () => {
@@ -431,7 +474,7 @@ describe('POST /admin/image-approvals/:mediaId', () => {
 
     it('returns 400 for invalid JSON bodies', async () => {
         const {db} = createMockDb({
-            firstResults: [createCurrentUserRecord('admin')],
+            firstResults: [createCurrentUserRecord('moderator')],
         })
         const mediaBucket = createMockR2Bucket()
         const sessionToken = 'session-token'
@@ -859,6 +902,20 @@ describe('POST /admin/reports/images/:mediaId/:rating/:action', () => {
         expect(response.status).toBe(401)
         expect(await response.json()).toEqual({
             error: 'Authentication required',
+        })
+    })
+
+    it('returns 403 for moderator users', async () => {
+        const {db} = createMockDb({
+            firstResults: [createCurrentUserRecord('moderator')],
+        })
+        const mediaBucket = createMockR2Bucket()
+
+        const response = await postReportAction('media-1', 'sfw', 'ignore', db, mediaBucket)
+
+        expect(response.status).toBe(403)
+        expect(await response.json()).toEqual({
+            error: 'Admin access required',
         })
     })
 

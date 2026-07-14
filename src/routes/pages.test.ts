@@ -2336,6 +2336,51 @@ describe('GET /admin', () => {
         expect(html).toContain('aria-label="Image Approvals content"')
     })
 
+    it('renders only image approvals navigation for moderator users', async () => {
+        const response = await getAppPath(
+            '/admin/image-approvals',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('mod_user', {
+                    role: 'moderator',
+                }),
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('<title>Image Approvals | Admin | MyOC</title>')
+        expect(html).toContain('href="/admin"')
+        expect(html).toContain('href="/admin/image-approvals"')
+        expect(html).toContain('Image Approvals')
+        expect(html).not.toContain('href="/admin/moderate-images"')
+        expect(html).not.toContain('href="/admin/moderate-characters"')
+        expect(html).not.toContain('href="/admin/moderate-users"')
+        expect(html).not.toContain('href="/admin/reports"')
+        expect(html).not.toContain('href="/admin/admin-options"')
+    })
+
+    it('returns not found for moderator users on other admin sections', async () => {
+        const response = await getAppPath(
+            '/admin/reports',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('mod_user', {
+                    role: 'moderator',
+                }),
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(404)
+        expect(html).toContain('404')
+        expect(html).not.toContain('Reports | Admin | MyOC')
+    })
+
     it('renders admin section routes with the matching section active', async () => {
         const response = await getAppPath(
             '/admin/moderate-users',
