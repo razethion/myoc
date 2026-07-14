@@ -1,4 +1,5 @@
 import {type Context, Hono} from 'hono'
+import type {Child} from 'hono/jsx'
 import {getImageApprovalData, getImageApprovalHistory, getImageApprovalPendingCount} from '../lib/admin/imageApprovals'
 import {getAdminJobLabel, getAdminOptionsData, parseAdminJobName} from '../lib/admin/jobs'
 import {getAdminReportsData} from '../lib/admin/reports'
@@ -464,25 +465,31 @@ async function renderAdminPage(c: PageRouteContext, activeSection: AdminSection)
         return renderNotFoundPage(c)
     }
 
-    const content =
-        activeSection === 'image-approvals' ? (
-            <AdminImageApprovalsPage
-                csrfToken={currentUser.csrfToken}
-                data={await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, currentUser.id)}
-            />
-        ) : activeSection === 'image-approval-log' ? (
-            <AdminImageApprovalLogPage history={await getImageApprovalHistory(c.env.DB)} />
-        ) : activeSection === 'reports' ? (
-            <AdminReportsPage csrfToken={currentUser.csrfToken} data={await getAdminReportsData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL)} />
-        ) : activeSection === 'admin-options' ? (
-            <AdminOptionsPage
-                csrfToken={currentUser.csrfToken}
-                data={await getAdminOptionsData(c.env.DB)}
-                feedback={getAdminOptionsFeedback(c)}
-            />
-        ) : null
+    let imageApprovalPendingCount = 0
+    let content: Child
 
-    const imageApprovalPendingCount = await getImageApprovalPendingCount(c.env.DB)
+    if (activeSection === 'image-approvals') {
+        const data = await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, currentUser.id)
+        imageApprovalPendingCount = data.pendingCount
+        content = <AdminImageApprovalsPage csrfToken={currentUser.csrfToken} data={data} />
+    } else {
+        imageApprovalPendingCount = await getImageApprovalPendingCount(c.env.DB)
+        content =
+            activeSection === 'image-approval-log' ? (
+                <AdminImageApprovalLogPage history={await getImageApprovalHistory(c.env.DB)} />
+            ) : activeSection === 'reports' ? (
+                <AdminReportsPage
+                    csrfToken={currentUser.csrfToken}
+                    data={await getAdminReportsData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL)}
+                />
+            ) : activeSection === 'admin-options' ? (
+                <AdminOptionsPage
+                    csrfToken={currentUser.csrfToken}
+                    data={await getAdminOptionsData(c.env.DB)}
+                    feedback={getAdminOptionsFeedback(c)}
+                />
+            ) : null
+    }
 
     return c.html(
         <AdminPage
