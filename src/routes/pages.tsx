@@ -465,7 +465,7 @@ async function renderAdminPage(c: PageRouteContext, activeSection: AdminSection)
         return renderNotFoundPage(c)
     }
 
-    let imageApprovalPendingCount = 0
+    let imageApprovalPendingCount: number
     let content: Child
 
     if (activeSection === 'image-approvals') {
