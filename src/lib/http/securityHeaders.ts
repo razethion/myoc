@@ -11,6 +11,7 @@ export const NON_HTML_CONTENT_SECURITY_POLICY = [
 ].join('; ')
 
 const STRICT_TRANSPORT_SECURITY = 'max-age=31536000; includeSubDomains'
+const TOYHOUSE_IMAGE_SOURCES = ['https://file.toyhou.se', 'https://f2.toyhou.se']
 const PERMISSIONS_POLICY = [
     'accelerometer=()',
     'camera=()',
@@ -26,8 +27,12 @@ export function securityHeaders(c: Context<{Bindings: Bindings}>, next: Next): P
     return applySecurityHeaders(c, next)
 }
 
-export function createHtmlContentSecurityPolicy(nonce: string): string {
+export function createHtmlContentSecurityPolicy(nonce: string, mediaPublicBaseUrl: string): string {
     // CropperJS and the chart editors generate inline style attributes and runtime style elements.
+    const mediaSource = cspSourceOrigin(mediaPublicBaseUrl)
+    const imageSources = ["'self'", 'data:', 'blob:', mediaSource, ...TOYHOUSE_IMAGE_SOURCES].filter(Boolean)
+    const mediaSources = ["'self'", mediaSource].filter(Boolean)
+
     return [
         "default-src 'self'",
         "base-uri 'self'",
@@ -39,10 +44,10 @@ export function createHtmlContentSecurityPolicy(nonce: string): string {
         "style-src 'self' 'unsafe-inline'",
         "style-src-elem 'self' 'unsafe-inline'",
         "style-src-attr 'unsafe-inline'",
-        "img-src 'self' data: blob: https:",
+        `img-src ${imageSources.join(' ')}`,
         "font-src 'self' data:",
         "connect-src 'self'",
-        "media-src 'self' https:",
+        `media-src ${mediaSources.join(' ')}`,
         "manifest-src 'self'",
         "worker-src 'none'",
         "frame-src 'none'",
@@ -63,7 +68,7 @@ async function applySecurityHeaders(c: Context<{Bindings: Bindings}>, next: Next
     }
 
     const nonce = createCspNonce()
-    headers.set('Content-Security-Policy', createHtmlContentSecurityPolicy(nonce))
+    headers.set('Content-Security-Policy', createHtmlContentSecurityPolicy(nonce, c.env.MEDIA_PUBLIC_BASE_URL))
     headers.delete('Content-Length')
 
     const rewritten = new HTMLRewriter().on('script', new NonceAttributeHandler(nonce)).transform(copyResponseWithHeaders(c.res, headers))
@@ -99,6 +104,16 @@ function createCspNonce(): string {
     crypto.getRandomValues(bytes)
 
     return btoa(String.fromCharCode(...bytes))
+}
+
+function cspSourceOrigin(value: string): string {
+    try {
+        const url = new URL(value)
+
+        return url.protocol === 'https:' ? url.origin : ''
+    } catch {
+        return ''
+    }
 }
 
 class NonceAttributeHandler implements HTMLRewriterElementContentHandlers {

@@ -313,6 +313,11 @@ describe('security headers', () => {
         expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'script-src-attr')).toBe("script-src-attr 'none'")
         expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'style-src-elem')).toBe("style-src-elem 'self' 'unsafe-inline'")
         expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'style-src-attr')).toBe("style-src-attr 'unsafe-inline'")
+        expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'img-src')).toBe(
+            "img-src 'self' data: blob: https://m.myoc.art https://file.toyhou.se https://f2.toyhou.se",
+        )
+        expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'media-src')).toBe("media-src 'self' https://m.myoc.art")
+        expect(contentSecurityPolicy).not.toContain(' https:;')
         expect(contentSecurityPolicy).toContain('upgrade-insecure-requests')
         expect(scriptTags.length).toBeGreaterThan(0)
         expect(scriptTags.every((tag) => tag.includes(`nonce="${nonce}"`))).toBe(true)
