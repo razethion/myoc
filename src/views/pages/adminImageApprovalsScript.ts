@@ -333,7 +333,7 @@ function adminImageApprovalsClient() {
             }
 
             event.preventDefault()
-            submitApproval()
+            void submitApproval()
             return
         }
 
