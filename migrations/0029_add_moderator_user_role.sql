@@ -18,63 +18,194 @@ DROP TABLE IF EXISTS __migration_0029_webauthn_challenges_backup;
 DROP TABLE IF EXISTS __migration_0029_admin_job_runs_backup;
 
 CREATE TABLE __migration_0029_sessions_backup AS
-SELECT *
+SELECT id,
+       user_id,
+       session_hash,
+       created_at,
+       expires_at
 FROM sessions;
 
 CREATE TABLE __migration_0029_user_social_links_backup AS
-SELECT *
+SELECT user_id,
+       platform,
+       label,
+       url,
+       created_at,
+       updated_at
 FROM user_social_links;
 
 CREATE TABLE __migration_0029_character_folders_backup AS
-SELECT *
+SELECT id,
+       user_id,
+       name,
+       parent_folder_id,
+       sort_order,
+       created_at,
+       updated_at,
+       folder_image_key
 FROM character_folders;
 
 CREATE TABLE __migration_0029_characters_backup AS
-SELECT *
+SELECT id,
+       size_chart_id,
+       user_id,
+       name,
+       profile_image_key,
+       folder_id,
+       created_at,
+       updated_at,
+       sort_order,
+       description,
+       height_chart_json
 FROM characters;
 
 CREATE TABLE __migration_0029_character_media_backup AS
-SELECT *
+SELECT id,
+       user_id,
+       character_id,
+       sfw_image_key,
+       nsfw_image_key,
+       sfw_artist,
+       nsfw_artist,
+       sfw_width,
+       sfw_height,
+       sfw_byte_size,
+       nsfw_width,
+       nsfw_height,
+       nsfw_byte_size,
+       created_at,
+       updated_at,
+       sfw_review_status,
+       sfw_reviewed_at,
+       sfw_approved_at,
+       sfw_homepage_allowed,
+       nsfw_review_status,
+       nsfw_reviewed_at,
+       nsfw_approved_at,
+       sfw_content_type,
+       nsfw_content_type,
+       sfw_preview_image_key,
+       sfw_preview_width,
+       sfw_preview_height,
+       sfw_preview_byte_size,
+       nsfw_preview_image_key,
+       nsfw_preview_width,
+       nsfw_preview_height,
+       nsfw_preview_byte_size,
+       nsfw_blur_image_key
 FROM character_media;
 
 CREATE TABLE __migration_0029_character_gallery_tabs_backup AS
-SELECT *
+SELECT id,
+       user_id,
+       character_id,
+       name,
+       sort_order,
+       created_at,
+       updated_at
 FROM character_gallery_tabs;
 
 CREATE TABLE __migration_0029_character_gallery_rows_backup AS
-SELECT *
+SELECT id,
+       user_id,
+       character_id,
+       tab_id,
+       sort_order,
+       created_at,
+       updated_at,
+       force_full_width
 FROM character_gallery_rows;
 
 CREATE TABLE __migration_0029_character_gallery_row_media_backup AS
-SELECT *
+SELECT row_id,
+       media_id,
+       sort_order
 FROM character_gallery_row_media;
 
 CREATE TABLE __migration_0029_character_media_review_events_backup AS
-SELECT *
+SELECT id,
+       media_id,
+       image_rating,
+       action,
+       homepage_allowed,
+       moderator_id,
+       created_at
 FROM character_media_review_events;
 
 CREATE TABLE __migration_0029_toyhouse_import_jobs_backup AS
-SELECT *
+SELECT id,
+       user_id,
+       status,
+       total_images,
+       created_at,
+       updated_at
 FROM toyhouse_import_jobs;
 
 CREATE TABLE __migration_0029_toyhouse_import_items_backup AS
-SELECT *
+SELECT id,
+       job_id,
+       user_id,
+       character_id,
+       toyhouse_character_id,
+       toyhouse_image_url,
+       import_mode,
+       rating,
+       status,
+       media_id,
+       error,
+       sort_order,
+       created_at,
+       updated_at
 FROM toyhouse_import_items;
 
 CREATE TABLE __migration_0029_character_folder_placements_backup AS
-SELECT *
+SELECT user_id,
+       folder_id,
+       character_id,
+       sort_order,
+       created_at,
+       updated_at
 FROM character_folder_placements;
 
 CREATE TABLE __migration_0029_user_passkeys_backup AS
-SELECT *
+SELECT id,
+       user_id,
+       credential_id,
+       public_key,
+       webauthn_user_id,
+       counter,
+       device_type,
+       backed_up,
+       transports,
+       name,
+       created_at,
+       last_used_at
 FROM user_passkeys;
 
 CREATE TABLE __migration_0029_webauthn_challenges_backup AS
-SELECT *
+SELECT id,
+       user_id,
+       email,
+       username,
+       webauthn_user_id,
+       ceremony,
+       challenge,
+       expires_at,
+       created_at
 FROM webauthn_challenges;
 
 CREATE TABLE __migration_0029_admin_job_runs_backup AS
-SELECT *
+SELECT id,
+       job_name,
+       trigger_source,
+       triggered_by_user_id,
+       cron,
+       status,
+       started_at,
+       finished_at,
+       duration_ms,
+       summary_json,
+       error_message
 FROM admin_job_runs;
 
 CREATE TABLE users_new
@@ -157,64 +288,326 @@ DROP TABLE users;
 ALTER TABLE users_new
     RENAME TO users;
 
-INSERT OR IGNORE INTO user_social_links
-SELECT *
+INSERT OR IGNORE INTO user_social_links (user_id,
+                                         platform,
+                                         label,
+                                         url,
+                                         created_at,
+                                         updated_at)
+SELECT user_id,
+       platform,
+       label,
+       url,
+       created_at,
+       updated_at
 FROM __migration_0029_user_social_links_backup;
 
-INSERT OR IGNORE INTO sessions
-SELECT *
+INSERT OR IGNORE INTO sessions (id,
+                                user_id,
+                                session_hash,
+                                created_at,
+                                expires_at)
+SELECT id,
+       user_id,
+       session_hash,
+       created_at,
+       expires_at
 FROM __migration_0029_sessions_backup;
 
-INSERT OR IGNORE INTO character_folders
-SELECT *
+INSERT OR IGNORE INTO character_folders (id,
+                                        user_id,
+                                        name,
+                                        parent_folder_id,
+                                        sort_order,
+                                        created_at,
+                                        updated_at,
+                                        folder_image_key)
+SELECT id,
+       user_id,
+       name,
+       parent_folder_id,
+       sort_order,
+       created_at,
+       updated_at,
+       folder_image_key
 FROM __migration_0029_character_folders_backup;
 
-INSERT OR IGNORE INTO characters
-SELECT *
+INSERT OR IGNORE INTO characters (id,
+                                  size_chart_id,
+                                  user_id,
+                                  name,
+                                  profile_image_key,
+                                  folder_id,
+                                  created_at,
+                                  updated_at,
+                                  sort_order,
+                                  description,
+                                  height_chart_json)
+SELECT id,
+       size_chart_id,
+       user_id,
+       name,
+       profile_image_key,
+       folder_id,
+       created_at,
+       updated_at,
+       sort_order,
+       description,
+       height_chart_json
 FROM __migration_0029_characters_backup;
 
-INSERT OR IGNORE INTO character_media
-SELECT *
+INSERT OR IGNORE INTO character_media (id,
+                                       user_id,
+                                       character_id,
+                                       sfw_image_key,
+                                       nsfw_image_key,
+                                       sfw_artist,
+                                       nsfw_artist,
+                                       sfw_width,
+                                       sfw_height,
+                                       sfw_byte_size,
+                                       nsfw_width,
+                                       nsfw_height,
+                                       nsfw_byte_size,
+                                       created_at,
+                                       updated_at,
+                                       sfw_review_status,
+                                       sfw_reviewed_at,
+                                       sfw_approved_at,
+                                       sfw_homepage_allowed,
+                                       nsfw_review_status,
+                                       nsfw_reviewed_at,
+                                       nsfw_approved_at,
+                                       sfw_content_type,
+                                       nsfw_content_type,
+                                       sfw_preview_image_key,
+                                       sfw_preview_width,
+                                       sfw_preview_height,
+                                       sfw_preview_byte_size,
+                                       nsfw_preview_image_key,
+                                       nsfw_preview_width,
+                                       nsfw_preview_height,
+                                       nsfw_preview_byte_size,
+                                       nsfw_blur_image_key)
+SELECT id,
+       user_id,
+       character_id,
+       sfw_image_key,
+       nsfw_image_key,
+       sfw_artist,
+       nsfw_artist,
+       sfw_width,
+       sfw_height,
+       sfw_byte_size,
+       nsfw_width,
+       nsfw_height,
+       nsfw_byte_size,
+       created_at,
+       updated_at,
+       sfw_review_status,
+       sfw_reviewed_at,
+       sfw_approved_at,
+       sfw_homepage_allowed,
+       nsfw_review_status,
+       nsfw_reviewed_at,
+       nsfw_approved_at,
+       sfw_content_type,
+       nsfw_content_type,
+       sfw_preview_image_key,
+       sfw_preview_width,
+       sfw_preview_height,
+       sfw_preview_byte_size,
+       nsfw_preview_image_key,
+       nsfw_preview_width,
+       nsfw_preview_height,
+       nsfw_preview_byte_size,
+       nsfw_blur_image_key
 FROM __migration_0029_character_media_backup;
 
-INSERT OR IGNORE INTO character_gallery_tabs
-SELECT *
+INSERT OR IGNORE INTO character_gallery_tabs (id,
+                                             user_id,
+                                             character_id,
+                                             name,
+                                             sort_order,
+                                             created_at,
+                                             updated_at)
+SELECT id,
+       user_id,
+       character_id,
+       name,
+       sort_order,
+       created_at,
+       updated_at
 FROM __migration_0029_character_gallery_tabs_backup;
 
-INSERT OR IGNORE INTO character_gallery_rows
-SELECT *
+INSERT OR IGNORE INTO character_gallery_rows (id,
+                                             user_id,
+                                             character_id,
+                                             tab_id,
+                                             sort_order,
+                                             created_at,
+                                             updated_at,
+                                             force_full_width)
+SELECT id,
+       user_id,
+       character_id,
+       tab_id,
+       sort_order,
+       created_at,
+       updated_at,
+       force_full_width
 FROM __migration_0029_character_gallery_rows_backup;
 
-INSERT OR IGNORE INTO character_gallery_row_media
-SELECT *
+INSERT OR IGNORE INTO character_gallery_row_media (row_id,
+                                                  media_id,
+                                                  sort_order)
+SELECT row_id,
+       media_id,
+       sort_order
 FROM __migration_0029_character_gallery_row_media_backup;
 
-INSERT OR IGNORE INTO character_media_review_events
-SELECT *
+INSERT OR IGNORE INTO character_media_review_events (id,
+                                                    media_id,
+                                                    image_rating,
+                                                    action,
+                                                    homepage_allowed,
+                                                    moderator_id,
+                                                    created_at)
+SELECT id,
+       media_id,
+       image_rating,
+       action,
+       homepage_allowed,
+       moderator_id,
+       created_at
 FROM __migration_0029_character_media_review_events_backup;
 
-INSERT OR IGNORE INTO toyhouse_import_jobs
-SELECT *
+INSERT OR IGNORE INTO toyhouse_import_jobs (id,
+                                           user_id,
+                                           status,
+                                           total_images,
+                                           created_at,
+                                           updated_at)
+SELECT id,
+       user_id,
+       status,
+       total_images,
+       created_at,
+       updated_at
 FROM __migration_0029_toyhouse_import_jobs_backup;
 
-INSERT OR IGNORE INTO toyhouse_import_items
-SELECT *
+INSERT OR IGNORE INTO toyhouse_import_items (id,
+                                            job_id,
+                                            user_id,
+                                            character_id,
+                                            toyhouse_character_id,
+                                            toyhouse_image_url,
+                                            import_mode,
+                                            rating,
+                                            status,
+                                            media_id,
+                                            error,
+                                            sort_order,
+                                            created_at,
+                                            updated_at)
+SELECT id,
+       job_id,
+       user_id,
+       character_id,
+       toyhouse_character_id,
+       toyhouse_image_url,
+       import_mode,
+       rating,
+       status,
+       media_id,
+       error,
+       sort_order,
+       created_at,
+       updated_at
 FROM __migration_0029_toyhouse_import_items_backup;
 
-INSERT OR IGNORE INTO character_folder_placements
-SELECT *
+INSERT OR IGNORE INTO character_folder_placements (user_id,
+                                                  folder_id,
+                                                  character_id,
+                                                  sort_order,
+                                                  created_at,
+                                                  updated_at)
+SELECT user_id,
+       folder_id,
+       character_id,
+       sort_order,
+       created_at,
+       updated_at
 FROM __migration_0029_character_folder_placements_backup;
 
-INSERT OR IGNORE INTO user_passkeys
-SELECT *
+INSERT OR IGNORE INTO user_passkeys (id,
+                                    user_id,
+                                    credential_id,
+                                    public_key,
+                                    webauthn_user_id,
+                                    counter,
+                                    device_type,
+                                    backed_up,
+                                    transports,
+                                    name,
+                                    created_at,
+                                    last_used_at)
+SELECT id,
+       user_id,
+       credential_id,
+       public_key,
+       webauthn_user_id,
+       counter,
+       device_type,
+       backed_up,
+       transports,
+       name,
+       created_at,
+       last_used_at
 FROM __migration_0029_user_passkeys_backup;
 
-INSERT OR IGNORE INTO webauthn_challenges
-SELECT *
+INSERT OR IGNORE INTO webauthn_challenges (id,
+                                           user_id,
+                                           email,
+                                           username,
+                                           webauthn_user_id,
+                                           ceremony,
+                                           challenge,
+                                           expires_at,
+                                           created_at)
+SELECT id,
+       user_id,
+       email,
+       username,
+       webauthn_user_id,
+       ceremony,
+       challenge,
+       expires_at,
+       created_at
 FROM __migration_0029_webauthn_challenges_backup;
 
-INSERT OR IGNORE INTO admin_job_runs
-SELECT *
+INSERT OR IGNORE INTO admin_job_runs (id,
+                                      job_name,
+                                      trigger_source,
+                                      triggered_by_user_id,
+                                      cron,
+                                      status,
+                                      started_at,
+                                      finished_at,
+                                      duration_ms,
+                                      summary_json,
+                                      error_message)
+SELECT id,
+       job_name,
+       trigger_source,
+       triggered_by_user_id,
+       cron,
+       status,
+       started_at,
+       finished_at,
+       duration_ms,
+       summary_json,
+       error_message
 FROM __migration_0029_admin_job_runs_backup;
 
 DROP TABLE __migration_0029_sessions_backup;
