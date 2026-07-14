@@ -303,6 +303,8 @@ describe('security headers', () => {
         const scriptDirective = getContentSecurityPolicyDirective(contentSecurityPolicy, 'script-src')
         const nonce = getNonceFromDirective(scriptDirective)
         const scriptTags = html.match(/<script\b[^>]*>/gi) ?? []
+        const structuredDataScriptTags = scriptTags.filter((tag) => tag.includes('type="application/ld+json"'))
+        const executableScriptTags = scriptTags.filter((tag) => !tag.includes('type="application/ld+json"'))
 
         expect(scriptDirective).toBe(`script-src 'self' 'nonce-${nonce}'`)
         expect(scriptDirective).not.toContain("'unsafe-inline'")
@@ -319,8 +321,10 @@ describe('security headers', () => {
         expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'media-src')).toBe("media-src 'self' https://m.myoc.art")
         expect(contentSecurityPolicy).not.toContain(' https:;')
         expect(contentSecurityPolicy).toContain('upgrade-insecure-requests')
-        expect(scriptTags.length).toBeGreaterThan(0)
-        expect(scriptTags.every((tag) => tag.includes(`nonce="${nonce}"`))).toBe(true)
+        expect(executableScriptTags.length).toBeGreaterThan(0)
+        expect(executableScriptTags.every((tag) => tag.includes(`nonce="${nonce}"`))).toBe(true)
+        expect(structuredDataScriptTags.length).toBeGreaterThan(0)
+        expect(structuredDataScriptTags.every((tag) => !tag.includes('nonce='))).toBe(true)
     })
 
     it('adds a locked-down content security policy to API responses', async () => {

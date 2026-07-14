@@ -71,9 +71,7 @@ async function applySecurityHeaders(c: Context<{Bindings: Bindings}>, next: Next
     headers.set('Content-Security-Policy', createHtmlContentSecurityPolicy(nonce, c.env.MEDIA_PUBLIC_BASE_URL))
     headers.delete('Content-Length')
 
-    const rewritten = new HTMLRewriter().on('script', new NonceAttributeHandler(nonce)).transform(copyResponseWithHeaders(c.res, headers))
-
-    c.res = rewritten
+    c.res = new HTMLRewriter().on('script', new NonceAttributeHandler(nonce)).transform(copyResponseWithHeaders(c.res, headers))
 }
 
 function setCommonSecurityHeaders(headers: Headers, requestUrl: string): void {
@@ -120,6 +118,26 @@ class NonceAttributeHandler implements HTMLRewriterElementContentHandlers {
     constructor(private readonly nonce: string) {}
 
     element(element: Element): void {
+        if (!isExecutableScriptType(element.getAttribute('type'))) {
+            return
+        }
+
         element.setAttribute('nonce', this.nonce)
     }
+}
+
+function isExecutableScriptType(type: string | null): boolean {
+    if (!type) {
+        return true
+    }
+
+    const normalized = type.trim().toLowerCase()
+
+    return (
+        normalized === 'module' ||
+        normalized === 'text/javascript' ||
+        normalized === 'application/javascript' ||
+        normalized === 'application/ecmascript' ||
+        normalized === 'text/ecmascript'
+    )
 }
