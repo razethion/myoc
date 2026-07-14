@@ -295,11 +295,12 @@ adminRoutes.post('/image-approvals/:mediaId', async (c) => {
                 ),
             ),
         ])
-        await completeImageApprovalLease(c.env.DB, media.id, authorization.currentUser.id)
     } catch (error) {
         await deleteR2Objects(c.env.MEDIA_BUCKET, copiedObjectKeys)
         throw error
     }
+
+    await completeImageApprovalLease(c.env.DB, media.id, authorization.currentUser.id)
 
     for (const move of update.moves) {
         try {
