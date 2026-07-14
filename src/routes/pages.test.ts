@@ -1,7 +1,9 @@
 import {afterEach, describe, expect, it, vi} from 'vitest'
 import app from '../index'
+import {NON_HTML_CONTENT_SECURITY_POLICY} from '../lib/http/securityHeaders'
 import {LEADERBOARD_CACHE_KEY, type LeaderboardSnapshot} from '../lib/leaderboard'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
+import {expectSecurityHeaders} from '../test/assertions'
 import {createWebpDataUrl} from '../test/imageFixtures'
 import {createMockKVNamespace} from '../test/mockKV'
 import {createMockR2Bucket} from '../test/mockR2'
@@ -274,6 +276,68 @@ function expectPatternAllowsReportedCharacterNames(html: string, inputId: string
     expect(regex.test('"Ivo"')).toBe(true)
     expect(regex.test('---')).toBe(false)
 }
+
+function getContentSecurityPolicyDirective(contentSecurityPolicy: string, directiveName: string): string {
+    return (
+        contentSecurityPolicy
+            .split(';')
+            .map((directive) => directive.trim())
+            .find((directive) => directive.startsWith(`${directiveName} `)) ?? ''
+    )
+}
+
+function getNonceFromDirective(directive: string): string {
+    const match = directive.match(/'nonce-([^']+)'/)
+
+    expect(match).not.toBeNull()
+    expect(match?.[1]).toMatch(/^[A-Za-z0-9+/]{22}==$/)
+
+    return match?.[1] ?? ''
+}
+
+describe('security headers', () => {
+    it('adds an enforcing nonce-based content security policy to HTML responses', async () => {
+        const response = await getAppPath('/')
+        const html = await response.text()
+        const contentSecurityPolicy = expectSecurityHeaders(response)
+        const scriptDirective = getContentSecurityPolicyDirective(contentSecurityPolicy, 'script-src')
+        const nonce = getNonceFromDirective(scriptDirective)
+        const scriptTags = html.match(/<script\b[^>]*>/gi) ?? []
+        const structuredDataScriptTags = scriptTags.filter((tag) => tag.includes('type="application/ld+json"'))
+        const executableScriptTags = scriptTags.filter((tag) => !tag.includes('type="application/ld+json"'))
+
+        expect(scriptDirective).toBe(`script-src 'self' 'nonce-${nonce}'`)
+        expect(scriptDirective).not.toContain("'unsafe-inline'")
+        expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'default-src')).toBe("default-src 'self'")
+        expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'base-uri')).toBe("base-uri 'self'")
+        expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'frame-ancestors')).toBe("frame-ancestors 'none'")
+        expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'object-src')).toBe("object-src 'none'")
+        expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'script-src-attr')).toBe("script-src-attr 'none'")
+        expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'style-src-elem')).toBe("style-src-elem 'self' 'unsafe-inline'")
+        expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'style-src-attr')).toBe("style-src-attr 'unsafe-inline'")
+        expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'img-src')).toBe(
+            "img-src 'self' data: blob: https://m.myoc.art https://file.toyhou.se https://f2.toyhou.se",
+        )
+        expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'media-src')).toBe("media-src 'self' https://m.myoc.art")
+        expect(contentSecurityPolicy).not.toContain(' https:;')
+        expect(contentSecurityPolicy).toContain('upgrade-insecure-requests')
+        expect(executableScriptTags.length).toBeGreaterThan(0)
+        expect(executableScriptTags.every((tag) => tag.includes(`nonce="${nonce}"`))).toBe(true)
+        expect(structuredDataScriptTags.length).toBeGreaterThan(0)
+        expect(structuredDataScriptTags.every((tag) => !tag.includes('nonce='))).toBe(true)
+    })
+
+    it('adds a locked-down content security policy to API responses', async () => {
+        const response = await getAppPath('/api/missing', createProfilePageDb(), {
+            accept: 'application/json',
+        })
+        const contentSecurityPolicy = expectSecurityHeaders(response)
+
+        expect(response.status).toBe(404)
+        expect(response.headers.get('content-type')).toContain('application/json')
+        expect(contentSecurityPolicy).toBe(NON_HTML_CONTENT_SECURITY_POLICY)
+    })
+})
 
 describe('public page redirects', () => {
     it('renders home for logged-in users', async () => {
@@ -980,7 +1044,7 @@ describe('public page redirects', () => {
         expect(html).toContain('<meta content="image/webp" property="og:image:type"/>')
         expect(html).toContain('<meta content="summary_large_image" name="twitter:card"/>')
         expect(html).toContain('<meta content="Hosting over 1,234 images" name="twitter:description"/>')
-        expect(html).toContain('<script type="application/ld+json">')
+        expect(html).toContain('type="application/ld+json"')
         expect(html).toContain('"@type":"WebSite"')
         expect(html).toContain('"description":"Hosting over 1,234 images"')
         expect(html).toContain('"target":"https://example.com/search?q={search_term_string}"')

@@ -1,5 +1,6 @@
 import {Hono} from 'hono'
 import {runAdminJob} from './lib/admin/jobs'
+import {securityHeaders} from './lib/http/securityHeaders'
 import {apiRoutes} from './routes/api'
 import {pageRoutes, renderNotFoundPage} from './routes/pages'
 import type {Bindings} from './types/bindings'
@@ -10,6 +11,7 @@ const LEADERBOARD_REFRESH_CRON = '0 10 * * *'
 
 const app = new Hono<{Bindings: Bindings}>()
 
+app.use('*', securityHeaders)
 app.route('/api', apiRoutes)
 app.route('/', pageRoutes)
 
