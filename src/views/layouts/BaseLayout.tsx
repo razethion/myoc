@@ -16,6 +16,7 @@ export function BaseLayout({title, head, children}: BaseLayoutProps) {
                     <meta charset="UTF-8" />
                     <meta content="width=device-width, initial-scale=1" name="viewport" />
                     <title>{title}</title>
+                    <link href="/assets/razfalling.png" rel="icon" type="image/png" />
                     <link href="/app.css" rel="stylesheet" />
                     {head}
                 </head>
