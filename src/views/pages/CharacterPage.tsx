@@ -1029,12 +1029,14 @@ function prepareLightboxColorSampler(src) {
             setLightboxColorStatus('Pick a pixel');
         } catch {
             galleryColorSampleImage = null;
+            setLightboxColorPickerAvailable(false);
             setLightboxColorStatus('Color sampling unavailable');
         }
     };
     image.onerror = () => {
         if (galleryColorSampleSrc !== src) return;
         galleryColorSampleImage = null;
+        setLightboxColorPickerAvailable(false);
         setLightboxColorStatus('Color sampling unavailable');
     };
     image.src = src;
