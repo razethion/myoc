@@ -480,6 +480,142 @@ function CharacterPageStyles() {
             .gallery-tab-panel[hidden] {
                 display: none;
             }
+
+            .gallery-lightbox-shell {
+                border-radius: 0;
+                display: grid;
+                grid-template-rows: auto minmax(18rem, 1fr) auto;
+                height: 100dvh;
+                max-height: 100dvh;
+                width: 100vw;
+            }
+
+            .gallery-lightbox-toolbar {
+                align-items: center;
+                border-bottom: 1px solid color-mix(in oklab, var(--color-base-content) 18%, transparent);
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.5rem;
+                justify-content: space-between;
+                min-width: 0;
+                padding: 0.75rem;
+            }
+
+            .gallery-lightbox-title {
+                min-width: 12rem;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .gallery-lightbox-viewer-wrap {
+                background:
+                    linear-gradient(45deg, color-mix(in oklab, var(--color-base-300) 88%, black) 25%, transparent 25%),
+                    linear-gradient(-45deg, color-mix(in oklab, var(--color-base-300) 88%, black) 25%, transparent 25%),
+                    linear-gradient(45deg, transparent 75%, color-mix(in oklab, var(--color-base-300) 88%, black) 75%),
+                    linear-gradient(-45deg, transparent 75%, color-mix(in oklab, var(--color-base-300) 88%, black) 75%);
+                background-color: var(--color-base-200);
+                background-position: 0 0, 0 0.5rem, 0.5rem -0.5rem, -0.5rem 0;
+                background-size: 1rem 1rem;
+                min-height: 0;
+                position: relative;
+            }
+
+            .gallery-lightbox-viewer {
+                height: 100%;
+                min-height: 18rem;
+                touch-action: none;
+                width: 100%;
+            }
+
+            .gallery-lightbox-viewer.is-color-picking {
+                cursor: crosshair;
+            }
+
+            .gallery-lightbox-gif-overlay {
+                display: block;
+                height: 100%;
+                object-fit: fill;
+                pointer-events: none;
+                user-select: none;
+                width: 100%;
+            }
+
+            .gallery-lightbox-footer {
+                align-items: center;
+                border-top: 1px solid color-mix(in oklab, var(--color-base-content) 18%, transparent);
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.75rem;
+                justify-content: space-between;
+                min-width: 0;
+                padding: 0.75rem;
+            }
+
+            .gallery-lightbox-credit {
+                min-width: 0;
+            }
+
+            .gallery-color-preview {
+                background: var(--color-base-300);
+                border: 1px solid color-mix(in oklab, var(--color-base-content) 25%, transparent);
+                height: 5rem;
+                image-rendering: pixelated;
+                width: 5rem;
+            }
+
+            .gallery-color-swatch {
+                background: var(--picked-color, transparent);
+                border: 1px solid color-mix(in oklab, var(--color-base-content) 30%, transparent);
+                display: inline-block;
+                height: 1.25rem;
+                width: 1.25rem;
+            }
+
+            .gallery-lightbox-empty-state {
+                align-items: center;
+                background: color-mix(in oklab, var(--color-base-100) 78%, transparent);
+                display: none;
+                inset: 0;
+                justify-content: center;
+                padding: 1rem;
+                position: absolute;
+                text-align: center;
+            }
+
+            .gallery-lightbox-viewer-wrap.viewer-unavailable .gallery-lightbox-empty-state {
+                display: flex;
+            }
+
+            .gallery-bookmark-loader {
+                align-items: center;
+                background: rgb(0 0 0 / 72%);
+                display: flex;
+                inset: 0;
+                justify-content: center;
+                position: fixed;
+                z-index: 80;
+            }
+
+            .gallery-bookmark-loader[hidden] {
+                display: none;
+            }
+
+            @media (max-width: 640px) {
+                .gallery-lightbox-shell {
+                    height: 100dvh;
+                    width: 100vw;
+                }
+
+                .gallery-lightbox-toolbar,
+                .gallery-lightbox-footer {
+                    align-items: stretch;
+                }
+
+                .gallery-lightbox-title {
+                    flex-basis: 100%;
+                }
+            }
         `}</style>
     )
 }
@@ -527,39 +663,50 @@ function GalleryImage({allowNsfwToggle, deferMediaLoad, media}: {allowNsfwToggle
     const style = `--media-width:${media.displayWidth};--media-height:${media.displayHeight};--media-aspect:${aspect};`
     const revealWidth = media.nsfwDisplayWidth ?? media.displayWidth
     const revealHeight = media.nsfwDisplayHeight ?? media.displayHeight
-    const initialSrc = media.displayPreviewUrl ?? media.displayUrl
-    const hasFullresPending = Boolean(media.displayPreviewUrl && media.displayPreviewUrl !== media.displayUrl)
-    const canToggleNsfw = Boolean(allowNsfwToggle && media.nsfwDisplayUrl && media.safeDisplayUrl)
+    const displayPreviewUrl = media.displayPreviewUrl
+    const displayUrl = media.displayUrl
+    const nsfwDisplayPreviewUrl = media.nsfwDisplayPreviewUrl
+    const nsfwDisplayUrl = media.nsfwDisplayUrl
+    const safeDisplayPreviewUrl = media.safeDisplayPreviewUrl
+    const safeDisplayUrl = media.safeDisplayUrl
+    const initialSrc = displayPreviewUrl ?? displayUrl
+    const hasFullresPending = Boolean(displayPreviewUrl && displayPreviewUrl !== displayUrl)
+    const canToggleNsfw = Boolean(allowNsfwToggle && nsfwDisplayUrl && safeDisplayUrl)
+    const bookmarkId = `${media.id}:${media.isNsfw && !media.isNsfwHidden ? 'nsfw' : 'sfw'}`
 
     return (
         <div
             class={`gallery-media ${deferMediaLoad ? '' : 'image-loading'} ${!deferMediaLoad && hasFullresPending ? 'fullres-loading' : ''} rounded ${media.isNsfwHidden ? 'nsfw-media' : ''}`}
             data-nsfw-alt={canToggleNsfw ? media.nsfwImageAlt : undefined}
             data-nsfw-height={canToggleNsfw ? String(revealHeight) : undefined}
-            data-nsfw-preview-url={canToggleNsfw && media.nsfwDisplayPreviewUrl ? media.nsfwDisplayPreviewUrl : undefined}
+            data-nsfw-preview-url={canToggleNsfw && nsfwDisplayPreviewUrl ? nsfwDisplayPreviewUrl : undefined}
             data-nsfw-title={canToggleNsfw ? media.nsfwArtist : undefined}
             data-nsfw-toggle-target={canToggleNsfw ? 'true' : undefined}
-            data-nsfw-url={canToggleNsfw ? media.nsfwDisplayUrl : undefined}
+            data-nsfw-url={canToggleNsfw ? nsfwDisplayUrl : undefined}
+            data-nsfw-bookmark-id={canToggleNsfw ? `${media.id}:nsfw` : undefined}
             data-nsfw-width={canToggleNsfw ? String(revealWidth) : undefined}
             data-safe-alt={canToggleNsfw ? media.safeImageAlt : undefined}
             data-safe-height={canToggleNsfw && media.safeDisplayHeight ? String(media.safeDisplayHeight) : undefined}
             data-safe-hidden={canToggleNsfw ? String(media.safeDisplayIsNsfwHidden) : undefined}
-            data-safe-preview-url={canToggleNsfw && media.safeDisplayPreviewUrl ? media.safeDisplayPreviewUrl : undefined}
+            data-safe-preview-url={canToggleNsfw && safeDisplayPreviewUrl ? safeDisplayPreviewUrl : undefined}
             data-safe-title={canToggleNsfw ? media.safeDisplayTitle : undefined}
-            data-safe-url={canToggleNsfw ? media.safeDisplayUrl : undefined}
+            data-safe-url={canToggleNsfw ? safeDisplayUrl : undefined}
+            data-safe-bookmark-id={canToggleNsfw ? `${media.id}:sfw` : undefined}
             data-safe-width={canToggleNsfw && media.safeDisplayWidth ? String(media.safeDisplayWidth) : undefined}
             style={style}
         >
             <img
                 alt={media.imageAlt}
                 class="gallery-image"
-                data-deferred-fullres-src={deferMediaLoad && hasFullresPending ? media.displayUrl : undefined}
-                data-deferred-preview-src={deferMediaLoad && media.displayPreviewUrl ? media.displayPreviewUrl : undefined}
+                crossOrigin="anonymous"
+                data-bookmark-id={bookmarkId}
+                data-deferred-fullres-src={deferMediaLoad && hasFullresPending ? displayUrl : undefined}
+                data-deferred-preview-src={deferMediaLoad && displayPreviewUrl ? displayPreviewUrl : undefined}
                 data-deferred-src={deferMediaLoad ? initialSrc : undefined}
-                data-fullres-src={!deferMediaLoad && hasFullresPending ? media.displayUrl : undefined}
+                data-fullres-src={!deferMediaLoad && hasFullresPending ? displayUrl : undefined}
                 data-nsfw-displayed={media.isNsfw && !media.isNsfwHidden ? 'true' : 'false'}
                 data-nsfw-hidden={media.isNsfwHidden ? 'true' : 'false'}
-                data-preview-src={!deferMediaLoad ? (media.displayPreviewUrl ?? undefined) : undefined}
+                data-preview-src={!deferMediaLoad ? (displayPreviewUrl ?? undefined) : undefined}
                 data-title={media.artist}
                 decoding="async"
                 height={media.displayHeight}
@@ -603,16 +750,539 @@ const galleryFullresConcurrency = 4;
 const galleryFullresWaitingForPreviews = new Set();
 const galleryImageMaxRetries = 3;
 const galleryFullresMaxRetries = 3;
+let galleryLightboxViewer = null;
+let galleryLightboxColorPicking = false;
+let galleryColorSampleImage = null;
+let galleryColorSampleSrc = '';
+let galleryCurrentLightboxBookmarkId = '';
+let gallerySuppressNextCloseBookmarkReset = false;
+const galleryColorSampleCanvas = document.createElement('canvas');
+galleryColorSampleCanvas.width = 1;
+galleryColorSampleCanvas.height = 1;
 
-function openLightbox(image) {
+function openLightbox(image, options = {}) {
     if (!isGalleryImageOpenable(image)) return;
+    setGalleryBookmarkLoaderVisible(false);
     const lightbox = document.getElementById('gallery-lightbox');
-    const lightboxImage = document.getElementById('lightbox-image');
     const lightboxTitle = document.getElementById('lightbox-title');
-    lightboxImage.src = image.src;
-    lightboxImage.alt = image.alt;
-    lightboxTitle.textContent = image.dataset.title || image.alt;
-    lightbox.showModal();
+    const lightboxCredit = document.getElementById('lightbox-credit');
+    const downloadLink = document.getElementById('lightbox-download');
+    const src = image.currentSrc || image.src || image.dataset.fullresLoadedFor;
+    const downloadSrc = image.dataset.fullresLoadedFor || src;
+    const title = image.dataset.title || 'Unknown artist';
+    const width = Number(image.naturalWidth || image.width || 1);
+    const height = Number(image.naturalHeight || image.height || 1);
+    const bookmarkId = image.dataset.bookmarkId || mediaBookmarkIdFromUrl(src);
+
+    if (!lightbox || !src) return;
+
+    galleryCurrentLightboxBookmarkId = bookmarkId;
+    lightbox.dataset.bookmarkId = bookmarkId;
+    lightboxTitle.textContent = 'Image viewer';
+    lightboxCredit.textContent = title;
+    downloadLink.href = downloadSrc;
+    downloadLink.download = sanitizeDownloadName(title, downloadSrc);
+    resetLightboxColorState();
+    if (!options.restoreBookmark) {
+        updateGalleryBookmarkHash({image: bookmarkId, zoom: null, x: null, y: null}, {mode: 'push'});
+    }
+    if (!lightbox.open) {
+        lightbox.showModal();
+    }
+    window.requestAnimationFrame(() => createLightboxViewer(src, width, height));
+}
+
+function createLightboxViewer(src, width, height) {
+    closeLightboxViewer({resetBookmark: false});
+
+    const viewerElement = document.getElementById('lightbox-viewer');
+    const viewerWrap = document.getElementById('lightbox-viewer-wrap');
+    if (!viewerElement || typeof window.OpenSeadragon !== 'function') {
+        if (viewerWrap) viewerWrap.classList.add('viewer-unavailable');
+        setLightboxColorStatus('Viewer unavailable');
+        return;
+    }
+
+    if (viewerWrap) viewerWrap.classList.remove('viewer-unavailable');
+    viewerElement.innerHTML = '';
+    const shouldUseHtmlOverlay = isGifImageUrl(src);
+
+    galleryLightboxViewer = window.OpenSeadragon({
+        id: 'lightbox-viewer',
+        prefixUrl: '/vendor/openseadragon/images/',
+        crossOriginPolicy: 'Anonymous',
+        ajaxWithCredentials: false,
+        tileSources: {
+            type: 'image',
+            url: src,
+            width,
+            height,
+            buildPyramid: false,
+            crossOriginPolicy: 'Anonymous',
+            ajaxWithCredentials: false,
+        },
+        showNavigator: true,
+        navigatorPosition: 'BOTTOM_RIGHT',
+        navigatorAutoFade: false,
+        showNavigationControl: false,
+        animationTime: 0.18,
+        blendTime: 0,
+        constrainDuringPan: true,
+        visibilityRatio: 1,
+        minZoomImageRatio: 0.7,
+        maxZoomPixelRatio: 8,
+        gestureSettingsMouse: {
+            clickToZoom: false,
+            dblClickToZoom: true,
+            dragToPan: true,
+            scrollToZoom: true,
+        },
+        gestureSettingsTouch: {
+            clickToZoom: false,
+            dblClickToZoom: true,
+            dragToPan: true,
+            pinchToZoom: true,
+        },
+    });
+
+    galleryLightboxViewer.addHandler('open', () => {
+        if (shouldUseHtmlOverlay) {
+            addGifLightboxOverlay(src, width, height);
+        }
+        galleryLightboxViewer.viewport.goHome(true);
+    });
+    galleryLightboxViewer.addHandler('open-failed', () => {
+        if (viewerWrap) viewerWrap.classList.add('viewer-unavailable');
+        setLightboxColorStatus('Image unavailable');
+    });
+    if (typeof galleryLightboxViewer.bookmarkUrl === 'function') {
+        galleryLightboxViewer.bookmarkUrl({
+            preserveHashParams: () => ({
+                tab: getActiveGalleryTabName(),
+                image: galleryCurrentLightboxBookmarkId,
+            }),
+            requiredHashParam: 'image',
+        });
+    }
+
+    viewerElement.dataset.imageSrc = src;
+    viewerElement.dataset.imageWidth = String(width);
+    viewerElement.dataset.imageHeight = String(height);
+    prepareLightboxColorSampler(src);
+}
+
+function isGifImageUrl(src) {
+    try {
+        return new URL(src, window.location.href).pathname.toLowerCase().endsWith('.gif');
+    } catch {
+        return /[.]gif(?:$|[?#])/i.test(String(src));
+    }
+}
+
+function addGifLightboxOverlay(src, width, height) {
+    if (!galleryLightboxViewer || typeof galleryLightboxViewer.HTMLelements !== 'function') return;
+
+    const image = document.createElement('img');
+    image.alt = '';
+    image.className = 'gallery-lightbox-gif-overlay';
+    image.crossOrigin = 'anonymous';
+    image.decoding = 'async';
+    image.src = src;
+
+    const elements = galleryLightboxViewer.HTMLelements();
+    elements.removeElementById('lightbox-gif');
+    elements.addElement({
+        id: 'lightbox-gif',
+        element: image,
+        x: 0,
+        y: 0,
+        width,
+        height,
+    });
+
+    const overlay = elements.getElementById('lightbox-gif');
+    if (overlay) {
+        overlay.element.style.pointerEvents = 'none';
+    }
+}
+
+function closeLightboxViewer(options = {}) {
+    const resetBookmark = options.resetBookmark !== false;
+    const updateHistory = options.updateHistory !== false;
+    setLightboxColorPicking(false);
+    if (galleryLightboxViewer) {
+        galleryLightboxViewer.destroy();
+        galleryLightboxViewer = null;
+    }
+    const viewerElement = document.getElementById('lightbox-viewer');
+    if (viewerElement) {
+        viewerElement.innerHTML = '';
+    }
+    if (resetBookmark) {
+        galleryCurrentLightboxBookmarkId = '';
+        const lightbox = document.getElementById('gallery-lightbox');
+        if (lightbox) delete lightbox.dataset.bookmarkId;
+        if (updateHistory) {
+            updateGalleryBookmarkHash({image: null, zoom: null, x: null, y: null}, {mode: options.historyMode || 'replace'});
+        }
+    }
+}
+
+function initLightboxControls() {
+    const lightbox = document.getElementById('gallery-lightbox');
+    const zoomInButton = document.getElementById('lightbox-zoom-in');
+    const zoomOutButton = document.getElementById('lightbox-zoom-out');
+    const resetButton = document.getElementById('lightbox-reset');
+    const colorButton = document.getElementById('lightbox-color-picker');
+    const copyColorButton = document.getElementById('lightbox-color-copy');
+    const closeButton = document.getElementById('lightbox-close');
+    const viewerElement = document.getElementById('lightbox-viewer');
+
+    if (!lightbox || lightbox.dataset.controlsBound === 'true') return;
+    lightbox.dataset.controlsBound = 'true';
+
+    zoomInButton?.addEventListener('click', () => zoomLightbox(1.35));
+    zoomOutButton?.addEventListener('click', () => zoomLightbox(0.74));
+    resetButton?.addEventListener('click', () => {
+        if (galleryLightboxViewer) galleryLightboxViewer.viewport.goHome();
+    });
+    colorButton?.addEventListener('click', () => setLightboxColorPicking(!galleryLightboxColorPicking));
+    copyColorButton?.addEventListener('click', () => copyLightboxPickedColor());
+    closeButton?.addEventListener('click', () => lightbox.close());
+    lightbox.addEventListener('close', () => {
+        const shouldUpdateHistory = !gallerySuppressNextCloseBookmarkReset;
+        gallerySuppressNextCloseBookmarkReset = false;
+        closeLightboxViewer({
+            historyMode: 'push',
+            resetBookmark: true,
+            updateHistory: shouldUpdateHistory,
+        });
+    });
+
+    viewerElement?.addEventListener('pointermove', (event) => {
+        if (!galleryLightboxColorPicking) return;
+        event.preventDefault();
+        event.stopPropagation();
+        previewLightboxColor(event);
+    }, {capture: true});
+    viewerElement?.addEventListener('click', (event) => {
+        if (!galleryLightboxColorPicking) return;
+        event.preventDefault();
+        event.stopPropagation();
+        pickLightboxColor(event);
+    }, {capture: true});
+}
+
+function zoomLightbox(ratio) {
+    if (!galleryLightboxViewer) return;
+    galleryLightboxViewer.viewport.zoomBy(ratio);
+    galleryLightboxViewer.viewport.applyConstraints();
+}
+
+function setLightboxColorPicking(isPicking) {
+    galleryLightboxColorPicking = Boolean(isPicking && galleryLightboxViewer);
+    const button = document.getElementById('lightbox-color-picker');
+    const viewerElement = document.getElementById('lightbox-viewer');
+    button?.classList.toggle('btn-active', galleryLightboxColorPicking);
+    button?.setAttribute('aria-pressed', galleryLightboxColorPicking ? 'true' : 'false');
+    viewerElement?.classList.toggle('is-color-picking', galleryLightboxColorPicking);
+    setLightboxGifOverlayVisible(!galleryLightboxColorPicking);
+
+    if (galleryLightboxViewer) {
+        galleryLightboxViewer.setMouseNavEnabled(!galleryLightboxColorPicking);
+    }
+
+    if (galleryLightboxColorPicking && !galleryColorSampleImage) {
+        setLightboxColorStatus('Color sampling unavailable');
+    }
+}
+
+function resetLightboxColorState() {
+    galleryColorSampleImage = null;
+    galleryColorSampleSrc = '';
+    setLightboxColorPicking(false);
+    setLightboxColorPickerAvailable(true);
+    setLightboxColorStatus('Pick a pixel');
+    setLightboxPickedColor('');
+    clearLightboxColorPreview();
+}
+
+function prepareLightboxColorSampler(src) {
+    galleryColorSampleImage = null;
+    galleryColorSampleSrc = src;
+
+    setLightboxColorPickerAvailable(true);
+    setLightboxColorStatus('Preparing color picker');
+
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    image.decoding = 'async';
+    image.onload = () => {
+        if (galleryColorSampleSrc !== src) return;
+
+        try {
+            const context = galleryColorSampleCanvas.getContext('2d', {willReadFrequently: true});
+            context.clearRect(0, 0, 1, 1);
+            context.drawImage(image, 0, 0, 1, 1, 0, 0, 1, 1);
+            context.getImageData(0, 0, 1, 1);
+            galleryColorSampleImage = image;
+            setLightboxColorStatus('Pick a pixel');
+        } catch {
+            galleryColorSampleImage = null;
+            setLightboxColorPickerAvailable(false);
+            setLightboxColorStatus('Color sampling unavailable');
+        }
+    };
+    image.onerror = () => {
+        if (galleryColorSampleSrc !== src) return;
+        galleryColorSampleImage = null;
+        setLightboxColorPickerAvailable(false);
+        setLightboxColorStatus('Color sampling unavailable');
+    };
+    image.src = src;
+}
+
+function setLightboxColorPickerAvailable(isAvailable) {
+    const button = document.getElementById('lightbox-color-picker');
+    if (!button) return;
+
+    button.disabled = !isAvailable;
+    button.setAttribute('aria-disabled', isAvailable ? 'false' : 'true');
+    if (!isAvailable) {
+        setLightboxColorPicking(false);
+    }
+}
+
+function lightboxImagePointFromEvent(event) {
+    if (!galleryLightboxViewer || !window.OpenSeadragon) return null;
+    const viewerElement = document.getElementById('lightbox-viewer');
+    const tiledImage = galleryLightboxViewer.world.getItemAt(0);
+    if (!viewerElement || !tiledImage) return null;
+
+    const rect = viewerElement.getBoundingClientRect();
+    const viewerPoint = new window.OpenSeadragon.Point(event.clientX - rect.left, event.clientY - rect.top);
+    const viewportPoint = galleryLightboxViewer.viewport.pointFromPixel(viewerPoint);
+    const imagePoint = tiledImage.viewportToImageCoordinates(viewportPoint);
+    const width = Number(viewerElement.dataset.imageWidth || galleryColorSampleImage?.naturalWidth || 1);
+    const height = Number(viewerElement.dataset.imageHeight || galleryColorSampleImage?.naturalHeight || 1);
+
+    if (imagePoint.x < 0 || imagePoint.y < 0 || imagePoint.x >= width || imagePoint.y >= height) {
+        return null;
+    }
+
+    return {
+        x: Math.max(0, Math.min(width - 1, Math.floor(imagePoint.x))),
+        y: Math.max(0, Math.min(height - 1, Math.floor(imagePoint.y))),
+        width,
+        height,
+    };
+}
+
+function previewLightboxColor(event) {
+    const point = lightboxImagePointFromEvent(event);
+    if (!point || !galleryColorSampleImage) return;
+    drawLightboxColorPreview(point);
+}
+
+function pickLightboxColor(event) {
+    const point = lightboxImagePointFromEvent(event);
+    if (!point || !galleryColorSampleImage) {
+        setLightboxColorStatus('Pick inside the image');
+        return;
+    }
+
+    try {
+        const color = sampleLightboxColor(point.x, point.y);
+        setLightboxPickedColor(color);
+        drawLightboxColorPreview(point);
+        setLightboxColorStatus('Color selected');
+        setLightboxColorPicking(false);
+    } catch {
+        setLightboxColorStatus('Color sampling unavailable');
+    }
+}
+
+function setLightboxGifOverlayVisible(isVisible) {
+    const overlay = document.querySelector('.gallery-lightbox-gif-overlay');
+    if (overlay) {
+        overlay.hidden = !isVisible;
+    }
+}
+
+function sampleLightboxColor(x, y) {
+    const context = galleryColorSampleCanvas.getContext('2d', {willReadFrequently: true});
+    context.clearRect(0, 0, 1, 1);
+    context.drawImage(galleryColorSampleImage, x, y, 1, 1, 0, 0, 1, 1);
+    const data = context.getImageData(0, 0, 1, 1).data;
+
+    return rgbToHex(data[0], data[1], data[2]);
+}
+
+function drawLightboxColorPreview(point) {
+    const preview = document.getElementById('lightbox-color-preview');
+    if (!preview || !galleryColorSampleImage) return;
+
+    const context = preview.getContext('2d');
+    const radius = 6;
+    const sx = Math.max(0, Math.min(point.width - (radius * 2 + 1), point.x - radius));
+    const sy = Math.max(0, Math.min(point.height - (radius * 2 + 1), point.y - radius));
+    context.imageSmoothingEnabled = false;
+    context.clearRect(0, 0, preview.width, preview.height);
+    context.drawImage(galleryColorSampleImage, sx, sy, radius * 2 + 1, radius * 2 + 1, 0, 0, preview.width, preview.height);
+    context.strokeStyle = '#ffffff';
+    context.lineWidth = 2;
+    context.strokeRect((preview.width / 2) - 4, (preview.height / 2) - 4, 8, 8);
+    context.strokeStyle = '#000000';
+    context.lineWidth = 1;
+    context.strokeRect((preview.width / 2) - 5, (preview.height / 2) - 5, 10, 10);
+}
+
+function clearLightboxColorPreview() {
+    const preview = document.getElementById('lightbox-color-preview');
+    if (!preview) return;
+
+    const context = preview.getContext('2d');
+    context.clearRect(0, 0, preview.width, preview.height);
+}
+
+function setLightboxPickedColor(color) {
+    const swatch = document.getElementById('lightbox-color-swatch');
+    const copyButton = document.getElementById('lightbox-color-copy');
+    const copyValue = document.getElementById('lightbox-color-copy-value');
+    if (swatch) {
+        if (color) {
+            swatch.style.setProperty('--picked-color', color);
+        } else {
+            swatch.style.removeProperty('--picked-color');
+        }
+    }
+    if (copyButton) {
+        copyButton.disabled = !color;
+        copyButton.dataset.color = color || '';
+        copyButton.setAttribute('aria-label', color ? 'Copy ' + color : 'No color selected');
+    }
+    if (copyValue) {
+        copyValue.textContent = color || 'No color selected';
+    }
+}
+
+function setLightboxColorStatus(status) {
+    const value = document.getElementById('lightbox-color-status');
+    if (value) value.textContent = status;
+}
+
+function copyLightboxPickedColor() {
+    const copyButton = document.getElementById('lightbox-color-copy');
+    const color = copyButton?.dataset.color || '';
+    if (!color) return;
+
+    if (!navigator.clipboard?.writeText) {
+        setLightboxColorStatus('Copy unavailable');
+        return;
+    }
+
+    navigator.clipboard
+        .writeText(color)
+        .then(() => setLightboxColorStatus('Copied ' + color))
+        .catch(() => setLightboxColorStatus('Copy unavailable'));
+}
+
+function rgbToHex(red, green, blue) {
+    return '#' + [red, green, blue].map((value) => Number(value).toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+function sanitizeDownloadName(title, src) {
+    let extension = 'png';
+    try {
+        const path = new URL(src, window.location.href).pathname;
+        const match = path.match(/\\.([a-z0-9]+)$/i);
+        if (match) extension = match[1].toLowerCase();
+    } catch {}
+
+    const baseName = String(title || 'myoc-gallery-image')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 60) || 'myoc-gallery-image';
+
+    return baseName + '.' + extension;
+}
+
+function parseGalleryBookmarkHash() {
+    const rawHash = window.location.hash.replace(/^#/, '');
+    if (!rawHash) return {};
+
+    if (!rawHash.includes('=')) {
+        return {tab: decodeURIComponent(rawHash)};
+    }
+
+    const params = new URLSearchParams(rawHash);
+    return {
+        tab: params.get('tab') || '',
+        image: params.get('image') || '',
+        zoom: parseBookmarkNumber(params.get('zoom')),
+        x: parseBookmarkNumber(params.get('x')),
+        y: parseBookmarkNumber(params.get('y')),
+    };
+}
+
+function parseBookmarkNumber(value) {
+    if (value === null || value === '') return undefined;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function buildGalleryBookmarkHash(values) {
+    const params = new URLSearchParams();
+    if (values.tab) params.set('tab', values.tab);
+    if (values.image) params.set('image', values.image);
+    if (Number.isFinite(values.zoom)) params.set('zoom', String(values.zoom));
+    if (Number.isFinite(values.x)) params.set('x', String(values.x));
+    if (Number.isFinite(values.y)) params.set('y', String(values.y));
+    const hash = params.toString();
+    return hash ? '#' + hash : '';
+}
+
+function updateGalleryBookmarkHash(updates, options = {}) {
+    const current = parseGalleryBookmarkHash();
+    const next = {
+        tab: current.tab || getActiveGalleryTabName() || defaultTabName,
+        image: current.image || '',
+        zoom: current.zoom,
+        x: current.x,
+        y: current.y,
+        ...updates,
+    };
+
+    ['image', 'zoom', 'x', 'y'].forEach((key) => {
+        if (next[key] === null) {
+            delete next[key];
+        }
+    });
+
+    const url = window.location.pathname + window.location.search + buildGalleryBookmarkHash(next);
+    if (url !== window.location.pathname + window.location.search + window.location.hash) {
+        const mode = options.mode === 'push' ? 'pushState' : 'replaceState';
+        history[mode](null, '', url);
+    }
+}
+
+function getActiveGalleryTabName() {
+    const checkedInput = document.querySelector('input[name="gallery-sort"]:checked');
+    if (checkedInput?.value) return checkedInput.value;
+    const visiblePanel = Array.from(document.querySelectorAll('[data-gallery-tab-panel]')).find((panel) => !panel.hidden);
+    return visiblePanel?.dataset.galleryTabPanel || defaultTabName;
+}
+
+function mediaBookmarkIdFromUrl(src) {
+    try {
+        const parts = new URL(src, window.location.href).pathname.split('/');
+        const mediaIndex = parts.indexOf('media');
+        if (mediaIndex !== -1 && parts[mediaIndex + 1] && parts[mediaIndex + 2]) {
+            return parts[mediaIndex + 1] + ':' + parts[mediaIndex + 2];
+        }
+    } catch {}
+    return '';
 }
 
 function showGalleryTab(tabId) {
@@ -657,17 +1327,18 @@ function activateGalleryTabPanel(panel) {
 function initGallerySortOptions() {
     const sortInputs = Array.from(document.querySelectorAll('input[name="gallery-sort"]'));
     const validSortValues = sortInputs.map((input) => input.value);
-    const requestedSort = decodeURIComponent(window.location.hash.replace('#', ''));
+    const bookmark = parseGalleryBookmarkHash();
+    const requestedSort = bookmark.tab || defaultTabName;
     const initialSort = validSortValues.includes(requestedSort) ? requestedSort : defaultTabName;
     sortInputs.forEach((input) => {
         input.checked = input.value === initialSort;
     });
-    if (!window.location.hash && initialSort) history.replaceState(null, '', '#' + encodeURIComponent(initialSort));
+    if (!window.location.hash && initialSort) updateGalleryBookmarkHash({tab: initialSort});
     sortInputs.forEach((input) => {
         input.addEventListener('change', () => {
             if (!input.checked) return;
             showGalleryTab(input.value);
-            history.replaceState(null, '', '#' + encodeURIComponent(input.value));
+            updateGalleryBookmarkHash({tab: input.value, image: null, zoom: null, x: null, y: null});
         });
     });
     return initialSort;
@@ -685,6 +1356,78 @@ function initLightbox(root = document) {
             openLightbox(image);
         });
     });
+}
+
+function findGalleryImageByBookmarkId(bookmarkId) {
+    return Array.from(document.querySelectorAll('.gallery-image')).find((image) => image.dataset.bookmarkId === bookmarkId);
+}
+
+function setGalleryBookmarkLoaderVisible(isVisible) {
+    const loader = document.getElementById('gallery-bookmark-loader');
+    if (!loader) return;
+    loader.hidden = !isVisible;
+    loader.setAttribute('aria-hidden', isVisible ? 'false' : 'true');
+}
+
+function openBookmarkedGalleryImageFromHash() {
+    const bookmark = parseGalleryBookmarkHash();
+    const lightbox = document.getElementById('gallery-lightbox');
+    if (!bookmark.image) {
+        setGalleryBookmarkLoaderVisible(false);
+        if (lightbox?.open) {
+            gallerySuppressNextCloseBookmarkReset = true;
+            lightbox.close();
+        }
+        return;
+    }
+
+    if (lightbox?.open && lightbox.dataset.bookmarkId === bookmark.image) return;
+
+    setGalleryBookmarkLoaderVisible(true);
+    if (bookmark.image.endsWith(':nsfw') && allowNsfwToggle) {
+        setNsfwMediaDisplay(true);
+    }
+
+    const image = findGalleryImageByBookmarkId(bookmark.image);
+    if (!image) {
+        setGalleryBookmarkLoaderVisible(false);
+        return;
+    }
+
+    const panel = image.closest('[data-gallery-tab-panel]');
+    if (panel?.dataset.galleryTabPanel) {
+        showGalleryTab(panel.dataset.galleryTabPanel);
+        if (!bookmark.tab) {
+            updateGalleryBookmarkHash({tab: panel.dataset.galleryTabPanel});
+        }
+    }
+
+    openBookmarkedGalleryImageWhenReady(image, 0);
+}
+
+function openBookmarkedGalleryImageWhenReady(image, attempt) {
+    if (isGalleryImageOpenable(image)) {
+        setGalleryBookmarkLoaderVisible(false);
+        openLightbox(image, {restoreBookmark: true});
+        return;
+    }
+
+    if (attempt >= 160) {
+        setGalleryBookmarkLoaderVisible(false);
+        return;
+    }
+
+    if (image.dataset.fullresSrc) {
+        queueGalleryFullresLoadAfterPreview(image);
+    }
+
+    window.setTimeout(() => openBookmarkedGalleryImageWhenReady(image, attempt + 1), 100);
+}
+
+function initGalleryBookmarkOpening() {
+    openBookmarkedGalleryImageFromHash();
+    window.addEventListener('hashchange', openBookmarkedGalleryImageFromHash);
+    window.addEventListener('popstate', openBookmarkedGalleryImageFromHash);
 }
 
 function isGalleryImageOpenable(image) {
@@ -735,13 +1478,6 @@ function updateGalleryImageLoader(media) {
     }
 }
 
-function retryImageUrl(src, attempt) {
-    const url = new URL(src, window.location.href);
-    url.searchParams.set('myoc_retry', String(attempt));
-    url.searchParams.set('myoc_retry_nonce', String(Date.now()));
-    return url.toString();
-}
-
 function resetGalleryImageRetry(image, src) {
     image.dataset.imageRetryBaseSrc = src;
     image.dataset.imageRetryCount = '0';
@@ -776,7 +1512,8 @@ function retryGalleryImageLoad(image) {
     const nextRetryCount = retryCount + 1;
     image.dataset.imageRetryCount = String(nextRetryCount);
     setGalleryImageLoading(image, true);
-    image.src = retryImageUrl(baseSrc, nextRetryCount);
+    image.removeAttribute('src');
+    image.src = baseSrc;
 }
 
 function refreshGalleryImageLoading(image) {
@@ -975,6 +1712,7 @@ function loadGalleryFullresImage(image) {
 
             const requestSrc = src;
             const preloader = new Image();
+            preloader.crossOrigin = 'anonymous';
             preloader.decoding = 'async';
             preloader.onload = () => finish(true, requestSrc);
             preloader.onerror = () => {
@@ -985,7 +1723,7 @@ function loadGalleryFullresImage(image) {
 
                 if (retryCount < galleryFullresMaxRetries) {
                     retryCount += 1;
-                    startAttempt(retryImageUrl(fullresSrc, retryCount));
+                    startAttempt(fullresSrc);
                     return;
                 }
 
@@ -1034,6 +1772,7 @@ function setGalleryMediaNsfwDisplay(media, displayNsfwMedia) {
     if (!image || !imageUrl) return;
 
     const previewUrl = displayNsfwMedia ? media.dataset.nsfwPreviewUrl : media.dataset.safePreviewUrl;
+    const bookmarkId = displayNsfwMedia ? media.dataset.nsfwBookmarkId : media.dataset.safeBookmarkId;
     const width = Number((displayNsfwMedia ? media.dataset.nsfwWidth : media.dataset.safeWidth) || image.width || 1);
     const height = Number((displayNsfwMedia ? media.dataset.nsfwHeight : media.dataset.safeHeight) || image.height || 1);
     const title = displayNsfwMedia ? media.dataset.nsfwTitle : media.dataset.safeTitle;
@@ -1044,6 +1783,7 @@ function setGalleryMediaNsfwDisplay(media, displayNsfwMedia) {
     setProgressiveGalleryImageSource(image, previewUrl || imageUrl, imageUrl, Boolean(previewUrl));
     image.alt = alt || image.alt;
     image.dataset.title = title || image.dataset.title || image.alt;
+    image.dataset.bookmarkId = bookmarkId || image.dataset.bookmarkId || '';
     image.setAttribute('aria-label', 'Open ' + (image.dataset.title || image.alt));
     image.dataset.nsfwDisplayed = displayNsfwMedia ? 'true' : 'false';
     image.dataset.nsfwHidden = isHidden ? 'true' : 'false';
@@ -1106,9 +1846,11 @@ function initNsfwToggle() {
 const initialGalleryTabName = initGallerySortOptions();
 initGalleryImageLoading();
 initGalleryFullresLoading();
+initLightboxControls();
 initLightbox();
 showGalleryTab(initialGalleryTabName);
 initNsfwToggle();
+initGalleryBookmarkOpening();
 `
 
     return <script dangerouslySetInnerHTML={{__html: script}}></script>
@@ -1289,12 +2031,182 @@ export function CharacterPage({
             </main>
 
             <dialog class="modal backdrop:bg-black/75" id="gallery-lightbox">
-                <div class="modal-box max-w-6xl border border-base-content/20 bg-base-200 p-0 shadow-2xl">
-                    <img alt="" class="max-h-[80vh] w-full object-contain" id="lightbox-image" />
-                    <div class="space-y-2 p-4">
-                        <h2 class="text-xl font-semibold" id="lightbox-title">
+                <div class="modal-box gallery-lightbox-shell max-w-none border border-base-content/20 bg-base-200 p-0 shadow-2xl">
+                    <div class="gallery-lightbox-toolbar">
+                        <h2 class="gallery-lightbox-title text-base font-semibold" id="lightbox-title">
                             <span class="sr-only">Selected gallery item</span>
                         </h2>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <div class="tooltip tooltip-bottom" data-tip="Zoom in">
+                                <button aria-label="Zoom in" class="btn btn-square btn-sm" id="lightbox-zoom-in" type="button">
+                                    <svg
+                                        aria-hidden="true"
+                                        class="h-5 w-5"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                    >
+                                        <path d="M12 5v14M5 12h14" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" />
+                                    </svg>
+                                </button>
+                            </div>
+                            <div class="tooltip tooltip-bottom" data-tip="Zoom out">
+                                <button aria-label="Zoom out" class="btn btn-square btn-sm" id="lightbox-zoom-out" type="button">
+                                    <svg
+                                        aria-hidden="true"
+                                        class="h-5 w-5"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                    >
+                                        <path d="M5 12h14" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" />
+                                    </svg>
+                                </button>
+                            </div>
+                            <div class="tooltip tooltip-bottom" data-tip="Fit image">
+                                <button aria-label="Fit image" class="btn btn-square btn-sm" id="lightbox-reset" type="button">
+                                    <svg
+                                        aria-hidden="true"
+                                        class="h-5 w-5"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                    >
+                                        <path
+                                            d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                            stroke-width="2"
+                                        />
+                                    </svg>
+                                </button>
+                            </div>
+                            <div class="tooltip tooltip-bottom" data-tip="Pick color">
+                                <button
+                                    aria-label="Pick color"
+                                    aria-pressed="false"
+                                    class="btn btn-square btn-sm"
+                                    id="lightbox-color-picker"
+                                    type="button"
+                                >
+                                    <svg
+                                        aria-hidden="true"
+                                        class="h-5 w-5"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                    >
+                                        <path d="m2 22 1-1h3l9-9" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" />
+                                        <path d="M3 21v-3l9-9" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" />
+                                        <path d="m15 6 3-3 3 3-3 3" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" />
+                                        <path d="m11 10 3 3 6-6-3-3-6 6Z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" />
+                                    </svg>
+                                </button>
+                            </div>
+                            <div class="tooltip tooltip-bottom" data-tip="Download">
+                                <a aria-label="Download image" class="btn btn-square btn-sm" href="/" id="lightbox-download">
+                                    <span class="sr-only">Download image</span>
+                                    <svg
+                                        aria-hidden="true"
+                                        class="h-5 w-5"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                    >
+                                        <path d="M12 3v12M7 10l5 5 5-5" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" />
+                                        <path d="M5 21h14" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" />
+                                    </svg>
+                                </a>
+                            </div>
+                            <div class="tooltip tooltip-bottom" data-tip="Close">
+                                <button aria-label="Close" class="btn btn-square btn-sm" id="lightbox-close" type="button">
+                                    <svg
+                                        aria-hidden="true"
+                                        class="h-5 w-5"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                    >
+                                        <path d="M6 6l12 12M18 6 6 18" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="gallery-lightbox-viewer-wrap" id="lightbox-viewer-wrap">
+                        <div
+                            aria-label="Gallery image viewer"
+                            class="gallery-lightbox-viewer"
+                            id="lightbox-viewer"
+                            role="application"
+                        ></div>
+                        <div class="gallery-lightbox-empty-state">
+                            <p class="text-sm text-base-content/70">This image could not be loaded in the viewer.</p>
+                        </div>
+                    </div>
+                    <div class="gallery-lightbox-footer">
+                        <div class="gallery-lightbox-credit">
+                            <p class="text-xs uppercase tracking-wide text-base-content/60">Artist</p>
+                            <p class="truncate text-sm font-medium" id="lightbox-credit">
+                                Unknown artist
+                            </p>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <canvas
+                                aria-label="Color zoom preview"
+                                class="gallery-color-preview rounded"
+                                height="80"
+                                id="lightbox-color-preview"
+                                width="80"
+                            ></canvas>
+                            <div class="flex min-w-0 items-center gap-2 text-sm">
+                                <span aria-hidden="true" class="gallery-color-swatch rounded" id="lightbox-color-swatch"></span>
+                                <button
+                                    aria-label="No color selected"
+                                    class="btn btn-xs min-w-32 justify-start font-mono"
+                                    disabled
+                                    id="lightbox-color-copy"
+                                    type="button"
+                                >
+                                    <svg
+                                        aria-hidden="true"
+                                        class="h-3.5 w-3.5 shrink-0"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                    >
+                                        <rect
+                                            height="14"
+                                            rx="2"
+                                            ry="2"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                            stroke-width="2"
+                                            width="14"
+                                            x="8"
+                                            y="8"
+                                        />
+                                        <path
+                                            d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                            stroke-width="2"
+                                        />
+                                    </svg>
+                                    <span id="lightbox-color-copy-value">No color selected</span>
+                                </button>
+                                <span class="truncate text-xs text-base-content/70" id="lightbox-color-status">
+                                    Pick a pixel
+                                </span>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <form class="modal-backdrop" method="dialog">
@@ -1302,6 +2214,15 @@ export function CharacterPage({
                 </form>
             </dialog>
 
+            <div aria-hidden="true" class="gallery-bookmark-loader" hidden id="gallery-bookmark-loader">
+                <span class="loading loading-spinner loading-xl text-white">
+                    <span class="sr-only">Loading image viewer</span>
+                </span>
+            </div>
+
+            <script src="/vendor/openseadragon/openseadragon.min.js"></script>
+            <script src="/vendor/openseadragon/OpenSeadragonHTMLelements.js"></script>
+            <script src="/vendor/openseadragon/openseadragon-bookmark-url.js"></script>
             <CharacterPageScript
                 allowNsfwToggle={allowNsfwToggle}
                 defaultTabName={defaultTabName}
