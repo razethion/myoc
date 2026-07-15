@@ -16,9 +16,9 @@ export const RELEASE_NOTES: ReleaseNote[] = [
         changes: [
             'Switched to an interactive image modal for gallery items, powered by OpenSeadragon.',
             'You can drag and zoom images for detail inspection.',
-            'There\'s now an eyedropper that lets you color pick from images.',
+            "There's now an eyedropper that lets you color pick from images.",
             'Image URLs are shareable and direct image links will open as-displayed and as-zoomed!',
-            'Browser history is retained so forward-back actions don\'t interrupt your browsing behaviour.',
+            "Browser history is retained so forward-back actions don't interrupt your browsing behaviour.",
         ],
     },
     {
