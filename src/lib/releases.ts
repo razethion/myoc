@@ -9,6 +9,19 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
     {
+        version: '2026.07.14.01',
+        releasedOn: 'July 14, 2026',
+        title: 'Better image viewer',
+        summary: 'A more functional image presentation in the gallery!.',
+        changes: [
+            'Switched to an interactive image modal for gallery items, powered by OpenSeadragon.',
+            'You can drag and zoom images for detail inspection.',
+            'There\'s now an eyedropper that lets you color pick from images.',
+            'Image URLs are shareable and direct image links will open as-displayed and as-zoomed!',
+            'Browser history is retained so forward-back actions don\'t interrupt your browsing behaviour.',
+        ],
+    },
+    {
         version: '2026.07.10.01',
         releasedOn: 'July 10, 2026',
         title: 'Passkeys!',
