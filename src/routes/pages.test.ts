@@ -379,7 +379,7 @@ describe('public page redirects', () => {
         expect(html).toContain('stats stats-vertical')
         expect(html).not.toContain('Character-first archive')
         expect(html).not.toContain('Library flow')
-        expect(html).not.toContain('MyOC is source available.')
+        expect(html).not.toContain('MyOC is open-source.')
         expect(html).not.toContain('href="https://github.com/razethion/myoc"')
         expect(html).not.toContain('home-loading-image')
         expect(html).not.toContain('data-gallery-image-loader')

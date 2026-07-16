@@ -25,8 +25,7 @@ If your Contribution is covered by patent claims that you can license, you grant
 ## 4. Relicensing
 
 You agree that the project owner may license, relicense, dual-license, or otherwise distribute your Contribution under
-the Business Source License 1.1, Apache License 2.0 after the applicable Change Date, a commercial license, or another
-license chosen by the project owner.
+the GNU General Public License version 3 or another open-source license chosen by the project owner.
 
 ## 5. Your Representations
 

@@ -1,6 +1,7 @@
 {
   "name": "myoc",
   "type": "module",
+  "license": "GPL-3.0-only",
   "packageManager": "npm@11.16.0",
   "engines": {
     "node": ">=24 <25"

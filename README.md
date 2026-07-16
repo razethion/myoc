@@ -88,5 +88,5 @@ npm run build
 
 ## License
 
-MyOC is licensed under the Business Source License 1.1. It is source-available, not open source, until the Change Date
-described in [`LICENSE.md`](./LICENSE.md).
+MyOC is open-source software licensed under the GNU General Public License version 3. See
+[`LICENSE.md`](./LICENSE.md) for the full license text.
