@@ -89,4 +89,4 @@ npm run build
 ## License
 
 MyOC is open-source software licensed under the GNU General Public License version 3. See
-[`LICENSE.md`](./LICENSE.md) for the full license text.
+[`LICENSE`](./LICENSE) for the full license text.
