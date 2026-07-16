@@ -10,7 +10,7 @@
 [Quickstart](#quickstart) |
 [Contributing](./CONTRIBUTING.md) |
 [Security](./SECURITY.md) |
-[License](./LICENSE.md)
+[License](./LICENSE)
 
 MyOC is a simple webapp for hosting, organizing, and sharing original character media. It is built for character owners,
 artists, and communities that want clean character references, full-resolution media, searchable public profiles, and
@@ -84,7 +84,7 @@ npm run build
 - [Support](./SUPPORT.md)
 - [Security](./SECURITY.md)
 - [Contributor License Agreement](./CLA.md)
-- [License](./LICENSE.md)
+- [License](./LICENSE)
 
 ## License
 
