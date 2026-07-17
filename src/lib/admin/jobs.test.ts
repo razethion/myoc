@@ -1,6 +1,6 @@
 import {describe, expect, it} from 'vitest'
 import {createMockDb} from '../../test/mockD1'
-import {type AdminJobSummary, getAdminJobRuns, recordAdminJobRun} from './jobs'
+import {type AdminJobSummary, getAdminOptionsData, recordAdminJobRun} from './jobs'
 
 const backupSummary = {
     compressedBytes: 2048,
@@ -80,7 +80,7 @@ describe('recordAdminJobRun', () => {
     })
 })
 
-describe('getAdminJobRuns', () => {
+describe('getAdminOptionsData', () => {
     it('returns known job runs with parsed summaries', async () => {
         const {db} = createMockDb({
             allResults: [
@@ -117,9 +117,9 @@ describe('getAdminJobRuns', () => {
             ],
         })
 
-        const runs = await getAdminJobRuns(db)
+        const data = await getAdminOptionsData(db)
 
-        expect(runs).toEqual([
+        expect(data.runs).toEqual([
             expect.objectContaining({
                 cron: '0 8 * * *',
                 id: 'run-1',

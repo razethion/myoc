@@ -2,7 +2,9 @@ import {describe, expect, it, vi} from 'vitest'
 import {createMockDb} from '../test/mockD1'
 import {createMockKVNamespace} from '../test/mockKV'
 import {createMockR2Bucket} from '../test/mockR2'
-import {getLeaderboardSnapshot, LEADERBOARD_CACHE_KEY, refreshLeaderboard} from './leaderboard'
+import {getLeaderboardSnapshot, refreshLeaderboard} from './leaderboard'
+
+const LEADERBOARD_CACHE_KEY = 'leaderboard:daily:v1'
 
 describe('refreshLeaderboard', () => {
     it('stores daily leaderboard rankings in KV', async () => {

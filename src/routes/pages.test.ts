@@ -1,7 +1,6 @@
 import {afterEach, describe, expect, it, vi} from 'vitest'
 import app from '../index'
-import {NON_HTML_CONTENT_SECURITY_POLICY} from '../lib/http/securityHeaders'
-import {LEADERBOARD_CACHE_KEY, type LeaderboardSnapshot} from '../lib/leaderboard'
+import type {LeaderboardSnapshot} from '../lib/leaderboard'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import {expectSecurityHeaders} from '../test/assertions'
 import {createWebpDataUrl} from '../test/imageFixtures'
@@ -11,6 +10,15 @@ import {resetWorkerBindings, workerEnv} from '../test/workerBindings'
 import {pageRoutes} from './pages'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
+const NON_HTML_CONTENT_SECURITY_POLICY = [
+    "default-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    'sandbox',
+].join('; ')
+const LEADERBOARD_CACHE_KEY = 'leaderboard:daily:v1'
 
 afterEach(async () => {
     vi.restoreAllMocks()

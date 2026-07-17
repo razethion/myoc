@@ -19,7 +19,7 @@ export const OkResponseSchema = z
     })
     .strict()
 
-export const UserRoleSchema = z.enum(['user', 'moderator', 'admin'])
+const UserRoleSchema = z.enum(['user', 'moderator', 'admin'])
 
 export const OwnUserSchema = z
     .object({
@@ -62,7 +62,7 @@ export const CharacterFolderSchema = z
     })
     .strict()
 
-export const CharacterHeightChartImageSchema = z
+const CharacterHeightChartImageSchema = z
     .object({
         key: z.string(),
         contentType: z.string(),
@@ -169,7 +169,7 @@ export const GalleryLayoutResponseSchema = z
     })
     .strict()
 
-export const SearchUserResultSchema = z
+const SearchUserResultSchema = z
     .object({
         id: z.string(),
         username: z.string(),
@@ -180,7 +180,7 @@ export const SearchUserResultSchema = z
     })
     .strict()
 
-export const SearchCharacterResultSchema = z
+const SearchCharacterResultSchema = z
     .object({
         id: z.string(),
         name: z.string(),
@@ -229,10 +229,9 @@ export const SizeChartSearchItemSchema = z
     })
     .strict()
 
-export const AdminJobStatusSchema = z.enum(['running', 'success', 'error'])
-export const AdminJobTriggerSourceSchema = z.enum(['cron', 'manual'])
+const AdminJobStatusSchema = z.enum(['running', 'success', 'error'])
 
-export const D1BackupSummarySchema = z
+const D1BackupSummarySchema = z
     .object({
         key: z.string(),
         databaseName: z.string(),
@@ -244,7 +243,7 @@ export const D1BackupSummarySchema = z
     })
     .strict()
 
-export const R2CleanupSummarySchema = z
+const R2CleanupSummarySchema = z
     .object({
         scanned: PositiveIntegerSchema,
         recognized: PositiveIntegerSchema,
@@ -257,7 +256,7 @@ export const R2CleanupSummarySchema = z
     })
     .strict()
 
-export const LeaderboardRefreshSummarySchema = z
+const LeaderboardRefreshSummarySchema = z
     .object({
         key: z.string(),
         generatedAt: z.string(),
@@ -274,25 +273,7 @@ export const LeaderboardRefreshSummarySchema = z
     })
     .strict()
 
-export const AdminJobSummarySchema = z.union([D1BackupSummarySchema, R2CleanupSummarySchema, LeaderboardRefreshSummarySchema])
-
-export const AdminJobRunSchema = z
-    .object({
-        id: z.string(),
-        jobName: z.enum(['d1-backup', 'r2-media-cleanup', 'leaderboard-refresh']),
-        label: z.string(),
-        triggerSource: AdminJobTriggerSourceSchema,
-        triggeredByUserId: NullableStringSchema,
-        triggeredByUsername: NullableStringSchema,
-        cron: NullableStringSchema,
-        status: AdminJobStatusSchema,
-        startedAt: z.string(),
-        finishedAt: NullableStringSchema,
-        durationMs: z.number().nullable(),
-        summary: AdminJobSummarySchema.nullable(),
-        errorMessage: NullableStringSchema,
-    })
-    .strict()
+const AdminJobSummarySchema = z.union([D1BackupSummarySchema, R2CleanupSummarySchema, LeaderboardRefreshSummarySchema])
 
 export const AdminJobRunResultSchema = z
     .object({
@@ -303,7 +284,7 @@ export const AdminJobRunResultSchema = z
     })
     .strict()
 
-export const ImageApprovalVariantSchema = z
+const ImageApprovalVariantSchema = z
     .object({
         rating: z.enum(['sfw', 'nsfw']),
         imageKey: z.string(),

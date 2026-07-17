@@ -1,4 +1,4 @@
-export function mediaUrlForKey(baseUrl: string, key: string): string {
+function mediaUrlForKey(baseUrl: string, key: string): string {
     const normalizedBaseUrl = baseUrl.replace(/\/+$/, '')
     const encodedKey = key.split('/').map(encodeURIComponent).join('/')
 
@@ -106,7 +106,7 @@ export function characterMediaNsfwBlurImageUrl(
     return mediaUrlForKey(baseUrl, characterMediaNsfwBlurImageObjectKey(userId, characterId, mediaId, imageKey))
 }
 
-export function extensionForImageContentType(contentType: string | null | undefined): string {
+function extensionForImageContentType(contentType: string | null | undefined): string {
     switch ((contentType ?? 'image/png').toLowerCase()) {
         case 'image/jpeg':
             return 'jpg'

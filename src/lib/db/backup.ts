@@ -87,7 +87,7 @@ export async function backupD1Database(env: D1BackupEnv, now = new Date(), optio
     return summary
 }
 
-export function createBackupKey(now: Date): string {
+function createBackupKey(now: Date): string {
     const timestamp = now.toISOString().replace(/[:.]/g, '-')
     const [datePart] = timestamp.split('T')
 
