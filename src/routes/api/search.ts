@@ -2,7 +2,7 @@ import {Hono} from 'hono'
 import {z} from 'zod'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {ErrorResponseSchema, responseSchema, SearchResponseSchema, SizeChartSearchItemSchema} from '../../lib/http/responseSchemas'
-import {characterHeightChartImageObjectKey, characterProfileImageUrl} from '../../lib/media/url'
+import {characterHeightChartImageUrl, characterProfileImageUrl} from '../../lib/media/url'
 import {normalizeSearchOffset, normalizeSearchQuery, searchCharacters, searchUsers} from '../../lib/search'
 import type {Bindings} from '../../types/bindings'
 
@@ -177,42 +177,6 @@ searchRoutes.get('/size-chart-characters/by-id', async (c) => {
     })
 })
 
-searchRoutes.get('/size-chart-characters/:characterId/image', async (c) => {
-    const characterId = c.req.param('characterId')
-    const imageKey = c.req.query('key') ?? ''
-    const character = await c.env.DB.prepare(
-        `SELECT id,
-                user_id,
-                height_chart_json
-         FROM characters
-         WHERE id = ?
-         LIMIT 1`,
-    )
-        .bind(characterId)
-        .first<{id: string; user_id: string; height_chart_json: string}>()
-
-    const heightChart = parseSizeChartJson(character?.height_chart_json)
-
-    if (!character || !heightChart?.image || heightChart.image.key !== imageKey) {
-        return c.body(null, 404)
-    }
-
-    const object = await c.env.MEDIA_BUCKET.get(
-        characterHeightChartImageObjectKey(character.user_id, character.id, heightChart.image.key, heightChart.image.contentType),
-    )
-
-    if (!object?.body) {
-        return c.body(null, 404)
-    }
-
-    return new Response(object.body, {
-        headers: {
-            'Cache-Control': 'public, max-age=31536000, immutable',
-            'Content-Type': heightChart.image.contentType,
-        },
-    })
-})
-
 function createSizeChartSearchTerms(query: string): {contains: string}[] {
     return query
         .toLowerCase()
@@ -275,7 +239,13 @@ function toSizeChartCharacterSearchResult(row: SizeChartCharacterSearchRow, medi
                   ...heightChart,
                   image: {
                       ...heightChart.image,
-                      url: `/api/search/size-chart-characters/${encodeURIComponent(row.id)}/image?key=${encodeURIComponent(heightChart.image.key)}`,
+                      url: characterHeightChartImageUrl(
+                          mediaBaseUrl,
+                          row.user_id,
+                          row.id,
+                          heightChart.image.key,
+                          heightChart.image.contentType,
+                      ),
                   },
               }
             : null,
