@@ -1,7 +1,7 @@
 import type {Context, Next} from 'hono'
 import type {Bindings} from '../../types/bindings'
 
-export const NON_HTML_CONTENT_SECURITY_POLICY = [
+const NON_HTML_CONTENT_SECURITY_POLICY = [
     "default-src 'none'",
     "base-uri 'none'",
     "form-action 'none'",
@@ -27,7 +27,7 @@ export function securityHeaders(c: Context<{Bindings: Bindings}>, next: Next): P
     return applySecurityHeaders(c, next)
 }
 
-export function createHtmlContentSecurityPolicy(nonce: string, mediaPublicBaseUrl: string): string {
+function createHtmlContentSecurityPolicy(nonce: string, mediaPublicBaseUrl: string): string {
     // CropperJS and the chart editors generate inline style attributes and runtime style elements.
     const mediaSource = cspSourceOrigin(mediaPublicBaseUrl)
     const imageSources = ["'self'", 'data:', 'blob:', mediaSource, ...TOYHOUSE_IMAGE_SOURCES].filter(Boolean)

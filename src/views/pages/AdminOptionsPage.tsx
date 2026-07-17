@@ -31,7 +31,7 @@ export function AdminOptionsPage({csrfToken, data, feedback}: AdminOptionsPagePr
             <section class="rounded border border-base-300 bg-base-200 p-4">
                 <div class="flex flex-wrap gap-3">
                     {data.jobs.map((job, index) => (
-                        <form action={`/api/admin/jobs/${job.name}/run`} method="post">
+                        <form action={`/admin/admin-options/jobs/${job.name}/run`} method="post">
                             <input name="csrfToken" type="hidden" value={csrfToken} />
                             <button class={`btn ${index === 0 ? 'btn-primary' : 'btn-outline'}`} type="submit">
                                 Run {job.label}

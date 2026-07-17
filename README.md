@@ -119,52 +119,25 @@ npm run semgrep
 npm run ci
 ```
 
-Project layout:
+## Repository Guide
 
-| Path | Purpose |
-| --- | --- |
-| [src/index.ts](src/index.ts) | Worker entry point, route mounting, and scheduled job dispatch |
-| [src/routes](src/routes) | Page routes, API routes, and form-action handlers |
-| [src/views](src/views) | Server-rendered JSX pages, layouts, and components |
-| [src/lib](src/lib) | Auth, media, search, leaderboard, admin, database backup, and HTTP helpers |
-| [src/test](src/test) | Worker binding mocks and test utilities |
-| [migrations](migrations) | Numbered D1 schema migrations |
-| [seeds/development.sql](seeds/development.sql) | Local and preview seed data |
-| [public](public) | Static assets copied or served by the Worker |
-| [vendor](vendor) | Checked-in vendor extensions copied during `npm run build` |
-| [scripts](scripts) | Build, security, and environment maintenance scripts |
+| Path                         | Purpose                                                         |
+|------------------------------|-----------------------------------------------------------------|
+| [`src/routes`](./src/routes) | Page and API route handlers.                                    |
+| [`src/views`](./src/views)   | Server-rendered layouts, components, and pages.                 |
+| [`src/lib`](./src/lib)       | Auth, media, search, admin, gallery, and shared business logic. |
+| [`migrations`](./migrations) | D1 schema history.                                              |
+| [`scripts`](./scripts)       | Local utility scripts.                                          |
+| [`.github`](./.github)       | Issue templates and CI/deployment workflows.                    |
 
-Database changes should be added as new numbered files in [migrations](migrations). Do not edit migrations that may
-already be applied. Update [seeds/development.sql](seeds/development.sql) when schema changes would break local setup.
+## Project Documents
 
-## Deployment
-
-Production and pull-request preview deployments run through
-[.github/workflows/checks.yml](.github/workflows/checks.yml).
-
-Manual deployment uses the same quality gate:
-
-```sh
-npm run deploy
-```
-
-The Worker configuration lives in [wrangler.jsonc](wrangler.jsonc). Required production secrets are declared there; keep
-real credentials out of the repository and in Wrangler or `.dev.vars`.
-
-## Help
-
-- Read [SUPPORT.md](SUPPORT.md) before opening support issues.
-- Report vulnerabilities through [SECURITY.md](SECURITY.md), not public issues.
-- Review project expectations in [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
-- Check local setup and contribution notes in [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Maintainers and Contributors
-
-MyOC is maintained by [@razethion](https://github.com/razethion).
-
-Contributions are welcome when they improve the focused character-gallery product. Before opening a pull request, read
-[CONTRIBUTING.md](CONTRIBUTING.md) and [CLA.md](CLA.md). By contributing, you agree to the contributor license agreement
-and confirm that you have the right to submit the work.
+- [Contributing](./CONTRIBUTING.md)
+- [Code of Conduct](./CODE_OF_CONDUCT.md)
+- [Support](./SUPPORT.md)
+- [Security](./SECURITY.md)
+- [Contributor License Agreement](./CLA.md)
+- [License](./LICENSE)
 
 ## License
 

@@ -28,7 +28,7 @@ export function PasskeyPromptPage({currentUser, mediaBaseUrl, returnTo}: Passkey
                             <span>You only need to answer this once.</span>
                         </div>
 
-                        <form action="/api/users/me/passkey-prompt-response" class="card-actions justify-end gap-2" method="post">
+                        <form action="/passkey-setup" class="card-actions justify-end gap-2" method="post">
                             <input name="csrfToken" type="hidden" value={currentUser.csrfToken} />
                             <input name="returnTo" type="hidden" value={returnTo} />
                             <button class="btn btn-ghost" name="choice" type="submit" value="later">

@@ -1,7 +1,7 @@
 import type {Bindings} from '../types/bindings'
 import {parseManagedR2MediaKey} from './media/r2Cleanup'
 
-export const LEADERBOARD_CACHE_KEY = 'leaderboard:daily:v1'
+const LEADERBOARD_CACHE_KEY = 'leaderboard:daily:v1'
 
 const LEADERBOARD_LIMIT = 10
 const LEADERBOARD_STORAGE_CANDIDATE_LIMIT = 100
@@ -35,7 +35,7 @@ export type LeaderboardUserDataEntry = LeaderboardUserBaseEntry & {
     monthlyStorageCostUsd: number
 }
 
-export type LeaderboardTopUserEntry = LeaderboardUserBaseEntry & {
+type LeaderboardTopUserEntry = LeaderboardUserBaseEntry & {
     characterCount: number
     imageCount: number
     bytes: number

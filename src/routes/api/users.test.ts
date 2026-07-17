@@ -8,6 +8,8 @@ import {createMockDb} from '../../test/mockD1'
 import {createMockR2Bucket} from '../../test/mockR2'
 import {createRequestHeaders, type TestRequestOptions} from '../../test/request'
 import {apiRoutes} from '../api'
+import {authPageActionRoutes} from '../page-actions/auth'
+import {settingsPageActionRoutes} from '../page-actions/settings'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
 const profilePhotoKeyPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
@@ -27,10 +29,10 @@ type CreateUserResponse = {
 
 type UserRequestOptions = TestRequestOptions
 
-async function postUser(body: unknown, db: D1Database, url = 'https://example.com/users'): Promise<Response> {
+async function postUser(body: unknown, db: D1Database, url = 'https://example.com/register'): Promise<Response> {
     const mediaBucket = createMockR2Bucket()
 
-    return apiRoutes.request(
+    return authPageActionRoutes.request(
         url,
         {
             method: 'POST',
@@ -50,8 +52,8 @@ async function postUser(body: unknown, db: D1Database, url = 'https://example.co
 async function postCurrentUserSettings(body: unknown, db: D1Database, options: UserRequestOptions = {}): Promise<Response> {
     const mediaBucket = createMockR2Bucket()
 
-    return apiRoutes.request(
-        'https://example.com/users/me',
+    return settingsPageActionRoutes.request(
+        'https://example.com/settings',
         {
             method: 'POST',
             body: body instanceof FormData ? body : JSON.stringify(body),
@@ -91,8 +93,8 @@ async function postPasskeyPromptResponse(body: unknown, db: D1Database, options:
         headers.accept = 'text/html'
     }
 
-    return apiRoutes.request(
-        'https://example.com/users/me/passkey-prompt-response',
+    return settingsPageActionRoutes.request(
+        'https://example.com/passkey-setup',
         {
             method: 'POST',
             body: body instanceof FormData ? body : JSON.stringify(body),
@@ -146,7 +148,7 @@ const currentUserRecord = {
     last_seen_version: null,
 }
 
-describe('POST /users', () => {
+describe('POST /register', () => {
     it('returns 400 for invalid JSON', async () => {
         const {db} = createMockDb()
 
@@ -328,7 +330,7 @@ describe('POST /users', () => {
     })
 })
 
-describe('POST /users/me', () => {
+describe('POST /settings', () => {
     it('returns 401 when the user is not logged in', async () => {
         const {db} = createMockDb()
 
@@ -658,7 +660,7 @@ describe('POST /users/me/release-view', () => {
     })
 })
 
-describe('POST /users/me/passkey-prompt-response', () => {
+describe('POST /passkey-setup', () => {
     it('returns 401 when the user is not logged in', async () => {
         const {db} = createMockDb()
 

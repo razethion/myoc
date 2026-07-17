@@ -1,8 +1,8 @@
 {
   "$schema": "./node_modules/knip/schema.json",
-  "entry": ["scripts/*.mjs", "src/styles/app.css"],
-  "project": ["src/**/*.{ts,tsx,css}", "scripts/*.mjs"],
+  "entry": ["src/index.ts!", "scripts/*.mjs!", "src/styles/app.css!"],
+  "project": ["src/**/*.{ts,tsx,css}!", "scripts/*.mjs!", "!src/**/*.test.{ts,tsx}!", "!src/test/**!"],
+  "tags": ["-@internal"],
   "ignoreBinaries": ["py"],
-  "ignoreDependencies": ["@simplewebauthn/browser", "cloudflare", "cropperjs"],
-  "ignoreExportsUsedInFile": true
+  "ignoreDependencies": ["@simplewebauthn/browser", "cropperjs"]
 }

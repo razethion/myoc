@@ -8,14 +8,12 @@ import {ErrorResponseSchema} from './responseSchemas'
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 const PUBLIC_UNSAFE_PATHS = new Set([
     '/login',
-    '/api/login',
-    '/api/login/passkey/options',
-    '/api/login/passkey/verify',
-    '/api/recovery/login',
-    '/api/register/passkey/options',
-    '/api/register/passkey/verify',
-    '/users',
-    '/api/users',
+    '/login/passkey/options',
+    '/login/passkey/verify',
+    '/recovery/login',
+    '/register',
+    '/register/passkey/options',
+    '/register/passkey/verify',
 ])
 
 export async function csrfProtection(c: Context<{Bindings: Bindings}>, next: Next) {

@@ -10,7 +10,7 @@ export type ImageApprovalAction =
     | 'mark_sfw_no_homepage'
     | 'report_nsfw'
 
-export type ImageApprovalVariant = {
+type ImageApprovalVariant = {
     rating: 'sfw' | 'nsfw'
     imageKey: string
     contentType: string
@@ -29,7 +29,7 @@ export type ImageApprovalVariant = {
     needsReview: boolean
 }
 
-export type ImageApprovalItem = {
+type ImageApprovalItem = {
     id: string
     createdAt: string
     updatedAt: string
@@ -48,7 +48,7 @@ export type ImageApprovalItem = {
     nsfw: ImageApprovalVariant | null
 }
 
-export type ImageApprovalHistoryItem = {
+type ImageApprovalHistoryItem = {
     id: string
     mediaId: string
     imageRating: 'sfw' | 'nsfw'
@@ -213,7 +213,7 @@ export async function getImageApprovalPendingCount(db: D1Database): Promise<numb
     return await getImageApprovalCount(db)
 }
 
-export async function getImageApprovalItem(db: D1Database, mediaBaseUrl: string, mediaId: string): Promise<ImageApprovalItem | null> {
+async function getImageApprovalItem(db: D1Database, mediaBaseUrl: string, mediaId: string): Promise<ImageApprovalItem | null> {
     const row = await db
         .prepare(
             `SELECT character_media.id,
