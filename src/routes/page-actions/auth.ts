@@ -4,7 +4,7 @@ import {
     verifyAuthenticationResponse,
     verifyRegistrationResponse,
 } from '@simplewebauthn/server'
-import {compare} from 'bcryptjs'
+import {compare, hash} from 'bcryptjs'
 import {Hono} from 'hono'
 import {getCookie} from 'hono/cookie'
 import {z} from 'zod'
@@ -35,11 +35,18 @@ import {
     toSqlTimestamp,
     type UserRecord,
 } from '../../lib/auth/session'
+import {csrfProtection} from '../../lib/http/csrf'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {ErrorResponseSchema, OwnUserSchema, responseSchema} from '../../lib/http/responseSchemas'
 import type {Bindings} from '../../types/bindings'
 
 type LoginRequest = {
+    username?: unknown
+    password?: unknown
+}
+
+type CreateUserRequest = {
+    email?: unknown
     username?: unknown
     password?: unknown
 }
@@ -69,6 +76,7 @@ type RecoveryLoginRequest = {
     recoveryPhrase?: unknown
 }
 
+const PASSWORD_HASH_ROUNDS = 10
 const AuthUserResponseSchema = responseSchema({user: OwnUserSchema})
 const PasskeyOptionsResponseSchema = responseSchema({
     challengeId: z.string(),
@@ -85,9 +93,22 @@ const RecoveryLoginResponseSchema = responseSchema({
     secureAccountRequired: z.literal(true),
 })
 
-export const authRoutes = new Hono<{Bindings: Bindings}>()
+export const authPageActionRoutes = new Hono<{Bindings: Bindings}>()
 
-authRoutes.post('/logout', async (c) => {
+for (const path of [
+    '/logout',
+    '/login',
+    '/register',
+    '/register/passkey/options',
+    '/register/passkey/verify',
+    '/login/passkey/options',
+    '/login/passkey/verify',
+    '/recovery/login',
+]) {
+    authPageActionRoutes.use(path, csrfProtection)
+}
+
+authPageActionRoutes.post('/logout', async (c) => {
     const sessionToken = getCookie(c, getSessionCookieName())
     const isBrowserForm = c.req.header('accept')?.includes('text/html')
 
@@ -104,12 +125,10 @@ authRoutes.post('/logout', async (c) => {
     return c.body(null, 204)
 })
 
-authRoutes.post('/login', async (c) => {
-    let body: LoginRequest
+authPageActionRoutes.post('/login', async (c) => {
+    const body = await parseBody<LoginRequest>(c.req.raw)
 
-    try {
-        body = await c.req.json<LoginRequest>()
-    } catch {
+    if (!body) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
@@ -150,15 +169,102 @@ authRoutes.post('/login', async (c) => {
     const sessionToken = await createSession(c.env.DB, user.id)
     setSessionCookie(c, sessionToken)
 
+    if (acceptsHtml(c.req.raw)) {
+        return c.redirect('/')
+    }
+
     return jsonResponse(c, AuthUserResponseSchema, {user: toPublicUser(user)})
 })
 
-authRoutes.post('/register/passkey/options', async (c) => {
-    let body: PasskeyRegistrationOptionsRequest
+authPageActionRoutes.post('/register', async (c) => {
+    const body = await parseBody<CreateUserRequest>(c.req.raw)
+
+    if (!body) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    }
+
+    const email = normalizeCredential(body.email)?.toLowerCase() ?? null
+    const username = normalizeCredential(body.username)
+    const password = normalizeCredential(body.password)
+
+    if (!email || !username || !password) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Email, username, and password are required'}, 400)
+    }
+
+    if (!isValidEmail(email)) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Email must be valid'}, 400)
+    }
+
+    if (!isValidUsername(username)) {
+        return jsonResponse(
+            c,
+            ErrorResponseSchema,
+            {error: 'Username must be 3-32 characters and contain only letters, numbers, and underscores'},
+            400,
+        )
+    }
+
+    if (password.length < 8) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Password must be at least 8 characters'}, 400)
+    }
+
+    const existingUser = await c.env.DB.prepare(
+        `SELECT id
+         FROM users
+         WHERE lower(email) = lower(?)
+            OR username = ?
+         LIMIT 1`,
+    )
+        .bind(email, username)
+        .first<Pick<UserRecord, 'id'>>()
+
+    if (existingUser) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Email or username is already in use'}, 409)
+    }
+
+    const now = new Date()
+    const user: UserRecord = {
+        id: crypto.randomUUID(),
+        email,
+        username,
+        password_hash: await hash(password, PASSWORD_HASH_ROUNDS),
+        role: 'user',
+        profile_photo_key: null,
+        bio: '',
+        display_nsfw_media: 0,
+        last_seen_version: null,
+        created_at: toSqlTimestamp(now),
+    }
 
     try {
-        body = await c.req.json<PasskeyRegistrationOptionsRequest>()
-    } catch {
+        await c.env.DB.prepare(
+            `INSERT INTO users (id, email, username, password_hash, role, bio, display_nsfw_media, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+            .bind(user.id, user.email, user.username, user.password_hash, user.role, user.bio, user.display_nsfw_media, user.created_at)
+            .run()
+    } catch (error) {
+        if (isUniqueConstraintError(error)) {
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Email or username is already in use'}, 409)
+        }
+
+        throw error
+    }
+
+    const sessionToken = await createSession(c.env.DB, user.id, now)
+    setSessionCookie(c, sessionToken)
+
+    if (acceptsHtml(c.req.raw)) {
+        return c.redirect('/')
+    }
+
+    return jsonResponse(c, AuthUserResponseSchema, {user: toPublicUser(user)}, 201)
+})
+
+authPageActionRoutes.post('/register/passkey/options', async (c) => {
+    const body = await parseBody<PasskeyRegistrationOptionsRequest>(c.req.raw)
+
+    if (!body) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
@@ -204,12 +310,10 @@ authRoutes.post('/register/passkey/options', async (c) => {
     })
 })
 
-authRoutes.post('/register/passkey/verify', async (c) => {
-    let body: PasskeyRegistrationVerifyRequest
+authPageActionRoutes.post('/register/passkey/verify', async (c) => {
+    const body = await parseBody<PasskeyRegistrationVerifyRequest>(c.req.raw)
 
-    try {
-        body = await c.req.json<PasskeyRegistrationVerifyRequest>()
-    } catch {
+    if (!body) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
@@ -348,12 +452,10 @@ authRoutes.post('/register/passkey/verify', async (c) => {
     )
 })
 
-authRoutes.post('/login/passkey/options', async (c) => {
-    let body: PasskeyAuthenticationOptionsRequest
+authPageActionRoutes.post('/login/passkey/options', async (c) => {
+    const body = await parseBody<PasskeyAuthenticationOptionsRequest>(c.req.raw)
 
-    try {
-        body = await c.req.json<PasskeyAuthenticationOptionsRequest>()
-    } catch {
+    if (!body) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
@@ -385,12 +487,10 @@ authRoutes.post('/login/passkey/options', async (c) => {
     })
 })
 
-authRoutes.post('/login/passkey/verify', async (c) => {
-    let body: PasskeyAuthenticationVerifyRequest
+authPageActionRoutes.post('/login/passkey/verify', async (c) => {
+    const body = await parseBody<PasskeyAuthenticationVerifyRequest>(c.req.raw)
 
-    try {
-        body = await c.req.json<PasskeyAuthenticationVerifyRequest>()
-    } catch {
+    if (!body) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
@@ -455,15 +555,17 @@ authRoutes.post('/login/passkey/verify', async (c) => {
     const sessionToken = await createSession(c.env.DB, user.id, now)
     setSessionCookie(c, sessionToken)
 
+    if (acceptsHtml(c.req.raw)) {
+        return c.redirect('/')
+    }
+
     return jsonResponse(c, AuthUserResponseSchema, {user: toPublicUser(user)})
 })
 
-authRoutes.post('/recovery/login', async (c) => {
-    let body: RecoveryLoginRequest
+authPageActionRoutes.post('/recovery/login', async (c) => {
+    const body = await parseBody<RecoveryLoginRequest>(c.req.raw)
 
-    try {
-        body = await c.req.json<RecoveryLoginRequest>()
-    } catch {
+    if (!body) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
 
@@ -520,6 +622,10 @@ authRoutes.post('/recovery/login', async (c) => {
     const sessionToken = await createSession(c.env.DB, user.id, now)
     setSessionCookie(c, sessionToken)
 
+    if (acceptsHtml(c.req.raw)) {
+        return c.redirect('/settings')
+    }
+
     return jsonResponse(c, RecoveryLoginResponseSchema, {
         user: toPublicUser({
             ...user,
@@ -529,6 +635,30 @@ authRoutes.post('/recovery/login', async (c) => {
         secureAccountRequired: true,
     })
 })
+
+async function parseBody<T extends object>(request: Request): Promise<T | null> {
+    const contentType = request.headers.get('content-type') ?? ''
+
+    if (contentType.includes('application/json')) {
+        try {
+            return (await request.json()) as T
+        } catch {
+            return null
+        }
+    }
+
+    if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {
+        const form = await request.formData()
+
+        return Object.fromEntries(form.entries()) as T
+    }
+
+    return {} as T
+}
+
+function acceptsHtml(request: Request): boolean {
+    return request.headers.get('accept')?.includes('text/html') ?? false
+}
 
 function isValidEmail(email: string): boolean {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)

@@ -11,6 +11,7 @@ import {createCsrfToken, type UserRecord} from '../../lib/auth/session'
 import {expectSessionCookie} from '../../test/assertions'
 import {createMockDb, sqlFragment} from '../../test/mockD1'
 import {apiRoutes} from '../api'
+import {authPageActionRoutes} from '../page-actions/auth'
 
 vi.mock('@simplewebauthn/server', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@simplewebauthn/server')>()
@@ -38,7 +39,7 @@ beforeEach(() => {
 })
 
 async function postLogin(body: unknown, db: D1Database, url = '/login', cookie?: string): Promise<Response> {
-    return apiRoutes.request(
+    return authPageActionRoutes.request(
         url,
         {
             method: 'POST',
@@ -55,7 +56,7 @@ async function postLogin(body: unknown, db: D1Database, url = '/login', cookie?:
 }
 
 async function postPasskeyRegistrationOptions(body: unknown, db: D1Database): Promise<Response> {
-    return apiRoutes.request(
+    return authPageActionRoutes.request(
         'https://example.com/register/passkey/options',
         {
             method: 'POST',
@@ -71,7 +72,7 @@ async function postPasskeyRegistrationOptions(body: unknown, db: D1Database): Pr
 }
 
 async function postPasskeyRegistrationVerify(body: unknown, db: D1Database): Promise<Response> {
-    return apiRoutes.request(
+    return authPageActionRoutes.request(
         'https://example.com/register/passkey/verify',
         {
             method: 'POST',
@@ -87,7 +88,7 @@ async function postPasskeyRegistrationVerify(body: unknown, db: D1Database): Pro
 }
 
 async function postPasskeyLoginOptions(body: unknown, db: D1Database): Promise<Response> {
-    return apiRoutes.request(
+    return authPageActionRoutes.request(
         'https://example.com/login/passkey/options',
         {
             method: 'POST',
@@ -103,7 +104,7 @@ async function postPasskeyLoginOptions(body: unknown, db: D1Database): Promise<R
 }
 
 async function postPasskeyLoginVerify(body: unknown, db: D1Database): Promise<Response> {
-    return apiRoutes.request(
+    return authPageActionRoutes.request(
         'https://example.com/login/passkey/verify',
         {
             method: 'POST',
@@ -119,7 +120,7 @@ async function postPasskeyLoginVerify(body: unknown, db: D1Database): Promise<Re
 }
 
 async function postRecoveryLogin(body: unknown, db: D1Database): Promise<Response> {
-    return apiRoutes.request(
+    return authPageActionRoutes.request(
         'https://example.com/recovery/login',
         {
             method: 'POST',
@@ -151,7 +152,7 @@ async function postSecurityComplete(db: D1Database, sessionToken = 'session-toke
 }
 
 async function postLogout(db: D1Database, cookie?: string, url = 'https://example.com/logout', csrfToken?: string): Promise<Response> {
-    return apiRoutes.request(
+    return authPageActionRoutes.request(
         url,
         {
             method: 'POST',
@@ -175,7 +176,7 @@ async function postLogoutForm(db: D1Database, cookie?: string, csrfToken?: strin
         body.set('csrfToken', csrfToken)
     }
 
-    return apiRoutes.request(
+    return authPageActionRoutes.request(
         'https://example.com/logout',
         {
             method: 'POST',

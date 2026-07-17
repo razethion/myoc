@@ -5,6 +5,7 @@ import {createMockImagesBinding} from '../../test/mockImages'
 import {createMockKVNamespace} from '../../test/mockKV'
 import {createMockR2Bucket} from '../../test/mockR2'
 import {apiRoutes} from '../api'
+import {adminPageActionRoutes} from '../page-actions/admin'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
 const reportedCharacterMediaR2Keys = [
@@ -86,7 +87,7 @@ async function postReportAction(
     sessionToken = 'session-token',
     accept = 'application/json',
 ): Promise<Response> {
-    return apiRoutes.request(
+    return adminPageActionRoutes.request(
         `https://example.com/admin/reports/images/${mediaId}/${rating}/${action}`,
         {
             method: 'POST',
@@ -109,8 +110,8 @@ async function postAdminJobRun(
     sessionToken = 'session-token',
     accept = 'application/json',
 ): Promise<Response> {
-    return apiRoutes.request(
-        `https://example.com/admin/jobs/${jobName}/run`,
+    return adminPageActionRoutes.request(
+        `https://example.com/admin/admin-options/jobs/${jobName}/run`,
         {
             method: 'POST',
             body: JSON.stringify({}),
@@ -125,7 +126,7 @@ async function postAdminJobRun(
     )
 }
 
-describe('POST /admin/jobs/:jobName/run', () => {
+describe('POST /admin/admin-options/jobs/:jobName/run', () => {
     it('rejects invalid job names', async () => {
         const {db} = createMockDb({
             firstResults: [createCurrentUserRecord('admin')],
@@ -634,7 +635,7 @@ describe('POST /admin/reports/images/:mediaId/:rating/:action', () => {
         const {db} = createMockDb()
         const mediaBucket = createMockR2Bucket()
 
-        const response = await apiRoutes.request(
+        const response = await adminPageActionRoutes.request(
             'https://example.com/admin/reports/images/media-1/sfw/ignore',
             {
                 method: 'POST',

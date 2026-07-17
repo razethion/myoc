@@ -149,7 +149,7 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
                                     </button>
                                 </li>
                             </ul>
-                            <form action="/api/logout" id="logout-form" method="post">
+                            <form action="/logout" id="logout-form" method="post">
                                 <input name="csrfToken" type="hidden" value={currentUser.csrfToken} />
                             </form>
                         </details>

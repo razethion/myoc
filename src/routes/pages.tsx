@@ -66,6 +66,9 @@ import {SitePoliciesPage} from '../views/pages/SitePoliciesPage'
 import {SizeChartViewerPage} from '../views/pages/SizeChartViewerPage'
 import {UserSettingsPage} from '../views/pages/UserSettingsPage'
 import {WhatsNewPage} from '../views/pages/WhatsNewPage'
+import {adminPageActionRoutes} from './page-actions/admin'
+import {authPageActionRoutes} from './page-actions/auth'
+import {settingsPageActionRoutes} from './page-actions/settings'
 
 export const pageRoutes = new Hono<{Bindings: Bindings}>()
 
@@ -121,6 +124,10 @@ pageRoutes.use('*', async (c, next) => {
 
     return c.redirect(`${PASSKEY_PROMPT_PATH}?returnTo=${encodeURIComponent(`${url.pathname}${url.search}`)}`)
 })
+
+pageRoutes.route('/', authPageActionRoutes)
+pageRoutes.route('/', settingsPageActionRoutes)
+pageRoutes.route('/', adminPageActionRoutes)
 
 function getRandomLetter(): string {
     const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
