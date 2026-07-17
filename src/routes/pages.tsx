@@ -266,6 +266,8 @@ pageRoutes.get('/migrate/toyhouse-image', async (c) => {
         return c.json({error: `Toyhou.se returned ${upstream.status} for image URL`}, 502)
     }
 
+    // Toyhou.se import needs an authenticated same-origin image proxy for CORS.
+    // nosemgrep: myoc.routes.no-image-body-proxy
     return new Response(upstream.body, {
         headers: {
             'cache-control': 'private, no-store',

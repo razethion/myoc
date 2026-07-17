@@ -35,3 +35,56 @@ rules:
       - pattern: new Response(JSON.stringify(...))
       - pattern: c.body(JSON.stringify(...), ...)
       - pattern: c.body(JSON.stringify(...))
+
+  - id: myoc.routes.no-image-body-proxy
+    message: Route handlers must not proxy body streams through the Worker; serve media from public R2 URLs or document a narrow exception.
+    severity: ERROR
+    languages:
+      - javascript
+      - typescript
+    paths:
+      include:
+        - /src/routes/**/*.ts
+        - /src/routes/**/*.tsx
+      exclude:
+        - "**/*.test.ts"
+        - "**/*.test.tsx"
+    patterns:
+      - pattern-either:
+          - pattern: new Response($SOURCE.body, ...)
+          - pattern: $C.body($SOURCE.body, ...)
+
+  - id: myoc.routes.no-direct-image-response
+    message: Route handlers must not return image bytes directly; return a public media URL instead.
+    severity: ERROR
+    languages:
+      - javascript
+      - typescript
+    paths:
+      include:
+        - /src/routes/**/*.ts
+        - /src/routes/**/*.tsx
+      exclude:
+        - "**/*.test.ts"
+        - "**/*.test.tsx"
+    patterns:
+      - pattern-either:
+          - pattern: |
+              new Response($BODY, { ..., headers: { ..., 'content-type': $CONTENT_TYPE, ... }, ... })
+          - pattern: |
+              new Response($BODY, { ..., headers: { ..., "content-type": $CONTENT_TYPE, ... }, ... })
+          - pattern: |
+              new Response($BODY, { ..., headers: { ..., 'Content-Type': $CONTENT_TYPE, ... }, ... })
+          - pattern: |
+              new Response($BODY, { ..., headers: { ..., "Content-Type": $CONTENT_TYPE, ... }, ... })
+          - pattern: |
+              $C.body($BODY, $STATUS, { ..., 'content-type': $CONTENT_TYPE, ... })
+          - pattern: |
+              $C.body($BODY, $STATUS, { ..., "content-type": $CONTENT_TYPE, ... })
+          - pattern: |
+              $C.body($BODY, $STATUS, { ..., 'Content-Type': $CONTENT_TYPE, ... })
+          - pattern: |
+              $C.body($BODY, $STATUS, { ..., "Content-Type": $CONTENT_TYPE, ... })
+      - metavariable-regex:
+          metavariable: $CONTENT_TYPE
+          regex: (?i)^['"]image/
