@@ -202,7 +202,7 @@ export function canModerateImages(user: CurrentUser | null): user is CurrentUser
     return user?.role === 'moderator' || user?.role === 'admin'
 }
 
-export function normalizeUserRole(role: unknown): UserRole {
+function normalizeUserRole(role: unknown): UserRole {
     return role === 'moderator' || role === 'admin' ? role : 'user'
 }
 

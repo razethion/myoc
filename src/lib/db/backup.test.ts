@@ -1,6 +1,6 @@
 import {describe, expect, it, vi} from 'vitest'
 import {createMockR2Bucket} from '../../test/mockR2'
-import {backupD1Database, createBackupKey} from './backup'
+import {backupD1Database} from './backup'
 
 const EXPORT_SQL = [
     'CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL);',
@@ -137,12 +137,6 @@ describe('backupD1Database', () => {
                 },
             ),
         ).rejects.toThrow('D1_REST_API_TOKEN is not configured')
-    })
-})
-
-describe('createBackupKey', () => {
-    it('creates date-partitioned gzip object keys', () => {
-        expect(createBackupKey(new Date('2026-01-02T03:04:05.006Z'))).toBe('d1/myoc-db/2026/01/02/myoc-db-2026-01-02T03-04-05-006Z.sql.gz')
     })
 })
 

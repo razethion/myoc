@@ -1,7 +1,6 @@
 import {afterEach, describe, expect, it, vi} from 'vitest'
 import app from '../index'
-import {NON_HTML_CONTENT_SECURITY_POLICY} from '../lib/http/securityHeaders'
-import {LEADERBOARD_CACHE_KEY, type LeaderboardSnapshot} from '../lib/leaderboard'
+import type {LeaderboardSnapshot} from '../lib/leaderboard'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import {expectSecurityHeaders} from '../test/assertions'
 import {createWebpDataUrl} from '../test/imageFixtures'
@@ -11,6 +10,15 @@ import {resetWorkerBindings, workerEnv} from '../test/workerBindings'
 import {pageRoutes} from './pages'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
+const NON_HTML_CONTENT_SECURITY_POLICY = [
+    "default-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    'sandbox',
+].join('; ')
+const LEADERBOARD_CACHE_KEY = 'leaderboard:daily:v1'
 
 afterEach(async () => {
     vi.restoreAllMocks()
@@ -2710,11 +2718,11 @@ describe('GET /admin', () => {
         expect(response.status).toBe(200)
         expect(html).toContain('<title>Admin Options | Admin | MyOC</title>')
         expect(html).toContain('D1 Database Backup started. Refresh Job History to check progress.')
-        expect(html).toContain('action="/api/admin/jobs/d1-backup/run"')
+        expect(html).toContain('action="/admin/admin-options/jobs/d1-backup/run"')
         expect(html).toContain('Run D1 Database Backup')
-        expect(html).toContain('action="/api/admin/jobs/r2-media-cleanup/run"')
+        expect(html).toContain('action="/admin/admin-options/jobs/r2-media-cleanup/run"')
         expect(html).toContain('Run R2 Media Cleanup')
-        expect(html).toContain('action="/api/admin/jobs/leaderboard-refresh/run"')
+        expect(html).toContain('action="/admin/admin-options/jobs/leaderboard-refresh/run"')
         expect(html).toContain('Run Leaderboard Refresh')
         expect(html).toContain('Job History')
         expect(html).toContain('Cron 0 8 * * *')

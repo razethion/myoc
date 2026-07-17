@@ -175,13 +175,13 @@ function AuthPageScript() {
                     throw new Error('Passkeys could not load. Refresh and try again.');
                 }
 
-                const optionsBody = await postJson('/api/login/passkey/options', {
+                const optionsBody = await postJson('/login/passkey/options', {
                     username,
                 });
                 const credential = await window.SimpleWebAuthnBrowser.startAuthentication({
                     optionsJSON: optionsBody.options,
                 });
-                await postJson('/api/login/passkey/verify', {
+                await postJson('/login/passkey/verify', {
                     challengeId: optionsBody.challengeId,
                     credential,
                 });
@@ -217,7 +217,7 @@ function AuthPageScript() {
                 const form = event.currentTarget;
                 const data = new FormData(form);
 
-                submitJson(form, '/api/login', {
+                submitJson(form, '/login', {
                     username: data.get('username'),
                     password: data.get('password'),
                 });
@@ -240,14 +240,14 @@ function AuthPageScript() {
                     }
 
                     const data = new FormData(form);
-                    const optionsBody = await postJson('/api/register/passkey/options', {
+                    const optionsBody = await postJson('/register/passkey/options', {
                         email: data.get('email'),
                         username: data.get('username'),
                     });
                     const credential = await window.SimpleWebAuthnBrowser.startRegistration({
                         optionsJSON: optionsBody.options,
                     });
-                    const responseBody = await postJson('/api/register/passkey/verify', {
+                    const responseBody = await postJson('/register/passkey/verify', {
                         challengeId: optionsBody.challengeId,
                         credential,
                         name: 'Primary passkey',
@@ -269,7 +269,7 @@ function AuthPageScript() {
                 const form = event.currentTarget;
                 const data = new FormData(form);
 
-                submitJson(form, '/api/users', {
+                submitJson(form, '/register', {
                     email: data.get('email'),
                     username: data.get('username'),
                     password: data.get('password'),
@@ -303,7 +303,7 @@ function AuthPageScript() {
                 clearAlerts();
 
                 try {
-                    await postJson('/api/recovery/login', {
+                    await postJson('/recovery/login', {
                         username: data.get('username'),
                         recoveryPhrase: data.get('recoveryPhrase'),
                     });
@@ -370,7 +370,7 @@ export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPa
                 {isLogin ? (
                     <div class="relative z-10 mx-auto w-full max-w-md">
                         <section class="auth-card rounded-3xl p-6 sm:p-8">
-                            <form action="/api/login/passkey/options" class="flex flex-col gap-6" data-passkey-login-form method="post">
+                            <form action="/login/passkey/options" class="flex flex-col gap-6" data-passkey-login-form method="post">
                                 <div class="text-center">
                                     <span class="badge badge-primary badge-lg">Login</span>
                                     <h1 class="mt-5 text-4xl font-black leading-none sm:text-5xl">Welcome back.</h1>
@@ -413,7 +413,7 @@ export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPa
                             </form>
 
                             <form
-                                action="/api/login"
+                                action="/login"
                                 class="mt-6 flex flex-col gap-4 border-t border-base-300 pt-6"
                                 data-password-login-form
                                 hidden
@@ -452,7 +452,7 @@ export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPa
                             </form>
 
                             <form
-                                action="/api/recovery/login"
+                                action="/recovery/login"
                                 class="mt-6 flex flex-col gap-4 border-t border-base-300 pt-6"
                                 data-recovery-login-form
                                 hidden
@@ -524,12 +524,7 @@ export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPa
                         </aside>
 
                         <section class="auth-card rounded-3xl p-6 sm:p-8">
-                            <form
-                                action="/api/register/passkey/options"
-                                class="flex flex-col gap-6"
-                                data-passkey-register-form
-                                method="post"
-                            >
+                            <form action="/register/passkey/options" class="flex flex-col gap-6" data-passkey-register-form method="post">
                                 <div>
                                     <h2 class="text-3xl font-black">Account details</h2>
                                     <p class="mt-2 opacity-70">Create a passkey account without setting a password.</p>
@@ -579,7 +574,7 @@ export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPa
                             </form>
 
                             <div class="mt-6 border-t border-base-300 pt-6" data-password-register-panel hidden>
-                                <form action="/api/users" class="flex flex-col gap-6" data-password-register-form method="post">
+                                <form action="/register" class="flex flex-col gap-6" data-password-register-form method="post">
                                     <div class="alert alert-error" data-auth-alert hidden></div>
 
                                     <label class="form-control w-full">

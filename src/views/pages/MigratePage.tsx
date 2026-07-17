@@ -2,7 +2,7 @@ import type {CurrentUser} from '../../lib/auth/session'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 
-export type ToyhouseCharacter = {
+type ToyhouseCharacter = {
     canImport?: boolean
     id: string
     images: ToyhouseImage[]
@@ -15,7 +15,7 @@ export type ToyhouseCharacter = {
     url: string
 }
 
-export type ToyhouseImage = {
+type ToyhouseImage = {
     fullsizeUrl: string
     thumbnailUrl: string
 }

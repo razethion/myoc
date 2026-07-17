@@ -42,7 +42,7 @@ export type CharacterPageMedia = {
     nsfwPreviewHeight: number | null
 }
 
-export type CharacterPageGalleryTab = {
+type CharacterPageGalleryTab = {
     id: string
     name: string
     rows: {

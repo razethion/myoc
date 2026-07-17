@@ -115,7 +115,7 @@ function ImageReportCard({csrfToken, report}: {csrfToken: string; report: AdminI
                                     </button>
                                 </form>
                                 <form
-                                    action={`/api/admin/reports/images/${encodeURIComponent(report.mediaId)}/${report.rating}/${item.action}`}
+                                    action={`/admin/reports/images/${encodeURIComponent(report.mediaId)}/${report.rating}/${item.action}`}
                                     method="post"
                                 >
                                     <input name="csrfToken" type="hidden" value={csrfToken} />

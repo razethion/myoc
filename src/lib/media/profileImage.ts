@@ -1,7 +1,7 @@
 import {getWebpDimensions} from './webp'
 
-export const PROFILE_IMAGE_SIZE = 512
-export const PROFILE_IMAGE_MAX_BYTES = 2 * 1024 * 1024
+const PROFILE_IMAGE_SIZE = 512
+const PROFILE_IMAGE_MAX_BYTES = 2 * 1024 * 1024
 export const PROFILE_IMAGE_MAX_REQUEST_BYTES = 3 * 1024 * 1024
 
 type ProfileImagePayload = {

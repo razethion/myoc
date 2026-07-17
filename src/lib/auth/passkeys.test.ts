@@ -3,9 +3,6 @@ import {describe, expect, it} from 'vitest'
 import {createMockDb, sqlFragment} from '../../test/mockD1'
 import type {Bindings} from '../../types/bindings'
 import {
-    base64UrlToBytes,
-    bytesToBase64Url,
-    createBase64UrlToken,
     createCredentialPublicKeyValue,
     createDisabledPasswordHash,
     createPasskeyAuthenticationOptions,
@@ -15,45 +12,14 @@ import {
     hashRecoveryPhrase,
     hasUsablePassword,
     listUserSessions,
-    normalizeRecoveryPhrase,
     type PasskeyRecord,
-    parseTransports,
     serializeTransports,
-    storeWebAuthnChallenge,
     toPasskeySummary,
     toWebAuthnCredential,
     verifyRecoveryPhrase,
 } from './passkeys'
 
 describe('passkey database helpers', () => {
-    it('stores challenges with expiry cleanup and nullable metadata', async () => {
-        const now = new Date('2026-06-10T12:00:00Z')
-        const {db, boundStatements} = createMockDb()
-
-        const challengeId = await storeWebAuthnChallenge(db, {
-            userId: 'user-1',
-            ceremony: 'authentication',
-            challenge: 'challenge-value',
-            now,
-        })
-
-        expect(challengeId).toMatch(/^[0-9a-f-]{36}$/)
-        expect(db.batch).toHaveBeenCalledTimes(1)
-        expect(boundStatements[0]?.sql).toContain(sqlFragment('DELETE', 'FROM', 'webauthn_challenges'))
-        expect(boundStatements[0]?.binds).toEqual(['2026-06-10 12:00:00'])
-        expect(boundStatements[1]?.sql).toContain(sqlFragment('INSERT', 'INTO', 'webauthn_challenges'))
-        expect(boundStatements[1]?.binds).toEqual([
-            challengeId,
-            'user-1',
-            null,
-            null,
-            null,
-            'authentication',
-            'challenge-value',
-            '2026-06-10 12:05:00',
-        ])
-    })
-
     it('fetches unexpired challenges by id and ceremony', async () => {
         const challenge = {
             id: 'challenge-1',
@@ -207,8 +173,6 @@ describe('passkey serialization helpers', () => {
         expect(serializeTransports()).toBeNull()
         expect(serializeTransports([])).toBeNull()
         expect(serializeTransports(['internal', 'usb'])).toBe('internal,usb')
-        expect(parseTransports(null)).toBeUndefined()
-        expect(parseTransports(' internal,usb,, ')).toEqual(['internal', 'usb'])
         expect(toPasskeySummary(syncedPasskey)).toEqual({
             id: 'passkey-1',
             name: 'Synced passkey',
@@ -223,11 +187,9 @@ describe('passkey serialization helpers', () => {
 
     it('converts credential public keys to and from base64url', () => {
         const bytes = new Uint8Array([0, 1, 2, 251, 252, 253, 254, 255])
-        const encoded = bytesToBase64Url(bytes)
+        const encoded = 'AAEC-_z9_v8'
 
-        expect(encoded).toBe('AAEC-_z9_v8')
         expect(createCredentialPublicKeyValue(bytes)).toBe(encoded)
-        expect(Array.from(base64UrlToBytes(encoded))).toEqual(Array.from(bytes))
         expect(Array.from(toWebAuthnCredential(createPasskey({public_key: encoded})).publicKey)).toEqual(Array.from(bytes))
     })
 })
@@ -236,7 +198,6 @@ describe('passkey recovery helpers', () => {
     it('normalizes and verifies recovery phrases before hashing', async () => {
         const phraseHash = await hashRecoveryPhrase(' Correct Horse_Battery  Staple ')
 
-        expect(normalizeRecoveryPhrase(' Correct Horse_Battery  Staple ')).toBe('correct-horse-battery-staple')
         await expect(verifyRecoveryPhrase('correct-horse-battery-staple', phraseHash)).resolves.toBe(true)
         await expect(verifyRecoveryPhrase('wrong phrase', phraseHash)).resolves.toBe(false)
     })
@@ -248,7 +209,6 @@ describe('passkey recovery helpers', () => {
         expect(disabledHash).toMatch(/^passkey-only:[A-Za-z0-9_-]{43}$/)
         expect(hasUsablePassword(disabledHash)).toBe(false)
         expect(hasUsablePassword('$2b$10$stored-password-hash')).toBe(true)
-        expect(createBase64UrlToken(16)).toMatch(/^[A-Za-z0-9_-]{22}$/)
         expect(recoveryPhrase.split('-')).toHaveLength(4)
     })
 })

@@ -1,5 +1,4 @@
 import {describe, expect, it} from 'vitest'
-import {characterHeightChartImageObjectKey} from '../../lib/media/url'
 import {createMockDb} from '../../test/mockD1'
 import {createMockR2Bucket} from '../../test/mockR2'
 import {apiRoutes} from '../api'
@@ -243,7 +242,7 @@ describe('GET /api/search/size-chart-characters', () => {
 
         expect(body.items.map((item) => item.id)).toEqual(['with-chart', 'without-chart', 'invalid-chart'])
         expect(body.items[0]?.hasSizeChart).toBe(true)
-        expect(body.items[0]?.heightChart?.image.url).toBe('/api/search/size-chart-characters/with-chart/image?key=chart%2Fkey')
+        expect(body.items[0]?.heightChart?.image.url).toBe(`${mediaPublicBaseUrl}/characters/owner-2/with-chart/height-chart/chart/key.png`)
         expect(body.items[1]?.heightChart).toBeNull()
         expect(body.items[2]?.heightChart).toBeNull()
     })
@@ -401,7 +400,7 @@ describe('GET /api/search/size-chart-characters/by-id', () => {
         expect(body.items[0]?.id).toBe('legacy-character-id')
         expect(body.items[0]?.sizeChartId).toBe('abcdef123456')
         expect(body.items[0]?.heightChart.image.url).toBe(
-            '/api/search/size-chart-characters/legacy-character-id/image?key=height-chart-image',
+            `${mediaPublicBaseUrl}/characters/owner-id/legacy-character-id/height-chart/height-chart-image.png`,
         )
     })
 
@@ -453,7 +452,7 @@ describe('GET /api/search/size-chart-characters/by-id', () => {
         expect(body.items[0]?.id).toBe('legacy-character-id')
         expect(body.items[0]?.sizeChartId).toBe('abcdef123456')
         expect(body.items[0]?.heightChart.image.url).toBe(
-            '/api/search/size-chart-characters/legacy-character-id/image?key=height-chart-image',
+            `${mediaPublicBaseUrl}/characters/owner-id/legacy-character-id/height-chart/height-chart-image.png`,
         )
         expect(body.items[1]?.id).toBe('legacy-character-id')
     })
@@ -501,109 +500,5 @@ describe('GET /api/search/size-chart-characters/by-id', () => {
         expect(await response.json()).toEqual({
             items: [],
         })
-    })
-})
-
-describe('GET /api/search/size-chart-characters/:characterId/image', () => {
-    it('returns 404 when the character or requested image key is missing', async () => {
-        const mediaBucket = createMockR2Bucket()
-        const {db} = createMockDb({
-            firstResults: [null],
-        })
-
-        const response = await apiRoutes.request(
-            'https://example.com/search/size-chart-characters/missing-character/image?key=height-chart-image',
-            {
-                headers: {
-                    accept: 'image/png',
-                },
-            },
-            requestEnv(db, mediaBucket),
-        )
-
-        expect(response.status).toBe(404)
-        expect(mediaBucket.get).not.toHaveBeenCalled()
-    })
-
-    it('returns 404 when the stored height chart image key does not match the request', async () => {
-        const mediaBucket = createMockR2Bucket()
-        const {db} = createMockDb({
-            firstResults: [
-                {
-                    id: 'character-1',
-                    user_id: 'owner-1',
-                    height_chart_json: sizeChartJson({key: 'stored-key'}),
-                },
-            ],
-        })
-
-        const response = await apiRoutes.request(
-            'https://example.com/search/size-chart-characters/character-1/image?key=other-key',
-            {
-                headers: {
-                    accept: 'image/png',
-                },
-            },
-            requestEnv(db, mediaBucket),
-        )
-
-        expect(response.status).toBe(404)
-        expect(mediaBucket.get).not.toHaveBeenCalled()
-    })
-
-    it('returns 404 when the referenced height chart object is missing from R2', async () => {
-        const mediaBucket = createMockR2Bucket()
-        const {db} = createMockDb({
-            firstResults: [
-                {
-                    id: 'character-1',
-                    user_id: 'owner-1',
-                    height_chart_json: sizeChartJson({key: 'stored-key'}),
-                },
-            ],
-        })
-
-        const response = await apiRoutes.request(
-            'https://example.com/search/size-chart-characters/character-1/image?key=stored-key',
-            {
-                headers: {
-                    accept: 'image/png',
-                },
-            },
-            requestEnv(db, mediaBucket),
-        )
-
-        expect(response.status).toBe(404)
-        expect(mediaBucket.get).toHaveBeenCalledWith('characters/owner-1/character-1/height-chart/stored-key.png')
-    })
-
-    it('streams the stored height chart image with immutable cache headers', async () => {
-        const mediaBucket = createMockR2Bucket()
-        const imageBytes = new Uint8Array([1, 2, 3])
-        await mediaBucket.put(characterHeightChartImageObjectKey('owner-1', 'character-1', 'stored-key', 'image/webp'), imageBytes)
-        const {db} = createMockDb({
-            firstResults: [
-                {
-                    id: 'character-1',
-                    user_id: 'owner-1',
-                    height_chart_json: sizeChartJson({key: 'stored-key', contentType: 'image/webp'}),
-                },
-            ],
-        })
-
-        const response = await apiRoutes.request(
-            'https://example.com/search/size-chart-characters/character-1/image?key=stored-key',
-            {
-                headers: {
-                    accept: 'image/webp',
-                },
-            },
-            requestEnv(db, mediaBucket),
-        )
-
-        expect(response.status).toBe(200)
-        expect(response.headers.get('Cache-Control')).toBe('public, max-age=31536000, immutable')
-        expect(response.headers.get('Content-Type')).toBe('image/webp')
-        expect(new Uint8Array(await response.arrayBuffer())).toEqual(imageBytes)
     })
 })

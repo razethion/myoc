@@ -959,7 +959,7 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
                     </div>
                 </div>
 
-                <form action="/api/users/me" class="space-y-8" data-settings-form method="post">
+                <form action="/settings" class="space-y-8" data-settings-form method="post">
                     <input name="csrfToken" type="hidden" value={currentUser.csrfToken} />
 
                     <section

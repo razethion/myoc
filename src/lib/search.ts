@@ -1,8 +1,8 @@
 import {characterProfileImageUrl, profilePhotoUrl} from './media/url'
 
-export const SEARCH_QUERY_MAX_LENGTH = 80
-export const SEARCH_USER_PAGE_SIZE = 4
-export const SEARCH_CHARACTER_PAGE_SIZE = 8
+const SEARCH_QUERY_MAX_LENGTH = 80
+const SEARCH_USER_PAGE_SIZE = 4
+const SEARCH_CHARACTER_PAGE_SIZE = 8
 const SEARCH_MAX_OFFSET = 1000
 
 export type SearchUserResult = {

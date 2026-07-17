@@ -179,7 +179,7 @@ export async function createPasskeyAuthenticationOptions(
     return {challengeId, options}
 }
 
-export async function storeWebAuthnChallenge(
+async function storeWebAuthnChallenge(
     db: D1Database,
     options: {
         userId?: string | null
@@ -367,7 +367,7 @@ export function serializeTransports(transports?: AuthenticatorTransportFuture[])
     return transports?.length ? transports.join(',') : null
 }
 
-export function parseTransports(value: string | null | undefined): AuthenticatorTransportFuture[] | undefined {
+function parseTransports(value: string | null | undefined): AuthenticatorTransportFuture[] | undefined {
     if (!value) {
         return undefined
     }
@@ -415,7 +415,7 @@ export async function verifyRecoveryPhrase(phrase: string, phraseHash: string): 
     return await compare(normalizeRecoveryPhrase(phrase), phraseHash)
 }
 
-export function normalizeRecoveryPhrase(phrase: string): string {
+function normalizeRecoveryPhrase(phrase: string): string {
     return phrase
         .trim()
         .toLowerCase()
@@ -423,13 +423,13 @@ export function normalizeRecoveryPhrase(phrase: string): string {
         .replace(/-+/g, '-')
 }
 
-export function createBase64UrlToken(byteLength: number): string {
+function createBase64UrlToken(byteLength: number): string {
     const bytes = new Uint8Array(byteLength)
     crypto.getRandomValues(bytes)
     return bytesToBase64Url(bytes)
 }
 
-export function bytesToBase64Url(bytes: Uint8Array): Base64URLString {
+function bytesToBase64Url(bytes: Uint8Array): Base64URLString {
     let binary = ''
 
     for (const byte of bytes) {
@@ -439,7 +439,7 @@ export function bytesToBase64Url(bytes: Uint8Array): Base64URLString {
     return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
 }
 
-export function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> {
+function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> {
     const base64 = value.replace(/-/g, '+').replace(/_/g, '/')
     const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
     const binary = atob(padded)

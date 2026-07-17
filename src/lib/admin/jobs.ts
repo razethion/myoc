@@ -4,7 +4,7 @@ import {backupD1Database, type D1BackupSummary} from '../db/backup'
 import {type LeaderboardRefreshSummary, refreshLeaderboard} from '../leaderboard'
 import {cleanupStaleR2Media, type R2CleanupSummary} from '../media/r2Cleanup'
 
-export const ADMIN_JOBS = [
+const ADMIN_JOBS = [
     {
         name: 'd1-backup',
         label: 'D1 Database Backup',
@@ -20,8 +20,8 @@ export const ADMIN_JOBS = [
 ] as const
 
 export type AdminJobName = (typeof ADMIN_JOBS)[number]['name']
-export type AdminJobTriggerSource = 'cron' | 'manual'
-export type AdminJobRunStatus = 'running' | 'success' | 'error'
+type AdminJobTriggerSource = 'cron' | 'manual'
+type AdminJobRunStatus = 'running' | 'success' | 'error'
 export type AdminJobSummary = D1BackupSummary | R2CleanupSummary | LeaderboardRefreshSummary
 
 type AdminJobEnv = Pick<
@@ -86,7 +86,7 @@ export async function getAdminOptionsData(db: D1Database): Promise<AdminOptionsD
     }
 }
 
-export async function getAdminJobRuns(db: D1Database, limit = 25): Promise<AdminJobRun[]> {
+async function getAdminJobRuns(db: D1Database, limit = 25): Promise<AdminJobRun[]> {
     const result = await db
         .prepare(
             `SELECT admin_job_runs.id,
@@ -128,6 +128,9 @@ export async function runAdminJob(env: AdminJobEnv, jobName: AdminJobName, optio
     return await recordAdminJobRun(env.DB, jobName, options, async () => runAdminJobTask(env, jobName))
 }
 
+/**
+ * @internal Exported for focused persistence tests; production callers use runAdminJob.
+ */
 export async function recordAdminJobRun<TSummary extends AdminJobSummary>(
     db: D1Database,
     jobName: AdminJobName,

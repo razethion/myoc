@@ -1,5 +1,7 @@
 import {describe, expect, it, vi} from 'vitest'
-import {normalizeSearchOffset, normalizeSearchQuery, SEARCH_QUERY_MAX_LENGTH, searchUsers} from './search'
+import {normalizeSearchOffset, normalizeSearchQuery, searchUsers} from './search'
+
+const SEARCH_QUERY_MAX_LENGTH = 80
 
 function createRecordingDb(): {db: D1Database; binds: unknown[][]} {
     const binds: unknown[][] = []
