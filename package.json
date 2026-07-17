@@ -13,10 +13,10 @@
     "lint": "biome ci .",
     "format": "biome format . --write",
     "deadcode": "knip --production",
-    "security": "node scripts/run-semgrep.mjs",
+    "semgrep": "node scripts/run-semgrep.mjs",
     "test": "vitest",
     "coverage": "vitest run --coverage",
-    "ci": "npm run lint && npm run typecheck && vitest run && npm run deadcode && npm run security",
+    "ci": "npm run lint && npm run typecheck && vitest run && npm run deadcode && npm run semgrep",
     "db:prepare:local": "wrangler d1 migrations apply myoc-db --local && wrangler d1 execute myoc-db --local --file seeds/development.sql",
     "env:clone:prod-to-dev": "node scripts/clone-prod-to-dev.mjs",
     "deploy": "npm run ci && npm run build && wrangler deploy --minify"

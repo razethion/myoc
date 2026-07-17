@@ -66,7 +66,7 @@ if (hasCommand('docker')) {
 console.error(
     [
         'Semgrep is not installed and Docker is not available.',
-        'Install Semgrep with pipx or run this project inside an environment with Docker/WSL, then retry `npm run security`.',
+        'Install Semgrep with pipx or run this project inside an environment with Docker/WSL, then retry `npm run semgrep`.',
         'CI uses the official semgrep/semgrep container and does not require a local install.',
     ].join('\n'),
 )
