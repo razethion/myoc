@@ -13,8 +13,8 @@ rules:
         - "**/*.tsx"
     pattern-regex: (?i)\bselect\s+\*
 
-  - id: myoc.api.no-direct-json-response
-    message: API JSON responses must go through jsonResponse with an explicit Zod response schema.
+  - id: myoc.routes.no-direct-json-response
+    message: API and page-action JSON responses must go through jsonResponse with an explicit Zod response schema.
     severity: ERROR
     languages:
       - javascript
@@ -23,6 +23,8 @@ rules:
       include:
         - /src/routes/api/**/*.ts
         - /src/routes/api/**/*.tsx
+        - /src/routes/page-actions/**/*.ts
+        - /src/routes/page-actions/**/*.tsx
         - /src/lib/auth/authorization.ts
         - /src/lib/http/csrf.ts
       exclude:
