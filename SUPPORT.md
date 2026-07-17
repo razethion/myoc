@@ -30,4 +30,4 @@ For setup problems, include:
 - Whether Wrangler is authenticated.
 - Whether the issue involves local D1, remote R2, KV, or Cloudflare Images.
 
-For licensing or commercial-use questions, start with [LICENSE.md](./LICENSE.md).
+For licensing or commercial-use questions, start with [LICENSE](./LICENSE).

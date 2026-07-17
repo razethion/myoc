@@ -1,92 +1,171 @@
-![MyOC banner: Easily share character art without losing quality. No fuss.](./public/assets/myocbanner.webp)
-
 # MyOC
 
-**High-resolution character galleries without the social-network sprawl.**
+[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare_Workers-F38020?style=for-the-badge&logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
+[![TypeScript](https://img.shields.io/badge/typescript-6.0-3178c6?logo=typescript&logoColor=white&style=for-the-badge)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/node.js-24-5fa04e?logo=nodedotjs&logoColor=white&style=for-the-badge)](package.json)
+[![License](https://img.shields.io/github/license/razethion/myoc?style=for-the-badge)](LICENSE)
 
-[![Runs on Cloudflare Workers](https://img.shields.io/badge/Runs_on-Cloudflare_Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
+MyOC is a high-resolution original-character gallery built on Cloudflare Workers. It gives character owners a focused
+place to create profiles, organize characters into folders, upload character media, preserve full-resolution art, and
+share clean profile or character links.
 
-[Features](#features) |
-[Quickstart](#quickstart) |
-[Contributing](./CONTRIBUTING.md) |
-[Security](./SECURITY.md) |
-[License](./LICENSE)
+The app is intentionally gallery-first. It is not trying to be a social network, marketplace, custom website builder, or
+general lore platform. See the product direction in the in-app `/product-vision` page and the source in
+[src/views/pages/ProductVisionPage.tsx](src/views/pages/ProductVisionPage.tsx).
 
-MyOC is a simple webapp for hosting, organizing, and sharing original character media. It is built for character owners,
-artists, and communities that want clean character references, full-resolution media, searchable public profiles, and
-useful gallery tools without turning the product into a feed-driven social network.
+## Highlights
 
-## Principles
+- **High-quality galleries**: uploads keep their original image bytes and format while also generating fast previews.
+- **Character management**: users can create characters, folders, profile images, descriptions, gallery tabs, and custom
+  gallery layouts.
+- **Size charts**: characters can have calibrated height-chart images that are searchable and shareable.
+- **Toyhou.se migration**: authenticated users can import character and gallery data from Toyhou.se.
+- **Content controls**: SFW/NSFW media variants, blur assets, user display preferences, and image approval workflows are
+  part of the product model.
+- **Passkey support**: accounts can use WebAuthn passkeys, recovery phrases, and session controls.
+- **Cloudflare-native operations**: D1 stores relational data, R2 stores media, KV caches derived views, and scheduled
+  Worker jobs handle backup, cleanup, and leaderboard refresh work.
 
-- Keep character galleries fast, readable, and easy to maintain.
-- Preserve media quality wherever practical.
-- Prefer shared, consistent profile layouts over custom CSS per profile.
-- Add tools only when they support character browsing or gallery management.
-- Keep operations simple enough to run reliably on Cloudflare.
+## Stack
 
-## Features
+- TypeScript, Hono, and `hono/jsx` for the Worker and server-rendered UI.
+- Tailwind CSS 4 and daisyUI 5 for styling.
+- Cloudflare Workers, D1, R2, KV, Images, and Cron Triggers for runtime infrastructure.
+- Vitest with `@cloudflare/vitest-pool-workers` for Worker-aware tests.
+- Biome, TypeScript, Knip, and Semgrep for quality checks.
 
-- Character profiles with folders, profile images, descriptions, social links, and ordered character lists.
-- Gallery editing with tabs, rows, custom ordering, full-width rows, and original media storage.
-- Media previews, admin image approval, and report handling.
-- User and character search with direct links to public pages.
-- Character height calibration, shareable size charts, and site-wide size comparison.
-- Toyhou.se migration flow for importing characters and gallery images.
-- Versioned release notes shown to signed-in users.
+## Getting Started
 
-## Quickstart
+### Requirements
 
-Requirements: Node.js 22 or newer, npm, and Wrangler access for Cloudflare-backed development tasks.
+- Node.js `>=24 <25`
+- npm 11
+- Wrangler access to the Cloudflare account when running the full Worker locally or deploying
+
+### Install
 
 ```sh
-npm install
+git clone https://github.com/razethion/myoc.git
+cd myoc
+npm ci
 cp .dev.vars.example .dev.vars
+```
+
+Authenticate Wrangler if you are running the full Worker locally or deploying:
+
+```sh
+npx wrangler login
+```
+
+Prepare the local D1 database and seed development data:
+
+```sh
 npm run db:prepare:local
+```
+
+Start the development server:
+
+```sh
 npm run dev
 ```
 
-Seeded local accounts use `password123`; the `demo` user is available after loading development seed data.
+Wrangler prints the local URL, usually `http://localhost:8787`.
 
-Before opening a pull request, run:
+Seeded local accounts:
 
-```sh
-npm run ci
-npm run security
-npm run build
+| Username | Email | Password |
+| --- | --- | --- |
+| `demo` | `demo@example.test` | `password123` |
+| `artist` | `artist@example.test` | `password123` |
+| `collector` | `collector@example.test` | `password123` |
+
+### Try It
+
+Open the local site and sign in with a seeded account:
+
+```text
+http://localhost:8787/login
 ```
 
-## Common Commands
+Useful local routes:
 
-| Command                    | Purpose                                                                    |
-|----------------------------|----------------------------------------------------------------------------|
-| `npm run dev`              | Generate Cloudflare types, build assets, and start local development.      |
-| `npm run ci`               | Run lint, type generation, TypeScript checks, tests, and dead-code checks. |
-| `npm run security`         | Run Semgrep using a local Semgrep install or Docker.                       |
-| `npm run build`            | Build public assets.                                                       |
-| `npm run db:prepare:local` | Apply local migrations and seed data.                                      |
-| `npm run deploy`           | Run checks, build assets, and deploy.                                      |
+- `/` - homepage, search, discovery, and public gallery previews
+- `/characters` - signed-in character and folder management
+- `/settings` - profile, social links, passkeys, recovery, and sessions
+- `/migrate` - Toyhou.se migration flow
+- `/search` - user and character search
+- `/leaderboard` - leaderboard view
+- `/size-chart` - character size-chart comparison
+- `/whats-new` - release notes from [src/lib/releases.ts](src/lib/releases.ts)
 
-## Repository Guide
+Example read-only API request:
 
-| Path                         | Purpose                                                         |
-|------------------------------|-----------------------------------------------------------------|
-| [`src/routes`](./src/routes) | Page and API route handlers.                                    |
-| [`src/views`](./src/views)   | Server-rendered layouts, components, and pages.                 |
-| [`src/lib`](./src/lib)       | Auth, media, search, admin, gallery, and shared business logic. |
-| [`migrations`](./migrations) | D1 schema history.                                              |
-| [`scripts`](./scripts)       | Local utility scripts.                                          |
-| [`.github`](./.github)       | Issue templates and CI/deployment workflows.                    |
+```sh
+curl "http://localhost:8787/api/search?type=characters&q=raz"
+```
 
-## Project Documents
+## Development
 
-- [Contributing](./CONTRIBUTING.md)
-- [Code of Conduct](./CODE_OF_CONDUCT.md)
-- [Support](./SUPPORT.md)
-- [Security](./SECURITY.md)
-- [Contributor License Agreement](./CLA.md)
-- [License](./LICENSE)
+Common commands:
+
+```sh
+npm run build
+npm run typecheck
+npm run lint
+npm run test
+npm run coverage
+npm run deadcode
+npm run semgrep
+npm run ci
+```
+
+Project layout:
+
+| Path | Purpose |
+| --- | --- |
+| [src/index.ts](src/index.ts) | Worker entry point, route mounting, and scheduled job dispatch |
+| [src/routes](src/routes) | Page routes, API routes, and form-action handlers |
+| [src/views](src/views) | Server-rendered JSX pages, layouts, and components |
+| [src/lib](src/lib) | Auth, media, search, leaderboard, admin, database backup, and HTTP helpers |
+| [src/test](src/test) | Worker binding mocks and test utilities |
+| [migrations](migrations) | Numbered D1 schema migrations |
+| [seeds/development.sql](seeds/development.sql) | Local and preview seed data |
+| [public](public) | Static assets copied or served by the Worker |
+| [vendor](vendor) | Checked-in vendor extensions copied during `npm run build` |
+| [scripts](scripts) | Build, security, and environment maintenance scripts |
+
+Database changes should be added as new numbered files in [migrations](migrations). Do not edit migrations that may
+already be applied. Update [seeds/development.sql](seeds/development.sql) when schema changes would break local setup.
+
+## Deployment
+
+Production and pull-request preview deployments run through
+[.github/workflows/checks.yml](.github/workflows/checks.yml).
+
+Manual deployment uses the same quality gate:
+
+```sh
+npm run deploy
+```
+
+The Worker configuration lives in [wrangler.jsonc](wrangler.jsonc). Required production secrets are declared there; keep
+real credentials out of the repository and in Wrangler or `.dev.vars`.
+
+## Help
+
+- Read [SUPPORT.md](SUPPORT.md) before opening support issues.
+- Report vulnerabilities through [SECURITY.md](SECURITY.md), not public issues.
+- Review project expectations in [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+- Check local setup and contribution notes in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Maintainers and Contributors
+
+MyOC is maintained by [@razethion](https://github.com/razethion).
+
+Contributions are welcome when they improve the focused character-gallery product. Before opening a pull request, read
+[CONTRIBUTING.md](CONTRIBUTING.md) and [CLA.md](CLA.md). By contributing, you agree to the contributor license agreement
+and confirm that you have the right to submit the work.
 
 ## License
 
-MyOC is open-source software licensed under the GNU General Public License version 3. See
-[`LICENSE`](./LICENSE) for the full license text.
+MyOC is licensed under [GPL-3.0-only](LICENSE).
