@@ -1,20 +1,24 @@
 ---
 name: Feature request
-about: Suggest an idea for this project
+about: Suggest a focused character-gallery improvement
 title: ''
-labels: ''
+labels: enhancement
 assignees: ''
 
 ---
 
 **Is your feature request related to a problem? Please describe.**
-A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
+A clear description of the user problem. Feature ideas should start with the workflow or confusion they solve.
 
 **Describe the solution you'd like**
-A clear and concise description of what you want to happen.
+A clear description of what you want to happen.
 
 **Describe alternatives you've considered**
-A clear and concise description of any alternative solutions or features you've considered.
+A clear description of any alternative solutions or features you've considered.
+
+**Product fit**
+How does this support MyOC's focus on character galleries, profile maintenance, media quality, search, migration,
+moderation, security, reliability, or operations?
 
 **Additional context**
 Add any other context or screenshots about the feature request here.

@@ -1,14 +1,14 @@
 ---
 name: Bug report
-about: Create a report to help us improve
+about: Report a reproducible MyOC defect
 title: ''
-labels: ''
+labels: bug
 assignees: ''
 
 ---
 
 **Describe the bug**
-A clear and concise description of what the bug is.
+A clear description of the defect.
 
 **To Reproduce**
 Steps to reproduce the behavior:
@@ -20,19 +20,19 @@ Steps to reproduce the behavior:
 **Expected behavior**
 A clear and concise description of what you expected to happen.
 
-**Screenshots**
-If applicable, add screenshots to help explain your problem.
+**Affected area**
+Which workflow is affected? For example: login, passkeys, settings, profile, character management, gallery uploads,
+gallery layout, folders, size chart, search, Toyhou.se migration, admin review, or local development.
 
-**Desktop (please complete the following information):**
- - OS: [e.g. iOS]
- - Browser [e.g. chrome, safari]
- - Version [e.g. 22]
+**Screenshots or logs**
+If applicable, add screenshots, request IDs, console output, or server logs.
 
-**Smartphone (please complete the following information):**
- - Device: [e.g. iPhone6]
- - OS: [e.g. iOS8.1]
- - Browser [e.g. stock browser, safari]
- - Version [e.g. 22]
+**Environment**
+- OS:
+- Browser and version:
+- Device:
+- Node.js and npm versions, for local setup bugs:
+- Wrangler authenticated, for local Cloudflare bugs:
 
 **Additional context**
 Add any other context about the problem here.

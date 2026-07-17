@@ -19,30 +19,34 @@ website builder, or general lore platform.
 
 ## Local Setup
 
+Use Node.js 24 and npm 11, matching [`package.json`](./package.json).
+
 ```sh
-npm install
+npm ci
 cp .dev.vars.example .dev.vars
+npx wrangler login
 npm run db:prepare:local
 npm run dev
 ```
 
-Seeded accounts use `password123` as the password.
+Wrangler prints the local URL, usually `http://localhost:8787`. Seeded accounts use `password123` as the password.
 
 ## Checks
 
 Before opening a pull request, run:
 
 ```sh
-npm run check
+npm run ci
 npm run build
 ```
 
-Use `npm run test` while actively working on tests.
+Use `npm run test` while actively working on tests, and `npm run coverage` when you need a local coverage report.
 
-If you change Cloudflare bindings in [`wrangler.jsonc`](./wrangler.jsonc), run:
+If you change Cloudflare bindings in [`wrangler.jsonc`](./wrangler.jsonc), run the typecheck command so Wrangler
+regenerates Worker types before TypeScript runs:
 
 ```sh
-npm run cf-typegen
+npm run typecheck
 ```
 
 Generated files such as `worker-configuration.d.ts`, `public/app.css`, and `public/vendor` are local build artifacts and
@@ -75,6 +79,6 @@ A good pull request should:
 - Include screenshots or short recordings for visible UI changes.
 - Include tests for behavior changes when practical.
 - Update documentation when setup, commands, policy, or behavior changes.
-- Pass `npm run check` and `npm run build`.
+- Pass `npm run ci` and `npm run build`.
 
 Do not report security vulnerabilities in public issues. Follow [SECURITY.md](./SECURITY.md).
