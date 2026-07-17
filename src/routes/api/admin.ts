@@ -8,7 +8,7 @@ import {
     isValidImageApprovalAction,
     queueImageReview,
 } from '../../lib/admin/imageApprovals'
-import {type AdminJobName, type AdminJobRunResult, getAdminJobRuns, isAdminJobName, runAdminJob} from '../../lib/admin/jobs'
+import {type AdminJobName, type AdminJobRunResult, isAdminJobName, runAdminJob} from '../../lib/admin/jobs'
 import {getAdminReportsData} from '../../lib/admin/reports'
 import {requireAdminApiUser, requireImageModeratorApiUser} from '../../lib/auth/authorization'
 import {toSqlTimestamp} from '../../lib/auth/session'
@@ -16,10 +16,8 @@ import {jsonResponse} from '../../lib/http/jsonResponse'
 import {
     AdminImageReportSchema,
     AdminJobRunResultSchema,
-    AdminJobRunSchema,
     ErrorResponseSchema,
     ImageApprovalDataSchema,
-    OkResponseSchema,
     responseSchema,
 } from '../../lib/http/responseSchemas'
 import {
@@ -38,9 +36,6 @@ const GALLERY_PREVIEW_CONTENT_TYPE = 'image/webp'
 const GALLERY_NSFW_BLUR_MAX_WIDTH = 960
 const GALLERY_NSFW_BLUR_AMOUNT = 250
 const GALLERY_NSFW_BLUR_QUALITY = 85
-const AdminJobsResponseSchema = responseSchema({
-    runs: z.array(AdminJobRunSchema),
-})
 const AdminJobActionResponseSchema = z.union([
     responseSchema({
         ok: z.literal(true),
@@ -139,42 +134,6 @@ type MediaReviewUpdate = {
         homepageAllowed: boolean
     }>
 }
-
-adminRoutes.get('/', async (c) => {
-    const authorization = await requireAdminApiUser(c)
-
-    if ('response' in authorization) {
-        return authorization.response
-    }
-
-    return jsonResponse(c, OkResponseSchema, {ok: true})
-})
-
-adminRoutes.get('/image-approvals', async (c) => {
-    const authorization = await requireImageModeratorApiUser(c)
-
-    if ('response' in authorization) {
-        return authorization.response
-    }
-
-    return jsonResponse(
-        c,
-        ImageApprovalDataSchema,
-        await getImageApprovalData(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, authorization.currentUser.id),
-    )
-})
-
-adminRoutes.get('/jobs', async (c) => {
-    const authorization = await requireAdminApiUser(c)
-
-    if ('response' in authorization) {
-        return authorization.response
-    }
-
-    return jsonResponse(c, AdminJobsResponseSchema, {
-        runs: await getAdminJobRuns(c.env.DB),
-    })
-})
 
 adminRoutes.post('/jobs/:jobName/run', async (c) => {
     const authorization = await requireAdminApiUser(c)

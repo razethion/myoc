@@ -492,73 +492,6 @@ characterRoutes.put('/folders/:id/placements', async (c) => {
     return jsonResponse(c, OkResponseSchema, {ok: true})
 })
 
-characterRoutes.post('/tree', async (c) => {
-    const currentUser = await getCurrentUser(c)
-
-    if (!currentUser) {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
-    }
-
-    let body: SortTreeRequest
-
-    try {
-        body = await c.req.json<SortTreeRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
-    }
-
-    if (!Array.isArray(body.items)) {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Tree items are required'}, 400)
-    }
-
-    const flattened = flattenTreeItems(body.items)
-
-    if ('error' in flattened) {
-        return jsonResponse(c, ErrorResponseSchema, {error: flattened.error}, 400)
-    }
-
-    const ownership = await validateTreeOwnership(c.env.DB, currentUser.id, flattened.items)
-
-    if ('error' in ownership) {
-        return jsonResponse(c, ErrorResponseSchema, {error: ownership.error}, 400)
-    }
-
-    const now = toSqlTimestamp(new Date())
-    const statements: D1PreparedStatement[] = []
-
-    for (const item of flattened.items) {
-        if (item.type === 'folder') {
-            statements.push(
-                c.env.DB.prepare(
-                    `UPDATE character_folders
-                 SET parent_folder_id = ?,
-                     sort_order = ?,
-                     updated_at = ?
-                 WHERE id = ?
-                   AND user_id = ?`,
-                ).bind(item.parentFolderId, item.sortOrder, now, item.id, currentUser.id),
-            )
-        } else {
-            statements.push(
-                c.env.DB.prepare(
-                    `UPDATE characters
-                 SET folder_id = ?,
-                     sort_order = ?,
-                     updated_at = ?
-                 WHERE id = ?
-                   AND user_id = ?`,
-                ).bind(item.parentFolderId, item.sortOrder, now, item.id, currentUser.id),
-            )
-        }
-    }
-
-    if (statements.length > 0) {
-        await c.env.DB.batch(statements)
-    }
-
-    return jsonResponse(c, OkResponseSchema, {ok: true})
-})
-
 characterRoutes.post('/folders', async (c) => {
     const currentUser = await getCurrentUser(c)
 
@@ -3325,47 +3258,6 @@ function normalizeOrderedIds(value: unknown, label: string): {ids: string[]} | {
     }
 
     return {ids}
-}
-
-async function validateTreeOwnership(
-    db: D1Database,
-    userId: string,
-    items: FlattenedTreeItem[],
-): Promise<
-    | {
-          ok: true
-      }
-    | {error: string}
-> {
-    const folderIds = new Set<string>()
-    const characterIds = new Set<string>()
-
-    for (const item of items) {
-        if (item.type === 'folder') {
-            folderIds.add(item.id)
-        } else {
-            characterIds.add(item.id)
-        }
-    }
-
-    const [ownedFolderIds, ownedCharacterIds] = await Promise.all([
-        getOwnedFolderIds(db, userId, [...folderIds]),
-        getOwnedCharacterIds(db, userId, [...characterIds]),
-    ])
-
-    for (const folderId of folderIds) {
-        if (!ownedFolderIds.has(folderId)) {
-            return {error: 'Tree contains folders that do not belong to the current user'}
-        }
-    }
-
-    for (const characterId of characterIds) {
-        if (!ownedCharacterIds.has(characterId)) {
-            return {error: 'Tree contains characters that do not belong to the current user'}
-        }
-    }
-
-    return {ok: true}
 }
 
 async function getOwnedFolderIds(db: D1Database, userId: string, folderIds: string[]): Promise<Set<string>> {
