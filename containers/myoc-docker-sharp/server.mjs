@@ -96,11 +96,11 @@ async function handlePreviewRequest(request, response) {
 
         console.log('Preview container processed image', {
             durationMs: Date.now() - startedAt,
-            previewBytes: result.bytes.byteLength,
+            previewBytes: Buffer.byteLength(result.bytes),
             previewHeight: result.height,
             previewWidth: result.width,
             requestId,
-            sourceBytes: sourceBytes.byteLength,
+            sourceBytes: Buffer.byteLength(sourceBytes),
             ...source,
         })
 
@@ -132,12 +132,13 @@ function isAuthorized(request) {
 
     const authorization = request.headers.authorization ?? ''
     const prefix = 'Bearer '
+    const prefixCharacters = 7
 
     if (!authorization.startsWith(prefix)) {
         return false
     }
 
-    return timingSafeStringEqual(authorization.slice(prefix.length), token)
+    return timingSafeStringEqual(authorization.slice(prefixCharacters), token)
 }
 
 function timingSafeStringEqual(left, right) {
@@ -212,7 +213,7 @@ async function readResponseBytes(response, maxBytes) {
             break
         }
 
-        receivedBytes += value.byteLength
+        receivedBytes += Buffer.byteLength(value)
 
         if (receivedBytes > maxBytes) {
             await reader.cancel()
@@ -264,7 +265,7 @@ function readRequestText(request, maxBytes) {
 
         request.on('data', (chunk) => {
             const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-            receivedBytes += bytes.byteLength
+            receivedBytes += Buffer.byteLength(bytes)
 
             if (receivedBytes > maxBytes) {
                 request.destroy()
