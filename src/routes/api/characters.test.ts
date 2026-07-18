@@ -4,7 +4,6 @@ import {
     createGifFile,
     createMalformedWebpFile,
     createOversizedWebpFile,
-    createPaddedWebpDataUrl,
     createPngFile,
     createWebpDataUrl,
     createWebpFile,
@@ -312,6 +311,8 @@ async function completeChunkedMedia(
     db: D1Database,
     options: CharacterRequestOptions = {},
 ): Promise<Response> {
+    mockCloudflareImagePreviewResponse(body)
+
     return apiRoutes.request(
         `https://example.com/characters/${characterId}/media/chunked/complete`,
         {
@@ -321,6 +322,90 @@ async function completeChunkedMedia(
         },
         requestEnv(db, options.mediaBucket, options.imagesBinding),
     )
+}
+
+function mockCloudflareImagePreviewResponse(body: unknown): void {
+    const preview = firstPreviewPayload(body)
+    const upload = firstCompletedUpload(body)
+
+    if (!upload) {
+        return
+    }
+
+    const dimensions = expectedPreviewDimensions(upload)
+    vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+            const bytes = preview
+                ? decodePreviewPayloadBytes(preview.data)
+                : new Uint8Array(await createWebpFile(dimensions.width, dimensions.height).arrayBuffer())
+            return new Response(bytes, {
+                headers: {
+                    'content-type': 'image/webp',
+                },
+            })
+        }),
+    )
+}
+
+function firstPreviewPayload(body: unknown): {data: string} | null {
+    if (!body || typeof body !== 'object') {
+        return null
+    }
+
+    const record = body as Record<string, unknown>
+
+    for (const key of ['sfwPreview', 'nsfwPreview']) {
+        const preview = record[key]
+
+        if (preview && typeof preview === 'object' && typeof (preview as {data?: unknown}).data === 'string') {
+            return {data: (preview as {data: string}).data}
+        }
+    }
+
+    return null
+}
+
+function decodePreviewPayloadBytes(value: string): Uint8Array {
+    const data = value.replace(/^data:image\/webp;base64,/i, '')
+    const binary = atob(data)
+    const bytes = new Uint8Array(binary.length)
+
+    for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index)
+    }
+
+    return bytes
+}
+
+function firstCompletedUpload(body: unknown): {width: number; height: number} | null {
+    if (!body || typeof body !== 'object') {
+        return null
+    }
+
+    const record = body as Record<string, unknown>
+
+    for (const key of ['sfwUpload', 'nsfwUpload']) {
+        const upload = record[key]
+
+        if (upload && typeof upload === 'object' && 'width' in upload && 'height' in upload) {
+            return {
+                width: Number((upload as {width: unknown}).width),
+                height: Number((upload as {height: unknown}).height),
+            }
+        }
+    }
+
+    return null
+}
+
+function expectedPreviewDimensions(original: {width: number; height: number}): {width: number; height: number} {
+    const scale = Math.min(1, 1600 / Math.max(original.width, original.height))
+
+    return {
+        width: Math.max(1, Math.round(original.width * scale)),
+        height: Math.max(1, Math.round(original.height * scale)),
+    }
 }
 
 async function initExistingChunkedMedia(
@@ -348,6 +433,8 @@ async function completeExistingChunkedMedia(
     db: D1Database,
     options: CharacterRequestOptions = {},
 ): Promise<Response> {
+    mockCloudflareImagePreviewResponse(body)
+
     return apiRoutes.request(
         `https://example.com/characters/${characterId}/media/${mediaId}/chunked/complete`,
         {
@@ -376,6 +463,8 @@ async function completeToyhouseImportItem(
     db: D1Database,
     options: CharacterRequestOptions = {},
 ): Promise<Response> {
+    mockCloudflareImagePreviewResponse(body)
+
     return apiRoutes.request(
         `https://example.com/characters/toyhouse-import-items/${itemId}/complete`,
         {
@@ -3394,10 +3483,10 @@ describe('character media uploads', () => {
         )
     })
 
-    it('rejects chunked gallery previews whose dimensions do not match the downscaled original', async () => {
+    it('rejects chunked gallery media larger than 200 MB', async () => {
         const {sessionToken, mediaBucket, character, db, csrfToken, initBody} = await createChunkedSfwUploadTestContext()
 
-        const pngFile = createPngFile(10000, 5000)
+        const pngFile = createPngFile(800, 600)
         const partResponse = await putChunkedMediaPart(
             character.id,
             initBody.mediaId,
@@ -3410,6 +3499,9 @@ describe('character media uploads', () => {
             {mediaBucket, sessionToken, csrfToken},
         )
         const uploadedPart = (await partResponse.json()) as R2UploadedPart
+        vi.mocked(mediaBucket.resumeMultipartUpload).mockReturnValueOnce({
+            complete: vi.fn(async () => ({size: 200 * 1024 * 1024 + 1})),
+        } as unknown as R2MultipartUpload)
 
         const completeResponse = await completeChunkedMedia(
             character.id,
@@ -3419,11 +3511,10 @@ describe('character media uploads', () => {
                     uploadId: initBody.uploads.sfw.uploadId,
                     imageKey: initBody.uploads.sfw.imageKey,
                     contentType: 'image/png',
-                    width: 10000,
-                    height: 5000,
+                    width: 800,
+                    height: 600,
                     parts: [uploadedPart],
                 },
-                sfwPreview: createPreviewPayload(1600, 1000),
             },
             db,
             {
@@ -3435,14 +3526,17 @@ describe('character media uploads', () => {
 
         expect(completeResponse.status).toBe(400)
         expect(await completeResponse.json()).toEqual({
-            error: 'SFW preview dimensions must match the uploaded image scaled to 1600px',
+            error: 'SFW image must be 200 MB or smaller',
         })
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            `characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.png`,
+        )
     })
 
-    it('rejects gallery previews that are too large for their dimensions', async () => {
+    it('rejects chunked gallery media larger than 200,000,000 pixels', async () => {
         const {sessionToken, mediaBucket, character, db, csrfToken, initBody} = await createChunkedSfwUploadTestContext()
 
-        const pngFile = createPngFile(1, 1)
+        const pngFile = createPngFile(20001, 10000)
         const partResponse = await putChunkedMediaPart(
             character.id,
             initBody.mediaId,
@@ -3464,15 +3558,9 @@ describe('character media uploads', () => {
                     uploadId: initBody.uploads.sfw.uploadId,
                     imageKey: initBody.uploads.sfw.imageKey,
                     contentType: 'image/png',
-                    width: 1,
-                    height: 1,
+                    width: 20001,
+                    height: 10000,
                     parts: [uploadedPart],
-                },
-                sfwPreview: {
-                    data: createPaddedWebpDataUrl(1, 1, 5000),
-                    contentType: 'image/webp',
-                    width: 1,
-                    height: 1,
                 },
             },
             db,
@@ -3485,10 +3573,11 @@ describe('character media uploads', () => {
 
         expect(completeResponse.status).toBe(400)
         expect(await completeResponse.json()).toEqual({
-            error: 'SFW preview is too large for its dimensions',
+            error: 'SFW image must be 200,000,000 pixels or smaller',
         })
-        expect(mediaBucket.createMultipartUpload).toHaveBeenCalledTimes(1)
-        expect(mediaBucket.put).not.toHaveBeenCalled()
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            `characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.png`,
+        )
     })
 
     it('keeps chunked GIF gallery media as GIF', async () => {
@@ -3857,44 +3946,6 @@ describe('character media uploads', () => {
         {
             body: {removeSfw: true},
             error: 'At least one image must remain on media',
-        },
-        {
-            body: {
-                sfwUpload: {
-                    uploadId: 'upload-id',
-                    imageKey: 'sfw-image',
-                    contentType: 'image/png',
-                    width: 800,
-                    height: 600,
-                    parts: [{partNumber: 1, etag: 'etag-1'}],
-                },
-            },
-            error: 'SFW preview is required',
-        },
-        {
-            body: {
-                nsfwUpload: {
-                    uploadId: 'upload-id',
-                    imageKey: 'nsfw-image',
-                    contentType: 'image/png',
-                    width: 800,
-                    height: 600,
-                    parts: [{partNumber: 1, etag: 'etag-1'}],
-                },
-            },
-            error: 'NSFW preview is required',
-        },
-        {
-            body: {
-                sfwPreview: createPreviewPayload(800, 600),
-            },
-            error: 'SFW preview requires an SFW upload',
-        },
-        {
-            body: {
-                nsfwPreview: createPreviewPayload(800, 600),
-            },
-            error: 'NSFW preview requires an NSFW upload',
         },
     ])('rejects invalid existing media chunked completions with $error', async ({body, error}) => {
         const sessionToken = 'session-token'
