@@ -74,10 +74,10 @@ Wrangler prints the local URL, usually `http://localhost:8787`.
 
 Seeded local accounts:
 
-| Username | Email | Password |
-| --- | --- | --- |
-| `demo` | `demo@example.test` | `password123` |
-| `artist` | `artist@example.test` | `password123` |
+| Username    | Email                    | Password      |
+|-------------|--------------------------|---------------|
+| `demo`      | `demo@example.test`      | `password123` |
+| `artist`    | `artist@example.test`    | `password123` |
 | `collector` | `collector@example.test` | `password123` |
 
 ### Try It
