@@ -2662,7 +2662,9 @@ async function generateMediaPreviewWithCloudflareImages(
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
-            const response = await fetch(previewUrl, {
+            const attemptUrl = new URL(previewUrl)
+            attemptUrl.searchParams.set('preview-attempt', String(attempt))
+            const response = await fetch(attemptUrl, {
                 headers: {
                     accept: 'image/webp,image/*,*/*;q=0.8',
                 },
