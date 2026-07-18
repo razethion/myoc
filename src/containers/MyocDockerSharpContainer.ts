@@ -18,6 +18,7 @@ export class MyocDockerSharpContainer extends Container<MyocDockerSharpContainer
         this.envVars = {
             PREVIEW_PROCESSOR_TOKEN: env.PREVIEW_PROCESSOR_TOKEN,
             SOURCE_IMAGE_MAX_BYTES: String(256 * 1024 * 1024),
+            SOURCE_LIMIT_INPUT_PIXELS: String(200_000_000),
         }
     }
 
