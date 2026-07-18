@@ -2649,6 +2649,8 @@ async function generateMediaPreviewWithCloudflareImages(
     sourceObjectKey: string,
     image: CompletedGalleryUpload,
 ): Promise<ParsedPreviewImage> {
+    const maxAttempts = 3
+    const retryDelayMs = 2_000
     const options = new URLSearchParams()
     options.set('width', String(GALLERY_PREVIEW_MAX_LONG_EDGE))
     options.set('height', String(GALLERY_PREVIEW_MAX_LONG_EDGE))
@@ -2656,16 +2658,27 @@ async function generateMediaPreviewWithCloudflareImages(
     options.set('format', 'webp')
     options.set('quality', String(GALLERY_PREVIEW_QUALITY))
 
-    const response = await fetch(
-        `${mediaPublicBaseUrl}/cdn-cgi/image/${[...options.entries()].map(([key, value]) => `${key}=${value}`).join(',')}/${sourceObjectKey}`,
-        {
-            headers: {
-                accept: 'image/webp,image/*,*/*;q=0.8',
-            },
-        },
-    )
+    const previewUrl = `${mediaPublicBaseUrl}/cdn-cgi/image/${[...options.entries()].map(([key, value]) => `${key}=${value}`).join(',')}/${sourceObjectKey}`
 
-    return await previewFromResponse(response, image, 'Cloudflare Images preview')
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+            const response = await fetch(previewUrl, {
+                headers: {
+                    accept: 'image/webp,image/*,*/*;q=0.8',
+                },
+            })
+
+            return await previewFromResponse(response, image, 'Cloudflare Images preview')
+        } catch (error) {
+            if (attempt === maxAttempts) {
+                throw error
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
+        }
+    }
+
+    throw new Error('Cloudflare Images preview failed unexpectedly.')
 }
 
 async function generateMediaPreviewWithContainer(
