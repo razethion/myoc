@@ -1,6 +1,6 @@
 import {Buffer} from 'node:buffer'
 import http from 'node:http'
-import {createHash, timingSafeEqual} from 'node:crypto'
+import {createHash, randomUUID, timingSafeEqual} from 'node:crypto'
 import process from 'node:process'
 import sharp from 'sharp'
 
@@ -78,9 +78,28 @@ async function handlePreviewRequest(request, response) {
         return
     }
 
+    const requestId = randomUUID()
+    const startedAt = Date.now()
+    const source = describeSourceUrl(imageUrl)
+
+    console.log('Preview container processing image', {
+        requestId,
+        ...source,
+    })
+
     try {
         const sourceBytes = await fetchImageBytes(imageUrl)
         const result = await createWebpPreview(sourceBytes)
+
+        console.log('Preview container processed image', {
+            durationMs: Date.now() - startedAt,
+            previewBytes: result.bytes.byteLength,
+            previewHeight: result.height,
+            previewWidth: result.width,
+            requestId,
+            sourceBytes: sourceBytes.byteLength,
+            ...source,
+        })
 
         response.writeHead(200, {
             'cache-control': 'no-store',
@@ -92,7 +111,10 @@ async function handlePreviewRequest(request, response) {
         response.end(result.bytes)
     } catch (error) {
         console.error('Preview generation failed', {
+            durationMs: Date.now() - startedAt,
             error: error instanceof Error ? error.message : String(error),
+            requestId,
+            ...source,
         })
         sendJson(response, 502, {error: 'Preview generation failed'})
     }
@@ -132,6 +154,15 @@ function isAllowedSourceUrl(value) {
     }
 
     return url.protocol === 'https:' || (allowHttpSourceUrls && url.protocol === 'http:')
+}
+
+function describeSourceUrl(value) {
+    const url = new URL(value)
+
+    return {
+        sourceHost: url.host,
+        sourcePath: url.pathname,
+    }
 }
 
 async function fetchImageBytes(imageUrl) {
