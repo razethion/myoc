@@ -35,14 +35,6 @@ export function createWebpDataUrl(width = 512, height = 512): string {
     return webpBytesToDataUrl(bytes)
 }
 
-export function createPaddedWebpDataUrl(width: number, height: number, byteLength: number): string {
-    const baseBytes = createVp8xWebpBytes(width, height)
-    const bytes = new Uint8Array(Math.max(byteLength, baseBytes.byteLength))
-    bytes.set(baseBytes)
-
-    return webpBytesToDataUrl(bytes)
-}
-
 function webpBytesToDataUrl(bytes: Uint8Array): string {
     let binary = ''
 
