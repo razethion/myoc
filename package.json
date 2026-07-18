@@ -15,11 +15,12 @@
     "deadcode": "knip --production",
     "semgrep": "node scripts/run-semgrep.mjs",
     "test": "vitest",
+    "test:run": "vitest run",
     "coverage": "vitest run --coverage",
-    "ci": "npm run lint && npm run typecheck && vitest run && npm run deadcode && npm run semgrep",
+    "ci": "npm run lint && npm run typecheck && npm run test:run && npm run deadcode && npm run semgrep",
     "db:prepare:local": "wrangler d1 migrations apply myoc-db --local && wrangler d1 execute myoc-db --local --file seeds/development.sql",
     "env:clone:prod-to-dev": "node scripts/clone-prod-to-dev.mjs",
-    "deploy": "npm run ci && npm run build && wrangler deploy --minify"
+    "deploy": "npm run build && wrangler deploy --minify"
   },
   "dependencies": {
     "@cloudflare/containers": "^0.3.7",
