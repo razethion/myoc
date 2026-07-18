@@ -1,7 +1,18 @@
 {
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
   "files": {
-    "includes": ["src/**", "scripts/**", "package.json", "tsconfig.json", "wrangler.jsonc", "vitest.config.ts", "biome.json", "knip*.json"]
+    "includes": [
+      "src/**",
+      "scripts/**",
+      "containers/**/*.mjs",
+      "containers/**/package.json",
+      "package.json",
+      "tsconfig.json",
+      "wrangler.jsonc",
+      "vitest.config.ts",
+      "biome.json",
+      "knip*.json"
+    ]
   },
   "formatter": {
     "indentStyle": "space",
@@ -39,6 +50,16 @@
         "rules": {
           "suspicious": {
             "noTemplateCurlyInString": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["containers/myoc-docker-sharp/server.mjs"],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "useLiteralKeys": "off"
           }
         }
       }

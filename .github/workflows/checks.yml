@@ -42,6 +42,15 @@ jobs:
       - name: Run quality checks
         run: npm run ci
 
+      - name: Upload coverage to Codecov
+        if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Build preview processor container
+        run: docker build --tag myoc-docker-sharp-ci containers/myoc-docker-sharp
+
   deploy-production:
     name: Deploy production
     needs: quality

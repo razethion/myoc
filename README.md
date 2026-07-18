@@ -4,6 +4,7 @@
 [![TypeScript](https://img.shields.io/badge/typescript-6.0-3178c6?logo=typescript&logoColor=white&style=for-the-badge)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/node.js-24-5fa04e?logo=nodedotjs&logoColor=white&style=for-the-badge)](package.json)
 [![License](https://img.shields.io/github/license/razethion/myoc?style=for-the-badge)](LICENSE)
+[![Codecov](https://img.shields.io/codecov/c/github/razethion/myoc/master?logo=codecov&logoColor=white&style=for-the-badge)](https://codecov.io/gh/razethion/myoc)
 
 MyOC is a high-resolution original-character gallery built on Cloudflare Workers. It gives character owners a focused
 place to create profiles, organize characters into folders, upload character media, preserve full-resolution art, and
@@ -73,10 +74,10 @@ Wrangler prints the local URL, usually `http://localhost:8787`.
 
 Seeded local accounts:
 
-| Username | Email | Password |
-| --- | --- | --- |
-| `demo` | `demo@example.test` | `password123` |
-| `artist` | `artist@example.test` | `password123` |
+| Username    | Email                    | Password      |
+|-------------|--------------------------|---------------|
+| `demo`      | `demo@example.test`      | `password123` |
+| `artist`    | `artist@example.test`    | `password123` |
 | `collector` | `collector@example.test` | `password123` |
 
 ### Try It

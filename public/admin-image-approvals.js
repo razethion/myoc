@@ -1,12 +1,12 @@
 ;(() => {
-    const root = document.querySelector('[data-image-approvals]')
-    const dataScript = document.getElementById('image-approval-data')
+    const root = /** @type {HTMLElement | null} */ (document.querySelector('[data-image-approvals]'))
+    const dataScript = /** @type {HTMLElement | null} */ (document.getElementById('image-approval-data'))
 
     if (!root || !dataScript) {
         return
     }
 
-    const currentContainer = root.querySelector('[data-approval-current]')
+    const currentContainer = /** @type {HTMLElement | null} */ (root.querySelector('[data-approval-current]'))
     const csrfToken = root.dataset.csrfToken || ''
     let state = JSON.parse(dataScript.dataset.imageApprovalState || '{}')
     let selectedActions = {}
@@ -211,6 +211,10 @@
         `
 
         for (const input of currentContainer.querySelectorAll('[data-action-input]')) {
+            if (!(input instanceof HTMLInputElement)) {
+                continue
+            }
+
             input.addEventListener('change', () => {
                 selectedActions[input.dataset.actionInput || ''] = input.value
                 renderCurrent()

@@ -1,7 +1,8 @@
 import {Buffer} from 'node:buffer'
-import http from 'node:http'
 import {createHash, randomUUID, timingSafeEqual} from 'node:crypto'
+import http from 'node:http'
 import process from 'node:process'
+import timers from 'node:timers'
 import sharp from 'sharp'
 
 const port = Number.parseInt(process.env['PORT'] ?? '8080', 10)
@@ -44,15 +45,17 @@ function shutdown(signal) {
         process.exit(0)
     })
 
-    setTimeout(() => {
-        server.closeAllConnections?.()
-        process.exit(0)
-    }, 2_000).unref()
+    timers
+        .setTimeout(() => {
+            server.closeAllConnections?.()
+            process.exit(0)
+        }, 2_000)
+        .unref()
 }
 
 async function handlePreviewRequest(request, response) {
     if (request.method !== 'POST') {
-        response.writeHead(405, {'allow': 'POST'})
+        response.writeHead(405, {allow: 'POST'})
         response.end()
         return
     }
@@ -93,11 +96,11 @@ async function handlePreviewRequest(request, response) {
 
         console.log('Preview container processed image', {
             durationMs: Date.now() - startedAt,
-            previewBytes: result.bytes.byteLength,
+            previewBytes: Buffer.byteLength(result.bytes),
             previewHeight: result.height,
             previewWidth: result.width,
             requestId,
-            sourceBytes: sourceBytes.byteLength,
+            sourceBytes: Buffer.byteLength(sourceBytes),
             ...source,
         })
 
@@ -209,7 +212,7 @@ async function readResponseBytes(response, maxBytes) {
             break
         }
 
-        receivedBytes += value.byteLength
+        receivedBytes += Buffer.byteLength(value)
 
         if (receivedBytes > maxBytes) {
             await reader.cancel()
@@ -260,7 +263,8 @@ function readRequestText(request, maxBytes) {
         let receivedBytes = 0
 
         request.on('data', (chunk) => {
-            receivedBytes += chunk.byteLength
+            const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+            receivedBytes += Buffer.byteLength(bytes)
 
             if (receivedBytes > maxBytes) {
                 request.destroy()
@@ -268,7 +272,7 @@ function readRequestText(request, maxBytes) {
                 return
             }
 
-            chunks.push(chunk)
+            chunks.push(bytes)
         })
 
         request.on('end', () => resolve(Buffer.concat(chunks, receivedBytes).toString('utf8')))
