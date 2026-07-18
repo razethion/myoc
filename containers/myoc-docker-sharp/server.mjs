@@ -132,13 +132,12 @@ function isAuthorized(request) {
 
     const authorization = request.headers.authorization ?? ''
     const prefix = 'Bearer '
-    const prefixCharacters = 7
 
     if (!authorization.startsWith(prefix)) {
         return false
     }
 
-    return timingSafeStringEqual(authorization.slice(prefixCharacters), token)
+    return timingSafeStringEqual(authorization.slice(prefix.length), token)
 }
 
 function timingSafeStringEqual(left, right) {
