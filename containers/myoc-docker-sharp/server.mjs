@@ -1,6 +1,6 @@
 import {Buffer} from 'node:buffer'
 import http from 'node:http'
-import {timingSafeEqual} from 'node:crypto'
+import {createHash, timingSafeEqual} from 'node:crypto'
 import process from 'node:process'
 import sharp from 'sharp'
 
@@ -116,14 +116,10 @@ function isAuthorized(request) {
 }
 
 function timingSafeStringEqual(left, right) {
-    const leftBytes = Buffer.from(left)
-    const rightBytes = Buffer.from(right)
+    const leftDigest = createHash('sha256').update(left).digest()
+    const rightDigest = createHash('sha256').update(right).digest()
 
-    if (leftBytes.byteLength !== rightBytes.byteLength) {
-        return false
-    }
-
-    return timingSafeEqual(leftBytes, rightBytes)
+    return timingSafeEqual(leftDigest, rightDigest)
 }
 
 function isAllowedSourceUrl(value) {
