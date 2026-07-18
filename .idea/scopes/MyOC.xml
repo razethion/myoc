@@ -1,0 +1,3 @@
+<component name="DependencyValidationManager">
+  <scope name="MyOC" pattern="!file[myoc]:.agents//*&amp;&amp;!file[myoc]:.ai//*&amp;&amp;!file[myoc]:vendor//*&amp;&amp;!file:public/app.css&amp;&amp;!file[myoc]:public/vendor//*&amp;&amp;!file:worker-configuration.d.ts&amp;&amp;!file:package-lock.json&amp;&amp;!file[myoc]:coverage//*" />
+</component>

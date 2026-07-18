@@ -61,6 +61,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check Docker
+        run: docker info
+
       - name: Build assets
         run: npm run build
 
@@ -98,20 +101,26 @@ jobs:
       - name: Build assets
         run: npm run build
 
+      - name: Check Docker
+        run: docker info
+
       - name: Prepare preview metadata
         id: preview
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           preview_alias="myoc-pr-${PR_NUMBER}"
+          preview_container_name="myoc-docker-sharp-pr-${PR_NUMBER}"
 
           echo "preview_alias=$preview_alias" >> "$GITHUB_OUTPUT"
+          echo "preview_container_name=$preview_container_name" >> "$GITHUB_OUTPUT"
 
       - name: Prepare preview D1 and config
         id: preview-db
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PREVIEW_ALIAS: ${{ steps.preview.outputs.preview_alias }}
+          PREVIEW_CONTAINER_NAME: ${{ steps.preview.outputs.preview_container_name }}
           DB_NAME: myoc-pr-${{ github.event.pull_request.number }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -159,6 +168,30 @@ jobs:
             "main": "src/index.ts",
             "compatibility_date": "2026-06-10",
             "workers_dev": true,
+            "containers": [
+              {
+                "name": "$PREVIEW_CONTAINER_NAME",
+                "class_name": "MyocDockerSharpContainer",
+                "image": "./containers/myoc-docker-sharp/Dockerfile",
+                "image_build_context": "./containers/myoc-docker-sharp",
+                "instance_type": "standard-1",
+                "max_instances": 1
+              }
+            ],
+            "durable_objects": {
+              "bindings": [
+                {
+                  "name": "MYOC_DOCKER_SHARP_CONTAINER",
+                  "class_name": "MyocDockerSharpContainer"
+                }
+              ]
+            },
+            "migrations": [
+              {
+                "tag": "v1",
+                "new_sqlite_classes": ["MyocDockerSharpContainer"]
+              }
+            ],
             "assets": {
               "directory": "./public"
             },
@@ -168,6 +201,9 @@ jobs:
             },
             "vars": {
               "MEDIA_PUBLIC_BASE_URL": "https://m.dev.myoc.art"
+            },
+            "secrets": {
+              "required": ["PREVIEW_PROCESSOR_TOKEN"]
             },
             "d1_databases": [
               {
@@ -204,8 +240,19 @@ jobs:
         id: upload-preview
         run: |
           set -euo pipefail
+          trap 'rm -f preview-secrets.json' EXIT
 
-          npx wrangler deploy --config wrangler.preview.jsonc --minify --message "GitHub Actions preview ${GITHUB_SHA}" 2>&1 | tee wrangler-preview.log
+          node -e "
+            const fs = require('node:fs');
+            const token = process.env.PREVIEW_PROCESSOR_TOKEN;
+            if (!token) {
+              console.error('PREVIEW_PROCESSOR_TOKEN GitHub secret is required for preview deploys.');
+              process.exit(1);
+            }
+            fs.writeFileSync('preview-secrets.json', JSON.stringify({ PREVIEW_PROCESSOR_TOKEN: token }));
+          "
+
+          npx wrangler deploy --config wrangler.preview.jsonc --secrets-file preview-secrets.json --minify --message "GitHub Actions preview ${GITHUB_SHA}" 2>&1 | tee wrangler-preview.log
 
           preview_url="$(node -e "
             const fs = require('node:fs');
@@ -225,6 +272,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PREVIEW_PROCESSOR_TOKEN: ${{ secrets.PREVIEW_PROCESSOR_TOKEN }}
 
       - name: Comment preview link
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
@@ -328,3 +376,49 @@ jobs:
           else
             echo "Preview Worker $WORKER_NAME does not exist or could not be deleted; nothing to clean up."
           fi
+
+      - name: Delete preview container
+        env:
+          CONTAINER_NAME: myoc-docker-sharp-pr-${{ github.event.pull_request.number }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+
+          if ! npx wrangler containers list --per-page 100 --json > containers-list.json; then
+            echo "::warning::Unable to list containers; preview container cleanup skipped."
+            exit 0
+          fi
+
+          container_id="$(node -e "
+            const fs = require('node:fs');
+            const payload = JSON.parse(fs.readFileSync('containers-list.json', 'utf8'));
+            const containers = Array.isArray(payload) ? payload : payload.result || payload.containers || [];
+            const container = containers.find((entry) => entry.name === process.env.CONTAINER_NAME);
+            process.stdout.write(container?.id || container?.uuid || container?.container_id || '');
+          " )"
+
+          if [ -n "$container_id" ]; then
+            printf 'y\n' | npx wrangler containers delete "$container_id"
+          else
+            echo "Preview container $CONTAINER_NAME does not exist; nothing to delete."
+          fi
+
+      - name: Delete preview container image
+        env:
+          CONTAINER_IMAGE: myoc-docker-sharp-pr-${{ github.event.pull_request.number }}:worker
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+
+          for attempt in 1 2 3; do
+            if npx wrangler containers images delete "$CONTAINER_IMAGE" --skip-confirmation; then
+              echo "Deleted preview container image $CONTAINER_IMAGE."
+              exit 0
+            fi
+
+            sleep 5
+          done
+
+          echo "Preview container image $CONTAINER_IMAGE does not exist or could not be deleted; nothing to clean up."

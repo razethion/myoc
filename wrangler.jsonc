@@ -10,6 +10,30 @@
       "invocation_logs": true
     }
   },
+  "containers": [
+    {
+      "name": "myoc-docker-sharp",
+      "class_name": "MyocDockerSharpContainer",
+      "image": "./containers/myoc-docker-sharp/Dockerfile",
+      "image_build_context": "./containers/myoc-docker-sharp",
+      "instance_type": "standard-1",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MYOC_DOCKER_SHARP_CONTAINER",
+        "class_name": "MyocDockerSharpContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["MyocDockerSharpContainer"]
+    }
+  ],
   "triggers": {
     "crons": ["0 8 * * *", "0 9 * * *", "0 10 * * *"]
   },
@@ -26,7 +50,7 @@
     "MEDIA_PUBLIC_BASE_URL": "https://m.myoc.art"
   },
   "secrets": {
-    "required": ["D1_REST_API_TOKEN"]
+    "required": ["D1_REST_API_TOKEN", "PREVIEW_PROCESSOR_TOKEN"]
   },
   "d1_databases": [
     {

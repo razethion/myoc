@@ -1,9 +1,14 @@
 import {Hono} from 'hono'
+
+export {ContainerProxy} from '@cloudflare/containers'
+
 import {runAdminJob} from './lib/admin/jobs'
 import {securityHeaders} from './lib/http/securityHeaders'
 import {apiRoutes} from './routes/api'
 import {pageRoutes, renderNotFoundPage} from './routes/pages'
 import type {Bindings} from './types/bindings'
+
+export {MyocDockerSharpContainer} from './containers/MyocDockerSharpContainer'
 
 const D1_BACKUP_CRON = '0 8 * * *'
 const R2_MEDIA_CLEANUP_CRON = '0 9 * * *'

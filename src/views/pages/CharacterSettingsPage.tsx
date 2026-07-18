@@ -769,8 +769,8 @@ function renderFilePreview(input, preview, emptyText) {
 }
 
 const allowedGalleryImageTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'];
-const galleryPreviewMaxLongEdge = 1600;
-const galleryPreviewQuality = 0.9;
+const galleryImageMaxBytes = 200 * 1024 * 1024;
+const galleryImageMaxPixels = 200000000;
 
 async function prepareOriginalImageFile(file) {
     if (!file) return null;
@@ -780,6 +780,9 @@ async function prepareOriginalImageFile(file) {
     if (!allowedGalleryImageTypes.includes(file.type)) {
         throw new Error('Choose a PNG, JPG, WebP, GIF, or AVIF image.');
     }
+    if (file.size > galleryImageMaxBytes) {
+        throw new Error('Gallery images must be 200 MB or smaller.');
+    }
     let bitmap;
     try {
         bitmap = await createImageBitmap(file, { colorSpaceConversion: 'default' });
@@ -787,12 +790,14 @@ async function prepareOriginalImageFile(file) {
         throw new Error('Could not read this image. Try PNG, JPG, WebP, GIF, or AVIF.');
     }
     try {
+        if (bitmap.width * bitmap.height > galleryImageMaxPixels) {
+            throw new Error('Gallery images must be 200,000,000 pixels or smaller.');
+        }
         const image = {
             file,
             contentType: file.type,
             width: bitmap.width,
-            height: bitmap.height,
-            preview: await createGalleryPreviewImage(bitmap)
+            height: bitmap.height
         };
         bitmap.close();
         return image;
@@ -800,50 +805,6 @@ async function prepareOriginalImageFile(file) {
         bitmap.close();
         throw error;
     }
-}
-
-async function createGalleryPreviewImage(bitmap) {
-    const longEdge = Math.max(bitmap.width, bitmap.height);
-    const scale = Math.min(1, galleryPreviewMaxLongEdge / longEdge);
-    const width = Math.max(1, Math.round(bitmap.width * scale));
-    const height = Math.max(1, Math.round(bitmap.height * scale));
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error('Could not prepare image preview.');
-    context.drawImage(bitmap, 0, 0, width, height);
-    const blob = await canvasToWebpBlob(canvas);
-    return {
-        data: await blobToBase64(blob),
-        contentType: 'image/webp',
-        width,
-        height
-    };
-}
-
-function canvasToWebpBlob(canvas) {
-    return new Promise((resolve, reject) => {
-        canvas.toBlob((blob) => {
-            if (blob) {
-                resolve(blob);
-                return;
-            }
-            reject(new Error('Could not prepare image preview.'));
-        }, 'image/webp', galleryPreviewQuality);
-    });
-}
-
-function blobToBase64(blob) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-            const result = String(reader.result || '');
-            resolve(result.includes(',') ? result.split(',')[1] : result);
-        };
-        reader.onerror = () => reject(new Error('Could not prepare image preview.'));
-        reader.readAsDataURL(blob);
-    });
 }
 
 async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}, progress) {
@@ -869,11 +830,9 @@ async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}, progress)
         nsfwArtist: nsfwArtist || ''
     };
     if (sfwImage) {
-        completeBody.sfwPreview = sfwImage.preview;
         completeBody.sfwUpload = await uploadChunkedImage(initResult.mediaId, 'sfw', sfwImage, initResult.uploads.sfw, progress);
     }
     if (nsfwImage) {
-        completeBody.nsfwPreview = nsfwImage.preview;
         completeBody.nsfwUpload = await uploadChunkedImage(initResult.mediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw, progress);
     }
 
@@ -1447,11 +1406,9 @@ editImageArtistForm.addEventListener('submit', async (event) => {
             removeNsfw: editRemoveNsfw
         };
         if (initResult && sfwImage) {
-            completeBody.sfwPreview = sfwImage.preview;
             completeBody.sfwUpload = await uploadChunkedImage(editTargetMediaId, 'sfw', sfwImage, initResult.uploads.sfw);
         }
         if (initResult && nsfwImage) {
-            completeBody.nsfwPreview = nsfwImage.preview;
             completeBody.nsfwUpload = await uploadChunkedImage(editTargetMediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw);
         }
         const result = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/' + encodeURIComponent(editTargetMediaId) + '/chunked/complete', {
@@ -1916,6 +1873,7 @@ function UploadDialog() {
                     <p class="text-sm text-base-content/70">
                         PNG, JPG, WebP, GIF, and AVIF images are accepted. Files are stored unmodified.
                     </p>
+                    <p class="text-xs text-base-content/60">Maximum 200 MB and 200,000,000 pixels per image.</p>
                     <div class="grid gap-3 sm:grid-cols-2">
                         <fieldset class="fieldset rounded border border-base-300 bg-base-200 p-3">
                             <label class="fieldset-label" for="gallery-image-sfw-file">
@@ -2004,6 +1962,7 @@ function BulkUploadDialog() {
                         <label class="fieldset-label" for="bulk-gallery-image-files">
                             Image Files
                         </label>
+                        <p class="text-xs text-base-content/60">Maximum 200 MB and 200,000,000 pixels per image.</p>
                         <input accept="image/*" class="file-input w-full" id="bulk-gallery-image-files" multiple required type="file" />
                     </fieldset>
                     <div class="space-y-3" id="bulk-upload-list"></div>

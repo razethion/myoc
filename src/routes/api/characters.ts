@@ -165,8 +165,6 @@ type ParsedChunkedMediaComplete = {
     artists: ParsedMediaArtists
     sfwUpload: CompletedChunkedUpload | null
     nsfwUpload: CompletedChunkedUpload | null
-    sfwPreview: ParsedPreviewImage | null
-    nsfwPreview: ParsedPreviewImage | null
 }
 
 type JsonProfileImage = {
@@ -277,8 +275,11 @@ const DUPLICATE_CHARACTER_NAME_ERROR = 'Character name already exists on this ac
 const GALLERY_IMAGE_ALLOWED_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'])
 
 const GALLERY_IMAGE_CACHE_CONTROL = 'public, max-age=31536000, immutable'
+const GALLERY_IMAGE_MAX_BYTES = 200 * 1024 * 1024
+const GALLERY_IMAGE_MAX_PIXELS = 200_000_000
 const GALLERY_PREVIEW_CONTENT_TYPE = 'image/webp'
 const GALLERY_PREVIEW_MAX_LONG_EDGE = 1600
+const GALLERY_PREVIEW_QUALITY = 90
 const GALLERY_PREVIEW_MAX_PIXELS = GALLERY_PREVIEW_MAX_LONG_EDGE * GALLERY_PREVIEW_MAX_LONG_EDGE
 const GALLERY_PREVIEW_MAX_BYTES_PER_PIXEL = 4
 const GALLERY_PREVIEW_MAX_CONTAINER_OVERHEAD_BYTES = 4096
@@ -1284,19 +1285,13 @@ characterRoutes.post('/toyhouse-import-items/:itemId/complete', async (c) => {
     }
 
     const upload = item.rating === 'sfw' ? complete.sfwUpload : complete.nsfwUpload
-    const preview = item.rating === 'sfw' ? complete.sfwPreview : complete.nsfwPreview
     const oppositeUpload = item.rating === 'sfw' ? complete.nsfwUpload : complete.sfwUpload
-    const oppositePreview = item.rating === 'sfw' ? complete.nsfwPreview : complete.sfwPreview
 
     if (!upload) {
         return jsonResponse(c, ErrorResponseSchema, {error: `${item.rating.toUpperCase()} upload is required for this import item`}, 400)
     }
 
-    if (!preview) {
-        return jsonResponse(c, ErrorResponseSchema, {error: `${item.rating.toUpperCase()} preview is required for this import item`}, 400)
-    }
-
-    if (oppositeUpload || oppositePreview) {
+    if (oppositeUpload) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Import item can only complete one media rating'}, 400)
     }
 
@@ -1344,13 +1339,14 @@ characterRoutes.post('/toyhouse-import-items/:itemId/complete', async (c) => {
                 completedImage.contentType,
             ),
         )
-        assertPreviewMatchesOriginal(preview, completedImage, `${item.rating.toUpperCase()} preview`)
-        const completedPreview = await putMediaPreviewImage(
+        const completedPreview = await generateAndPutMediaPreviewImage(
+            c.env,
             c.env.MEDIA_BUCKET,
+            c.env.MEDIA_PUBLIC_BASE_URL,
             currentUser.id,
             item.character_id,
             mediaId.value,
-            preview,
+            completedImage,
             item.rating,
             completedKeys,
         )
@@ -1362,7 +1358,7 @@ characterRoutes.post('/toyhouse-import-items/:itemId/complete', async (c) => {
                       currentUser.id,
                       item.character_id,
                       mediaId.value,
-                      preview,
+                      completedPreview.preview,
                       completedKeys,
                   )
                 : null
@@ -1489,26 +1485,10 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: mediaId.error}, 400)
     }
 
-    const {artists, sfwUpload, nsfwUpload, sfwPreview, nsfwPreview} = complete
+    const {artists, sfwUpload, nsfwUpload} = complete
 
     if (!sfwUpload && !nsfwUpload) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'At least one image is required'}, 400)
-    }
-
-    if (sfwUpload && !sfwPreview) {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'SFW preview is required'}, 400)
-    }
-
-    if (nsfwUpload && !nsfwPreview) {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'NSFW preview is required'}, 400)
-    }
-
-    if (!sfwUpload && sfwPreview) {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'SFW preview requires an SFW upload'}, 400)
-    }
-
-    if (!nsfwUpload && nsfwPreview) {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'NSFW preview requires an NSFW upload'}, 400)
     }
 
     if (!(await characterHasMediaCapacity(c.env.DB, currentUser.id, character.id))) {
@@ -1525,8 +1505,8 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
     try {
         let sfwImage: CompletedGalleryUpload | null = null
         let nsfwImage: CompletedGalleryUpload | null = null
-        let sfwPreviewImage: CompletedGalleryPreview | null = null
-        let nsfwPreviewImage: CompletedGalleryPreview | null = null
+        let sfwPreviewImage: (CompletedGalleryPreview & {preview: ParsedPreviewImage}) | null = null
+        let nsfwPreviewImage: (CompletedGalleryPreview & {preview: ParsedPreviewImage}) | null = null
         let nsfwBlurImageKey: string | null = null
 
         if (sfwUpload && !('error' in sfwUpload)) {
@@ -1542,13 +1522,14 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
             completedKeys.push(
                 characterMediaImageObjectKey(currentUser.id, character.id, mediaId.value, sfwImage.imageKey, 'sfw', sfwImage.contentType),
             )
-            assertPreviewMatchesOriginal(sfwPreview as ParsedPreviewImage, sfwImage, 'SFW preview')
-            sfwPreviewImage = await putMediaPreviewImage(
+            sfwPreviewImage = await generateAndPutMediaPreviewImage(
+                c.env,
                 c.env.MEDIA_BUCKET,
+                c.env.MEDIA_PUBLIC_BASE_URL,
                 currentUser.id,
                 character.id,
                 mediaId.value,
-                sfwPreview as ParsedPreviewImage,
+                sfwImage,
                 'sfw',
                 completedKeys,
             )
@@ -1574,13 +1555,14 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
                     nsfwImage.contentType,
                 ),
             )
-            assertPreviewMatchesOriginal(nsfwPreview as ParsedPreviewImage, nsfwImage, 'NSFW preview')
-            nsfwPreviewImage = await putMediaPreviewImage(
+            nsfwPreviewImage = await generateAndPutMediaPreviewImage(
+                c.env,
                 c.env.MEDIA_BUCKET,
+                c.env.MEDIA_PUBLIC_BASE_URL,
                 currentUser.id,
                 character.id,
                 mediaId.value,
-                nsfwPreview as ParsedPreviewImage,
+                nsfwImage,
                 'nsfw',
                 completedKeys,
             )
@@ -1590,7 +1572,7 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
                 currentUser.id,
                 character.id,
                 mediaId.value,
-                nsfwPreview as ParsedPreviewImage,
+                nsfwPreviewImage.preview,
                 completedKeys,
             )
         }
@@ -1714,7 +1696,7 @@ characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: complete.error}, complete.status)
     }
 
-    const {artists, sfwUpload, nsfwUpload, sfwPreview, nsfwPreview} = complete
+    const {artists, sfwUpload, nsfwUpload} = complete
     const removeSfw = normalizePermanentConfirmation(complete.body.removeSfw)
     const removeNsfw = normalizePermanentConfirmation(complete.body.removeNsfw)
     const finalHasSfw = Boolean((media.sfw_image_key && !removeSfw && !sfwUpload) || sfwUpload)
@@ -1722,22 +1704,6 @@ characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
 
     if (!finalHasSfw && !finalHasNsfw) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'At least one image must remain on media'}, 400)
-    }
-
-    if (sfwUpload && !sfwPreview) {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'SFW preview is required'}, 400)
-    }
-
-    if (nsfwUpload && !nsfwPreview) {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'NSFW preview is required'}, 400)
-    }
-
-    if (!sfwUpload && sfwPreview) {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'SFW preview requires an SFW upload'}, 400)
-    }
-
-    if (!nsfwUpload && nsfwPreview) {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'NSFW preview requires an NSFW upload'}, 400)
     }
 
     const uploadedKeys: string[] = []
@@ -1758,12 +1724,13 @@ characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
             await replaceMediaVariantWithChunkedUpload(
                 c.env.IMAGES,
                 c.env.MEDIA_BUCKET,
+                c.env,
+                c.env.MEDIA_PUBLIC_BASE_URL,
                 currentUser.id,
                 character.id,
                 media,
                 nextMedia,
                 sfwUpload,
-                sfwPreview as ParsedPreviewImage,
                 'sfw',
                 uploadedKeys,
                 deletedKeys,
@@ -1774,12 +1741,13 @@ characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
             await replaceMediaVariantWithChunkedUpload(
                 c.env.IMAGES,
                 c.env.MEDIA_BUCKET,
+                c.env,
+                c.env.MEDIA_PUBLIC_BASE_URL,
                 currentUser.id,
                 character.id,
                 media,
                 nextMedia,
                 nsfwUpload,
-                nsfwPreview as ParsedPreviewImage,
                 'nsfw',
                 uploadedKeys,
                 deletedKeys,
@@ -2326,98 +2294,6 @@ function parseChunkedUploadPair(
     return {sfwUpload, nsfwUpload}
 }
 
-function parsePreviewImagePair(
-    sfwValue: unknown,
-    nsfwValue: unknown,
-):
-    | {
-          sfwPreview: ParsedPreviewImage | null
-          nsfwPreview: ParsedPreviewImage | null
-      }
-    | {error: string} {
-    const sfwPreview = parsePreviewImage(sfwValue)
-    const nsfwPreview = parsePreviewImage(nsfwValue)
-
-    if (sfwPreview && 'error' in sfwPreview) {
-        return {error: `SFW ${sfwPreview.error}`}
-    }
-
-    if (nsfwPreview && 'error' in nsfwPreview) {
-        return {error: `NSFW ${nsfwPreview.error}`}
-    }
-
-    return {sfwPreview, nsfwPreview}
-}
-
-function parsePreviewImage(value: unknown): ParsedPreviewImage | null | {error: string} {
-    if (value === undefined || value === null) {
-        return null
-    }
-
-    if (!isRecord(value)) {
-        return {error: 'preview must be an object'}
-    }
-
-    const contentType = typeof value.contentType === 'string' ? value.contentType.toLowerCase() : GALLERY_PREVIEW_CONTENT_TYPE
-
-    if (contentType !== GALLERY_PREVIEW_CONTENT_TYPE) {
-        return {error: 'preview must be a WebP image'}
-    }
-
-    if (typeof value.data !== 'string' || value.data.length === 0) {
-        return {error: 'preview data is required'}
-    }
-
-    const normalizedDimensions = normalizeGalleryImageDimensions(value.width, value.height)
-
-    if ('error' in normalizedDimensions) {
-        return {error: 'preview dimensions are required'}
-    }
-
-    if (
-        normalizedDimensions.width > GALLERY_PREVIEW_MAX_LONG_EDGE ||
-        normalizedDimensions.height > GALLERY_PREVIEW_MAX_LONG_EDGE ||
-        Math.max(normalizedDimensions.width, normalizedDimensions.height) > GALLERY_PREVIEW_MAX_LONG_EDGE
-    ) {
-        return {error: `preview long edge must be ${GALLERY_PREVIEW_MAX_LONG_EDGE}px or smaller`}
-    }
-
-    const bytes = decodePreviewBase64(value.data)
-
-    if ('error' in bytes) {
-        return bytes
-    }
-
-    if (bytes.bytes.byteLength <= 0) {
-        return {error: 'preview is empty'}
-    }
-
-    if (bytes.bytes.byteLength > GALLERY_PREVIEW_MAX_BYTES) {
-        return {error: 'preview is too large'}
-    }
-
-    if (bytes.bytes.byteLength > maxPreviewByteSize(normalizedDimensions.width, normalizedDimensions.height)) {
-        return {error: 'preview is too large for its dimensions'}
-    }
-
-    const dimensions = getWebpDimensions(bytes.bytes)
-
-    if (!dimensions) {
-        return {error: 'preview must be a valid WebP image'}
-    }
-
-    if (dimensions.width !== normalizedDimensions.width || dimensions.height !== normalizedDimensions.height) {
-        return {error: 'preview dimensions do not match the WebP file'}
-    }
-
-    return {
-        bytes: bytes.bytes,
-        contentType: GALLERY_PREVIEW_CONTENT_TYPE,
-        width: dimensions.width,
-        height: dimensions.height,
-    }
-}
-
 function maxPreviewByteSize(width: number, height: number): number {
     return width * height * GALLERY_PREVIEW_MAX_BYTES_PER_PIXEL + GALLERY_PREVIEW_MAX_CONTAINER_OVERHEAD_BYTES
 }
@@ -2449,27 +2325,6 @@ function assertPreviewMatchesOriginal(
     }
 }
 
-function decodePreviewBase64(value: string): {bytes: Uint8Array} | {error: string} {
-    const data = value.startsWith('data:') ? value.replace(/^data:image\/webp;base64,/i, '') : value
-
-    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(data) || data.length % 4 !== 0) {
-        return {error: 'preview data must be base64 WebP data'}
-    }
-
-    try {
-        const decoded = atob(data)
-        const bytes = new Uint8Array(decoded.length)
-
-        for (let index = 0; index < decoded.length; index += 1) {
-            bytes[index] = decoded.charCodeAt(index)
-        }
-
-        return {bytes}
-    } catch {
-        return {error: 'preview data must be base64 WebP data'}
-    }
-}
-
 async function parseChunkedMediaCompleteBody(c: CharacterRouteContext): Promise<
     | ParsedChunkedMediaComplete
     | {
@@ -2497,19 +2352,11 @@ async function parseChunkedMediaCompleteBody(c: CharacterRouteContext): Promise<
         return {error: uploads.error, status: 400}
     }
 
-    const previews = parsePreviewImagePair(body.sfwPreview, body.nsfwPreview)
-
-    if ('error' in previews) {
-        return {error: previews.error, status: 400}
-    }
-
     return {
         body,
         artists,
         sfwUpload: uploads.sfwUpload,
         nsfwUpload: uploads.nsfwUpload,
-        sfwPreview: previews.sfwPreview,
-        nsfwPreview: previews.nsfwPreview,
     }
 }
 
@@ -2683,12 +2530,13 @@ function assignMediaVariant(
 async function replaceMediaVariantWithChunkedUpload(
     images: ImagesBinding,
     bucket: R2Bucket,
+    env: Bindings,
+    mediaPublicBaseUrl: string,
     userId: string,
     characterId: string,
     media: CharacterMediaRecord,
     nextMedia: CharacterMediaRecord,
     upload: CompletedChunkedUpload,
-    preview: ParsedPreviewImage,
     rating: MediaRating,
     uploadedKeys: string[],
     deletedKeys: string[],
@@ -2697,12 +2545,29 @@ async function replaceMediaVariantWithChunkedUpload(
     const label = rating === 'sfw' ? 'SFW image' : 'NSFW image'
     const image = await completeChunkedGalleryUpload(bucket, userId, characterId, media.id, upload, rating, label)
     uploadedKeys.push(characterMediaImageObjectKey(userId, characterId, media.id, image.imageKey, rating, image.contentType))
-    assertPreviewMatchesOriginal(preview, image, rating === 'sfw' ? 'SFW preview' : 'NSFW preview')
-    const previewImage = await putMediaPreviewImage(bucket, userId, characterId, media.id, preview, rating, uploadedKeys)
+    const previewImage = await generateAndPutMediaPreviewImage(
+        env,
+        bucket,
+        mediaPublicBaseUrl,
+        userId,
+        characterId,
+        media.id,
+        image,
+        rating,
+        uploadedKeys,
+    )
     assignMediaVariant(nextMedia, rating, image, previewImage)
 
     if (rating === 'nsfw') {
-        nextMedia.nsfw_blur_image_key = await putNsfwBlurImage(images, bucket, userId, characterId, media.id, preview, uploadedKeys)
+        nextMedia.nsfw_blur_image_key = await putNsfwBlurImage(
+            images,
+            bucket,
+            userId,
+            characterId,
+            media.id,
+            previewImage.preview,
+            uploadedKeys,
+        )
     }
 }
 
@@ -2733,6 +2598,136 @@ async function putMediaPreviewImage(
         height: preview.height,
         byteSize: preview.bytes.byteLength,
     }
+}
+
+async function generateAndPutMediaPreviewImage(
+    env: Bindings,
+    bucket: R2Bucket,
+    mediaPublicBaseUrl: string,
+    userId: string,
+    characterId: string,
+    mediaId: string,
+    image: CompletedGalleryUpload,
+    rating: MediaRating,
+    uploadedKeys: string[],
+): Promise<CompletedGalleryPreview & {preview: ParsedPreviewImage}> {
+    const preview = await generateMediaPreviewImage(env, mediaPublicBaseUrl, userId, characterId, mediaId, image, rating)
+    const stored = await putMediaPreviewImage(bucket, userId, characterId, mediaId, preview, rating, uploadedKeys)
+
+    return {
+        ...stored,
+        preview,
+    }
+}
+
+async function generateMediaPreviewImage(
+    env: Bindings,
+    mediaPublicBaseUrl: string,
+    userId: string,
+    characterId: string,
+    mediaId: string,
+    image: CompletedGalleryUpload,
+    rating: MediaRating,
+): Promise<ParsedPreviewImage> {
+    const sourceObjectKey = characterMediaImageObjectKey(userId, characterId, mediaId, image.imageKey, rating, image.contentType)
+    const sourceUrl = characterMediaImageUrl(mediaPublicBaseUrl, userId, characterId, mediaId, image.imageKey, rating, image.contentType)
+
+    try {
+        return await generateMediaPreviewWithCloudflareImages(mediaPublicBaseUrl, sourceObjectKey, image)
+    } catch (error) {
+        console.warn('Cloudflare Images preview generation failed, falling back to container', {
+            error: error instanceof Error ? error.message : String(error),
+            sourceObjectKey,
+        })
+    }
+
+    return await generateMediaPreviewWithContainer(env, sourceUrl, image)
+}
+
+async function generateMediaPreviewWithCloudflareImages(
+    mediaPublicBaseUrl: string,
+    sourceObjectKey: string,
+    image: CompletedGalleryUpload,
+): Promise<ParsedPreviewImage> {
+    const options = new URLSearchParams()
+    options.set('width', String(GALLERY_PREVIEW_MAX_LONG_EDGE))
+    options.set('height', String(GALLERY_PREVIEW_MAX_LONG_EDGE))
+    options.set('fit', 'scale-down')
+    options.set('format', 'webp')
+    options.set('quality', String(GALLERY_PREVIEW_QUALITY))
+
+    const response = await fetch(
+        `${mediaPublicBaseUrl}/cdn-cgi/image/${[...options.entries()].map(([key, value]) => `${key}=${value}`).join(',')}/${sourceObjectKey}`,
+        {
+            headers: {
+                accept: 'image/webp,image/*,*/*;q=0.8',
+            },
+        },
+    )
+
+    return await previewFromResponse(response, image, 'Cloudflare Images preview')
+}
+
+async function generateMediaPreviewWithContainer(
+    env: Bindings,
+    sourceUrl: string,
+    image: CompletedGalleryUpload,
+): Promise<ParsedPreviewImage> {
+    if (!env.MYOC_DOCKER_SHARP_CONTAINER) {
+        throw new Error('Preview container binding is not configured.')
+    }
+
+    const id = env.MYOC_DOCKER_SHARP_CONTAINER.idFromName('myoc-docker-sharp')
+    const container = env.MYOC_DOCKER_SHARP_CONTAINER.get(id)
+    const response = await container.fetch('https://container/images/preview', {
+        body: JSON.stringify({imageUrl: sourceUrl}),
+        headers: {
+            authorization: `Bearer ${env.PREVIEW_PROCESSOR_TOKEN}`,
+            'content-type': 'application/json',
+        },
+        method: 'POST',
+    })
+
+    return await previewFromResponse(response, image, 'Container preview')
+}
+
+async function previewFromResponse(response: Response, image: CompletedGalleryUpload, label: string): Promise<ParsedPreviewImage> {
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.toLowerCase() ?? ''
+
+    if (!response.ok || contentType !== GALLERY_PREVIEW_CONTENT_TYPE) {
+        const message = new TextDecoder().decode(bytes).slice(0, 500)
+        throw new Error(`${label} failed with ${response.status}${message ? `: ${message}` : ''}`)
+    }
+
+    if (bytes.byteLength <= 0) {
+        throw new Error(`${label} is empty`)
+    }
+
+    if (bytes.byteLength > GALLERY_PREVIEW_MAX_BYTES) {
+        throw new Error(`${label} is too large`)
+    }
+
+    const dimensions = getWebpDimensions(bytes)
+
+    if (!dimensions) {
+        throw new Error(`${label} returned an invalid WebP image`)
+    }
+
+    const preview = {
+        bytes,
+        contentType: GALLERY_PREVIEW_CONTENT_TYPE,
+        width: dimensions.width,
+        height: dimensions.height,
+    } satisfies ParsedPreviewImage
+
+    assertPreviewMatchesOriginal(preview, image, label)
+
+    if (bytes.byteLength > maxPreviewByteSize(preview.width, preview.height)) {
+        throw new Error(`${label} is too large for its dimensions`)
+    }
+
+    return preview
 }
 
 async function putNsfwBlurImage(
@@ -4333,6 +4328,11 @@ async function completeChunkedGalleryUpload(
         throw new Error(`${label} is empty`)
     }
 
+    if (completedObject.size > GALLERY_IMAGE_MAX_BYTES) {
+        await deleteR2Objects(bucket, [objectKey])
+        throw new Error(`${label} must be 200 MB or smaller`)
+    }
+
     const dimensions = await readStoredGalleryImageDimensions(bucket, objectKey, upload.contentType)
 
     if (!dimensions) {
@@ -4343,6 +4343,11 @@ async function completeChunkedGalleryUpload(
     if (dimensions.width !== upload.width || dimensions.height !== upload.height) {
         await deleteR2Objects(bucket, [objectKey])
         throw new Error(`${label} dimensions do not match the uploaded image`)
+    }
+
+    if (dimensions.width * dimensions.height > GALLERY_IMAGE_MAX_PIXELS) {
+        await deleteR2Objects(bucket, [objectKey])
+        throw new Error(`${label} must be ${GALLERY_IMAGE_MAX_PIXELS.toLocaleString('en-US')} pixels or smaller`)
     }
 
     return {

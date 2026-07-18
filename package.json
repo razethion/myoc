@@ -12,16 +12,20 @@
     "typecheck": "wrangler types && tsc --noEmit",
     "lint": "biome ci .",
     "format": "biome format . --write",
-    "deadcode": "knip --production",
+    "deadcode": "npm run deadcode:production && npm run deadcode:nonproduction",
+    "deadcode:production": "knip --production --config knip.production.json",
+    "deadcode:nonproduction": "knip",
     "semgrep": "node scripts/run-semgrep.mjs",
     "test": "vitest",
+    "test:run": "vitest run",
     "coverage": "vitest run --coverage",
-    "ci": "npm run lint && npm run typecheck && vitest run && npm run deadcode && npm run semgrep",
+    "ci": "npm run lint && npm run typecheck && npm run test:run && npm run deadcode && npm run semgrep",
     "db:prepare:local": "wrangler d1 migrations apply myoc-db --local && wrangler d1 execute myoc-db --local --file seeds/development.sql",
     "env:clone:prod-to-dev": "node scripts/clone-prod-to-dev.mjs",
-    "deploy": "npm run ci && npm run build && wrangler deploy --minify"
+    "deploy": "npm run build && wrangler deploy --minify"
   },
   "dependencies": {
+    "@cloudflare/containers": "^0.3.7",
     "@scure/bip39": "^2.2.0",
     "@simplewebauthn/browser": "^13.3.0",
     "@simplewebauthn/server": "^13.3.2",
