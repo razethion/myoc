@@ -53,6 +53,16 @@
           }
         }
       }
+    },
+    {
+      "includes": ["containers/myoc-docker-sharp/server.mjs"],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "useLiteralKeys": "off"
+          }
+        }
+      }
     }
   ]
 }

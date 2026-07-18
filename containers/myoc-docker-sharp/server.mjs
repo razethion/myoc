@@ -2,16 +2,17 @@ import {Buffer} from 'node:buffer'
 import {createHash, randomUUID, timingSafeEqual} from 'node:crypto'
 import http from 'node:http'
 import process from 'node:process'
+import timers from 'node:timers'
 import sharp from 'sharp'
 
-const port = Number.parseInt(process.env.PORT ?? '8080', 10)
-const previewLongEdge = parsePositiveInteger(process.env.PREVIEW_MAX_LONG_EDGE, 1600)
-const previewQuality = clamp(parsePositiveInteger(process.env.PREVIEW_WEBP_QUALITY, 90), 1, 100)
-const requestBodyMaxBytes = parsePositiveInteger(process.env.REQUEST_BODY_MAX_BYTES, 4096)
-const sourceImageMaxBytes = parsePositiveInteger(process.env.SOURCE_IMAGE_MAX_BYTES, 64 * 1024 * 1024)
-const sourceFetchTimeoutMs = parsePositiveInteger(process.env.SOURCE_FETCH_TIMEOUT_MS, 30_000)
-const sourceLimitInputPixels = parsePositiveInteger(process.env.SOURCE_LIMIT_INPUT_PIXELS, 100_000_000)
-const allowHttpSourceUrls = process.env.ALLOW_HTTP_SOURCE_URLS === 'true'
+const port = Number.parseInt(process.env['PORT'] ?? '8080', 10)
+const previewLongEdge = parsePositiveInteger(process.env['PREVIEW_MAX_LONG_EDGE'], 1600)
+const previewQuality = clamp(parsePositiveInteger(process.env['PREVIEW_WEBP_QUALITY'], 90), 1, 100)
+const requestBodyMaxBytes = parsePositiveInteger(process.env['REQUEST_BODY_MAX_BYTES'], 4096)
+const sourceImageMaxBytes = parsePositiveInteger(process.env['SOURCE_IMAGE_MAX_BYTES'], 64 * 1024 * 1024)
+const sourceFetchTimeoutMs = parsePositiveInteger(process.env['SOURCE_FETCH_TIMEOUT_MS'], 30_000)
+const sourceLimitInputPixels = parsePositiveInteger(process.env['SOURCE_LIMIT_INPUT_PIXELS'], 100_000_000)
+const allowHttpSourceUrls = process.env['ALLOW_HTTP_SOURCE_URLS'] === 'true'
 
 const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', `https://${request.headers.host ?? 'localhost'}`)
@@ -44,10 +45,12 @@ function shutdown(signal) {
         process.exit(0)
     })
 
-    setTimeout(() => {
-        server.closeAllConnections?.()
-        process.exit(0)
-    }, 2_000).unref()
+    timers
+        .setTimeout(() => {
+            server.closeAllConnections?.()
+            process.exit(0)
+        }, 2_000)
+        .unref()
 }
 
 async function handlePreviewRequest(request, response) {
@@ -121,7 +124,7 @@ async function handlePreviewRequest(request, response) {
 }
 
 function isAuthorized(request) {
-    const token = process.env.PREVIEW_PROCESSOR_TOKEN
+    const token = process.env['PREVIEW_PROCESSOR_TOKEN']
 
     if (!token) {
         return false
@@ -260,7 +263,8 @@ function readRequestText(request, maxBytes) {
         let receivedBytes = 0
 
         request.on('data', (chunk) => {
-            receivedBytes += chunk.byteLength
+            const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+            receivedBytes += bytes.byteLength
 
             if (receivedBytes > maxBytes) {
                 request.destroy()
@@ -268,7 +272,7 @@ function readRequestText(request, maxBytes) {
                 return
             }
 
-            chunks.push(chunk)
+            chunks.push(bytes)
         })
 
         request.on('end', () => resolve(Buffer.concat(chunks, receivedBytes).toString('utf8')))
