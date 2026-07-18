@@ -479,8 +479,8 @@ describe('GET /api/search/size-chart-characters/by-id', () => {
         })
     })
 
-    it('limits ID lookups to the first 30 normalized IDs', async () => {
-        const ids = Array.from({length: 31}, (_, index) => `character-${index}`)
+    it('limits ID lookups to the first 99 normalized IDs', async () => {
+        const ids = Array.from({length: 100}, (_, index) => `character-${index}`)
         const {db, boundStatements} = createMockDb({
             allResults: [[]],
         })
@@ -496,7 +496,7 @@ describe('GET /api/search/size-chart-characters/by-id', () => {
         )
 
         expect(response.status).toBe(200)
-        expect(boundStatements[0]?.binds).toEqual(ids.slice(0, 30))
+        expect(boundStatements[0]?.binds).toEqual(ids.slice(0, 99))
         expect(await response.json()).toEqual({
             items: [],
         })
