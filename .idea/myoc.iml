@@ -7,8 +7,5 @@
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
-    <orderEntry type="library" name="daisyui" level="application" />
-    <orderEntry type="library" name="black" level="application" />
-    <orderEntry type="library" name="@tailwindcss" level="application" />
   </component>
 </module>
