@@ -1,4 +1,7 @@
 import {Hono} from 'hono'
+
+export {ContainerProxy} from '@cloudflare/containers'
+
 import {runAdminJob} from './lib/admin/jobs'
 import {securityHeaders} from './lib/http/securityHeaders'
 import {apiRoutes} from './routes/api'
