@@ -5,6 +5,8 @@ import {apiRoutes} from './routes/api'
 import {pageRoutes, renderNotFoundPage} from './routes/pages'
 import type {Bindings} from './types/bindings'
 
+export {MyocDockerSharpContainer} from './containers/MyocDockerSharpContainer'
+
 const D1_BACKUP_CRON = '0 8 * * *'
 const R2_MEDIA_CLEANUP_CRON = '0 9 * * *'
 const LEADERBOARD_REFRESH_CRON = '0 10 * * *'
