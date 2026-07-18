@@ -740,21 +740,25 @@ function renderSearchResults() {
         els.searchResults.innerHTML = '<div class="alert alert-error">' + escapeHtml(state.restoreError) + '</div>';
         return;
     }
+    const isChartFull = state.characters.length >= MAX_LAYOUT_CHARACTERS;
+    const limitMessage = isChartFull
+        ? '<div class="size-chart-muted">This size chart is full. Remove a character before adding another.</div>'
+        : '';
     if (!state.query) {
-        els.searchResults.innerHTML = '<div class="size-chart-muted">Search for a character to add.</div>';
+        els.searchResults.innerHTML = limitMessage || '<div class="size-chart-muted">Search for a character to add.</div>';
         return;
     }
     if (state.searchItems.length === 0) {
-        els.searchResults.innerHTML = '<div class="size-chart-muted">No characters found.</div>';
+        els.searchResults.innerHTML = limitMessage + '<div class="size-chart-muted">No characters found.</div>';
         return;
     }
-    els.searchResults.innerHTML = state.searchItems.map((item, index) => {
+    els.searchResults.innerHTML = limitMessage + state.searchItems.map((item, index) => {
         const selected = state.characters.some((character) => character.id === item.id);
-        const disabled = !item.hasSizeChart || selected;
+        const disabled = !item.hasSizeChart || selected || isChartFull;
         const badge = item.hasSizeChart
             ? '<span class="badge badge-primary badge-sm">' + escapeHtml(formatHeight(item.heightChart.height.meters)) + '</span>'
             : '<span class="badge badge-outline badge-sm">no size chart</span>';
-        const action = selected ? 'Added' : 'Add';
+        const action = selected ? 'Added' : isChartFull ? 'Max ' + MAX_LAYOUT_CHARACTERS : 'Add';
         return '<button class="size-chart-result ' + (disabled ? 'is-disabled' : '') + '" data-result-index="' + index + '" ' + (disabled ? 'disabled' : '') + ' type="button">' +
             '<img alt="' + escapeHtml(item.name) + '" src="' + escapeHtml(item.profileImageUrl) + '">' +
             '<span><strong>' + escapeHtml(item.name) + '</strong><small>by ' + escapeHtml(item.ownerUsername) + '</small></span>' +
@@ -919,6 +923,10 @@ function createChartCharacter(item, placement) {
 function addCharacter(item, placement) {
     if (!item || !item.hasSizeChart || !item.heightChart || !item.heightChart.image) return;
     if (state.characters.some((character) => character.id === item.id)) return;
+    if (state.characters.length >= MAX_LAYOUT_CHARACTERS) {
+        renderSearchResults();
+        return;
+    }
     state.characters.push(createChartCharacter(item, placement));
     state.selectedId = item.id;
     renderAll();
