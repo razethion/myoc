@@ -48,6 +48,7 @@ type SizeChartJson = {
 
 const SIZE_CHART_ID_SELECT_SQL = 'lower(hex(characters.size_chart_id)) AS size_chart_id'
 const SIZE_CHART_ID_LOOKUP_SQL = 'lower(hex(characters.size_chart_id))'
+const SIZE_CHART_ID_LOOKUP_LIMIT = 99
 
 searchRoutes.get('/', async (c) => {
     const type = c.req.query('type')
@@ -158,7 +159,7 @@ searchRoutes.get('/size-chart-characters/by-id', async (c) => {
          FROM characters
                   INNER JOIN users ON users.id = characters.user_id
          WHERE ${where}
-         LIMIT 30`,
+         LIMIT ${SIZE_CHART_ID_LOOKUP_LIMIT}`,
     )
         .bind(...ids, ...sizeChartIds)
         .all<SizeChartCharacterSearchRow>()
@@ -210,7 +211,7 @@ function normalizeSizeChartIds(value: string | null | undefined): string[] {
         seen.add(normalized)
         ids.push(normalized)
 
-        if (ids.length >= 30) {
+        if (ids.length >= SIZE_CHART_ID_LOOKUP_LIMIT) {
             break
         }
     }
