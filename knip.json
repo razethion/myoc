@@ -1,7 +1,14 @@
 {
   "$schema": "./node_modules/knip/schema.json",
-  "entry": ["scripts/*.mjs!", "src/styles/app.css!"],
-  "project": ["src/**/*.{ts,tsx,css}!", "scripts/*.mjs!"],
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/*.mjs!", "src/styles/app.css!"],
+      "project": ["src/**/*.{ts,tsx,css}!", "scripts/*.mjs!"]
+    },
+    "containers/myoc-docker-sharp": {
+      "project": ["*.mjs!"]
+    }
+  },
   "ignoreBinaries": ["py"],
   "ignoreDependencies": ["@simplewebauthn/browser", "cloudflare", "cropperjs"]
 }

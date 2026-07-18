@@ -2,6 +2,10 @@
   "name": "myoc-docker-sharp",
   "private": true,
   "type": "module",
+  "scripts": {
+    "check": "node --check server.mjs",
+    "start": "node server.mjs"
+  },
   "engines": {
     "node": ">=24 <25"
   },

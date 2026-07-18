@@ -1,17 +1,17 @@
 import {Buffer} from 'node:buffer'
-import http from 'node:http'
 import {createHash, randomUUID, timingSafeEqual} from 'node:crypto'
+import http from 'node:http'
 import process from 'node:process'
 import sharp from 'sharp'
 
-const port = Number.parseInt(process.env['PORT'] ?? '8080', 10)
-const previewLongEdge = parsePositiveInteger(process.env['PREVIEW_MAX_LONG_EDGE'], 1600)
-const previewQuality = clamp(parsePositiveInteger(process.env['PREVIEW_WEBP_QUALITY'], 90), 1, 100)
-const requestBodyMaxBytes = parsePositiveInteger(process.env['REQUEST_BODY_MAX_BYTES'], 4096)
-const sourceImageMaxBytes = parsePositiveInteger(process.env['SOURCE_IMAGE_MAX_BYTES'], 64 * 1024 * 1024)
-const sourceFetchTimeoutMs = parsePositiveInteger(process.env['SOURCE_FETCH_TIMEOUT_MS'], 30_000)
-const sourceLimitInputPixels = parsePositiveInteger(process.env['SOURCE_LIMIT_INPUT_PIXELS'], 100_000_000)
-const allowHttpSourceUrls = process.env['ALLOW_HTTP_SOURCE_URLS'] === 'true'
+const port = Number.parseInt(process.env.PORT ?? '8080', 10)
+const previewLongEdge = parsePositiveInteger(process.env.PREVIEW_MAX_LONG_EDGE, 1600)
+const previewQuality = clamp(parsePositiveInteger(process.env.PREVIEW_WEBP_QUALITY, 90), 1, 100)
+const requestBodyMaxBytes = parsePositiveInteger(process.env.REQUEST_BODY_MAX_BYTES, 4096)
+const sourceImageMaxBytes = parsePositiveInteger(process.env.SOURCE_IMAGE_MAX_BYTES, 64 * 1024 * 1024)
+const sourceFetchTimeoutMs = parsePositiveInteger(process.env.SOURCE_FETCH_TIMEOUT_MS, 30_000)
+const sourceLimitInputPixels = parsePositiveInteger(process.env.SOURCE_LIMIT_INPUT_PIXELS, 100_000_000)
+const allowHttpSourceUrls = process.env.ALLOW_HTTP_SOURCE_URLS === 'true'
 
 const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', `https://${request.headers.host ?? 'localhost'}`)
@@ -52,7 +52,7 @@ function shutdown(signal) {
 
 async function handlePreviewRequest(request, response) {
     if (request.method !== 'POST') {
-        response.writeHead(405, {'allow': 'POST'})
+        response.writeHead(405, {allow: 'POST'})
         response.end()
         return
     }
@@ -121,7 +121,7 @@ async function handlePreviewRequest(request, response) {
 }
 
 function isAuthorized(request) {
-    const token = process.env['PREVIEW_PROCESSOR_TOKEN']
+    const token = process.env.PREVIEW_PROCESSOR_TOKEN
 
     if (!token) {
         return false
