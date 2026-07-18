@@ -1,8 +1,11 @@
-import {afterEach, describe, expect, it, vi} from 'vitest'
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest'
 import {MyocDockerSharpContainer} from './MyocDockerSharpContainer'
 
 const containerMock = vi.hoisted(() => ({
     nextState: {status: 'stopped'},
+    destroy: vi.fn(),
+    getState: vi.fn(),
+    stop: vi.fn(),
 }))
 
 vi.mock('@cloudflare/containers', () => {
@@ -17,26 +20,36 @@ vi.mock('@cloudflare/containers', () => {
             outboundHandler = handler
         }
 
-        envVars: Record<string, string> = {}
-        stop = vi.fn()
-        destroy = vi.fn()
-        getState = vi.fn(async () => containerMock.nextState)
-
         constructor(
             readonly ctx: unknown,
             readonly env: TEnv,
-        ) {}
+        ) {
+            Object.assign(this, {
+                destroy: containerMock.destroy,
+                getState: containerMock.getState,
+                stop: containerMock.stop,
+            })
+        }
     }
 
     return {Container}
 })
 
 describe('MyocDockerSharpContainer', () => {
+    beforeEach(() => {
+        containerMock.nextState = {status: 'stopped'}
+        containerMock.destroy.mockReset()
+        containerMock.destroy.mockResolvedValue(undefined)
+        containerMock.getState.mockReset()
+        containerMock.getState.mockImplementation(async () => containerMock.nextState)
+        containerMock.stop.mockReset()
+        containerMock.stop.mockResolvedValue(undefined)
+    })
+
     afterEach(() => {
         vi.useRealTimers()
         vi.restoreAllMocks()
         vi.unstubAllGlobals()
-        containerMock.nextState = {status: 'stopped'}
     })
 
     it('configures the preview processor container runtime and environment', () => {
@@ -76,9 +89,9 @@ describe('MyocDockerSharpContainer', () => {
         await vi.advanceTimersByTimeAsync(1_000)
         await activityExpired
 
-        expect(container.stop).toHaveBeenCalledTimes(1)
-        expect(container.getState).toHaveBeenCalledTimes(1)
-        expect(container.destroy).toHaveBeenCalledTimes(1)
+        expect(containerMock.stop).toHaveBeenCalledTimes(1)
+        expect(containerMock.getState).toHaveBeenCalledTimes(1)
+        expect(containerMock.destroy).toHaveBeenCalledTimes(1)
         expect(log).toHaveBeenCalledWith('Preview container idle, signalling stop')
         expect(warn).toHaveBeenCalledWith('Preview container ignored stop signal, destroying instance')
     })
@@ -95,9 +108,9 @@ describe('MyocDockerSharpContainer', () => {
         await vi.advanceTimersByTimeAsync(1_000)
         await activityExpired
 
-        expect(container.stop).toHaveBeenCalledTimes(1)
-        expect(container.getState).toHaveBeenCalledTimes(1)
-        expect(container.destroy).not.toHaveBeenCalled()
+        expect(containerMock.stop).toHaveBeenCalledTimes(1)
+        expect(containerMock.getState).toHaveBeenCalledTimes(1)
+        expect(containerMock.destroy).not.toHaveBeenCalled()
     })
 
     it('allows outbound requests to the media origin through the Worker fetch implementation', async () => {
