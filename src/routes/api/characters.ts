@@ -2656,6 +2656,7 @@ async function generateMediaPreviewWithCloudflareImages(sourceUrl: string, image
                 cf: {
                     cacheTtlByStatus: {'404': 0, '500-599': 0},
                     image: {
+                        anim: false,
                         fit: 'scale-down',
                         format: 'webp',
                         height: GALLERY_PREVIEW_MAX_LONG_EDGE,
@@ -2709,8 +2710,10 @@ async function previewFromResponse(response: Response, image: CompletedGalleryUp
     const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.toLowerCase() ?? ''
 
     if (!response.ok || contentType !== GALLERY_PREVIEW_CONTENT_TYPE) {
-        const message = new TextDecoder().decode(bytes).slice(0, 500)
-        throw new Error(`${label} failed with ${response.status}${message ? `: ${message}` : ''}`)
+        const canDecodeMessage = contentType.startsWith('text/') || contentType === 'application/json'
+        const message = canDecodeMessage ? new TextDecoder().decode(bytes).slice(0, 500) : ''
+        const details = message ? `: ${message}` : contentType ? ` (${contentType})` : ''
+        throw new Error(`${label} failed with ${response.status}${details}`)
     }
 
     if (bytes.byteLength <= 0) {
