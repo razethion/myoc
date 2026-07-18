@@ -50,6 +50,9 @@ jobs:
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
+      - name: Build preview processor container
+        run: docker build --tag myoc-docker-sharp-ci containers/myoc-docker-sharp
+
   deploy-production:
     name: Deploy production
     needs: quality
