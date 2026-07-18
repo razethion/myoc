@@ -2633,7 +2633,7 @@ async function generateMediaPreviewImage(
     const sourceUrl = characterMediaImageUrl(mediaPublicBaseUrl, userId, characterId, mediaId, image.imageKey, rating, image.contentType)
 
     try {
-        return await generateMediaPreviewWithCloudflareImages(mediaPublicBaseUrl, sourceObjectKey, image)
+        return await generateMediaPreviewWithCloudflareImages(sourceUrl, image)
     } catch (error) {
         console.warn('Cloudflare Images preview generation failed, falling back to container', {
             error: error instanceof Error ? error.message : String(error),
@@ -2644,27 +2644,25 @@ async function generateMediaPreviewImage(
     return await generateMediaPreviewWithContainer(env, sourceUrl, image)
 }
 
-async function generateMediaPreviewWithCloudflareImages(
-    mediaPublicBaseUrl: string,
-    sourceObjectKey: string,
-    image: CompletedGalleryUpload,
-): Promise<ParsedPreviewImage> {
+async function generateMediaPreviewWithCloudflareImages(sourceUrl: string, image: CompletedGalleryUpload): Promise<ParsedPreviewImage> {
     const maxAttempts = 3
     const retryDelayMs = 2_000
-    const options = new URLSearchParams()
-    options.set('width', String(GALLERY_PREVIEW_MAX_LONG_EDGE))
-    options.set('height', String(GALLERY_PREVIEW_MAX_LONG_EDGE))
-    options.set('fit', 'scale-down')
-    options.set('format', 'webp')
-    options.set('quality', String(GALLERY_PREVIEW_QUALITY))
 
-    const previewUrl = `${mediaPublicBaseUrl}/cdn-cgi/image/${[...options.entries()].map(([key, value]) => `${key}=${value}`).join(',')}/${sourceObjectKey}`
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
-            const attemptUrl = new URL(previewUrl)
-            attemptUrl.searchParams.set('preview-attempt', String(attempt))
-            const response = await fetch(attemptUrl, {
+            const response = await fetch(sourceUrl, {
+                cf: {
+                    cacheTtlByStatus: {'404': 0, '500-599': 0},
+                    image: {
+                        fit: 'scale-down',
+                        format: 'webp',
+                        height: GALLERY_PREVIEW_MAX_LONG_EDGE,
+                        quality: GALLERY_PREVIEW_QUALITY,
+                        width: GALLERY_PREVIEW_MAX_LONG_EDGE,
+                    },
+                },
                 headers: {
                     accept: 'image/webp,image/*,*/*;q=0.8',
                 },
