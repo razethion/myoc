@@ -1,7 +1,9 @@
 import {describe, expect, it, vi} from 'vitest'
 import {createCsrfToken} from '../../lib/auth/session'
 import {
+    createAvifFile,
     createGifFile,
+    createJpegFile,
     createMalformedWebpFile,
     createOversizedWebpFile,
     createPngFile,
@@ -3689,6 +3691,152 @@ describe('character media uploads', () => {
         expect(body.media.sfwPreviewHeight).toBe(240)
         const mediaInsert = boundStatements.find((statement) => statement.sql.includes(['INSERT INTO', 'character_media'].join(' ')))
         expect(mediaInsert?.binds[5]).toBe('image/gif')
+    })
+
+    it.each([
+        {
+            label: 'JPEG',
+            contentType: 'image/jpeg',
+            extension: 'jpg',
+            file: createJpegFile(640, 480),
+        },
+        {
+            label: 'AVIF',
+            contentType: 'image/avif',
+            extension: 'avif',
+            file: createAvifFile(640, 480),
+        },
+    ])('verifies chunked $label gallery media dimensions from the stored object', async ({contentType, extension, file}) => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character, currentUserRecord, character, currentUserRecord, character],
+        })
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await initChunkedMedia(
+            character.id,
+            {
+                uploads: [{rating: 'sfw', contentType}],
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
+        expect(initResponse.status).toBe(200)
+        const initBody = (await initResponse.json()) as ChunkedSfwInitBody
+
+        const partResponse = await putChunkedMediaPart(
+            character.id,
+            initBody.mediaId,
+            'sfw',
+            initBody.uploads.sfw.uploadId,
+            1,
+            initBody.uploads.sfw.imageKey,
+            file,
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+            contentType,
+        )
+        expect(partResponse.status).toBe(200)
+        const uploadedPart = (await partResponse.json()) as R2UploadedPart
+
+        const completeResponse = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType,
+                    width: 640,
+                    height: 480,
+                    parts: [uploadedPart],
+                },
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
+
+        expect(completeResponse.status).toBe(201)
+        const body = (await completeResponse.json()) as {
+            media: {
+                sfwContentType: string
+                sfwImageUrl: string
+                sfwWidth: number
+                sfwHeight: number
+                sfwByteSize: number
+            }
+        }
+        expect(body.media.sfwContentType).toBe(contentType)
+        expect(body.media.sfwImageUrl).toBe(
+            `${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.${extension}`,
+        )
+        expect(body.media.sfwWidth).toBe(640)
+        expect(body.media.sfwHeight).toBe(480)
+        expect(body.media.sfwByteSize).toBe(file.size)
+        const mediaInsert = boundStatements.find((statement) => statement.sql.includes(['INSERT INTO', 'character_media'].join(' ')))
+        expect(mediaInsert?.binds[5]).toBe(contentType)
+    })
+
+    it('rejects chunked gallery media when the completed object cannot be re-read for verification', async () => {
+        const {sessionToken, mediaBucket, character, db, csrfToken, initBody} = await createChunkedSfwUploadTestContext()
+
+        const pngFile = createPngFile(800, 600)
+        const partResponse = await putChunkedMediaPart(
+            character.id,
+            initBody.mediaId,
+            'sfw',
+            initBody.uploads.sfw.uploadId,
+            1,
+            initBody.uploads.sfw.imageKey,
+            pngFile,
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+        const uploadedPart = (await partResponse.json()) as R2UploadedPart
+        vi.mocked(mediaBucket.get).mockResolvedValueOnce(null)
+
+        const completeResponse = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/png',
+                    width: 800,
+                    height: 600,
+                    parts: [uploadedPart],
+                },
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
+
+        expect(completeResponse.status).toBe(400)
+        expect(await completeResponse.json()).toEqual({
+            error: 'SFW image dimensions could not be verified',
+        })
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            `characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.png`,
+        )
     })
 
     it('marks Toyhou.se import items and their jobs as failed', async () => {

@@ -10,6 +10,26 @@ const EXPORT_SQL = [
 ].join('\n')
 
 describe('backupD1Database', () => {
+    it('uses the global fetch implementation when no fetch option is provided', async () => {
+        const fetcher = createExportFetch()
+        vi.stubGlobal('fetch', fetcher)
+
+        try {
+            const summary = await backupD1Database({
+                CLOUDFLARE_ACCOUNT_ID: 'account-id',
+                D1_DATABASE_ID: 'database-id',
+                D1_REST_API_TOKEN: 'api-token',
+                DB_BACKUP_BUCKET: createMockR2Bucket(),
+            })
+
+            expect(summary.databaseName).toBe('myoc-db')
+            expect(summary.key).toMatch(/^d1\/myoc-db\/\d{4}\/\d{2}\/\d{2}\/myoc-db-\d{4}-\d{2}-\d{2}T/)
+            expect(fetcher).toHaveBeenCalled()
+        } finally {
+            vi.unstubAllGlobals()
+        }
+    })
+
     it('exports D1 through the REST API and stores a gzipped SQL backup in R2', async () => {
         const backupBucket = createMockR2Bucket()
         const now = new Date('2026-07-12T08:00:00.000Z')
@@ -119,6 +139,159 @@ describe('backupD1Database', () => {
                 },
             ),
         ).rejects.toThrow('D1 export API failed with HTTP 403: not allowed')
+    })
+
+    it('reports an unknown export API error when Cloudflare does not return messages', async () => {
+        const fetcher = vi.fn(async () =>
+            Response.json(
+                {
+                    success: false,
+                },
+                {status: 500},
+            ),
+        ) as unknown as typeof fetch
+
+        await expect(
+            backupD1Database(
+                {
+                    CLOUDFLARE_ACCOUNT_ID: 'account-id',
+                    D1_DATABASE_ID: 'database-id',
+                    D1_REST_API_TOKEN: 'api-token',
+                    DB_BACKUP_BUCKET: createMockR2Bucket(),
+                },
+                new Date('2026-07-12T08:00:00.000Z'),
+                {
+                    fetch: fetcher,
+                    pollDelayMs: 0,
+                },
+            ),
+        ).rejects.toThrow('D1 export API failed with HTTP 500: Unknown error')
+    })
+
+    it('reports a malformed export API response without a result', async () => {
+        const fetcher = vi.fn(async () =>
+            Response.json({
+                success: true,
+            }),
+        ) as unknown as typeof fetch
+
+        await expect(
+            backupD1Database(
+                {
+                    CLOUDFLARE_ACCOUNT_ID: 'account-id',
+                    D1_DATABASE_ID: 'database-id',
+                    D1_REST_API_TOKEN: 'api-token',
+                    DB_BACKUP_BUCKET: createMockR2Bucket(),
+                },
+                new Date('2026-07-12T08:00:00.000Z'),
+                {
+                    fetch: fetcher,
+                    pollDelayMs: 0,
+                },
+            ),
+        ).rejects.toThrow('D1 export API did not return a result')
+    })
+
+    it.each([
+        {
+            result: {
+                status: 'error',
+                error: 'bookmark expired',
+            },
+            message: 'D1 export failed: bookmark expired',
+        },
+        {
+            result: {
+                status: 'error',
+                error: {message: 'bookmark expired'},
+            },
+            message: 'D1 export failed: Unknown error',
+        },
+    ])('reports failed export polling responses as $message', async ({result, message}) => {
+        const fetcher = vi.fn(async () =>
+            Response.json({
+                result,
+                success: true,
+            }),
+        ) as unknown as typeof fetch
+
+        await expect(
+            backupD1Database(
+                {
+                    CLOUDFLARE_ACCOUNT_ID: 'account-id',
+                    D1_DATABASE_ID: 'database-id',
+                    D1_REST_API_TOKEN: 'api-token',
+                    DB_BACKUP_BUCKET: createMockR2Bucket(),
+                },
+                new Date('2026-07-12T08:00:00.000Z'),
+                {
+                    fetch: fetcher,
+                    pollDelayMs: 0,
+                },
+            ),
+        ).rejects.toThrow(message)
+    })
+
+    it('reports when export polling never returns a signed dump URL', async () => {
+        const fetcher = vi.fn(async () =>
+            Response.json({
+                result: {
+                    status: 'active',
+                },
+                success: true,
+            }),
+        ) as unknown as typeof fetch
+
+        await expect(
+            backupD1Database(
+                {
+                    CLOUDFLARE_ACCOUNT_ID: 'account-id',
+                    D1_DATABASE_ID: 'database-id',
+                    D1_REST_API_TOKEN: 'api-token',
+                    DB_BACKUP_BUCKET: createMockR2Bucket(),
+                },
+                new Date('2026-07-12T08:00:00.000Z'),
+                {
+                    fetch: fetcher,
+                    pollAttempts: 2,
+                    pollDelayMs: 1,
+                },
+            ),
+        ).rejects.toThrow('D1 export did not return a signed dump URL after 2 attempts')
+        expect(fetcher).toHaveBeenCalledTimes(2)
+    })
+
+    it('reports a dump download failure after receiving a signed URL', async () => {
+        const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+            if (String(input).endsWith('/export')) {
+                return Response.json({
+                    result: {
+                        result: {
+                            signed_url: 'https://example.test/dump.sql',
+                        },
+                    },
+                    success: true,
+                })
+            }
+
+            return new Response('unavailable', {status: 503})
+        }) as unknown as typeof fetch
+
+        await expect(
+            backupD1Database(
+                {
+                    CLOUDFLARE_ACCOUNT_ID: 'account-id',
+                    D1_DATABASE_ID: 'database-id',
+                    D1_REST_API_TOKEN: 'api-token',
+                    DB_BACKUP_BUCKET: createMockR2Bucket(),
+                },
+                new Date('2026-07-12T08:00:00.000Z'),
+                {
+                    fetch: fetcher,
+                    pollDelayMs: 0,
+                },
+            ),
+        ).rejects.toThrow('D1 export dump download failed with HTTP 503')
     })
 
     it('reports a configuration error when the API token secret is missing', async () => {

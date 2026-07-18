@@ -30,6 +30,18 @@ export function createGifFile(width = 100, height = 80, name = 'gallery.gif'): F
     })
 }
 
+export function createJpegFile(width = 100, height = 80, name = 'gallery.jpg'): File {
+    return new File([createJpegBytes(width, height)], name, {
+        type: 'image/jpeg',
+    })
+}
+
+export function createAvifFile(width = 100, height = 80, name = 'gallery.avif'): File {
+    return new File([createAvifBytes(width, height)], name, {
+        type: 'image/avif',
+    })
+}
+
 export function createWebpDataUrl(width = 512, height = 512): string {
     const bytes = createVp8xWebpBytes(width, height)
     return webpBytesToDataUrl(bytes)
@@ -60,6 +72,35 @@ function createGifBytes(width: number, height: number): Uint8Array {
     writeAscii(bytes, 0, 'GIF89a')
     writeUint16Le(bytes, 6, width)
     writeUint16Le(bytes, 8, height)
+    return bytes
+}
+
+function createJpegBytes(width: number, height: number): Uint8Array {
+    const bytes = new Uint8Array(16)
+    bytes.set([0xff, 0xd8, 0xff, 0xe0], 0)
+    writeUint32Be(bytes, 4, 0x0002ffc0)
+    writeUint32Be(bytes, 8, 0x00080800)
+    bytes[11] = (height >>> 8) & 0xff
+    bytes[12] = height & 0xff
+    bytes[13] = (width >>> 8) & 0xff
+    bytes[14] = width & 0xff
+    return bytes
+}
+
+function createAvifBytes(width: number, height: number): Uint8Array {
+    const bytes = new Uint8Array(48)
+    writeUint32Be(bytes, 0, 48)
+    writeAscii(bytes, 4, 'meta')
+    writeUint32Be(bytes, 8, 0)
+    writeUint32Be(bytes, 12, 36)
+    writeAscii(bytes, 16, 'iprp')
+    writeUint32Be(bytes, 20, 28)
+    writeAscii(bytes, 24, 'ipco')
+    writeUint32Be(bytes, 28, 20)
+    writeAscii(bytes, 32, 'ispe')
+    writeUint32Be(bytes, 36, 0)
+    writeUint32Be(bytes, 40, width)
+    writeUint32Be(bytes, 44, height)
     return bytes
 }
 
