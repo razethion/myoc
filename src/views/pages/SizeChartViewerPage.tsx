@@ -758,7 +758,7 @@ function renderSearchResults() {
         const badge = item.hasSizeChart
             ? '<span class="badge badge-primary badge-sm">' + escapeHtml(formatHeight(item.heightChart.height.meters)) + '</span>'
             : '<span class="badge badge-outline badge-sm">no size chart</span>';
-        const action = selected ? 'Added' : isChartFull ? 'Max ' + MAX_LAYOUT_CHARACTERS : 'Add';
+        const action = selected ? 'Added' : isChartFull ? 'Chart full' : 'Add';
         return '<button class="size-chart-result ' + (disabled ? 'is-disabled' : '') + '" data-result-index="' + index + '" ' + (disabled ? 'disabled' : '') + ' type="button">' +
             '<img alt="' + escapeHtml(item.name) + '" src="' + escapeHtml(item.profileImageUrl) + '">' +
             '<span><strong>' + escapeHtml(item.name) + '</strong><small>by ' + escapeHtml(item.ownerUsername) + '</small></span>' +
