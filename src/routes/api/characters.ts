@@ -171,6 +171,8 @@ class ChunkedUploadInitError extends Error {
     }
 }
 
+class PreviewValidationError extends Error {}
+
 type JsonProfileImage = {
     data: string
 }
@@ -309,7 +311,18 @@ type CompletedGalleryUpload = {
     contentType: string
     width: number
     height: number
+    displayWidth: number
+    displayHeight: number
     byteSize: number
+    exifOrientation: number | null
+}
+
+type GalleryImageMetadata = {
+    width: number
+    height: number
+    displayWidth: number
+    displayHeight: number
+    exifOrientation: number | null
 }
 
 type CompletedGalleryPreview = {
@@ -1039,7 +1052,10 @@ characterRoutes.put('/:id/height-chart', async (c) => {
             contentType: imageResult.contentType,
             width: imageResult.width,
             height: imageResult.height,
+            displayWidth: imageResult.width,
+            displayHeight: imageResult.height,
             byteSize: imageResult.bytes.byteLength,
+            exifOrientation: null,
         }
         uploadedObjectKey = characterHeightChartImageObjectKey(currentUser.id, character.id, imageKey, imageResult.contentType)
 
@@ -2352,13 +2368,18 @@ function maxPreviewByteSize(width: number, height: number): number {
     return width * height * GALLERY_PREVIEW_MAX_BYTES_PER_PIXEL + GALLERY_PREVIEW_MAX_CONTAINER_OVERHEAD_BYTES
 }
 
-function expectedPreviewDimensions(original: {width: number; height: number}): {width: number; height: number} {
-    const longEdge = Math.max(original.width, original.height)
+function expectedPreviewDimensions(original: {width: number; height: number; displayWidth?: number; displayHeight?: number}): {
+    width: number
+    height: number
+} {
+    const width = original.displayWidth ?? original.width
+    const height = original.displayHeight ?? original.height
+    const longEdge = Math.max(width, height)
     const scale = Math.min(1, GALLERY_PREVIEW_MAX_LONG_EDGE / longEdge)
 
     return {
-        width: Math.max(1, Math.round(original.width * scale)),
-        height: Math.max(1, Math.round(original.height * scale)),
+        width: Math.max(1, Math.round(width * scale)),
+        height: Math.max(1, Math.round(height * scale)),
     }
 }
 
@@ -2367,6 +2388,8 @@ function assertPreviewMatchesOriginal(
     original: {
         width: number
         height: number
+        displayWidth?: number
+        displayHeight?: number
     },
     label: string,
 ): void {
@@ -2375,7 +2398,7 @@ function assertPreviewMatchesOriginal(
     const heightDelta = Math.abs(preview.height - expected.height)
 
     if (widthDelta > GALLERY_PREVIEW_DIMENSION_TOLERANCE || heightDelta > GALLERY_PREVIEW_DIMENSION_TOLERANCE) {
-        throw new Error(`${label} dimensions must match the uploaded image scaled to ${GALLERY_PREVIEW_MAX_LONG_EDGE}px`)
+        throw new PreviewValidationError(`${label} dimensions must match the uploaded image scaled to ${GALLERY_PREVIEW_MAX_LONG_EDGE}px`)
     }
 }
 
@@ -2807,6 +2830,7 @@ async function generateMediaPreviewImage(
     } catch (error) {
         console.warn('Cloudflare Images preview generation failed, falling back to container', {
             error: error instanceof Error ? error.message : String(error),
+            exifOrientation: image.exifOrientation,
             sourceObjectKey,
         })
     }
@@ -2817,6 +2841,7 @@ async function generateMediaPreviewImage(
 async function generateMediaPreviewWithCloudflareImages(sourceUrl: string, image: CompletedGalleryUpload): Promise<ParsedPreviewImage> {
     const maxAttempts = 3
     const retryDelayMs = 2_000
+    const orientationTransform = cloudflareExifOrientationTransform(image.exifOrientation)
 
     await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
 
@@ -2831,6 +2856,7 @@ async function generateMediaPreviewWithCloudflareImages(sourceUrl: string, image
                         format: 'webp',
                         height: GALLERY_PREVIEW_MAX_LONG_EDGE,
                         quality: GALLERY_PREVIEW_QUALITY,
+                        ...orientationTransform,
                         width: GALLERY_PREVIEW_MAX_LONG_EDGE,
                     },
                 },
@@ -2841,6 +2867,10 @@ async function generateMediaPreviewWithCloudflareImages(sourceUrl: string, image
 
             return await previewFromResponse(response, image, 'Cloudflare Images preview')
         } catch (error) {
+            if (error instanceof PreviewValidationError) {
+                throw error
+            }
+
             if (attempt === maxAttempts) {
                 throw error
             }
@@ -2850,6 +2880,27 @@ async function generateMediaPreviewWithCloudflareImages(sourceUrl: string, image
     }
 
     throw new Error('Cloudflare Images preview failed unexpectedly.')
+}
+
+function cloudflareExifOrientationTransform(orientation: number | null): {flip?: 'h' | 'v' | 'hv'; rotate?: 90 | 180 | 270} {
+    switch (orientation) {
+        case 2:
+            return {flip: 'h'}
+        case 3:
+            return {rotate: 180}
+        case 4:
+            return {flip: 'v'}
+        case 5:
+            return {flip: 'h', rotate: 270}
+        case 6:
+            return {rotate: 90}
+        case 7:
+            return {flip: 'h', rotate: 90}
+        case 8:
+            return {rotate: 270}
+        default:
+            return {}
+    }
 }
 
 async function generateMediaPreviewWithContainer(
@@ -4326,6 +4377,25 @@ function readGalleryImageDimensions(bytes: Uint8Array, contentType: string): {wi
     return null
 }
 
+function readGalleryImageMetadata(bytes: Uint8Array, contentType: string): GalleryImageMetadata | null {
+    const dimensions = readGalleryImageDimensions(bytes, contentType)
+
+    if (!dimensions) {
+        return null
+    }
+
+    const exifOrientation = contentType === 'image/jpeg' ? readJpegExifOrientation(bytes) : null
+    const swapsDimensions = exifOrientation !== null && exifOrientation >= 5 && exifOrientation <= 8
+
+    return {
+        width: dimensions.width,
+        height: dimensions.height,
+        displayWidth: swapsDimensions ? dimensions.height : dimensions.width,
+        displayHeight: swapsDimensions ? dimensions.width : dimensions.height,
+        exifOrientation,
+    }
+}
+
 function readGifDimensions(bytes: Uint8Array): {width: number; height: number} | null {
     if (bytes.length < 10) {
         return null
@@ -4381,6 +4451,102 @@ function readJpegDimensions(bytes: Uint8Array): {width: number; height: number} 
         }
 
         offset += length
+    }
+
+    return null
+}
+
+function readJpegExifOrientation(bytes: Uint8Array): number | null {
+    if (bytes.length < 4 || byteAt(bytes, 0) !== 0xff || byteAt(bytes, 1) !== 0xd8) {
+        return null
+    }
+
+    let offset = 2
+
+    while (offset + 4 <= bytes.length) {
+        if (byteAt(bytes, offset) !== 0xff) {
+            return null
+        }
+
+        const marker = byteAt(bytes, offset + 1)
+        offset += 2
+
+        if (marker === 0xd9 || marker === 0xda) {
+            return null
+        }
+
+        if (offset + 2 > bytes.length) {
+            return null
+        }
+
+        const length = (byteAt(bytes, offset) << 8) | byteAt(bytes, offset + 1)
+
+        if (length < 2 || offset + length > bytes.length) {
+            return null
+        }
+
+        if (marker === 0xe1) {
+            const orientation = readExifOrientationFromApp1(bytes, offset + 2, offset + length)
+
+            if (orientation !== null) {
+                return orientation
+            }
+        }
+
+        offset += length
+    }
+
+    return null
+}
+
+function readExifOrientationFromApp1(bytes: Uint8Array, start: number, end: number): number | null {
+    if (end - start < 32 || readAscii(bytes, start, 6) !== 'Exif\0\0') {
+        return null
+    }
+
+    const tiffStart = start + 6
+    const byteOrder = readAscii(bytes, tiffStart, 2)
+    const littleEndian = byteOrder === 'II'
+
+    if (!littleEndian && byteOrder !== 'MM') {
+        return null
+    }
+
+    if (readUint16(bytes, tiffStart + 2, littleEndian) !== 42) {
+        return null
+    }
+
+    const firstIfdOffset = readUint32(bytes, tiffStart + 4, littleEndian)
+    const ifdStart = tiffStart + firstIfdOffset
+
+    if (firstIfdOffset < 8 || ifdStart + 2 > end) {
+        return null
+    }
+
+    const entryCount = readUint16(bytes, ifdStart, littleEndian)
+    let entryOffset = ifdStart + 2
+
+    for (let index = 0; index < entryCount; index += 1) {
+        if (entryOffset + 12 > end) {
+            return null
+        }
+
+        const tag = readUint16(bytes, entryOffset, littleEndian)
+
+        if (tag === 0x0112) {
+            const type = readUint16(bytes, entryOffset + 2, littleEndian)
+            const valueCount = readUint32(bytes, entryOffset + 4, littleEndian)
+
+            if (type !== 3 || valueCount < 1) {
+                return null
+            }
+
+            const orientation = readUint16(bytes, entryOffset + 8, littleEndian)
+
+            return orientation >= 1 && orientation <= 8 ? orientation : null
+        }
+
+        entryOffset += 12
     }
 
     return null
@@ -4478,6 +4644,27 @@ function readUint32Be(bytes: Uint8Array, offset: number): number {
     )
 }
 
+function readUint16(bytes: Uint8Array, offset: number, littleEndian: boolean): number {
+    if (littleEndian) {
+        return byteAt(bytes, offset) | (byteAt(bytes, offset + 1) << 8)
+    }
+
+    return (byteAt(bytes, offset) << 8) | byteAt(bytes, offset + 1)
+}
+
+function readUint32(bytes: Uint8Array, offset: number, littleEndian: boolean): number {
+    if (littleEndian) {
+        return (
+            byteAt(bytes, offset) +
+            byteAt(bytes, offset + 1) * 0x100 +
+            byteAt(bytes, offset + 2) * 0x10000 +
+            byteAt(bytes, offset + 3) * 0x1000000
+        )
+    }
+
+    return readUint32Be(bytes, offset)
+}
+
 function byteAt(bytes: Uint8Array, offset: number): number {
     const value = bytes[offset]
 
@@ -4511,14 +4698,14 @@ async function completeChunkedGalleryUpload(
         throw new Error(`${label} must be 200 MB or smaller`)
     }
 
-    const dimensions = await readStoredGalleryImageDimensions(bucket, objectKey, upload.contentType)
+    const metadata = await readStoredGalleryImageMetadata(bucket, objectKey, upload.contentType)
 
-    if (!dimensions) {
+    if (!metadata) {
         await deleteR2Objects(bucket, [objectKey])
         throw new Error(`${label} dimensions could not be verified`)
     }
 
-    if (dimensions.width * dimensions.height > GALLERY_IMAGE_MAX_PIXELS) {
+    if (metadata.width * metadata.height > GALLERY_IMAGE_MAX_PIXELS) {
         await deleteR2Objects(bucket, [objectKey])
         throw new Error(`${label} must be ${GALLERY_IMAGE_MAX_PIXELS.toLocaleString('en-US')} pixels or smaller`)
     }
@@ -4526,17 +4713,20 @@ async function completeChunkedGalleryUpload(
     return {
         imageKey: upload.imageKey,
         contentType: upload.contentType,
-        width: dimensions.width,
-        height: dimensions.height,
+        width: metadata.width,
+        height: metadata.height,
+        displayWidth: metadata.displayWidth,
+        displayHeight: metadata.displayHeight,
         byteSize: completedObject.size,
+        exifOrientation: metadata.exifOrientation,
     }
 }
 
-async function readStoredGalleryImageDimensions(
+async function readStoredGalleryImageMetadata(
     bucket: R2Bucket,
     objectKey: string,
     contentType: string,
-): Promise<{width: number; height: number} | null> {
+): Promise<GalleryImageMetadata | null> {
     const object = await bucket.get(objectKey, {
         range: {
             offset: 0,
@@ -4548,7 +4738,7 @@ async function readStoredGalleryImageDimensions(
         return null
     }
 
-    return readGalleryImageDimensions(new Uint8Array(await object.arrayBuffer()), contentType)
+    return readGalleryImageMetadata(new Uint8Array(await object.arrayBuffer()), contentType)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

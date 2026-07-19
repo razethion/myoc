@@ -36,6 +36,12 @@ export function createJpegFile(width = 100, height = 80, name = 'gallery.jpg'): 
     })
 }
 
+export function createExifOrientationJpegFile(width = 100, height = 80, orientation = 6, name = 'gallery.jpg'): File {
+    return new File([createExifOrientationJpegBytes(width, height, orientation)], name, {
+        type: 'image/jpeg',
+    })
+}
+
 export function createAvifFile(width = 100, height = 80, name = 'gallery.avif'): File {
     return new File([createAvifBytes(width, height)], name, {
         type: 'image/avif',
@@ -95,6 +101,28 @@ function createJpegBytes(width: number, height: number): Uint8Array {
     return bytes
 }
 
+function createExifOrientationJpegBytes(width: number, height: number, orientation: number): Uint8Array {
+    const jpegBytes = createJpegBytes(width, height)
+    const app1Payload = new Uint8Array(32)
+    writeAscii(app1Payload, 0, 'Exif')
+    writeAscii(app1Payload, 6, 'II')
+    writeUint16Le(app1Payload, 8, 42)
+    writeUint32Le(app1Payload, 10, 8)
+    writeUint16Le(app1Payload, 14, 1)
+    writeUint16Le(app1Payload, 16, 0x0112)
+    writeUint16Le(app1Payload, 18, 3)
+    writeUint32Le(app1Payload, 20, 1)
+    writeUint16Le(app1Payload, 24, orientation)
+
+    const app1Segment = new Uint8Array(4 + app1Payload.byteLength)
+    app1Segment.set([0xff, 0xe1], 0)
+    app1Segment[2] = ((app1Payload.byteLength + 2) >>> 8) & 0xff
+    app1Segment[3] = (app1Payload.byteLength + 2) & 0xff
+    app1Segment.set(app1Payload, 4)
+
+    return concatBytes([jpegBytes.slice(0, 2), app1Segment, jpegBytes.slice(2)])
+}
+
 function createAvifBytes(width: number, height: number): Uint8Array {
     const bytes = new Uint8Array(48)
     writeUint32Be(bytes, 0, 48)
@@ -121,5 +149,18 @@ export function createWebpBytes(width: number, height: number): Uint8Array {
     writeUint32Le(bytes, 16, 10)
     writeUint24Le(bytes, 24, width - 1)
     writeUint24Le(bytes, 27, height - 1)
+    return bytes
+}
+
+function concatBytes(chunks: Uint8Array[]): Uint8Array {
+    const totalLength = chunks.reduce((total, chunk) => total + chunk.byteLength, 0)
+    const bytes = new Uint8Array(totalLength)
+    let offset = 0
+
+    for (const chunk of chunks) {
+        bytes.set(chunk, offset)
+        offset += chunk.byteLength
+    }
+
     return bytes
 }
