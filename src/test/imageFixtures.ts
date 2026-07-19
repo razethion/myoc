@@ -1,4 +1,4 @@
-import {writeAscii, writeUint16Le, writeUint24Le, writeUint32Be, writeUint32Le} from './binaryWriters'
+import {writeAscii, writeUint16Be, writeUint16Le, writeUint24Le, writeUint32Be, writeUint32Le} from './binaryWriters'
 
 export function createWebpFile(width = 512, height = 512, type = 'image/webp', name = 'profile-image.webp'): File {
     return new File([createWebpBytes(width, height)], name, {
@@ -38,6 +38,18 @@ export function createJpegFile(width = 100, height = 80, name = 'gallery.jpg'): 
 
 export function createExifOrientationJpegFile(width = 100, height = 80, orientation = 6, name = 'gallery.jpg'): File {
     return new File([createExifOrientationJpegBytes(width, height, orientation)], name, {
+        type: 'image/jpeg',
+    })
+}
+
+export function createBigEndianExifOrientationJpegFile(width = 100, height = 80, orientation = 6, name = 'gallery.jpg'): File {
+    return new File([createExifOrientationJpegBytes(width, height, orientation, false)], name, {
+        type: 'image/jpeg',
+    })
+}
+
+export function createJpegFileWithExifWithoutOrientation(width = 100, height = 80, name = 'gallery.jpg'): File {
+    return new File([createExifJpegBytes(width, height, null, true)], name, {
         type: 'image/jpeg',
     })
 }
@@ -101,18 +113,26 @@ function createJpegBytes(width: number, height: number): Uint8Array {
     return bytes
 }
 
-function createExifOrientationJpegBytes(width: number, height: number, orientation: number): Uint8Array {
+function createExifOrientationJpegBytes(width: number, height: number, orientation: number, littleEndian = true): Uint8Array {
+    return createExifJpegBytes(width, height, orientation, littleEndian)
+}
+
+function createExifJpegBytes(width: number, height: number, orientation: number | null, littleEndian: boolean): Uint8Array {
     const jpegBytes = createJpegBytes(width, height)
     const app1Payload = new Uint8Array(32)
     writeAscii(app1Payload, 0, 'Exif')
-    writeAscii(app1Payload, 6, 'II')
-    writeUint16Le(app1Payload, 8, 42)
-    writeUint32Le(app1Payload, 10, 8)
-    writeUint16Le(app1Payload, 14, 1)
-    writeUint16Le(app1Payload, 16, 0x0112)
-    writeUint16Le(app1Payload, 18, 3)
-    writeUint32Le(app1Payload, 20, 1)
-    writeUint16Le(app1Payload, 24, orientation)
+    writeAscii(app1Payload, 6, littleEndian ? 'II' : 'MM')
+
+    const writeUint16 = littleEndian ? writeUint16Le : writeUint16Be
+    const writeUint32 = littleEndian ? writeUint32Le : writeUint32Be
+
+    writeUint16(app1Payload, 8, 42)
+    writeUint32(app1Payload, 10, 8)
+    writeUint16(app1Payload, 14, 1)
+    writeUint16(app1Payload, 16, orientation === null ? 0x010f : 0x0112)
+    writeUint16(app1Payload, 18, orientation === null ? 2 : 3)
+    writeUint32(app1Payload, 20, 1)
+    writeUint16(app1Payload, 24, orientation ?? 0)
 
     const app1Segment = new Uint8Array(4 + app1Payload.byteLength)
     app1Segment.set([0xff, 0xe1], 0)

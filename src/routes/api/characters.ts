@@ -2875,6 +2875,7 @@ async function generateMediaPreviewWithCloudflareImages(sourceUrl: string, image
         }
     }
 
+    /* istanbul ignore next -- maxAttempts is positive, and the loop either returns or throws from the catch block. */
     throw new Error('Cloudflare Images preview failed unexpectedly.')
 }
 
@@ -2936,11 +2937,16 @@ async function previewFromResponse(response: Response, image: CompletedGalleryUp
     const bytes = new Uint8Array(await response.arrayBuffer())
     const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.toLowerCase() ?? ''
 
-    if (!response.ok || contentType !== GALLERY_PREVIEW_CONTENT_TYPE) {
+    if (!response.ok) {
         const canDecodeMessage = contentType.startsWith('text/') || contentType === 'application/json'
         const message = canDecodeMessage ? new TextDecoder().decode(bytes).slice(0, 500) : ''
         const details = message ? `: ${message}` : contentType ? ` (${contentType})` : ''
         throw new Error(`${label} failed with ${response.status}${details}`)
+    }
+
+    if (contentType !== GALLERY_PREVIEW_CONTENT_TYPE) {
+        const details = contentType ? ` (${contentType})` : ''
+        throw new PreviewValidationError(`${label} returned an unexpected content type${details}`)
     }
 
     if (bytes.byteLength <= 0) {

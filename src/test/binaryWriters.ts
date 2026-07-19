@@ -8,6 +8,10 @@ export function writeUint16Le(bytes: Uint8Array, offset: number, value: number):
     writeUintLe(bytes, offset, value, 2)
 }
 
+export function writeUint16Be(bytes: Uint8Array, offset: number, value: number): void {
+    writeUintBe(bytes, offset, value, 2)
+}
+
 export function writeUint24Le(bytes: Uint8Array, offset: number, value: number): void {
     writeUintLe(bytes, offset, value, 3)
 }
