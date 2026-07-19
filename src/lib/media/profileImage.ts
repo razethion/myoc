@@ -27,10 +27,6 @@ function validateProfileImagePayload(
           error: string
           status: 400
       } {
-    if (image.contentType !== PROFILE_IMAGE_CONTENT_TYPE) {
-        return {error: PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR, status: 400}
-    }
-
     if (image.bytes.byteLength > PROFILE_IMAGE_MAX_BYTES) {
         return {error: `${label} must be 2 MB or smaller`, status: 400}
     }

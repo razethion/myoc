@@ -1835,6 +1835,171 @@ describe('GET /migrate', () => {
         )
     })
 
+    it('shows a media error when a Toyhou.se profile image data URL is unsupported', async () => {
+        const payload = {
+            myocUserId: 'current-user',
+            profileUrl: 'https://toyhou.se/demo',
+            folderUrl: 'https://toyhou.se/demo/characters/folder:all',
+            pagesFetched: 1,
+            characters: [
+                {
+                    id: '9430171',
+                    images: [
+                        {
+                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png',
+                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/9430171_thumb.png',
+                        },
+                    ],
+                    imageCount: 1,
+                    name: 'Absinthe',
+                    thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485',
+                    url: 'https://toyhou.se/9430171.absinthe',
+                },
+            ],
+        }
+        const form = new FormData()
+        form.set('toyhousePayload', JSON.stringify(payload))
+        form.append('characterIds', '9430171')
+        form.set('profileImageDataUrl:9430171', 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==')
+        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png')
+
+        const db = createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo'),
+        })
+        const bucket = createMockR2Bucket()
+        const response = await app.request(
+            'https://example.com/migrate/import/confirm',
+            {
+                body: form,
+                headers: {
+                    cookie: 'myoc_session=session-token',
+                },
+                method: 'POST',
+            },
+            {
+                CACHE: createMockKVNamespace(),
+                DB: db,
+                MEDIA_BUCKET: bucket,
+                MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+            },
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Unexpected media, contact support')
+        expect(bucket.put).not.toHaveBeenCalled()
+    })
+
+    it('shows a media error when a Toyhou.se profile image data URL cannot be decoded', async () => {
+        const payload = {
+            myocUserId: 'current-user',
+            profileUrl: 'https://toyhou.se/demo',
+            folderUrl: 'https://toyhou.se/demo/characters/folder:all',
+            pagesFetched: 1,
+            characters: [
+                {
+                    id: '9430171',
+                    images: [
+                        {
+                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png',
+                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/9430171_thumb.png',
+                        },
+                    ],
+                    imageCount: 1,
+                    name: 'Absinthe',
+                    thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485',
+                    url: 'https://toyhou.se/9430171.absinthe',
+                },
+            ],
+        }
+        const form = new FormData()
+        form.set('toyhousePayload', JSON.stringify(payload))
+        form.append('characterIds', '9430171')
+        form.set('profileImageDataUrl:9430171', 'data:image/png;base64,%%%%')
+        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png')
+
+        const db = createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo'),
+        })
+        const bucket = createMockR2Bucket()
+        const response = await app.request(
+            'https://example.com/migrate/import/confirm',
+            {
+                body: form,
+                headers: {
+                    cookie: 'myoc_session=session-token',
+                },
+                method: 'POST',
+            },
+            {
+                CACHE: createMockKVNamespace(),
+                DB: db,
+                MEDIA_BUCKET: bucket,
+                MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+            },
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Unexpected media, contact support')
+        expect(bucket.put).not.toHaveBeenCalled()
+    })
+
+    it('shows a media error when Toyhou.se PNG profile image conversion is unavailable', async () => {
+        const payload = {
+            myocUserId: 'current-user',
+            profileUrl: 'https://toyhou.se/demo',
+            folderUrl: 'https://toyhou.se/demo/characters/folder:all',
+            pagesFetched: 1,
+            characters: [
+                {
+                    id: '9430171',
+                    images: [
+                        {
+                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png',
+                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/9430171_thumb.png',
+                        },
+                    ],
+                    imageCount: 1,
+                    name: 'Absinthe',
+                    thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485',
+                    url: 'https://toyhou.se/9430171.absinthe',
+                },
+            ],
+        }
+        const form = new FormData()
+        form.set('toyhousePayload', JSON.stringify(payload))
+        form.append('characterIds', '9430171')
+        form.set('profileImageDataUrl:9430171', createPngDataUrl())
+        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png')
+
+        const db = createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo'),
+        })
+        const bucket = createMockR2Bucket()
+        const response = await app.request(
+            'https://example.com/migrate/import/confirm',
+            {
+                body: form,
+                headers: {
+                    cookie: 'myoc_session=session-token',
+                },
+                method: 'POST',
+            },
+            {
+                CACHE: createMockKVNamespace(),
+                DB: db,
+                MEDIA_BUCKET: bucket,
+                MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+            },
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Unexpected media, contact support')
+        expect(bucket.put).not.toHaveBeenCalled()
+    })
+
     it('looks up large Toyhou.se import item sets in bounded D1 queries', async () => {
         const imageUrls = Array.from({length: 120}, (_, index) => `https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_${index}.png`)
         const payload = {

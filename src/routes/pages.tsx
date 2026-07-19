@@ -1402,11 +1402,7 @@ function readProfileImageDataUrl(value: string): {contentType: string; bytes: Ui
         return {error: PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR}
     }
 
-    const [, contentType, encodedBytes] = match
-
-    if (!contentType || !encodedBytes) {
-        return {error: PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR}
-    }
+    const [contentType, encodedBytes] = match.slice(1) as [string, string]
 
     try {
         const binary = atob(encodedBytes)
