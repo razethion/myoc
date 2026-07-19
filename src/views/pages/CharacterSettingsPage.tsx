@@ -269,7 +269,9 @@ async function apiFetch(url, options) {
         });
     } catch (error) {
         const message = error && error.message ? error.message : 'Network request failed';
-        throw new Error(requestLabel ? requestLabel + ' failed: ' + message : message);
+        const wrappedError = new Error(requestLabel ? requestLabel + ' failed: ' + message : message);
+        wrappedError.retryable = true;
+        throw wrappedError;
     }
     if (!response.ok) {
         let message = 'Request failed';
@@ -277,12 +279,34 @@ async function apiFetch(url, options) {
             const body = await response.json();
             message = body.error || message;
         } catch {}
-        throw new Error(requestLabel ? requestLabel + ' failed: ' + message : message);
+        const error = new Error(requestLabel ? requestLabel + ' failed: ' + message : message);
+        error.retryable = response.status === 429 || response.status >= 500;
+        throw error;
     }
     if (response.status === 204) {
         return null;
     }
     return await response.json();
+}
+
+function sleep(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function withRetry(label, task, onRetry) {
+    let lastError = null;
+    for (let attempt = 1; attempt <= chunkUploadMaxAttempts; attempt += 1) {
+        try {
+            return await task(attempt);
+        } catch (error) {
+            lastError = error;
+            if (error && error.retryable === false) break;
+            if (attempt >= chunkUploadMaxAttempts) break;
+            if (onRetry) onRetry(error, attempt);
+            await sleep(700 * attempt * attempt);
+        }
+    }
+    throw lastError || new Error(label + ' failed.');
 }
 
 function setLoading(button, isLoading, text) {
@@ -786,6 +810,7 @@ function renderFilePreview(input, preview, emptyText) {
 const allowedGalleryImageTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'];
 const galleryImageMaxBytes = 200 * 1024 * 1024;
 const galleryImageMaxPixels = 200000000;
+const chunkUploadMaxAttempts = 3;
 
 async function prepareOriginalImageFile(file) {
     if (!file) return null;
@@ -848,11 +873,19 @@ async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}, progress)
         sfwArtist: sfwArtist || '',
         nsfwArtist: nsfwArtist || ''
     };
-    if (sfwImage) {
-        completeBody.sfwUpload = await uploadChunkedImage(initResult.mediaId, 'sfw', sfwImage, initResult.uploads.sfw, progress);
-    }
-    if (nsfwImage) {
-        completeBody.nsfwUpload = await uploadChunkedImage(initResult.mediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw, progress);
+    try {
+        if (sfwImage) {
+            completeBody.sfwUpload = await uploadChunkedImage(initResult.mediaId, 'sfw', sfwImage, initResult.uploads.sfw, progress);
+        }
+        if (nsfwImage) {
+            completeBody.nsfwUpload = await uploadChunkedImage(initResult.mediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw, progress);
+        }
+    } catch (error) {
+        await abortChunkedUploads(initResult.mediaId, [
+            { rating: 'sfw', image: sfwImage, upload: initResult.uploads.sfw },
+            { rating: 'nsfw', image: nsfwImage, upload: initResult.uploads.nsfw }
+        ]);
+        throw error;
     }
 
     if (progress) progress({ status: 'Finalizing', percent: 95, detail: 'Finishing upload' });
@@ -886,7 +919,8 @@ async function uploadChunkedImage(mediaId, rating, image, upload, progress) {
 
     for (let offset = 0; offset < file.size; offset += chunkSize) {
         const chunk = file.slice(offset, Math.min(offset + chunkSize, file.size), image.contentType);
-        const part = await apiFetch(
+        const label = 'Uploading ' + rating.toUpperCase() + ' chunk ' + partNumber;
+        const part = await withRetry(label, async () => await apiFetch(
             '/api/characters/' + encodeURIComponent(character.id)
             + '/media/chunked/' + encodeURIComponent(mediaId)
             + '/' + encodeURIComponent(rating)
@@ -896,10 +930,18 @@ async function uploadChunkedImage(mediaId, rating, image, upload, progress) {
             + '&contentType=' + encodeURIComponent(image.contentType),
             {
                 method: 'PUT',
-                requestLabel: 'Uploading ' + rating.toUpperCase() + ' chunk ' + partNumber,
+                requestLabel: label,
                 body: chunk
             }
-        );
+        ), (error, attempt) => {
+            if (!progress) return;
+            const message = error && error.message ? error.message : String(error);
+            progress({
+                status: 'Uploading',
+                percent: 10 + ((offset / totalBytes) * 80),
+                detail: label + ' failed, retrying ' + attempt + ' of ' + (chunkUploadMaxAttempts - 1) + ': ' + message
+            });
+        });
         parts.push(part);
         const uploadedBytes = Math.min(offset + chunk.size, file.size);
         if (progress) {
@@ -918,6 +960,33 @@ async function uploadChunkedImage(mediaId, rating, image, upload, progress) {
         contentType: image.contentType,
         parts
     };
+}
+
+async function abortChunkedUploads(mediaId, uploads) {
+    await Promise.all(uploads.map(async ({rating, image, upload}) => {
+        if (!image || !upload) return;
+        try {
+            await apiFetch(
+                '/api/characters/' + encodeURIComponent(character.id)
+                + '/media/chunked/' + encodeURIComponent(mediaId)
+                + '/' + encodeURIComponent(rating)
+                + '/' + encodeURIComponent(upload.uploadId)
+                + '?imageKey=' + encodeURIComponent(upload.imageKey)
+                + '&contentType=' + encodeURIComponent(image.contentType),
+                {
+                    method: 'DELETE',
+                    requestLabel: 'Canceling ' + rating.toUpperCase() + ' upload'
+                }
+            );
+        } catch (error) {
+            console.warn('Unable to abort chunked gallery upload after failure.', {
+                error,
+                imageKey: upload.imageKey,
+                mediaId,
+                rating
+            });
+        }
+    }));
 }
 
 function openEditMediaModal(mediaId) {
@@ -1427,11 +1496,21 @@ editImageArtistForm.addEventListener('submit', async (event) => {
             removeSfw: editRemoveSfw,
             removeNsfw: editRemoveNsfw
         };
-        if (initResult && sfwImage) {
-            completeBody.sfwUpload = await uploadChunkedImage(editTargetMediaId, 'sfw', sfwImage, initResult.uploads.sfw);
-        }
-        if (initResult && nsfwImage) {
-            completeBody.nsfwUpload = await uploadChunkedImage(editTargetMediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw);
+        try {
+            if (initResult && sfwImage) {
+                completeBody.sfwUpload = await uploadChunkedImage(editTargetMediaId, 'sfw', sfwImage, initResult.uploads.sfw);
+            }
+            if (initResult && nsfwImage) {
+                completeBody.nsfwUpload = await uploadChunkedImage(editTargetMediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw);
+            }
+        } catch (error) {
+            if (initResult) {
+                await abortChunkedUploads(editTargetMediaId, [
+                    { rating: 'sfw', image: sfwImage, upload: initResult.uploads.sfw },
+                    { rating: 'nsfw', image: nsfwImage, upload: initResult.uploads.nsfw }
+                ]);
+            }
+            throw error;
         }
         const result = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/' + encodeURIComponent(editTargetMediaId) + '/chunked/complete', {
             method: 'POST',
