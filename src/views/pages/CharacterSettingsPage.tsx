@@ -312,6 +312,11 @@ function openBulkUploadProgress(files) {
     if (!bulkUploadProgressModal.open) bulkUploadProgressModal.showModal();
 }
 
+function formatBulkUploadErrorDetail(file, error) {
+    const message = error && error.message ? error.message : 'Upload failed';
+    return file && file.name ? file.name + ' — ' + message : message;
+}
+
 async function loadCharacterProfileForCropping(file) {
     if (!file || !file.type.startsWith('image/')) throw new Error('Choose an image file.');
     if (typeof Cropper === 'undefined') throw new Error('Profile image editor could not load. Refresh and try again.');
@@ -334,7 +339,7 @@ async function createCroppedCharacterProfileFile() {
                 return;
             }
             const extension = blob.type === 'image/png' ? 'png' : blob.type === 'image/jpeg' ? 'jpg' : 'webp';
-            resolve(new File([blob], 'character-profile.' + extension, { type: blob.type || 'application/octet-stream' }));
+            resolve(new File([blob], 'character-profile.' + extension, { type: blob.type || 'image/webp' }));
         }, 'image/webp', 0.9);
     });
 }
@@ -784,20 +789,25 @@ async function prepareOriginalImageFile(file) {
     if (file.size > galleryImageMaxBytes) {
         throw new Error('Gallery images must be 200 MB or smaller.');
     }
+    const image = {
+        file,
+        contentType: file.type
+    };
     let bitmap;
     try {
         bitmap = await createImageBitmap(file, { colorSpaceConversion: 'default' });
-    } catch {
-        throw new Error('Could not read this image. Try PNG, JPG, WebP, GIF, or AVIF.');
+    } catch (error) {
+        console.warn('Image preflight decode failed; continuing with server-side validation.', {
+            error,
+            size: file.size,
+            type: file.type
+        });
+        return image;
     }
     try {
         if (bitmap.width * bitmap.height > galleryImageMaxPixels) {
             throw new Error('Gallery images must be 200,000,000 pixels or smaller.');
         }
-        const image = {
-            file,
-            contentType: file.type
-        };
         bitmap.close();
         return image;
     } catch (error) {
@@ -1354,16 +1364,18 @@ bulkUploadForm.addEventListener('submit', async (event) => {
         bulkUploadModal.close();
         showAlert('Bulk upload complete. Save changes to persist gallery placement.', true);
     } catch (error) {
+        const errorMessage = error && error.message ? error.message : 'Upload failed';
         if (activeIndex >= 0) {
+            const activeFile = bulkUploadFiles[activeIndex];
             setBulkUploadProgress(
                 'Bulk upload stopped at image ' + (activeIndex + 1) + ' of ' + bulkUploadFiles.length,
                 ((activeIndex + 1) / Math.max(bulkUploadFiles.length, 1)) * 100,
-                error.message || 'Upload failed',
+                formatBulkUploadErrorDetail(activeFile, error),
                 true,
                 true
             );
         }
-        showAlert(error.message, false);
+        showAlert(errorMessage, false);
     } finally {
         setLoading(submitButton, false, 'Uploading...');
     }
@@ -1991,7 +2003,7 @@ function BulkUploadProgressDialog() {
                     Preparing upload
                 </p>
                 <progress class="progress mt-5 w-full" id="bulk-upload-progress-bar" max="100" value="0"></progress>
-                <p class="mt-2 truncate text-sm text-base-content/70" id="bulk-upload-progress-detail">
+                <p class="mt-2 break-words text-sm whitespace-normal text-base-content/70" id="bulk-upload-progress-detail">
                     Waiting to upload
                 </p>
                 <div class="modal-action">

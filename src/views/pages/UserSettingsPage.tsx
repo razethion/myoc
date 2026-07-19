@@ -588,7 +588,7 @@ function UserSettingsPageScript() {
                         ? 'jpg'
                         : 'webp';
                 formData.set('profilePhoto', new File([croppedProfilePhotoBlob], 'profile-photo.' + profilePhotoExtension, {
-                    type: croppedProfilePhotoBlob.type || 'application/octet-stream',
+                    type: croppedProfilePhotoBlob.type || 'image/webp',
                 }));
 
                 try {
