@@ -2841,25 +2841,21 @@ async function generateMediaPreviewImage(
 async function generateMediaPreviewWithCloudflareImages(sourceUrl: string, image: CompletedGalleryUpload): Promise<ParsedPreviewImage> {
     const maxAttempts = 3
     const retryDelayMs = 2_000
-    const orientationTransform = cloudflareExifOrientationTransform(image.exifOrientation)
+    const previewUrl = cloudflareImageTransformUrl(sourceUrl, {
+        anim: false,
+        fit: 'scale-down',
+        format: 'webp',
+        height: GALLERY_PREVIEW_MAX_LONG_EDGE,
+        quality: GALLERY_PREVIEW_QUALITY,
+        ...cloudflareExifOrientationTransform(image.exifOrientation),
+        width: GALLERY_PREVIEW_MAX_LONG_EDGE,
+    })
 
     await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
-            const response = await fetch(sourceUrl, {
-                cf: {
-                    cacheTtlByStatus: {'404': 0, '500-599': 0},
-                    image: {
-                        anim: false,
-                        fit: 'scale-down',
-                        format: 'webp',
-                        height: GALLERY_PREVIEW_MAX_LONG_EDGE,
-                        quality: GALLERY_PREVIEW_QUALITY,
-                        ...orientationTransform,
-                        width: GALLERY_PREVIEW_MAX_LONG_EDGE,
-                    },
-                },
+            const response = await fetch(previewUrl, {
                 headers: {
                     accept: 'image/webp,image/*,*/*;q=0.8',
                 },
@@ -2880,6 +2876,16 @@ async function generateMediaPreviewWithCloudflareImages(sourceUrl: string, image
     }
 
     throw new Error('Cloudflare Images preview failed unexpectedly.')
+}
+
+function cloudflareImageTransformUrl(sourceUrl: string, options: Record<string, boolean | number | string | undefined>): string {
+    const url = new URL(sourceUrl)
+    const optionString = Object.entries(options)
+        .filter((entry): entry is [string, boolean | number | string] => entry[1] !== undefined)
+        .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+        .join(',')
+
+    return `${url.origin}/cdn-cgi/image/${optionString}${url.pathname}${url.search}`
 }
 
 function cloudflareExifOrientationTransform(orientation: number | null): {flip?: 'h' | 'v' | 'hv'; rotate?: 90 | 180 | 270} {

@@ -3527,13 +3527,10 @@ describe('character media uploads', () => {
         expect(body.media.sfwPreviewWidth).toBe(1200)
         expect(body.media.sfwPreviewHeight).toBe(1600)
         expect(globalThis.fetch).toHaveBeenCalledWith(
-            `${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.jpg`,
+            `${mediaPublicBaseUrl}/cdn-cgi/image/anim=false,fit=scale-down,format=webp,height=1600,quality=90,rotate=90,width=1600/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.jpg`,
             expect.objectContaining({
-                cf: expect.objectContaining({
-                    image: expect.objectContaining({
-                        format: 'webp',
-                        rotate: 90,
-                    }),
+                headers: expect.objectContaining({
+                    accept: 'image/webp,image/*,*/*;q=0.8',
                 }),
             }),
         )
@@ -3628,13 +3625,10 @@ describe('character media uploads', () => {
         expect(body.media.sfwPreviewWidth).toBe(1200)
         expect(body.media.sfwPreviewHeight).toBe(1600)
         expect(globalThis.fetch).toHaveBeenCalledWith(
-            `${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.jpg`,
+            `${mediaPublicBaseUrl}/cdn-cgi/image/anim=false,fit=scale-down,format=webp,height=1600,quality=90,rotate=90,width=1600/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.jpg`,
             expect.objectContaining({
-                cf: expect.objectContaining({
-                    image: expect.objectContaining({
-                        format: 'webp',
-                        rotate: 90,
-                    }),
+                headers: expect.objectContaining({
+                    accept: 'image/webp,image/*,*/*;q=0.8',
                 }),
             }),
         )
