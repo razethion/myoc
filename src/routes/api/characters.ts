@@ -143,8 +143,6 @@ type CompletedChunkedUpload = {
     uploadId: string
     imageKey: string
     contentType: string
-    width: number
-    height: number
     parts: R2UploadedPart[]
 }
 
@@ -4072,8 +4070,6 @@ function parseCompletedChunkedUpload(value: unknown):
           uploadId: string
           imageKey: string
           contentType: string
-          width: number
-          height: number
           parts: R2UploadedPart[]
       }
     | {error: string}
@@ -4089,7 +4085,6 @@ function parseCompletedChunkedUpload(value: unknown):
     const uploadId = normalizeOptionalText(value.uploadId)
     const imageKey = normalizeUploadIdentifier(value.imageKey, 'Image key')
     const contentType = normalizeGalleryImageContentType(value.contentType)
-    const dimensions = normalizeGalleryImageDimensions(value.width, value.height)
 
     if (!uploadId) {
         return {error: 'upload id is required'}
@@ -4101,10 +4096,6 @@ function parseCompletedChunkedUpload(value: unknown):
 
     if ('error' in contentType) {
         return {error: contentType.error}
-    }
-
-    if ('error' in dimensions) {
-        return {error: dimensions.error}
     }
 
     if (!Array.isArray(value.parts) || value.parts.length === 0) {
@@ -4134,8 +4125,6 @@ function parseCompletedChunkedUpload(value: unknown):
         uploadId,
         imageKey: imageKey.value,
         contentType: contentType.contentType,
-        width: dimensions.width,
-        height: dimensions.height,
         parts,
     }
 }
@@ -4354,11 +4343,6 @@ async function completeChunkedGalleryUpload(
     if (!dimensions) {
         await deleteR2Objects(bucket, [objectKey])
         throw new Error(`${label} dimensions could not be verified`)
-    }
-
-    if (dimensions.width !== upload.width || dimensions.height !== upload.height) {
-        await deleteR2Objects(bucket, [objectKey])
-        throw new Error(`${label} dimensions do not match the uploaded image`)
     }
 
     if (dimensions.width * dimensions.height > GALLERY_IMAGE_MAX_PIXELS) {

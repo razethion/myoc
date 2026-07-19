@@ -328,19 +328,16 @@ async function completeChunkedMedia(
 
 function mockCloudflareImagePreviewResponse(body: unknown): void {
     const preview = firstPreviewPayload(body)
-    const upload = firstCompletedUpload(body)
 
-    if (!upload) {
+    if (!preview) {
         return
     }
 
-    const dimensions = expectedPreviewDimensions(upload)
     vi.stubGlobal(
         'fetch',
         vi.fn(async () => {
-            const bytes = preview
-                ? decodePreviewPayloadBytes(preview.data)
-                : new Uint8Array(await createWebpFile(dimensions.width, dimensions.height).arrayBuffer())
+            const bytes = decodePreviewPayloadBytes(preview.data)
+
             return new Response(bytes, {
                 headers: {
                     'content-type': 'image/webp',
@@ -378,36 +375,6 @@ function decodePreviewPayloadBytes(value: string): Uint8Array {
     }
 
     return bytes
-}
-
-function firstCompletedUpload(body: unknown): {width: number; height: number} | null {
-    if (!body || typeof body !== 'object') {
-        return null
-    }
-
-    const record = body as Record<string, unknown>
-
-    for (const key of ['sfwUpload', 'nsfwUpload']) {
-        const upload = record[key]
-
-        if (upload && typeof upload === 'object' && 'width' in upload && 'height' in upload) {
-            return {
-                width: Number((upload as {width: unknown}).width),
-                height: Number((upload as {height: unknown}).height),
-            }
-        }
-    }
-
-    return null
-}
-
-function expectedPreviewDimensions(original: {width: number; height: number}): {width: number; height: number} {
-    const scale = Math.min(1, 1600 / Math.max(original.width, original.height))
-
-    return {
-        width: Math.max(1, Math.round(original.width * scale)),
-        height: Math.max(1, Math.round(original.height * scale)),
-    }
 }
 
 async function initExistingChunkedMedia(
@@ -3215,8 +3182,6 @@ describe('character media uploads', () => {
                     uploadId: initBody.uploads.sfw.uploadId,
                     imageKey: initBody.uploads.sfw.imageKey,
                     contentType: 'image/png',
-                    width: 10000,
-                    height: 10000,
                     parts: [uploadedPart],
                 },
                 sfwPreview: createPreviewPayload(1600, 1600),
@@ -3311,8 +3276,6 @@ describe('character media uploads', () => {
                     uploadId: 'upload-id',
                     imageKey: 'image-key',
                     contentType: 'image/png',
-                    width: 800,
-                    height: 600,
                     parts: [{partNumber: 1, etag: 'etag'}],
                 },
                 sfwPreview: createPreviewPayload(800, 600),
@@ -3392,8 +3355,6 @@ describe('character media uploads', () => {
                     uploadId: initBody.uploads.nsfw.uploadId,
                     imageKey: initBody.uploads.nsfw.imageKey,
                     contentType: 'image/png',
-                    width: 800,
-                    height: 600,
                     parts: [uploadedPart],
                 },
                 nsfwPreview: createPreviewPayload(800, 600),
@@ -3437,7 +3398,7 @@ describe('character media uploads', () => {
         expect(mediaInsert?.binds[23]).toBe(body.media.nsfwBlurImageKey)
     })
 
-    it('rejects chunked gallery media when declared original dimensions do not match the stored image', async () => {
+    it('uses stored image dimensions when declared original dimensions do not match the stored image', async () => {
         const {sessionToken, mediaBucket, character, db, csrfToken, initBody} = await createChunkedSfwUploadTestContext()
 
         const pngFile = createPngFile(800, 600)
@@ -3466,7 +3427,7 @@ describe('character media uploads', () => {
                     height: 1600,
                     parts: [uploadedPart],
                 },
-                sfwPreview: createPreviewPayload(1600, 1600),
+                sfwPreview: createPreviewPayload(800, 600),
             },
             db,
             {
@@ -3476,11 +3437,11 @@ describe('character media uploads', () => {
             },
         )
 
-        expect(completeResponse.status).toBe(400)
-        expect(await completeResponse.json()).toEqual({
-            error: 'SFW image dimensions do not match the uploaded image',
-        })
-        expect(mediaBucket.delete).toHaveBeenCalledWith(
+        expect(completeResponse.status).toBe(201)
+        const body = (await completeResponse.json()) as {media: {sfwWidth: number; sfwHeight: number}}
+        expect(body.media.sfwWidth).toBe(800)
+        expect(body.media.sfwHeight).toBe(600)
+        expect(mediaBucket.delete).not.toHaveBeenCalledWith(
             `characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.png`,
         )
     })
@@ -3513,8 +3474,6 @@ describe('character media uploads', () => {
                     uploadId: initBody.uploads.sfw.uploadId,
                     imageKey: initBody.uploads.sfw.imageKey,
                     contentType: 'image/png',
-                    width: 800,
-                    height: 600,
                     parts: [uploadedPart],
                 },
             },
@@ -3560,8 +3519,6 @@ describe('character media uploads', () => {
                     uploadId: initBody.uploads.sfw.uploadId,
                     imageKey: initBody.uploads.sfw.imageKey,
                     contentType: 'image/png',
-                    width: 20001,
-                    height: 10000,
                     parts: [uploadedPart],
                 },
             },
@@ -3654,8 +3611,6 @@ describe('character media uploads', () => {
                     uploadId: initBody.uploads.sfw.uploadId,
                     imageKey: initBody.uploads.sfw.imageKey,
                     contentType: 'image/gif',
-                    width: 320,
-                    height: 240,
                     parts: [uploadedPart],
                 },
                 sfwPreview: createPreviewPayload(320, 240),
@@ -3757,10 +3712,9 @@ describe('character media uploads', () => {
                     uploadId: initBody.uploads.sfw.uploadId,
                     imageKey: initBody.uploads.sfw.imageKey,
                     contentType,
-                    width: 640,
-                    height: 480,
                     parts: [uploadedPart],
                 },
+                sfwPreview: createPreviewPayload(640, 480),
             },
             db,
             {
@@ -3817,8 +3771,6 @@ describe('character media uploads', () => {
                     uploadId: initBody.uploads.sfw.uploadId,
                     imageKey: initBody.uploads.sfw.imageKey,
                     contentType: 'image/png',
-                    width: 800,
-                    height: 600,
                     parts: [uploadedPart],
                 },
             },
@@ -3938,8 +3890,6 @@ describe('character media uploads', () => {
                     uploadId: initBody.uploads.sfw.uploadId,
                     imageKey: initBody.uploads.sfw.imageKey,
                     contentType: 'image/png',
-                    width: 800,
-                    height: 600,
                     parts: [uploadedPart],
                 },
                 sfwPreview: createPreviewPayload(800, 600),

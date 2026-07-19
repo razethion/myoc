@@ -795,9 +795,7 @@ async function prepareOriginalImageFile(file) {
         }
         const image = {
             file,
-            contentType: file.type,
-            width: bitmap.width,
-            height: bitmap.height
+            contentType: file.type
         };
         bitmap.close();
         return image;
@@ -895,8 +893,6 @@ async function uploadChunkedImage(mediaId, rating, image, upload, progress) {
         uploadId: upload.uploadId,
         imageKey: upload.imageKey,
         contentType: image.contentType,
-        width: image.width,
-        height: image.height,
         parts
     };
 }
