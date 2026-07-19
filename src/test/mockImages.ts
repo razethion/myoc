@@ -1,6 +1,7 @@
 import {vi} from 'vitest'
+import {createWebpBytes} from './imageFixtures'
 
-const transformedImageBytes = new TextEncoder().encode('mock-transformed-image')
+const transformedImageBytes = createWebpBytes(512, 512)
 
 export function createMockImagesBinding(): ImagesBinding {
     return {

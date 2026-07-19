@@ -18,7 +18,7 @@ import {
     responseSchema,
 } from '../../lib/http/responseSchemas'
 import {getPngDimensions} from '../../lib/media/png'
-import {PROFILE_IMAGE_MAX_REQUEST_BYTES, validateProfileImagePayload} from '../../lib/media/profileImage'
+import {normalizeProfileImagePayload, PROFILE_IMAGE_MAX_REQUEST_BYTES} from '../../lib/media/profileImage'
 import {
     characterFolderImageObjectKey,
     characterFolderImageUrl,
@@ -143,8 +143,6 @@ type CompletedChunkedUpload = {
     uploadId: string
     imageKey: string
     contentType: string
-    width: number
-    height: number
     parts: R2UploadedPart[]
 }
 
@@ -166,6 +164,14 @@ type ParsedChunkedMediaComplete = {
     sfwUpload: CompletedChunkedUpload | null
     nsfwUpload: CompletedChunkedUpload | null
 }
+
+class ChunkedUploadInitError extends Error {
+    constructor(readonly referenceId: string) {
+        super('Upload could not be initialized')
+    }
+}
+
+class PreviewValidationError extends Error {}
 
 type JsonProfileImage = {
     data: string
@@ -305,7 +311,18 @@ type CompletedGalleryUpload = {
     contentType: string
     width: number
     height: number
+    displayWidth: number
+    displayHeight: number
     byteSize: number
+    exifOrientation: number | null
+}
+
+type GalleryImageMetadata = {
+    width: number
+    height: number
+    displayWidth: number
+    displayHeight: number
+    exifOrientation: number | null
 }
 
 type CompletedGalleryPreview = {
@@ -522,7 +539,7 @@ characterRoutes.post('/folders', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Parent folder not found'}, 404)
     }
 
-    const folderImageResult = parsed.folderImage ? await validateProfileImage(parsed.folderImage, 'Folder image') : null
+    const folderImageResult = parsed.folderImage ? await validateProfileImage(c.env.IMAGES, parsed.folderImage, 'Folder image') : null
 
     if (folderImageResult && 'error' in folderImageResult) {
         return jsonResponse(c, ErrorResponseSchema, {error: folderImageResult.error}, folderImageResult.status)
@@ -655,7 +672,7 @@ characterRoutes.post('/folders/:id/image', async (c) => {
     }
 
     const file = form.get('folderImage') ?? form.get('folder-image')
-    const folderImageResult = await validateProfileImage(file instanceof File ? file : null, 'Folder image')
+    const folderImageResult = await validateProfileImage(c.env.IMAGES, file instanceof File ? file : null, 'Folder image')
 
     if ('error' in folderImageResult) {
         return jsonResponse(c, ErrorResponseSchema, {error: folderImageResult.error}, folderImageResult.status)
@@ -805,7 +822,7 @@ characterRoutes.post('/', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Folder not found'}, 404)
     }
 
-    const profileImageResult = await validateProfileImage(parsed.profileImage)
+    const profileImageResult = await validateProfileImage(c.env.IMAGES, parsed.profileImage)
 
     if ('error' in profileImageResult) {
         return jsonResponse(c, ErrorResponseSchema, {error: profileImageResult.error}, profileImageResult.status)
@@ -957,7 +974,7 @@ characterRoutes.post('/:id/profile-image', async (c) => {
 
     const {currentUser, character, form} = owned
     const file = form.get('profileImage') ?? form.get('character-profile-photo')
-    const profileImageResult = await validateProfileImage(file instanceof File ? file : null)
+    const profileImageResult = await validateProfileImage(c.env.IMAGES, file instanceof File ? file : null)
 
     if ('error' in profileImageResult) {
         return jsonResponse(c, ErrorResponseSchema, {error: profileImageResult.error}, profileImageResult.status)
@@ -1035,7 +1052,10 @@ characterRoutes.put('/:id/height-chart', async (c) => {
             contentType: imageResult.contentType,
             width: imageResult.width,
             height: imageResult.height,
+            displayWidth: imageResult.width,
+            displayHeight: imageResult.height,
             byteSize: imageResult.bytes.byteLength,
+            exifOrientation: null,
         }
         uploadedObjectKey = characterHeightChartImageObjectKey(currentUser.id, character.id, imageKey, imageResult.contentType)
 
@@ -1106,7 +1126,32 @@ characterRoutes.post('/:id/media/chunked/init', async (c) => {
     }
 
     const mediaId = crypto.randomUUID()
-    const chunkedUploads = await createChunkedGalleryUploads(c.env.MEDIA_BUCKET, currentUser.id, character.id, mediaId, uploads.uploads)
+    const initReferenceId = crypto.randomUUID()
+    let chunkedUploads: Awaited<ReturnType<typeof createChunkedGalleryUploads>>
+
+    try {
+        chunkedUploads = await createChunkedGalleryUploads(c.env.MEDIA_BUCKET, currentUser.id, character.id, mediaId, uploads.uploads, {
+            referenceId: initReferenceId,
+            operation: 'create-media',
+        })
+    } catch (error) {
+        const referenceId = error instanceof ChunkedUploadInitError ? error.referenceId : initReferenceId
+        console.error('Chunked gallery upload init route failed', {
+            referenceId,
+            operation: 'create-media',
+            mediaId,
+            userId: currentUser.id,
+            characterId: character.id,
+            error: describeError(error),
+        })
+
+        return jsonResponse(
+            c,
+            ErrorResponseSchema,
+            {error: `Upload could not be initialized. Try again, or contact support with reference ${referenceId}.`},
+            503,
+        )
+    }
 
     return jsonResponse(c, ChunkedUploadInitResponseSchema, {mediaId, uploads: chunkedUploads})
 })
@@ -1676,7 +1721,32 @@ characterRoutes.post('/:id/media/:mediaId/chunked/init', async (c) => {
         return uploads
     }
 
-    const chunkedUploads = await createChunkedGalleryUploads(c.env.MEDIA_BUCKET, currentUser.id, character.id, media.id, uploads.uploads)
+    const initReferenceId = crypto.randomUUID()
+    let chunkedUploads: Awaited<ReturnType<typeof createChunkedGalleryUploads>>
+
+    try {
+        chunkedUploads = await createChunkedGalleryUploads(c.env.MEDIA_BUCKET, currentUser.id, character.id, media.id, uploads.uploads, {
+            referenceId: initReferenceId,
+            operation: 'replace-media',
+        })
+    } catch (error) {
+        const referenceId = error instanceof ChunkedUploadInitError ? error.referenceId : initReferenceId
+        console.error('Chunked gallery upload init route failed', {
+            referenceId,
+            operation: 'replace-media',
+            mediaId: media.id,
+            userId: currentUser.id,
+            characterId: character.id,
+            error: describeError(error),
+        })
+
+        return jsonResponse(
+            c,
+            ErrorResponseSchema,
+            {error: `Upload could not be initialized. Try again, or contact support with reference ${referenceId}.`},
+            503,
+        )
+    }
 
     return jsonResponse(c, ChunkedUploadInitResponseSchema, {mediaId: media.id, uploads: chunkedUploads})
 })
@@ -2298,13 +2368,18 @@ function maxPreviewByteSize(width: number, height: number): number {
     return width * height * GALLERY_PREVIEW_MAX_BYTES_PER_PIXEL + GALLERY_PREVIEW_MAX_CONTAINER_OVERHEAD_BYTES
 }
 
-function expectedPreviewDimensions(original: {width: number; height: number}): {width: number; height: number} {
-    const longEdge = Math.max(original.width, original.height)
+function expectedPreviewDimensions(original: {width: number; height: number; displayWidth?: number; displayHeight?: number}): {
+    width: number
+    height: number
+} {
+    const width = original.displayWidth ?? original.width
+    const height = original.displayHeight ?? original.height
+    const longEdge = Math.max(width, height)
     const scale = Math.min(1, GALLERY_PREVIEW_MAX_LONG_EDGE / longEdge)
 
     return {
-        width: Math.max(1, Math.round(original.width * scale)),
-        height: Math.max(1, Math.round(original.height * scale)),
+        width: Math.max(1, Math.round(width * scale)),
+        height: Math.max(1, Math.round(height * scale)),
     }
 }
 
@@ -2313,6 +2388,8 @@ function assertPreviewMatchesOriginal(
     original: {
         width: number
         height: number
+        displayWidth?: number
+        displayHeight?: number
     },
     label: string,
 ): void {
@@ -2321,7 +2398,7 @@ function assertPreviewMatchesOriginal(
     const heightDelta = Math.abs(preview.height - expected.height)
 
     if (widthDelta > GALLERY_PREVIEW_DIMENSION_TOLERANCE || heightDelta > GALLERY_PREVIEW_DIMENSION_TOLERANCE) {
-        throw new Error(`${label} dimensions must match the uploaded image scaled to ${GALLERY_PREVIEW_MAX_LONG_EDGE}px`)
+        throw new PreviewValidationError(`${label} dimensions must match the uploaded image scaled to ${GALLERY_PREVIEW_MAX_LONG_EDGE}px`)
     }
 }
 
@@ -2386,6 +2463,10 @@ async function createChunkedGalleryUploads(
     characterId: string,
     mediaId: string,
     uploadInits: ChunkedUploadInit[],
+    diagnostics: {
+        referenceId: string
+        operation: 'create-media' | 'replace-media'
+    },
 ): Promise<
     Partial<
         Record<
@@ -2410,26 +2491,138 @@ async function createChunkedGalleryUploads(
             }
         >
     > = {}
+    const createdUploads: Array<{
+        rating: MediaRating
+        objectKey: string
+        upload: R2MultipartUpload
+    }> = []
 
-    for (const uploadInit of uploadInits) {
-        const imageKey = crypto.randomUUID()
-        const objectKey = characterMediaImageObjectKey(userId, characterId, mediaId, imageKey, uploadInit.rating, uploadInit.contentType)
-        const upload = await bucket.createMultipartUpload(objectKey, {
-            httpMetadata: {
-                cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
+    console.log('Chunked gallery upload init started', {
+        referenceId: diagnostics.referenceId,
+        operation: diagnostics.operation,
+        mediaId,
+        uploadCount: uploadInits.length,
+        uploads: uploadInits.map((upload) => ({rating: upload.rating, contentType: upload.contentType})),
+    })
+
+    try {
+        for (const uploadInit of uploadInits) {
+            const imageKey = crypto.randomUUID()
+            const objectKey = characterMediaImageObjectKey(
+                userId,
+                characterId,
+                mediaId,
+                imageKey,
+                uploadInit.rating,
+                uploadInit.contentType,
+            )
+
+            console.log('Creating R2 multipart upload for gallery image', {
+                referenceId: diagnostics.referenceId,
+                operation: diagnostics.operation,
+                mediaId,
+                rating: uploadInit.rating,
                 contentType: uploadInit.contentType,
-            },
+                objectKey,
+            })
+
+            const upload = await bucket.createMultipartUpload(objectKey, {
+                httpMetadata: {
+                    cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
+                    contentType: uploadInit.contentType,
+                },
+            })
+            createdUploads.push({rating: uploadInit.rating, objectKey, upload})
+
+            console.log('Created R2 multipart upload for gallery image', {
+                referenceId: diagnostics.referenceId,
+                operation: diagnostics.operation,
+                mediaId,
+                rating: uploadInit.rating,
+                uploadId: upload.uploadId,
+                imageKey,
+                objectKey,
+            })
+
+            uploads[uploadInit.rating] = {
+                uploadId: upload.uploadId,
+                imageKey,
+                contentType: uploadInit.contentType,
+                chunkSize: GALLERY_CHUNK_SIZE,
+            }
+        }
+    } catch (error) {
+        console.error('Chunked gallery upload init failed while creating R2 multipart uploads', {
+            referenceId: diagnostics.referenceId,
+            operation: diagnostics.operation,
+            mediaId,
+            createdUploads: createdUploads.map((created) => ({
+                rating: created.rating,
+                uploadId: created.upload.uploadId,
+                objectKey: created.objectKey,
+            })),
+            error: describeError(error),
         })
 
-        uploads[uploadInit.rating] = {
-            uploadId: upload.uploadId,
-            imageKey,
-            contentType: uploadInit.contentType,
-            chunkSize: GALLERY_CHUNK_SIZE,
-        }
+        await Promise.all(
+            createdUploads.map(async (created) => {
+                try {
+                    await created.upload.abort()
+                    console.warn('Aborted partially initialized R2 multipart upload', {
+                        referenceId: diagnostics.referenceId,
+                        operation: diagnostics.operation,
+                        mediaId,
+                        rating: created.rating,
+                        uploadId: created.upload.uploadId,
+                        objectKey: created.objectKey,
+                    })
+                } catch (abortError) {
+                    console.error('Unable to abort partially initialized R2 multipart upload', {
+                        referenceId: diagnostics.referenceId,
+                        operation: diagnostics.operation,
+                        mediaId,
+                        rating: created.rating,
+                        uploadId: created.upload.uploadId,
+                        objectKey: created.objectKey,
+                        error: describeError(abortError),
+                    })
+                }
+            }),
+        )
+
+        throw new ChunkedUploadInitError(diagnostics.referenceId)
     }
 
+    console.log('Chunked gallery upload init completed', {
+        referenceId: diagnostics.referenceId,
+        operation: diagnostics.operation,
+        mediaId,
+        uploads: Object.entries(uploads).map(([rating, upload]) => ({
+            rating,
+            uploadId: upload?.uploadId,
+            imageKey: upload?.imageKey,
+            contentType: upload?.contentType,
+            chunkSize: upload?.chunkSize,
+        })),
+    })
+
     return uploads
+}
+
+function describeError(error: unknown): string {
+    if (error instanceof Error) {
+        return error.message || error.name
+    }
+
+    if (typeof error === 'string') {
+        return error
+    }
+
+    try {
+        return JSON.stringify(error)
+    } catch {
+        return String(error)
+    }
 }
 
 function existingMediaVariantKey(media: CharacterMediaRecord, rating: MediaRating): string | null {
@@ -2637,6 +2830,7 @@ async function generateMediaPreviewImage(
     } catch (error) {
         console.warn('Cloudflare Images preview generation failed, falling back to container', {
             error: error instanceof Error ? error.message : String(error),
+            exifOrientation: image.exifOrientation,
             sourceObjectKey,
         })
     }
@@ -2647,23 +2841,21 @@ async function generateMediaPreviewImage(
 async function generateMediaPreviewWithCloudflareImages(sourceUrl: string, image: CompletedGalleryUpload): Promise<ParsedPreviewImage> {
     const maxAttempts = 3
     const retryDelayMs = 2_000
+    const previewUrl = cloudflareImageTransformUrl(sourceUrl, {
+        anim: false,
+        fit: 'scale-down',
+        format: 'webp',
+        height: GALLERY_PREVIEW_MAX_LONG_EDGE,
+        quality: GALLERY_PREVIEW_QUALITY,
+        ...cloudflareExifOrientationTransform(image.exifOrientation),
+        width: GALLERY_PREVIEW_MAX_LONG_EDGE,
+    })
 
     await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
-            const response = await fetch(sourceUrl, {
-                cf: {
-                    cacheTtlByStatus: {'404': 0, '500-599': 0},
-                    image: {
-                        anim: false,
-                        fit: 'scale-down',
-                        format: 'webp',
-                        height: GALLERY_PREVIEW_MAX_LONG_EDGE,
-                        quality: GALLERY_PREVIEW_QUALITY,
-                        width: GALLERY_PREVIEW_MAX_LONG_EDGE,
-                    },
-                },
+            const response = await fetch(previewUrl, {
                 headers: {
                     accept: 'image/webp,image/*,*/*;q=0.8',
                 },
@@ -2671,6 +2863,10 @@ async function generateMediaPreviewWithCloudflareImages(sourceUrl: string, image
 
             return await previewFromResponse(response, image, 'Cloudflare Images preview')
         } catch (error) {
+            if (error instanceof PreviewValidationError) {
+                throw error
+            }
+
             if (attempt === maxAttempts) {
                 throw error
             }
@@ -2679,7 +2875,39 @@ async function generateMediaPreviewWithCloudflareImages(sourceUrl: string, image
         }
     }
 
+    /* istanbul ignore next -- maxAttempts is positive, and the loop either returns or throws from the catch block. */
     throw new Error('Cloudflare Images preview failed unexpectedly.')
+}
+
+function cloudflareImageTransformUrl(sourceUrl: string, options: Record<string, boolean | number | string | undefined>): string {
+    const url = new URL(sourceUrl)
+    const optionString = Object.entries(options)
+        .filter((entry): entry is [string, boolean | number | string] => entry[1] !== undefined)
+        .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+        .join(',')
+
+    return `${url.origin}/cdn-cgi/image/${optionString}${url.pathname}${url.search}`
+}
+
+function cloudflareExifOrientationTransform(orientation: number | null): {flip?: 'h' | 'v' | 'hv'; rotate?: 90 | 180 | 270} {
+    switch (orientation) {
+        case 2:
+            return {flip: 'h'}
+        case 3:
+            return {rotate: 180}
+        case 4:
+            return {flip: 'v'}
+        case 5:
+            return {flip: 'h', rotate: 270}
+        case 6:
+            return {rotate: 90}
+        case 7:
+            return {flip: 'h', rotate: 90}
+        case 8:
+            return {rotate: 270}
+        default:
+            return {}
+    }
 }
 
 async function generateMediaPreviewWithContainer(
@@ -2709,11 +2937,16 @@ async function previewFromResponse(response: Response, image: CompletedGalleryUp
     const bytes = new Uint8Array(await response.arrayBuffer())
     const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.toLowerCase() ?? ''
 
-    if (!response.ok || contentType !== GALLERY_PREVIEW_CONTENT_TYPE) {
+    if (!response.ok) {
         const canDecodeMessage = contentType.startsWith('text/') || contentType === 'application/json'
         const message = canDecodeMessage ? new TextDecoder().decode(bytes).slice(0, 500) : ''
         const details = message ? `: ${message}` : contentType ? ` (${contentType})` : ''
         throw new Error(`${label} failed with ${response.status}${details}`)
+    }
+
+    if (contentType !== GALLERY_PREVIEW_CONTENT_TYPE) {
+        const details = contentType ? ` (${contentType})` : ''
+        throw new PreviewValidationError(`${label} returned an unexpected content type${details}`)
     }
 
     if (bytes.byteLength <= 0) {
@@ -3880,6 +4113,7 @@ async function deleteR2Objects(bucket: R2Bucket, objectKeys: string[]): Promise<
 }
 
 async function validateProfileImage(
+    images: ImagesBinding | undefined,
     file: File | JsonProfileImage | null,
     label = 'Character profile image',
 ): Promise<
@@ -3902,15 +4136,15 @@ async function validateProfileImage(
         return profileImage
     }
 
-    const validation = validateProfileImagePayload(profileImage, label)
+    const normalized = await normalizeProfileImagePayload(profileImage, label, images)
 
-    if ('error' in validation) {
-        return validation
+    if ('error' in normalized) {
+        return normalized
     }
 
     return {
-        contentType: profileImage.contentType,
-        bytes: profileImage.bytes,
+        contentType: normalized.contentType,
+        bytes: normalized.bytes,
     }
 }
 
@@ -4072,8 +4306,6 @@ function parseCompletedChunkedUpload(value: unknown):
           uploadId: string
           imageKey: string
           contentType: string
-          width: number
-          height: number
           parts: R2UploadedPart[]
       }
     | {error: string}
@@ -4089,7 +4321,6 @@ function parseCompletedChunkedUpload(value: unknown):
     const uploadId = normalizeOptionalText(value.uploadId)
     const imageKey = normalizeUploadIdentifier(value.imageKey, 'Image key')
     const contentType = normalizeGalleryImageContentType(value.contentType)
-    const dimensions = normalizeGalleryImageDimensions(value.width, value.height)
 
     if (!uploadId) {
         return {error: 'upload id is required'}
@@ -4101,10 +4332,6 @@ function parseCompletedChunkedUpload(value: unknown):
 
     if ('error' in contentType) {
         return {error: contentType.error}
-    }
-
-    if ('error' in dimensions) {
-        return {error: dimensions.error}
     }
 
     if (!Array.isArray(value.parts) || value.parts.length === 0) {
@@ -4134,8 +4361,6 @@ function parseCompletedChunkedUpload(value: unknown):
         uploadId,
         imageKey: imageKey.value,
         contentType: contentType.contentType,
-        width: dimensions.width,
-        height: dimensions.height,
         parts,
     }
 }
@@ -4162,6 +4387,25 @@ function readGalleryImageDimensions(bytes: Uint8Array, contentType: string): {wi
     }
 
     return null
+}
+
+function readGalleryImageMetadata(bytes: Uint8Array, contentType: string): GalleryImageMetadata | null {
+    const dimensions = readGalleryImageDimensions(bytes, contentType)
+
+    if (!dimensions) {
+        return null
+    }
+
+    const exifOrientation = contentType === 'image/jpeg' ? readJpegExifOrientation(bytes) : null
+    const swapsDimensions = exifOrientation !== null && exifOrientation >= 5 && exifOrientation <= 8
+
+    return {
+        width: dimensions.width,
+        height: dimensions.height,
+        displayWidth: swapsDimensions ? dimensions.height : dimensions.width,
+        displayHeight: swapsDimensions ? dimensions.width : dimensions.height,
+        exifOrientation,
+    }
 }
 
 function readGifDimensions(bytes: Uint8Array): {width: number; height: number} | null {
@@ -4219,6 +4463,102 @@ function readJpegDimensions(bytes: Uint8Array): {width: number; height: number} 
         }
 
         offset += length
+    }
+
+    return null
+}
+
+function readJpegExifOrientation(bytes: Uint8Array): number | null {
+    if (bytes.length < 4 || byteAt(bytes, 0) !== 0xff || byteAt(bytes, 1) !== 0xd8) {
+        return null
+    }
+
+    let offset = 2
+
+    while (offset + 4 <= bytes.length) {
+        if (byteAt(bytes, offset) !== 0xff) {
+            return null
+        }
+
+        const marker = byteAt(bytes, offset + 1)
+        offset += 2
+
+        if (marker === 0xd9 || marker === 0xda) {
+            return null
+        }
+
+        if (offset + 2 > bytes.length) {
+            return null
+        }
+
+        const length = (byteAt(bytes, offset) << 8) | byteAt(bytes, offset + 1)
+
+        if (length < 2 || offset + length > bytes.length) {
+            return null
+        }
+
+        if (marker === 0xe1) {
+            const orientation = readExifOrientationFromApp1(bytes, offset + 2, offset + length)
+
+            if (orientation !== null) {
+                return orientation
+            }
+        }
+
+        offset += length
+    }
+
+    return null
+}
+
+function readExifOrientationFromApp1(bytes: Uint8Array, start: number, end: number): number | null {
+    if (end - start < 32 || readAscii(bytes, start, 6) !== 'Exif\0\0') {
+        return null
+    }
+
+    const tiffStart = start + 6
+    const byteOrder = readAscii(bytes, tiffStart, 2)
+    const littleEndian = byteOrder === 'II'
+
+    if (!littleEndian && byteOrder !== 'MM') {
+        return null
+    }
+
+    if (readUint16(bytes, tiffStart + 2, littleEndian) !== 42) {
+        return null
+    }
+
+    const firstIfdOffset = readUint32(bytes, tiffStart + 4, littleEndian)
+    const ifdStart = tiffStart + firstIfdOffset
+
+    if (firstIfdOffset < 8 || ifdStart + 2 > end) {
+        return null
+    }
+
+    const entryCount = readUint16(bytes, ifdStart, littleEndian)
+    let entryOffset = ifdStart + 2
+
+    for (let index = 0; index < entryCount; index += 1) {
+        if (entryOffset + 12 > end) {
+            return null
+        }
+
+        const tag = readUint16(bytes, entryOffset, littleEndian)
+
+        if (tag === 0x0112) {
+            const type = readUint16(bytes, entryOffset + 2, littleEndian)
+            const valueCount = readUint32(bytes, entryOffset + 4, littleEndian)
+
+            if (type !== 3 || valueCount < 1) {
+                return null
+            }
+
+            const orientation = readUint16(bytes, entryOffset + 8, littleEndian)
+
+            return orientation >= 1 && orientation <= 8 ? orientation : null
+        }
+
+        entryOffset += 12
     }
 
     return null
@@ -4316,6 +4656,27 @@ function readUint32Be(bytes: Uint8Array, offset: number): number {
     )
 }
 
+function readUint16(bytes: Uint8Array, offset: number, littleEndian: boolean): number {
+    if (littleEndian) {
+        return byteAt(bytes, offset) | (byteAt(bytes, offset + 1) << 8)
+    }
+
+    return (byteAt(bytes, offset) << 8) | byteAt(bytes, offset + 1)
+}
+
+function readUint32(bytes: Uint8Array, offset: number, littleEndian: boolean): number {
+    if (littleEndian) {
+        return (
+            byteAt(bytes, offset) +
+            byteAt(bytes, offset + 1) * 0x100 +
+            byteAt(bytes, offset + 2) * 0x10000 +
+            byteAt(bytes, offset + 3) * 0x1000000
+        )
+    }
+
+    return readUint32Be(bytes, offset)
+}
+
 function byteAt(bytes: Uint8Array, offset: number): number {
     const value = bytes[offset]
 
@@ -4349,19 +4710,14 @@ async function completeChunkedGalleryUpload(
         throw new Error(`${label} must be 200 MB or smaller`)
     }
 
-    const dimensions = await readStoredGalleryImageDimensions(bucket, objectKey, upload.contentType)
+    const metadata = await readStoredGalleryImageMetadata(bucket, objectKey, upload.contentType)
 
-    if (!dimensions) {
+    if (!metadata) {
         await deleteR2Objects(bucket, [objectKey])
         throw new Error(`${label} dimensions could not be verified`)
     }
 
-    if (dimensions.width !== upload.width || dimensions.height !== upload.height) {
-        await deleteR2Objects(bucket, [objectKey])
-        throw new Error(`${label} dimensions do not match the uploaded image`)
-    }
-
-    if (dimensions.width * dimensions.height > GALLERY_IMAGE_MAX_PIXELS) {
+    if (metadata.width * metadata.height > GALLERY_IMAGE_MAX_PIXELS) {
         await deleteR2Objects(bucket, [objectKey])
         throw new Error(`${label} must be ${GALLERY_IMAGE_MAX_PIXELS.toLocaleString('en-US')} pixels or smaller`)
     }
@@ -4369,17 +4725,20 @@ async function completeChunkedGalleryUpload(
     return {
         imageKey: upload.imageKey,
         contentType: upload.contentType,
-        width: dimensions.width,
-        height: dimensions.height,
+        width: metadata.width,
+        height: metadata.height,
+        displayWidth: metadata.displayWidth,
+        displayHeight: metadata.displayHeight,
         byteSize: completedObject.size,
+        exifOrientation: metadata.exifOrientation,
     }
 }
 
-async function readStoredGalleryImageDimensions(
+async function readStoredGalleryImageMetadata(
     bucket: R2Bucket,
     objectKey: string,
     contentType: string,
-): Promise<{width: number; height: number} | null> {
+): Promise<GalleryImageMetadata | null> {
     const object = await bucket.get(objectKey, {
         range: {
             offset: 0,
@@ -4391,7 +4750,7 @@ async function readStoredGalleryImageDimensions(
         return null
     }
 
-    return readGalleryImageDimensions(new Uint8Array(await object.arrayBuffer()), contentType)
+    return readGalleryImageMetadata(new Uint8Array(await object.arrayBuffer()), contentType)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

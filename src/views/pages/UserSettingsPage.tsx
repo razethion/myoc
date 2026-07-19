@@ -582,8 +582,13 @@ function UserSettingsPageScript() {
 
                 const formData = new FormData();
                 formData.set('csrfToken', profilePhotoUploader.dataset.csrfToken || '');
-                formData.set('profilePhoto', new File([croppedProfilePhotoBlob], 'profile-photo.webp', {
-                    type: 'image/webp',
+                const profilePhotoExtension = croppedProfilePhotoBlob.type === 'image/png'
+                    ? 'png'
+                    : croppedProfilePhotoBlob.type === 'image/jpeg'
+                        ? 'jpg'
+                        : 'webp';
+                formData.set('profilePhoto', new File([croppedProfilePhotoBlob], 'profile-photo.' + profilePhotoExtension, {
+                    type: croppedProfilePhotoBlob.type || 'image/webp',
                 }));
 
                 try {

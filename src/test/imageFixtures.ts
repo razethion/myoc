@@ -1,7 +1,7 @@
-import {writeAscii, writeUint16Le, writeUint24Le, writeUint32Be, writeUint32Le} from './binaryWriters'
+import {writeAscii, writeUint16Be, writeUint16Le, writeUint24Le, writeUint32Be, writeUint32Le} from './binaryWriters'
 
 export function createWebpFile(width = 512, height = 512, type = 'image/webp', name = 'profile-image.webp'): File {
-    return new File([createVp8xWebpBytes(width, height)], name, {
+    return new File([createWebpBytes(width, height)], name, {
         type,
     })
 }
@@ -36,6 +36,24 @@ export function createJpegFile(width = 100, height = 80, name = 'gallery.jpg'): 
     })
 }
 
+export function createExifOrientationJpegFile(width = 100, height = 80, orientation = 6, name = 'gallery.jpg'): File {
+    return new File([createExifOrientationJpegBytes(width, height, orientation)], name, {
+        type: 'image/jpeg',
+    })
+}
+
+export function createBigEndianExifOrientationJpegFile(width = 100, height = 80, orientation = 6, name = 'gallery.jpg'): File {
+    return new File([createExifOrientationJpegBytes(width, height, orientation, false)], name, {
+        type: 'image/jpeg',
+    })
+}
+
+export function createJpegFileWithExifWithoutOrientation(width = 100, height = 80, name = 'gallery.jpg'): File {
+    return new File([createExifJpegBytes(width, height, null, true)], name, {
+        type: 'image/jpeg',
+    })
+}
+
 export function createAvifFile(width = 100, height = 80, name = 'gallery.avif'): File {
     return new File([createAvifBytes(width, height)], name, {
         type: 'image/avif',
@@ -43,18 +61,26 @@ export function createAvifFile(width = 100, height = 80, name = 'gallery.avif'):
 }
 
 export function createWebpDataUrl(width = 512, height = 512): string {
-    const bytes = createVp8xWebpBytes(width, height)
+    const bytes = createWebpBytes(width, height)
     return webpBytesToDataUrl(bytes)
 }
 
+export function createPngDataUrl(width = 512, height = 512): string {
+    return bytesToDataUrl(createPngBytes(width, height), 'image/png')
+}
+
 function webpBytesToDataUrl(bytes: Uint8Array): string {
+    return bytesToDataUrl(bytes, 'image/webp')
+}
+
+function bytesToDataUrl(bytes: Uint8Array, contentType: string): string {
     let binary = ''
 
     for (const byte of bytes) {
         binary += String.fromCharCode(byte)
     }
 
-    return `data:image/webp;base64,${btoa(binary)}`
+    return `data:${contentType};base64,${btoa(binary)}`
 }
 
 function createPngBytes(width: number, height: number): Uint8Array {
@@ -87,6 +113,36 @@ function createJpegBytes(width: number, height: number): Uint8Array {
     return bytes
 }
 
+function createExifOrientationJpegBytes(width: number, height: number, orientation: number, littleEndian = true): Uint8Array {
+    return createExifJpegBytes(width, height, orientation, littleEndian)
+}
+
+function createExifJpegBytes(width: number, height: number, orientation: number | null, littleEndian: boolean): Uint8Array {
+    const jpegBytes = createJpegBytes(width, height)
+    const app1Payload = new Uint8Array(32)
+    writeAscii(app1Payload, 0, 'Exif')
+    writeAscii(app1Payload, 6, littleEndian ? 'II' : 'MM')
+
+    const writeUint16 = littleEndian ? writeUint16Le : writeUint16Be
+    const writeUint32 = littleEndian ? writeUint32Le : writeUint32Be
+
+    writeUint16(app1Payload, 8, 42)
+    writeUint32(app1Payload, 10, 8)
+    writeUint16(app1Payload, 14, 1)
+    writeUint16(app1Payload, 16, orientation === null ? 0x010f : 0x0112)
+    writeUint16(app1Payload, 18, orientation === null ? 2 : 3)
+    writeUint32(app1Payload, 20, 1)
+    writeUint16(app1Payload, 24, orientation ?? 0)
+
+    const app1Segment = new Uint8Array(4 + app1Payload.byteLength)
+    app1Segment.set([0xff, 0xe1], 0)
+    app1Segment[2] = ((app1Payload.byteLength + 2) >>> 8) & 0xff
+    app1Segment[3] = (app1Payload.byteLength + 2) & 0xff
+    app1Segment.set(app1Payload, 4)
+
+    return concatBytes([jpegBytes.slice(0, 2), app1Segment, jpegBytes.slice(2)])
+}
+
 function createAvifBytes(width: number, height: number): Uint8Array {
     const bytes = new Uint8Array(48)
     writeUint32Be(bytes, 0, 48)
@@ -104,7 +160,7 @@ function createAvifBytes(width: number, height: number): Uint8Array {
     return bytes
 }
 
-function createVp8xWebpBytes(width: number, height: number): Uint8Array {
+export function createWebpBytes(width: number, height: number): Uint8Array {
     const bytes = new Uint8Array(30)
     writeAscii(bytes, 0, 'RIFF')
     writeUint32Le(bytes, 4, bytes.length - 8)
@@ -113,5 +169,18 @@ function createVp8xWebpBytes(width: number, height: number): Uint8Array {
     writeUint32Le(bytes, 16, 10)
     writeUint24Le(bytes, 24, width - 1)
     writeUint24Le(bytes, 27, height - 1)
+    return bytes
+}
+
+function concatBytes(chunks: Uint8Array[]): Uint8Array {
+    const totalLength = chunks.reduce((total, chunk) => total + chunk.byteLength, 0)
+    const bytes = new Uint8Array(totalLength)
+    let offset = 0
+
+    for (const chunk of chunks) {
+        bytes.set(chunk, offset)
+        offset += chunk.byteLength
+    }
+
     return bytes
 }

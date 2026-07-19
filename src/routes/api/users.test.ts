@@ -3,8 +3,16 @@ import {describe, expect, it, vi} from 'vitest'
 import {createCsrfToken} from '../../lib/auth/session'
 import {APP_VERSION} from '../../lib/releases'
 import {expectSessionCookie} from '../../test/assertions'
-import {createMalformedWebpFile, createOversizedWebpFile, createWebpFile} from '../../test/imageFixtures'
+import {
+    createGifFile,
+    createJpegFile,
+    createMalformedWebpFile,
+    createOversizedWebpFile,
+    createPngFile,
+    createWebpFile,
+} from '../../test/imageFixtures'
 import {createMockDb} from '../../test/mockD1'
+import {createMockImagesBinding} from '../../test/mockImages'
 import {createMockR2Bucket} from '../../test/mockR2'
 import {createRequestHeaders, type TestRequestOptions} from '../../test/request'
 import {apiRoutes} from '../api'
@@ -111,7 +119,7 @@ async function postPasskeyPromptResponse(body: unknown, db: D1Database, options:
 async function postProfilePhoto(
     db: D1Database,
     mediaBucket: R2Bucket,
-    options: {sessionToken: string; csrfToken: string; file?: File},
+    options: {sessionToken: string; csrfToken: string; file?: File; imagesBinding?: ImagesBinding},
 ): Promise<Response> {
     const form = new FormData()
     form.set('csrfToken', options.csrfToken)
@@ -131,6 +139,7 @@ async function postProfilePhoto(
         },
         {
             DB: db,
+            IMAGES: options.imagesBinding ?? createMockImagesBinding(),
             MEDIA_BUCKET: mediaBucket,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         },
@@ -889,7 +898,56 @@ describe('POST /users/me/profile-photo', () => {
         expect(mediaBucket.put).not.toHaveBeenCalled()
     })
 
-    it('rejects profile photos that are not WebP files', async () => {
+    it('converts PNG profile photos to WebP before storing', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const imagesBinding = createMockImagesBinding()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postProfilePhoto(db, mediaBucket, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+            file: createPngFile(512, 512, 'image/png', 'profile-photo.png'),
+            imagesBinding,
+        })
+
+        expect(response.status).toBe(200)
+        expect(imagesBinding.input).toHaveBeenCalledTimes(1)
+        const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
+        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 90})
+        const body = (await response.json()) as {profilePhotoKey: string}
+        expect(mediaBucket.put).toHaveBeenCalledWith(`users/current-user/profile/${body.profilePhotoKey}.webp`, expect.any(Uint8Array), {
+            httpMetadata: {
+                cacheControl: 'public, max-age=31536000, immutable',
+                contentType: 'image/webp',
+            },
+        })
+    })
+
+    it('converts JPEG profile photos to WebP before storing', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const imagesBinding = createMockImagesBinding()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postProfilePhoto(db, mediaBucket, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+            file: createJpegFile(512, 512, 'profile-photo.jpg'),
+            imagesBinding,
+        })
+
+        expect(response.status).toBe(200)
+        expect(imagesBinding.input).toHaveBeenCalledTimes(1)
+        const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
+        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 90})
+    })
+
+    it('rejects profile photos that cannot be normalized', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
         const {db} = createMockDb({
@@ -899,12 +957,12 @@ describe('POST /users/me/profile-photo', () => {
         const response = await postProfilePhoto(db, mediaBucket, {
             sessionToken,
             csrfToken: await createCsrfToken(sessionToken),
-            file: createWebpFile(512, 512, 'image/png'),
+            file: createGifFile(512, 512, 'profile-photo.gif'),
         })
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
-            error: 'Profile photo must be a WebP image',
+            error: 'Unexpected media, contact support',
         })
         expect(mediaBucket.put).not.toHaveBeenCalled()
     })
@@ -944,7 +1002,7 @@ describe('POST /users/me/profile-photo', () => {
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
-            error: 'Profile photo must be a valid WebP image',
+            error: 'Unexpected media, contact support',
         })
         expect(mediaBucket.put).not.toHaveBeenCalled()
     })

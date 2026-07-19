@@ -59,7 +59,7 @@ describe('MyocDockerSharpContainer', () => {
 
         expect(container.defaultPort).toBe(8080)
         expect(container.enableInternet).toBe(false)
-        expect(container.allowedHosts).toEqual(['m.myoc.art'])
+        expect(container.allowedHosts).toEqual(['m.myoc.art', 'm.dev.myoc.art'])
         expect(container.interceptHttps).toBe(true)
         expect(container.pingEndpoint).toBe('localhost/health')
         expect(container.requiredPorts).toEqual([8080])
@@ -113,8 +113,11 @@ describe('MyocDockerSharpContainer', () => {
         expect(containerMock.destroy).not.toHaveBeenCalled()
     })
 
-    it('allows outbound requests to the media origin through the Worker fetch implementation', async () => {
-        const request = new Request('https://m.myoc.art/characters/owner/character/media/image.png')
+    it.each([
+        'm.myoc.art',
+        'm.dev.myoc.art',
+    ])('allows outbound requests to the %s media origin through the Worker fetch implementation', async (host) => {
+        const request = new Request(`https://${host}/characters/owner/character/media/image.png`)
         const fetcher = vi.fn(async () => new Response('ok', {status: 202}))
         vi.stubGlobal('fetch', fetcher)
 

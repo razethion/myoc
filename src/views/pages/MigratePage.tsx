@@ -417,9 +417,7 @@ function ToyhouseClientImportScript({csrfToken, importPlan}: {csrfToken: string;
             }
             return {
                 blob,
-                contentType,
-                height: bitmap.height,
-                width: bitmap.width
+                contentType
             };
         } finally {
             if (bitmap && typeof bitmap.close === 'function') bitmap.close();
@@ -479,8 +477,6 @@ function ToyhouseClientImportScript({csrfToken, importPlan}: {csrfToken: string;
                 uploadId: upload.uploadId,
                 imageKey: upload.imageKey,
                 contentType: image.contentType,
-                width: image.width,
-                height: image.height,
                 parts
             };
 

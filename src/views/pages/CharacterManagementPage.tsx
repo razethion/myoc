@@ -1068,7 +1068,8 @@ function CharacterManagementScript({
         async function uploadEditFolderImage(folder) {
             const blob = await createCroppedFolderImageBlob('edit');
             const form = new FormData();
-            form.append('folderImage', blob, 'folder.webp');
+            const extension = blob.type === 'image/png' ? 'png' : blob.type === 'image/jpeg' ? 'jpg' : 'webp';
+            form.append('folderImage', blob, 'folder.' + extension);
             const response = await fetch('/api/characters/folders/' + encodeURIComponent(folder.id) + '/image', {
                 method: 'POST',
                 headers: {

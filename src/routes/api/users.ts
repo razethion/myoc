@@ -3,7 +3,7 @@ import {z} from 'zod'
 import {getCurrentUser} from '../../lib/auth/session'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {ErrorResponseSchema, responseSchema} from '../../lib/http/responseSchemas'
-import {PROFILE_IMAGE_MAX_REQUEST_BYTES, validateProfileImagePayload} from '../../lib/media/profileImage'
+import {normalizeProfileImagePayload, PROFILE_IMAGE_MAX_REQUEST_BYTES} from '../../lib/media/profileImage'
 import {profilePhotoObjectKey, profilePhotoUrl} from '../../lib/media/url'
 import {APP_VERSION} from '../../lib/releases'
 import type {Bindings} from '../../types/bindings'
@@ -60,26 +60,26 @@ userRoutes.post('/me/profile-photo', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Profile photo is required'}, 400)
     }
 
-    const bytes = new Uint8Array(await file.arrayBuffer())
-    const validation = validateProfileImagePayload(
+    const image = await normalizeProfileImagePayload(
         {
             contentType: file.type,
-            bytes,
+            bytes: new Uint8Array(await file.arrayBuffer()),
         },
         'Profile photo',
+        c.env.IMAGES,
     )
 
-    if ('error' in validation) {
-        return jsonResponse(c, ErrorResponseSchema, {error: validation.error}, validation.status)
+    if ('error' in image) {
+        return jsonResponse(c, ErrorResponseSchema, {error: image.error}, image.status)
     }
 
     const profilePhotoKey = crypto.randomUUID()
     const objectKey = profilePhotoObjectKey(currentUser.id, profilePhotoKey)
 
-    await c.env.MEDIA_BUCKET.put(objectKey, bytes, {
+    await c.env.MEDIA_BUCKET.put(objectKey, image.bytes, {
         httpMetadata: {
             cacheControl: 'public, max-age=31536000, immutable',
-            contentType: 'image/webp',
+            contentType: image.contentType,
         },
     })
 

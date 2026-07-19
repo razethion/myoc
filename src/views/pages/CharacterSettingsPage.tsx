@@ -255,25 +255,58 @@ function clearAlert() {
 }
 
 async function apiFetch(url, options) {
-    const response = await fetch(url, {
-        ...options,
-        headers: {
-            ...(options && options.headers ? options.headers : {}),
-            'x-csrf-token': csrfToken
-        }
-    });
+    const requestLabel = options && options.requestLabel ? options.requestLabel : '';
+    const fetchOptions = { ...(options || {}) };
+    delete fetchOptions.requestLabel;
+    let response;
+    try {
+        response = await fetch(url, {
+            ...fetchOptions,
+            headers: {
+                ...(fetchOptions && fetchOptions.headers ? fetchOptions.headers : {}),
+                'x-csrf-token': csrfToken
+            }
+        });
+    } catch (error) {
+        const message = error && error.message ? error.message : 'Network request failed';
+        const wrappedError = new Error(requestLabel ? requestLabel + ' failed: ' + message : message);
+        wrappedError.retryable = true;
+        throw wrappedError;
+    }
     if (!response.ok) {
         let message = 'Request failed';
         try {
             const body = await response.json();
             message = body.error || message;
         } catch {}
-        throw new Error(message);
+        const error = new Error(requestLabel ? requestLabel + ' failed: ' + message : message);
+        error.retryable = response.status === 429 || response.status >= 500;
+        throw error;
     }
     if (response.status === 204) {
         return null;
     }
     return await response.json();
+}
+
+function sleep(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function withRetry(label, task, onRetry) {
+    let lastError = null;
+    for (let attempt = 1; attempt <= chunkUploadMaxAttempts; attempt += 1) {
+        try {
+            return await task(attempt);
+        } catch (error) {
+            lastError = error;
+            if (error && error.retryable === false) break;
+            if (attempt >= chunkUploadMaxAttempts) break;
+            if (onRetry) onRetry(error, attempt);
+            await sleep(700 * attempt * attempt);
+        }
+    }
+    throw lastError || new Error(label + ' failed.');
 }
 
 function setLoading(button, isLoading, text) {
@@ -312,6 +345,11 @@ function openBulkUploadProgress(files) {
     if (!bulkUploadProgressModal.open) bulkUploadProgressModal.showModal();
 }
 
+function formatBulkUploadErrorDetail(file, error) {
+    const message = error && error.message ? error.message : 'Upload failed';
+    return file && file.name ? file.name + ' — ' + message : message;
+}
+
 async function loadCharacterProfileForCropping(file) {
     if (!file || !file.type.startsWith('image/')) throw new Error('Choose an image file.');
     if (typeof Cropper === 'undefined') throw new Error('Profile image editor could not load. Refresh and try again.');
@@ -333,7 +371,8 @@ async function createCroppedCharacterProfileFile() {
                 reject(new Error('Could not prepare profile image.'));
                 return;
             }
-            resolve(new File([blob], 'character-profile.webp', { type: 'image/webp' }));
+            const extension = blob.type === 'image/png' ? 'png' : blob.type === 'image/jpeg' ? 'jpg' : 'webp';
+            resolve(new File([blob], 'character-profile.' + extension, { type: blob.type || 'image/webp' }));
         }, 'image/webp', 0.9);
     });
 }
@@ -771,6 +810,7 @@ function renderFilePreview(input, preview, emptyText) {
 const allowedGalleryImageTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'];
 const galleryImageMaxBytes = 200 * 1024 * 1024;
 const galleryImageMaxPixels = 200000000;
+const chunkUploadMaxAttempts = 3;
 
 async function prepareOriginalImageFile(file) {
     if (!file) return null;
@@ -783,22 +823,25 @@ async function prepareOriginalImageFile(file) {
     if (file.size > galleryImageMaxBytes) {
         throw new Error('Gallery images must be 200 MB or smaller.');
     }
+    const image = {
+        file,
+        contentType: file.type
+    };
     let bitmap;
     try {
         bitmap = await createImageBitmap(file, { colorSpaceConversion: 'default' });
-    } catch {
-        throw new Error('Could not read this image. Try PNG, JPG, WebP, GIF, or AVIF.');
+    } catch (error) {
+        console.warn('Image preflight decode failed; continuing with server-side validation.', {
+            error,
+            size: file.size,
+            type: file.type
+        });
+        return image;
     }
     try {
         if (bitmap.width * bitmap.height > galleryImageMaxPixels) {
             throw new Error('Gallery images must be 200,000,000 pixels or smaller.');
         }
-        const image = {
-            file,
-            contentType: file.type,
-            width: bitmap.width,
-            height: bitmap.height
-        };
         bitmap.close();
         return image;
     } catch (error) {
@@ -822,6 +865,7 @@ async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}, progress)
     const initResult = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/chunked/init', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
+        requestLabel: 'Starting upload session',
         body: JSON.stringify({ uploads })
     });
     const completeBody = {
@@ -829,17 +873,26 @@ async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}, progress)
         sfwArtist: sfwArtist || '',
         nsfwArtist: nsfwArtist || ''
     };
-    if (sfwImage) {
-        completeBody.sfwUpload = await uploadChunkedImage(initResult.mediaId, 'sfw', sfwImage, initResult.uploads.sfw, progress);
-    }
-    if (nsfwImage) {
-        completeBody.nsfwUpload = await uploadChunkedImage(initResult.mediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw, progress);
+    try {
+        if (sfwImage) {
+            completeBody.sfwUpload = await uploadChunkedImage(initResult.mediaId, 'sfw', sfwImage, initResult.uploads.sfw, progress);
+        }
+        if (nsfwImage) {
+            completeBody.nsfwUpload = await uploadChunkedImage(initResult.mediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw, progress);
+        }
+    } catch (error) {
+        await abortChunkedUploads(initResult.mediaId, [
+            { rating: 'sfw', image: sfwImage, upload: initResult.uploads.sfw },
+            { rating: 'nsfw', image: nsfwImage, upload: initResult.uploads.nsfw }
+        ]);
+        throw error;
     }
 
     if (progress) progress({ status: 'Finalizing', percent: 95, detail: 'Finishing upload' });
     const result = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/chunked/complete', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
+        requestLabel: 'Finalizing upload',
         body: JSON.stringify(completeBody)
     });
     mediaLibrary.set(result.media.id, result.media);
@@ -866,7 +919,8 @@ async function uploadChunkedImage(mediaId, rating, image, upload, progress) {
 
     for (let offset = 0; offset < file.size; offset += chunkSize) {
         const chunk = file.slice(offset, Math.min(offset + chunkSize, file.size), image.contentType);
-        const part = await apiFetch(
+        const label = 'Uploading ' + rating.toUpperCase() + ' chunk ' + partNumber;
+        const part = await withRetry(label, async () => await apiFetch(
             '/api/characters/' + encodeURIComponent(character.id)
             + '/media/chunked/' + encodeURIComponent(mediaId)
             + '/' + encodeURIComponent(rating)
@@ -876,9 +930,18 @@ async function uploadChunkedImage(mediaId, rating, image, upload, progress) {
             + '&contentType=' + encodeURIComponent(image.contentType),
             {
                 method: 'PUT',
+                requestLabel: label,
                 body: chunk
             }
-        );
+        ), (error, attempt) => {
+            if (!progress) return;
+            const message = error && error.message ? error.message : String(error);
+            progress({
+                status: 'Uploading',
+                percent: 10 + ((offset / totalBytes) * 80),
+                detail: label + ' failed, retrying ' + attempt + ' of ' + (chunkUploadMaxAttempts - 1) + ': ' + message
+            });
+        });
         parts.push(part);
         const uploadedBytes = Math.min(offset + chunk.size, file.size);
         if (progress) {
@@ -895,10 +958,35 @@ async function uploadChunkedImage(mediaId, rating, image, upload, progress) {
         uploadId: upload.uploadId,
         imageKey: upload.imageKey,
         contentType: image.contentType,
-        width: image.width,
-        height: image.height,
         parts
     };
+}
+
+async function abortChunkedUploads(mediaId, uploads) {
+    await Promise.all(uploads.map(async ({rating, image, upload}) => {
+        if (!image || !upload) return;
+        try {
+            await apiFetch(
+                '/api/characters/' + encodeURIComponent(character.id)
+                + '/media/chunked/' + encodeURIComponent(mediaId)
+                + '/' + encodeURIComponent(rating)
+                + '/' + encodeURIComponent(upload.uploadId)
+                + '?imageKey=' + encodeURIComponent(upload.imageKey)
+                + '&contentType=' + encodeURIComponent(image.contentType),
+                {
+                    method: 'DELETE',
+                    requestLabel: 'Canceling ' + rating.toUpperCase() + ' upload'
+                }
+            );
+        } catch (error) {
+            console.warn('Unable to abort chunked gallery upload after failure.', {
+                error,
+                imageKey: upload.imageKey,
+                mediaId,
+                rating
+            });
+        }
+    }));
 }
 
 function openEditMediaModal(mediaId) {
@@ -1357,16 +1445,18 @@ bulkUploadForm.addEventListener('submit', async (event) => {
         bulkUploadModal.close();
         showAlert('Bulk upload complete. Save changes to persist gallery placement.', true);
     } catch (error) {
+        const errorMessage = error && error.message ? error.message : 'Upload failed';
         if (activeIndex >= 0) {
+            const activeFile = bulkUploadFiles[activeIndex];
             setBulkUploadProgress(
                 'Bulk upload stopped at image ' + (activeIndex + 1) + ' of ' + bulkUploadFiles.length,
                 ((activeIndex + 1) / Math.max(bulkUploadFiles.length, 1)) * 100,
-                error.message || 'Upload failed',
+                formatBulkUploadErrorDetail(activeFile, error),
                 true,
                 true
             );
         }
-        showAlert(error.message, false);
+        showAlert(errorMessage, false);
     } finally {
         setLoading(submitButton, false, 'Uploading...');
     }
@@ -1396,6 +1486,7 @@ editImageArtistForm.addEventListener('submit', async (event) => {
             ? await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/' + encodeURIComponent(editTargetMediaId) + '/chunked/init', {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
+                requestLabel: 'Starting replacement upload session',
                 body: JSON.stringify({ uploads })
             })
             : null;
@@ -1405,15 +1496,26 @@ editImageArtistForm.addEventListener('submit', async (event) => {
             removeSfw: editRemoveSfw,
             removeNsfw: editRemoveNsfw
         };
-        if (initResult && sfwImage) {
-            completeBody.sfwUpload = await uploadChunkedImage(editTargetMediaId, 'sfw', sfwImage, initResult.uploads.sfw);
-        }
-        if (initResult && nsfwImage) {
-            completeBody.nsfwUpload = await uploadChunkedImage(editTargetMediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw);
+        try {
+            if (initResult && sfwImage) {
+                completeBody.sfwUpload = await uploadChunkedImage(editTargetMediaId, 'sfw', sfwImage, initResult.uploads.sfw);
+            }
+            if (initResult && nsfwImage) {
+                completeBody.nsfwUpload = await uploadChunkedImage(editTargetMediaId, 'nsfw', nsfwImage, initResult.uploads.nsfw);
+            }
+        } catch (error) {
+            if (initResult) {
+                await abortChunkedUploads(editTargetMediaId, [
+                    { rating: 'sfw', image: sfwImage, upload: initResult.uploads.sfw },
+                    { rating: 'nsfw', image: nsfwImage, upload: initResult.uploads.nsfw }
+                ]);
+            }
+            throw error;
         }
         const result = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/' + encodeURIComponent(editTargetMediaId) + '/chunked/complete', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
+            requestLabel: 'Finalizing replacement upload',
             body: JSON.stringify(completeBody)
         });
         mediaLibrary.set(result.media.id, result.media);
@@ -1994,7 +2096,7 @@ function BulkUploadProgressDialog() {
                     Preparing upload
                 </p>
                 <progress class="progress mt-5 w-full" id="bulk-upload-progress-bar" max="100" value="0"></progress>
-                <p class="mt-2 truncate text-sm text-base-content/70" id="bulk-upload-progress-detail">
+                <p class="mt-2 break-words text-sm whitespace-normal text-base-content/70" id="bulk-upload-progress-detail">
                     Waiting to upload
                 </p>
                 <div class="modal-action">

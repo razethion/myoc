@@ -234,8 +234,8 @@ async function createWebpPreview(sourceBytes) {
     }).rotate()
 
     const metadata = await image.metadata()
-    const width = metadata.width ?? 0
-    const height = metadata.height ?? 0
+    const width = metadata.autoOrient?.width ?? metadata.width ?? 0
+    const height = metadata.autoOrient?.height ?? metadata.height ?? 0
 
     if (width < 1 || height < 1) {
         throw new Error('Source image dimensions could not be read')

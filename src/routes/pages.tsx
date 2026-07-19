@@ -7,7 +7,7 @@ import {listUserPasskeys, listUserSessions, toPasskeySummary} from '../lib/auth/
 import {type CurrentUser, canModerateImages, getCurrentUser, isAdminUser, toSqlTimestamp} from '../lib/auth/session'
 import {chunkGalleryItems, shouldForceGalleryRowFullWidth} from '../lib/gallery'
 import {getLeaderboardSnapshot} from '../lib/leaderboard'
-import {validateProfileImagePayload} from '../lib/media/profileImage'
+import {normalizeProfileImagePayload, PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR} from '../lib/media/profileImage'
 import {
     characterHeightChartImageUrl,
     characterMediaImageUrl,
@@ -394,6 +394,7 @@ pageRoutes.post('/migrate/import/confirm', async (c) => {
                     clientImportPlan = await prepareToyhouseClientImportPlan(
                         c.env.DB,
                         c.env.MEDIA_BUCKET,
+                        c.env.IMAGES,
                         currentUser.id,
                         reviewed,
                         selection,
@@ -1014,6 +1015,7 @@ function parseToyhouseImportSelection(formData: FormData, migrationResult: Toyho
 async function prepareToyhouseClientImportPlan(
     db: D1Database,
     bucket: R2Bucket,
+    images: ImagesBinding | undefined,
     userId: string,
     migrationResult: ToyhouseMigrationResult,
     selection: ToyhouseImportSelection,
@@ -1068,6 +1070,7 @@ async function prepareToyhouseClientImportPlan(
                     : await stageToyhouseImportedCharacter(
                           db,
                           bucket,
+                          images,
                           userId,
                           character,
                           selection.profileImagesByCharacterId.get(characterId) ?? '',
@@ -1349,20 +1352,20 @@ async function getToyhouseImportItemsByIds(
 async function stageToyhouseImportedCharacter(
     db: D1Database,
     bucket: R2Bucket,
+    images: ImagesBinding | undefined,
     userId: string,
     character: ToyhouseMigrationResult['characters'][number],
     profileImageDataUrl: string,
     staged: StagedToyhouseImport,
 ): Promise<StagedToyhouseCharacter> {
-    const profileImage = readWebpDataUrl(profileImageDataUrl)
-    const validation = 'error' in profileImage ? profileImage : validateProfileImagePayload(profileImage, `${character.name} profile image`)
-
-    if ('error' in validation) {
-        throw new Error(validation.error)
-    }
-
+    const profileImage = readProfileImageDataUrl(profileImageDataUrl)
     if ('error' in profileImage) {
         throw new Error(profileImage.error)
+    }
+
+    const normalizedProfileImage = await normalizeProfileImagePayload(profileImage, `${character.name} profile image`, images)
+    if ('error' in normalizedProfileImage) {
+        throw new Error(normalizedProfileImage.error)
     }
 
     const now = toSqlTimestamp(new Date())
@@ -1370,10 +1373,10 @@ async function stageToyhouseImportedCharacter(
     const profileImageKey = crypto.randomUUID()
     const profileObjectKey = characterProfileImageObjectKey(userId, characterId, profileImageKey)
 
-    await bucket.put(profileObjectKey, profileImage.bytes, {
+    await bucket.put(profileObjectKey, normalizedProfileImage.bytes, {
         httpMetadata: {
             cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
-            contentType: profileImage.contentType,
+            contentType: normalizedProfileImage.contentType,
         },
     })
     staged.uploadedKeys.push(profileObjectKey)
@@ -1392,18 +1395,14 @@ async function stageToyhouseImportedCharacter(
     return {id: characterId, isNew: true}
 }
 
-function readWebpDataUrl(value: string): {contentType: string; bytes: Uint8Array} | {error: string} {
-    const match = /^data:(image\/webp);base64,(.+)$/i.exec(value)
+function readProfileImageDataUrl(value: string): {contentType: string; bytes: Uint8Array} | {error: string} {
+    const match = /^data:(image\/(?:webp|png|jpeg));base64,(.+)$/i.exec(value)
 
     if (!match) {
-        return {error: 'Profile image must be a WebP data URL.'}
+        return {error: PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR}
     }
 
-    const [, contentType, encodedBytes] = match
-
-    if (!contentType || !encodedBytes) {
-        return {error: 'Profile image must be a WebP data URL.'}
-    }
+    const [contentType, encodedBytes] = match.slice(1) as [string, string]
 
     try {
         const binary = atob(encodedBytes)
@@ -1418,7 +1417,7 @@ function readWebpDataUrl(value: string): {contentType: string; bytes: Uint8Array
             contentType: contentType.toLowerCase(),
         }
     } catch {
-        return {error: 'Profile image could not be read.'}
+        return {error: PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR}
     }
 }
 

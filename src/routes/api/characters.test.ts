@@ -2,11 +2,16 @@ import {describe, expect, it, vi} from 'vitest'
 import {createCsrfToken} from '../../lib/auth/session'
 import {
     createAvifFile,
+    createBigEndianExifOrientationJpegFile,
+    createExifOrientationJpegFile,
     createGifFile,
     createJpegFile,
+    createJpegFileWithExifWithoutOrientation,
     createMalformedWebpFile,
     createOversizedWebpFile,
+    createPngDataUrl,
     createPngFile,
+    createWebpBytes,
     createWebpDataUrl,
     createWebpFile,
 } from '../../test/imageFixtures'
@@ -61,6 +66,9 @@ type FolderResponse = {
 type CharacterRequestOptions = TestRequestOptions & {
     mediaBucket?: R2Bucket
     imagesBinding?: ImagesBinding
+    previewContainer?: DurableObjectNamespace
+    cloudflarePreviewResponse?: Response
+    cloudflarePreviewResponses?: Array<Response | Error>
 }
 
 type ChunkedSfwInitBody = {
@@ -74,12 +82,32 @@ type ChunkedSfwInitBody = {
     }
 }
 
-function requestEnv(db: D1Database, mediaBucket?: R2Bucket, imagesBinding = createMockImagesBinding()) {
+function requestEnv(
+    db: D1Database,
+    mediaBucket?: R2Bucket,
+    imagesBinding = createMockImagesBinding(),
+    previewContainer?: DurableObjectNamespace,
+) {
     return {
         DB: db,
         MEDIA_BUCKET: mediaBucket ?? createMockR2Bucket(),
         IMAGES: imagesBinding,
         MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+        MYOC_DOCKER_SHARP_CONTAINER: previewContainer,
+        PREVIEW_PROCESSOR_TOKEN: 'preview-token',
+    }
+}
+
+function createMockPreviewContainer(response: Response) {
+    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => response.clone())
+    const namespace = {
+        idFromName: vi.fn(() => 'preview-container-id'),
+        get: vi.fn(() => ({fetch})),
+    }
+
+    return {
+        fetch,
+        namespace: namespace as unknown as DurableObjectNamespace,
     }
 }
 
@@ -313,7 +341,10 @@ async function completeChunkedMedia(
     db: D1Database,
     options: CharacterRequestOptions = {},
 ): Promise<Response> {
-    mockCloudflareImagePreviewResponse(body)
+    mockCloudflareImagePreviewResponse(
+        body,
+        options.cloudflarePreviewResponses ?? (options.cloudflarePreviewResponse ? [options.cloudflarePreviewResponse] : undefined),
+    )
 
     return apiRoutes.request(
         `https://example.com/characters/${characterId}/media/chunked/complete`,
@@ -322,25 +353,39 @@ async function completeChunkedMedia(
             body: JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.imagesBinding, options.previewContainer),
     )
 }
 
-function mockCloudflareImagePreviewResponse(body: unknown): void {
+function mockCloudflareImagePreviewResponse(body: unknown, responses?: Array<Response | Error>): void {
     const preview = firstPreviewPayload(body)
-    const upload = firstCompletedUpload(body)
 
-    if (!upload) {
+    if (!preview) {
         return
     }
 
-    const dimensions = expectedPreviewDimensions(upload)
+    let responseIndex = 0
+
     vi.stubGlobal(
         'fetch',
         vi.fn(async () => {
-            const bytes = preview
-                ? decodePreviewPayloadBytes(preview.data)
-                : new Uint8Array(await createWebpFile(dimensions.width, dimensions.height).arrayBuffer())
+            if (responses?.length) {
+                const response = responses[Math.min(responseIndex, responses.length - 1)]
+                responseIndex += 1
+
+                if (response instanceof Error) {
+                    throw response
+                }
+
+                if (!response) {
+                    throw new Error('Missing mocked Cloudflare preview response')
+                }
+
+                return response.clone()
+            }
+
+            const bytes = decodePreviewPayloadBytes(preview.data)
+
             return new Response(bytes, {
                 headers: {
                     'content-type': 'image/webp',
@@ -378,36 +423,6 @@ function decodePreviewPayloadBytes(value: string): Uint8Array {
     }
 
     return bytes
-}
-
-function firstCompletedUpload(body: unknown): {width: number; height: number} | null {
-    if (!body || typeof body !== 'object') {
-        return null
-    }
-
-    const record = body as Record<string, unknown>
-
-    for (const key of ['sfwUpload', 'nsfwUpload']) {
-        const upload = record[key]
-
-        if (upload && typeof upload === 'object' && 'width' in upload && 'height' in upload) {
-            return {
-                width: Number((upload as {width: unknown}).width),
-                height: Number((upload as {height: unknown}).height),
-            }
-        }
-    }
-
-    return null
-}
-
-function expectedPreviewDimensions(original: {width: number; height: number}): {width: number; height: number} {
-    const scale = Math.min(1, 1600 / Math.max(original.width, original.height))
-
-    return {
-        width: Math.max(1, Math.round(original.width * scale)),
-        height: Math.max(1, Math.round(original.height * scale)),
-    }
 }
 
 async function initExistingChunkedMedia(
@@ -1346,6 +1361,38 @@ describe('POST /characters/folders', () => {
         expect(boundStatements[1]?.binds[4]).toBe(body.folder.folderImageKey)
     })
 
+    it('creates a folder by converting a PNG cropped image data URL to WebP', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const imagesBinding = createMockImagesBinding()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postFolder(
+            {
+                name: ' Main Characters ',
+                parentFolderId: 'root',
+                folderImageData: createPngDataUrl(512, 512),
+            },
+            db,
+            {
+                imagesBinding,
+                mediaBucket,
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(201)
+
+        const body = (await response.json()) as FolderResponse
+        expectStoredFolderImage(mediaBucket, body.folder)
+        expect(imagesBinding.input).toHaveBeenCalledTimes(1)
+        const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
+        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 90})
+    })
+
     it('creates a nested folder', async () => {
         const sessionToken = 'session-token'
         const {db, boundStatements} = createMockDb({
@@ -2070,7 +2117,7 @@ describe('POST /characters', () => {
         const form = new FormData()
         form.set('csrfToken', await createCsrfToken(sessionToken))
         form.set('new-character-name', 'Ren')
-        form.set('new-character-profile-image', createWebpFile(512, 512, 'image/png'))
+        form.set('new-character-profile-image', createGifFile(512, 512, 'profile.gif'))
 
         const response = await postCharacter(form, db, {
             mediaBucket,
@@ -2079,9 +2126,35 @@ describe('POST /characters', () => {
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
-            error: 'Character profile image must be a WebP image',
+            error: 'Unexpected media, contact support',
         })
         expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
+    it('creates a character by converting a PNG cropped profile image to WebP', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const imagesBinding = createMockImagesBinding()
+        const form = new FormData()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+        form.set('csrfToken', await createCsrfToken(sessionToken))
+        form.set('new-character-name', 'Ren')
+        form.set('new-character-profile-image', createPngFile(512, 512, 'image/png', 'profile.png'))
+
+        const response = await postCharacter(form, db, {
+            imagesBinding,
+            mediaBucket,
+            sessionToken,
+        })
+
+        expect(response.status).toBe(201)
+        const body = (await response.json()) as CharacterResponse
+        expectStoredCharacterProfileImage(mediaBucket, body.character)
+        expect(imagesBinding.input).toHaveBeenCalledTimes(1)
+        const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
+        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 90})
     })
 
     it('rejects profile images that are not exactly 512x512', async () => {
@@ -2148,7 +2221,7 @@ describe('POST /characters', () => {
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
-            error: 'Character profile image must be a valid WebP image',
+            error: 'Unexpected media, contact support',
         })
         expect(mediaBucket.put).not.toHaveBeenCalled()
     })
@@ -2594,9 +2667,10 @@ describe('POST /characters/:id/profile-image', () => {
         }
     })
 
-    it('rejects profile images that are not 512x512 WebP files', async () => {
+    it('converts PNG character profile images to WebP before storing', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
+        const imagesBinding = createMockImagesBinding()
         const character = createCharacterRecord()
         const {db} = createMockDb({
             firstResults: [currentUserRecord, character],
@@ -2605,16 +2679,62 @@ describe('POST /characters/:id/profile-image', () => {
         form.set('profileImage', createPngFile(512, 512))
 
         const response = await postProfileImage(character.id, form, db, {
+            imagesBinding,
             mediaBucket,
             sessionToken,
             csrfToken: await createCsrfToken(sessionToken),
         })
 
-        expect(response.status).toBe(400)
-        expect(await response.json()).toEqual({
-            error: 'Character profile image must be a WebP image',
+        expect(response.status).toBe(200)
+        const body = (await response.json()) as {profileImageKey: string}
+        expect(mediaBucket.put).toHaveBeenCalledWith(
+            `characters/current-user/character-id/profile/${body.profileImageKey}.webp`,
+            expect.any(Uint8Array),
+            {
+                httpMetadata: {
+                    cacheControl: 'public, max-age=31536000, immutable',
+                    contentType: 'image/webp',
+                },
+            },
+        )
+        expect(imagesBinding.input).toHaveBeenCalledTimes(1)
+        const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
+        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 90})
+    })
+
+    it('converts JPEG folder images to WebP before storing', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const imagesBinding = createMockImagesBinding()
+        const folder = createFolderRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, folder],
         })
-        expect(mediaBucket.put).not.toHaveBeenCalled()
+        const form = new FormData()
+        form.set('folderImage', createJpegFile(512, 512, 'folder.jpg'))
+
+        const response = await postFolderImage(folder.id, form, db, {
+            imagesBinding,
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        const body = (await response.json()) as {folderImageKey: string}
+        expect(mediaBucket.put).toHaveBeenCalledWith(
+            `characters/current-user/folders/folder-id/image/${body.folderImageKey}.webp`,
+            expect.any(Uint8Array),
+            {
+                httpMetadata: {
+                    cacheControl: 'public, max-age=31536000, immutable',
+                    contentType: 'image/webp',
+                },
+            },
+        )
+        expect(imagesBinding.input).toHaveBeenCalledTimes(1)
+        const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
+        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 90})
     })
 })
 
@@ -3018,6 +3138,125 @@ describe('character media uploads', () => {
         expect(mediaBucket.createMultipartUpload).not.toHaveBeenCalled()
     })
 
+    it('reports chunked upload init failures and aborts partially initialized multipart uploads', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const firstUpload = {
+            key: 'first-key',
+            uploadId: 'first-upload',
+            uploadPart: vi.fn(),
+            abort: vi.fn(async () => {}),
+            complete: vi.fn(),
+        } as unknown as R2MultipartUpload
+        vi.mocked(mediaBucket.createMultipartUpload)
+            .mockResolvedValueOnce(firstUpload)
+            .mockRejectedValueOnce(new Error('R2 multipart init failed'))
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+
+        try {
+            const response = await initChunkedMedia(
+                character.id,
+                {
+                    uploads: [
+                        {rating: 'sfw', contentType: 'image/png'},
+                        {rating: 'nsfw', contentType: 'image/jpeg'},
+                    ],
+                },
+                db,
+                {
+                    mediaBucket,
+                    sessionToken,
+                    csrfToken: await createCsrfToken(sessionToken),
+                },
+            )
+
+            expect(response.status).toBe(503)
+            const body = (await response.json()) as {error: string}
+            expect(body.error).toMatch(/^Upload could not be initialized\. Try again, or contact support with reference /)
+            expect(mediaBucket.createMultipartUpload).toHaveBeenCalledTimes(2)
+            expect(firstUpload.abort).toHaveBeenCalledTimes(1)
+            expect(errorSpy).toHaveBeenCalledWith(
+                'Chunked gallery upload init failed while creating R2 multipart uploads',
+                expect.objectContaining({
+                    error: 'R2 multipart init failed',
+                    createdUploads: [
+                        expect.objectContaining({
+                            rating: 'sfw',
+                            uploadId: 'first-upload',
+                        }),
+                    ],
+                }),
+            )
+        } finally {
+            logSpy.mockRestore()
+            warnSpy.mockRestore()
+            errorSpy.mockRestore()
+        }
+    })
+
+    it.each([
+        {
+            thrown: 'string failure',
+            expected: 'string failure',
+        },
+        {
+            thrown: {code: 'bad-r2-state'},
+            expected: '{"code":"bad-r2-state"}',
+        },
+        {
+            thrown: (() => {
+                const circular: {self?: unknown} = {}
+                circular.self = circular
+                return circular
+            })(),
+            expected: '[object Object]',
+        },
+    ])('describes non-Error chunked upload init failures as $expected', async ({thrown, expected}) => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        vi.mocked(mediaBucket.createMultipartUpload).mockRejectedValueOnce(thrown)
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+
+        try {
+            const response = await initChunkedMedia(
+                character.id,
+                {
+                    uploads: [{rating: 'sfw', contentType: 'image/png'}],
+                },
+                db,
+                {
+                    mediaBucket,
+                    sessionToken,
+                    csrfToken: await createCsrfToken(sessionToken),
+                },
+            )
+
+            expect(response.status).toBe(503)
+            expect(errorSpy).toHaveBeenCalledWith(
+                'Chunked gallery upload init failed while creating R2 multipart uploads',
+                expect.objectContaining({
+                    error: expected,
+                }),
+            )
+        } finally {
+            logSpy.mockRestore()
+            warnSpy.mockRestore()
+            errorSpy.mockRestore()
+        }
+    })
+
     it.each([
         {
             rating: 'private',
@@ -3215,8 +3454,6 @@ describe('character media uploads', () => {
                     uploadId: initBody.uploads.sfw.uploadId,
                     imageKey: initBody.uploads.sfw.imageKey,
                     contentType: 'image/png',
-                    width: 10000,
-                    height: 10000,
                     parts: [uploadedPart],
                 },
                 sfwPreview: createPreviewPayload(1600, 1600),
@@ -3295,6 +3532,582 @@ describe('character media uploads', () => {
         expect(mediaInsert?.binds[14]).toBe(1600)
     })
 
+    it('passes EXIF orientation transforms to Cloudflare Images for gallery previews', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character, currentUserRecord, character, currentUserRecord, character],
+        })
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await initChunkedMedia(
+            character.id,
+            {
+                ratings: [{rating: 'sfw', contentType: 'image/jpeg'}],
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
+        const initBody = (await initResponse.json()) as ChunkedSfwInitBody
+        const jpegFile = createExifOrientationJpegFile(4608, 3456, 6)
+        const partResponse = await putChunkedMediaPart(
+            character.id,
+            initBody.mediaId,
+            'sfw',
+            initBody.uploads.sfw.uploadId,
+            1,
+            initBody.uploads.sfw.imageKey,
+            jpegFile,
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+            'image/jpeg',
+        )
+        const uploadedPart = (await partResponse.json()) as R2UploadedPart
+
+        const completeResponse = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/jpeg',
+                    parts: [uploadedPart],
+                },
+                sfwPreview: createPreviewPayload(1200, 1600),
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
+
+        const responseBody = await completeResponse.json()
+        expect(completeResponse.status, JSON.stringify(responseBody)).toBe(201)
+        const body = responseBody as {
+            media: {
+                sfwWidth: number
+                sfwHeight: number
+                sfwPreviewWidth: number
+                sfwPreviewHeight: number
+            }
+        }
+        expect(body.media.sfwWidth).toBe(4608)
+        expect(body.media.sfwHeight).toBe(3456)
+        expect(body.media.sfwPreviewWidth).toBe(1200)
+        expect(body.media.sfwPreviewHeight).toBe(1600)
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+            `${mediaPublicBaseUrl}/cdn-cgi/image/anim=false,fit=scale-down,format=webp,height=1600,quality=90,rotate=90,width=1600/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.jpg`,
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    accept: 'image/webp,image/*,*/*;q=0.8',
+                }),
+            }),
+        )
+        const mediaInsert = boundStatements.find((statement) => statement.sql.includes(['INSERT INTO', 'character_media'].join(' ')))
+        expect(mediaInsert?.binds[9]).toBe(4608)
+        expect(mediaInsert?.binds[10]).toBe(3456)
+        expect(mediaInsert?.binds[13]).toBe(1200)
+        expect(mediaInsert?.binds[14]).toBe(1600)
+    })
+
+    it('falls back to the container when Cloudflare returns the wrong EXIF-oriented preview dimensions', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const previewContainer = createMockPreviewContainer(
+            new Response(createWebpBytes(1200, 1600), {
+                headers: {
+                    'content-type': 'image/webp',
+                },
+            }),
+        )
+        const character = createCharacterRecord()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character, currentUserRecord, character, currentUserRecord, character],
+        })
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await initChunkedMedia(
+            character.id,
+            {
+                ratings: [{rating: 'sfw', contentType: 'image/jpeg'}],
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
+        const initBody = (await initResponse.json()) as ChunkedSfwInitBody
+        const jpegFile = createExifOrientationJpegFile(4608, 3456, 6)
+        const partResponse = await putChunkedMediaPart(
+            character.id,
+            initBody.mediaId,
+            'sfw',
+            initBody.uploads.sfw.uploadId,
+            1,
+            initBody.uploads.sfw.imageKey,
+            jpegFile,
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+            'image/jpeg',
+        )
+        const uploadedPart = (await partResponse.json()) as R2UploadedPart
+
+        const completeResponse = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/jpeg',
+                    parts: [uploadedPart],
+                },
+                sfwPreview: createPreviewPayload(1600, 1200),
+            },
+            db,
+            {
+                mediaBucket,
+                previewContainer: previewContainer.namespace,
+                sessionToken,
+                csrfToken,
+            },
+        )
+
+        const responseBody = await completeResponse.json()
+        expect(completeResponse.status, JSON.stringify(responseBody)).toBe(201)
+        const body = responseBody as {
+            media: {
+                sfwWidth: number
+                sfwHeight: number
+                sfwPreviewWidth: number
+                sfwPreviewHeight: number
+            }
+        }
+        expect(body.media.sfwWidth).toBe(4608)
+        expect(body.media.sfwHeight).toBe(3456)
+        expect(body.media.sfwPreviewWidth).toBe(1200)
+        expect(body.media.sfwPreviewHeight).toBe(1600)
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+            `${mediaPublicBaseUrl}/cdn-cgi/image/anim=false,fit=scale-down,format=webp,height=1600,quality=90,rotate=90,width=1600/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.jpg`,
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    accept: 'image/webp,image/*,*/*;q=0.8',
+                }),
+            }),
+        )
+        expect(previewContainer.fetch).toHaveBeenCalledTimes(1)
+        expect(await vi.mocked(previewContainer.fetch).mock.calls[0]?.[1]?.body).toBe(
+            JSON.stringify({
+                imageUrl: `${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.jpg`,
+            }),
+        )
+        const mediaInsert = boundStatements.find((statement) => statement.sql.includes(['INSERT INTO', 'character_media'].join(' ')))
+        expect(mediaInsert?.binds[9]).toBe(4608)
+        expect(mediaInsert?.binds[10]).toBe(3456)
+        expect(mediaInsert?.binds[13]).toBe(1200)
+        expect(mediaInsert?.binds[14]).toBe(1600)
+    })
+
+    it('handles big-endian EXIF orientation and EXIF without orientation for gallery previews', async () => {
+        const cases = [
+            {
+                file: createBigEndianExifOrientationJpegFile(4608, 3456, 6),
+                preview: createPreviewPayload(1200, 1600),
+                expectedPreview: {width: 1200, height: 1600},
+                expectedTransformOptions: 'anim=false,fit=scale-down,format=webp,height=1600,quality=90,rotate=90,width=1600',
+            },
+            {
+                file: createJpegFileWithExifWithoutOrientation(800, 600),
+                preview: createPreviewPayload(800, 600),
+                expectedPreview: {width: 800, height: 600},
+                expectedTransformOptions: 'anim=false,fit=scale-down,format=webp,height=1600,quality=90,width=1600',
+            },
+        ]
+
+        for (const testCase of cases) {
+            const sessionToken = crypto.randomUUID()
+            const mediaBucket = createMockR2Bucket()
+            const character = createCharacterRecord()
+            const {db} = createMockDb({
+                firstResults: [currentUserRecord, character, currentUserRecord, character, currentUserRecord, character],
+            })
+            const csrfToken = await createCsrfToken(sessionToken)
+
+            const initResponse = await initChunkedMedia(
+                character.id,
+                {
+                    ratings: [{rating: 'sfw', contentType: 'image/jpeg'}],
+                },
+                db,
+                {
+                    mediaBucket,
+                    sessionToken,
+                    csrfToken,
+                },
+            )
+            const initBody = (await initResponse.json()) as ChunkedSfwInitBody
+            const partResponse = await putChunkedMediaPart(
+                character.id,
+                initBody.mediaId,
+                'sfw',
+                initBody.uploads.sfw.uploadId,
+                1,
+                initBody.uploads.sfw.imageKey,
+                testCase.file,
+                db,
+                {
+                    mediaBucket,
+                    sessionToken,
+                    csrfToken,
+                },
+                'image/jpeg',
+            )
+            const uploadedPart = (await partResponse.json()) as R2UploadedPart
+
+            const completeResponse = await completeChunkedMedia(
+                character.id,
+                {
+                    mediaId: initBody.mediaId,
+                    sfwUpload: {
+                        uploadId: initBody.uploads.sfw.uploadId,
+                        imageKey: initBody.uploads.sfw.imageKey,
+                        contentType: 'image/jpeg',
+                        parts: [uploadedPart],
+                    },
+                    sfwPreview: testCase.preview,
+                },
+                db,
+                {
+                    mediaBucket,
+                    sessionToken,
+                    csrfToken,
+                },
+            )
+
+            const responseBody = await completeResponse.json()
+            expect(completeResponse.status, JSON.stringify(responseBody)).toBe(201)
+            const body = responseBody as {
+                media: {
+                    sfwPreviewWidth: number
+                    sfwPreviewHeight: number
+                }
+            }
+            expect(body.media.sfwPreviewWidth).toBe(testCase.expectedPreview.width)
+            expect(body.media.sfwPreviewHeight).toBe(testCase.expectedPreview.height)
+            expect(globalThis.fetch).toHaveBeenCalledWith(
+                `${mediaPublicBaseUrl}/cdn-cgi/image/${testCase.expectedTransformOptions}/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.jpg`,
+                expect.objectContaining({
+                    headers: expect.objectContaining({
+                        accept: 'image/webp,image/*,*/*;q=0.8',
+                    }),
+                }),
+            )
+        }
+    }, 10_000)
+
+    it('falls back to the container when Cloudflare returns a non-WebP preview response', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const previewContainer = createMockPreviewContainer(
+            new Response(createWebpBytes(800, 600), {
+                headers: {
+                    'content-type': 'image/webp',
+                },
+            }),
+        )
+        const character = createCharacterRecord()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character, currentUserRecord, character, currentUserRecord, character],
+        })
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await initChunkedMedia(
+            character.id,
+            {
+                ratings: [{rating: 'sfw', contentType: 'image/png'}],
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
+        const initBody = (await initResponse.json()) as ChunkedSfwInitBody
+        const pngFile = createPngFile(800, 600)
+        const partResponse = await putChunkedMediaPart(
+            character.id,
+            initBody.mediaId,
+            'sfw',
+            initBody.uploads.sfw.uploadId,
+            1,
+            initBody.uploads.sfw.imageKey,
+            pngFile,
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
+        const uploadedPart = (await partResponse.json()) as R2UploadedPart
+
+        const completeResponse = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/png',
+                    parts: [uploadedPart],
+                },
+                sfwPreview: createPreviewPayload(800, 600),
+            },
+            db,
+            {
+                cloudflarePreviewResponse: new Response(new Uint8Array([1, 2, 3]), {
+                    headers: {
+                        'content-type': 'image/jpeg',
+                    },
+                }),
+                mediaBucket,
+                previewContainer: previewContainer.namespace,
+                sessionToken,
+                csrfToken,
+            },
+        )
+
+        const responseBody = await completeResponse.json()
+        expect(completeResponse.status, JSON.stringify(responseBody)).toBe(201)
+        const body = responseBody as {
+            media: {
+                sfwWidth: number
+                sfwHeight: number
+                sfwPreviewWidth: number
+                sfwPreviewHeight: number
+            }
+        }
+        expect(body.media.sfwWidth).toBe(800)
+        expect(body.media.sfwHeight).toBe(600)
+        expect(body.media.sfwPreviewWidth).toBe(800)
+        expect(body.media.sfwPreviewHeight).toBe(600)
+        expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+            `${mediaPublicBaseUrl}/cdn-cgi/image/anim=false,fit=scale-down,format=webp,height=1600,quality=90,width=1600/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.png`,
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    accept: 'image/webp,image/*,*/*;q=0.8',
+                }),
+            }),
+        )
+        expect(previewContainer.fetch).toHaveBeenCalledTimes(1)
+        const mediaInsert = boundStatements.find((statement) => statement.sql.includes(['INSERT INTO', 'character_media'].join(' ')))
+        expect(mediaInsert?.binds[13]).toBe(800)
+        expect(mediaInsert?.binds[14]).toBe(600)
+    })
+
+    it('retries Cloudflare preview generation when the transform request fails transiently', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character, currentUserRecord, character, currentUserRecord, character],
+        })
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await initChunkedMedia(
+            character.id,
+            {
+                ratings: [{rating: 'sfw', contentType: 'image/png'}],
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
+        const initBody = (await initResponse.json()) as ChunkedSfwInitBody
+        const pngFile = createPngFile(800, 600)
+        const partResponse = await putChunkedMediaPart(
+            character.id,
+            initBody.mediaId,
+            'sfw',
+            initBody.uploads.sfw.uploadId,
+            1,
+            initBody.uploads.sfw.imageKey,
+            pngFile,
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
+        const uploadedPart = (await partResponse.json()) as R2UploadedPart
+
+        const completeResponse = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/png',
+                    parts: [uploadedPart],
+                },
+                sfwPreview: createPreviewPayload(800, 600),
+            },
+            db,
+            {
+                cloudflarePreviewResponses: [
+                    new Error('temporary Cloudflare fetch failure'),
+                    new Response(createWebpBytes(800, 600), {
+                        headers: {
+                            'content-type': 'image/webp',
+                        },
+                    }),
+                ],
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
+
+        const responseBody = await completeResponse.json()
+        expect(completeResponse.status, JSON.stringify(responseBody)).toBe(201)
+        const body = responseBody as {
+            media: {
+                sfwPreviewWidth: number
+                sfwPreviewHeight: number
+            }
+        }
+        expect(body.media.sfwPreviewWidth).toBe(800)
+        expect(body.media.sfwPreviewHeight).toBe(600)
+        expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+            `${mediaPublicBaseUrl}/cdn-cgi/image/anim=false,fit=scale-down,format=webp,height=1600,quality=90,width=1600/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.png`,
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    accept: 'image/webp,image/*,*/*;q=0.8',
+                }),
+            }),
+        )
+        const mediaInsert = boundStatements.find((statement) => statement.sql.includes(['INSERT INTO', 'character_media'].join(' ')))
+        expect(mediaInsert?.binds[13]).toBe(800)
+        expect(mediaInsert?.binds[14]).toBe(600)
+    }, 10_000)
+
+    it('falls back to the container after Cloudflare preview generation keeps returning errors', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const previewContainer = createMockPreviewContainer(
+            new Response(createWebpBytes(800, 600), {
+                headers: {
+                    'content-type': 'image/webp',
+                },
+            }),
+        )
+        const character = createCharacterRecord()
+        const {db, boundStatements} = createMockDb({
+            firstResults: [currentUserRecord, character, currentUserRecord, character, currentUserRecord, character],
+        })
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await initChunkedMedia(
+            character.id,
+            {
+                ratings: [{rating: 'sfw', contentType: 'image/png'}],
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
+        const initBody = (await initResponse.json()) as ChunkedSfwInitBody
+        const pngFile = createPngFile(800, 600)
+        const partResponse = await putChunkedMediaPart(
+            character.id,
+            initBody.mediaId,
+            'sfw',
+            initBody.uploads.sfw.uploadId,
+            1,
+            initBody.uploads.sfw.imageKey,
+            pngFile,
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
+        const uploadedPart = (await partResponse.json()) as R2UploadedPart
+
+        const completeResponse = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/png',
+                    parts: [uploadedPart],
+                },
+                sfwPreview: createPreviewPayload(800, 600),
+            },
+            db,
+            {
+                cloudflarePreviewResponse: new Response(JSON.stringify({error: 'preview failed'}), {
+                    status: 502,
+                    headers: {
+                        'content-type': 'application/json',
+                    },
+                }),
+                mediaBucket,
+                previewContainer: previewContainer.namespace,
+                sessionToken,
+                csrfToken,
+            },
+        )
+
+        const responseBody = await completeResponse.json()
+        expect(completeResponse.status, JSON.stringify(responseBody)).toBe(201)
+        const body = responseBody as {
+            media: {
+                sfwPreviewWidth: number
+                sfwPreviewHeight: number
+            }
+        }
+        expect(body.media.sfwPreviewWidth).toBe(800)
+        expect(body.media.sfwPreviewHeight).toBe(600)
+        expect(globalThis.fetch).toHaveBeenCalledTimes(3)
+        expect(previewContainer.fetch).toHaveBeenCalledTimes(1)
+        const mediaInsert = boundStatements.find((statement) => statement.sql.includes(['INSERT INTO', 'character_media'].join(' ')))
+        expect(mediaInsert?.binds[13]).toBe(800)
+        expect(mediaInsert?.binds[14]).toBe(600)
+    }, 12_000)
+
     it('rejects completed gallery uploads when the character is already at the media limit', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
@@ -3311,8 +4124,6 @@ describe('character media uploads', () => {
                     uploadId: 'upload-id',
                     imageKey: 'image-key',
                     contentType: 'image/png',
-                    width: 800,
-                    height: 600,
                     parts: [{partNumber: 1, etag: 'etag'}],
                 },
                 sfwPreview: createPreviewPayload(800, 600),
@@ -3392,8 +4203,6 @@ describe('character media uploads', () => {
                     uploadId: initBody.uploads.nsfw.uploadId,
                     imageKey: initBody.uploads.nsfw.imageKey,
                     contentType: 'image/png',
-                    width: 800,
-                    height: 600,
                     parts: [uploadedPart],
                 },
                 nsfwPreview: createPreviewPayload(800, 600),
@@ -3437,7 +4246,7 @@ describe('character media uploads', () => {
         expect(mediaInsert?.binds[23]).toBe(body.media.nsfwBlurImageKey)
     })
 
-    it('rejects chunked gallery media when declared original dimensions do not match the stored image', async () => {
+    it('uses stored image dimensions when declared original dimensions do not match the stored image', async () => {
         const {sessionToken, mediaBucket, character, db, csrfToken, initBody} = await createChunkedSfwUploadTestContext()
 
         const pngFile = createPngFile(800, 600)
@@ -3466,7 +4275,7 @@ describe('character media uploads', () => {
                     height: 1600,
                     parts: [uploadedPart],
                 },
-                sfwPreview: createPreviewPayload(1600, 1600),
+                sfwPreview: createPreviewPayload(800, 600),
             },
             db,
             {
@@ -3476,11 +4285,11 @@ describe('character media uploads', () => {
             },
         )
 
-        expect(completeResponse.status).toBe(400)
-        expect(await completeResponse.json()).toEqual({
-            error: 'SFW image dimensions do not match the uploaded image',
-        })
-        expect(mediaBucket.delete).toHaveBeenCalledWith(
+        expect(completeResponse.status).toBe(201)
+        const body = (await completeResponse.json()) as {media: {sfwWidth: number; sfwHeight: number}}
+        expect(body.media.sfwWidth).toBe(800)
+        expect(body.media.sfwHeight).toBe(600)
+        expect(mediaBucket.delete).not.toHaveBeenCalledWith(
             `characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.png`,
         )
     })
@@ -3513,8 +4322,6 @@ describe('character media uploads', () => {
                     uploadId: initBody.uploads.sfw.uploadId,
                     imageKey: initBody.uploads.sfw.imageKey,
                     contentType: 'image/png',
-                    width: 800,
-                    height: 600,
                     parts: [uploadedPart],
                 },
             },
@@ -3560,8 +4367,6 @@ describe('character media uploads', () => {
                     uploadId: initBody.uploads.sfw.uploadId,
                     imageKey: initBody.uploads.sfw.imageKey,
                     contentType: 'image/png',
-                    width: 20001,
-                    height: 10000,
                     parts: [uploadedPart],
                 },
             },
@@ -3654,8 +4459,6 @@ describe('character media uploads', () => {
                     uploadId: initBody.uploads.sfw.uploadId,
                     imageKey: initBody.uploads.sfw.imageKey,
                     contentType: 'image/gif',
-                    width: 320,
-                    height: 240,
                     parts: [uploadedPart],
                 },
                 sfwPreview: createPreviewPayload(320, 240),
@@ -3757,10 +4560,9 @@ describe('character media uploads', () => {
                     uploadId: initBody.uploads.sfw.uploadId,
                     imageKey: initBody.uploads.sfw.imageKey,
                     contentType,
-                    width: 640,
-                    height: 480,
                     parts: [uploadedPart],
                 },
+                sfwPreview: createPreviewPayload(640, 480),
             },
             db,
             {
@@ -3817,8 +4619,6 @@ describe('character media uploads', () => {
                     uploadId: initBody.uploads.sfw.uploadId,
                     imageKey: initBody.uploads.sfw.imageKey,
                     contentType: 'image/png',
-                    width: 800,
-                    height: 600,
                     parts: [uploadedPart],
                 },
             },
@@ -3938,8 +4738,6 @@ describe('character media uploads', () => {
                     uploadId: initBody.uploads.sfw.uploadId,
                     imageKey: initBody.uploads.sfw.imageKey,
                     contentType: 'image/png',
-                    width: 800,
-                    height: 600,
                     parts: [uploadedPart],
                 },
                 sfwPreview: createPreviewPayload(800, 600),
