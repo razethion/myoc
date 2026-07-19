@@ -1,7 +1,7 @@
 import {writeAscii, writeUint16Le, writeUint24Le, writeUint32Be, writeUint32Le} from './binaryWriters'
 
 export function createWebpFile(width = 512, height = 512, type = 'image/webp', name = 'profile-image.webp'): File {
-    return new File([createVp8xWebpBytes(width, height)], name, {
+    return new File([createWebpBytes(width, height)], name, {
         type,
     })
 }
@@ -43,18 +43,26 @@ export function createAvifFile(width = 100, height = 80, name = 'gallery.avif'):
 }
 
 export function createWebpDataUrl(width = 512, height = 512): string {
-    const bytes = createVp8xWebpBytes(width, height)
+    const bytes = createWebpBytes(width, height)
     return webpBytesToDataUrl(bytes)
 }
 
+export function createPngDataUrl(width = 512, height = 512): string {
+    return bytesToDataUrl(createPngBytes(width, height), 'image/png')
+}
+
 function webpBytesToDataUrl(bytes: Uint8Array): string {
+    return bytesToDataUrl(bytes, 'image/webp')
+}
+
+function bytesToDataUrl(bytes: Uint8Array, contentType: string): string {
     let binary = ''
 
     for (const byte of bytes) {
         binary += String.fromCharCode(byte)
     }
 
-    return `data:image/webp;base64,${btoa(binary)}`
+    return `data:${contentType};base64,${btoa(binary)}`
 }
 
 function createPngBytes(width: number, height: number): Uint8Array {
@@ -104,7 +112,7 @@ function createAvifBytes(width: number, height: number): Uint8Array {
     return bytes
 }
 
-function createVp8xWebpBytes(width: number, height: number): Uint8Array {
+export function createWebpBytes(width: number, height: number): Uint8Array {
     const bytes = new Uint8Array(30)
     writeAscii(bytes, 0, 'RIFF')
     writeUint32Le(bytes, 4, bytes.length - 8)

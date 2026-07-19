@@ -6,6 +6,7 @@ import {
     createJpegFile,
     createMalformedWebpFile,
     createOversizedWebpFile,
+    createPngDataUrl,
     createPngFile,
     createWebpDataUrl,
     createWebpFile,
@@ -1313,6 +1314,38 @@ describe('POST /characters/folders', () => {
         expect(boundStatements[1]?.binds[4]).toBe(body.folder.folderImageKey)
     })
 
+    it('creates a folder by converting a PNG cropped image data URL to WebP', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const imagesBinding = createMockImagesBinding()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postFolder(
+            {
+                name: ' Main Characters ',
+                parentFolderId: 'root',
+                folderImageData: createPngDataUrl(512, 512),
+            },
+            db,
+            {
+                imagesBinding,
+                mediaBucket,
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(201)
+
+        const body = (await response.json()) as FolderResponse
+        expectStoredFolderImage(mediaBucket, body.folder)
+        expect(imagesBinding.input).toHaveBeenCalledTimes(1)
+        const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
+        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 90})
+    })
+
     it('creates a nested folder', async () => {
         const sessionToken = 'session-token'
         const {db, boundStatements} = createMockDb({
@@ -2037,7 +2070,7 @@ describe('POST /characters', () => {
         const form = new FormData()
         form.set('csrfToken', await createCsrfToken(sessionToken))
         form.set('new-character-name', 'Ren')
-        form.set('new-character-profile-image', createWebpFile(512, 512, 'image/png'))
+        form.set('new-character-profile-image', createGifFile(512, 512, 'profile.gif'))
 
         const response = await postCharacter(form, db, {
             mediaBucket,
@@ -2046,9 +2079,35 @@ describe('POST /characters', () => {
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
-            error: 'Character profile image must be a WebP image',
+            error: 'Unexpected media, contact support',
         })
         expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
+    it('creates a character by converting a PNG cropped profile image to WebP', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const imagesBinding = createMockImagesBinding()
+        const form = new FormData()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+        form.set('csrfToken', await createCsrfToken(sessionToken))
+        form.set('new-character-name', 'Ren')
+        form.set('new-character-profile-image', createPngFile(512, 512, 'image/png', 'profile.png'))
+
+        const response = await postCharacter(form, db, {
+            imagesBinding,
+            mediaBucket,
+            sessionToken,
+        })
+
+        expect(response.status).toBe(201)
+        const body = (await response.json()) as CharacterResponse
+        expectStoredCharacterProfileImage(mediaBucket, body.character)
+        expect(imagesBinding.input).toHaveBeenCalledTimes(1)
+        const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
+        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 90})
     })
 
     it('rejects profile images that are not exactly 512x512', async () => {
@@ -2115,7 +2174,7 @@ describe('POST /characters', () => {
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
-            error: 'Character profile image must be a valid WebP image',
+            error: 'Unexpected media, contact support',
         })
         expect(mediaBucket.put).not.toHaveBeenCalled()
     })
@@ -2561,9 +2620,10 @@ describe('POST /characters/:id/profile-image', () => {
         }
     })
 
-    it('rejects profile images that are not 512x512 WebP files', async () => {
+    it('converts PNG character profile images to WebP before storing', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
+        const imagesBinding = createMockImagesBinding()
         const character = createCharacterRecord()
         const {db} = createMockDb({
             firstResults: [currentUserRecord, character],
@@ -2572,16 +2632,62 @@ describe('POST /characters/:id/profile-image', () => {
         form.set('profileImage', createPngFile(512, 512))
 
         const response = await postProfileImage(character.id, form, db, {
+            imagesBinding,
             mediaBucket,
             sessionToken,
             csrfToken: await createCsrfToken(sessionToken),
         })
 
-        expect(response.status).toBe(400)
-        expect(await response.json()).toEqual({
-            error: 'Character profile image must be a WebP image',
+        expect(response.status).toBe(200)
+        const body = (await response.json()) as {profileImageKey: string}
+        expect(mediaBucket.put).toHaveBeenCalledWith(
+            `characters/current-user/character-id/profile/${body.profileImageKey}.webp`,
+            expect.any(Uint8Array),
+            {
+                httpMetadata: {
+                    cacheControl: 'public, max-age=31536000, immutable',
+                    contentType: 'image/webp',
+                },
+            },
+        )
+        expect(imagesBinding.input).toHaveBeenCalledTimes(1)
+        const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
+        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 90})
+    })
+
+    it('converts JPEG folder images to WebP before storing', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const imagesBinding = createMockImagesBinding()
+        const folder = createFolderRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, folder],
         })
-        expect(mediaBucket.put).not.toHaveBeenCalled()
+        const form = new FormData()
+        form.set('folderImage', createJpegFile(512, 512, 'folder.jpg'))
+
+        const response = await postFolderImage(folder.id, form, db, {
+            imagesBinding,
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        const body = (await response.json()) as {folderImageKey: string}
+        expect(mediaBucket.put).toHaveBeenCalledWith(
+            `characters/current-user/folders/folder-id/image/${body.folderImageKey}.webp`,
+            expect.any(Uint8Array),
+            {
+                httpMetadata: {
+                    cacheControl: 'public, max-age=31536000, immutable',
+                    contentType: 'image/webp',
+                },
+            },
+        )
+        expect(imagesBinding.input).toHaveBeenCalledTimes(1)
+        const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
+        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 90})
     })
 })
 

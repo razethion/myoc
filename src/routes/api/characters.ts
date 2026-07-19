@@ -18,7 +18,7 @@ import {
     responseSchema,
 } from '../../lib/http/responseSchemas'
 import {getPngDimensions} from '../../lib/media/png'
-import {PROFILE_IMAGE_MAX_REQUEST_BYTES, validateProfileImagePayload} from '../../lib/media/profileImage'
+import {normalizeProfileImagePayload, PROFILE_IMAGE_MAX_REQUEST_BYTES} from '../../lib/media/profileImage'
 import {
     characterFolderImageObjectKey,
     characterFolderImageUrl,
@@ -520,7 +520,7 @@ characterRoutes.post('/folders', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Parent folder not found'}, 404)
     }
 
-    const folderImageResult = parsed.folderImage ? await validateProfileImage(parsed.folderImage, 'Folder image') : null
+    const folderImageResult = parsed.folderImage ? await validateProfileImage(c.env.IMAGES, parsed.folderImage, 'Folder image') : null
 
     if (folderImageResult && 'error' in folderImageResult) {
         return jsonResponse(c, ErrorResponseSchema, {error: folderImageResult.error}, folderImageResult.status)
@@ -653,7 +653,7 @@ characterRoutes.post('/folders/:id/image', async (c) => {
     }
 
     const file = form.get('folderImage') ?? form.get('folder-image')
-    const folderImageResult = await validateProfileImage(file instanceof File ? file : null, 'Folder image')
+    const folderImageResult = await validateProfileImage(c.env.IMAGES, file instanceof File ? file : null, 'Folder image')
 
     if ('error' in folderImageResult) {
         return jsonResponse(c, ErrorResponseSchema, {error: folderImageResult.error}, folderImageResult.status)
@@ -803,7 +803,7 @@ characterRoutes.post('/', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Folder not found'}, 404)
     }
 
-    const profileImageResult = await validateProfileImage(parsed.profileImage)
+    const profileImageResult = await validateProfileImage(c.env.IMAGES, parsed.profileImage)
 
     if ('error' in profileImageResult) {
         return jsonResponse(c, ErrorResponseSchema, {error: profileImageResult.error}, profileImageResult.status)
@@ -955,7 +955,7 @@ characterRoutes.post('/:id/profile-image', async (c) => {
 
     const {currentUser, character, form} = owned
     const file = form.get('profileImage') ?? form.get('character-profile-photo')
-    const profileImageResult = await validateProfileImage(file instanceof File ? file : null)
+    const profileImageResult = await validateProfileImage(c.env.IMAGES, file instanceof File ? file : null)
 
     if ('error' in profileImageResult) {
         return jsonResponse(c, ErrorResponseSchema, {error: profileImageResult.error}, profileImageResult.status)
@@ -3878,6 +3878,7 @@ async function deleteR2Objects(bucket: R2Bucket, objectKeys: string[]): Promise<
 }
 
 async function validateProfileImage(
+    images: ImagesBinding | undefined,
     file: File | JsonProfileImage | null,
     label = 'Character profile image',
 ): Promise<
@@ -3900,15 +3901,15 @@ async function validateProfileImage(
         return profileImage
     }
 
-    const validation = validateProfileImagePayload(profileImage, label)
+    const normalized = await normalizeProfileImagePayload(profileImage, label, images)
 
-    if ('error' in validation) {
-        return validation
+    if ('error' in normalized) {
+        return normalized
     }
 
     return {
-        contentType: profileImage.contentType,
-        bytes: profileImage.bytes,
+        contentType: normalized.contentType,
+        bytes: normalized.bytes,
     }
 }
 

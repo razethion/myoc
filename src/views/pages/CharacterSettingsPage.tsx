@@ -333,7 +333,8 @@ async function createCroppedCharacterProfileFile() {
                 reject(new Error('Could not prepare profile image.'));
                 return;
             }
-            resolve(new File([blob], 'character-profile.webp', { type: 'image/webp' }));
+            const extension = blob.type === 'image/png' ? 'png' : blob.type === 'image/jpeg' ? 'jpg' : 'webp';
+            resolve(new File([blob], 'character-profile.' + extension, { type: blob.type || 'application/octet-stream' }));
         }, 'image/webp', 0.9);
     });
 }
