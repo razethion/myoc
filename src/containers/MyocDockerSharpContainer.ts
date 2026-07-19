@@ -9,7 +9,7 @@ type EmptyContainerProps = Record<string | number | symbol, never>
 export class MyocDockerSharpContainer extends Container<MyocDockerSharpContainerEnv> {
     override defaultPort = 8080
     override enableInternet = false
-    override allowedHosts = ['m.myoc.art']
+    override allowedHosts = ['m.myoc.art', 'm.dev.myoc.art']
     override interceptHttps = true
     override pingEndpoint = 'localhost/health'
     override requiredPorts = [8080]
