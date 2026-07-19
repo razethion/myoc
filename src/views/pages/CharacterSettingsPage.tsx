@@ -255,20 +255,29 @@ function clearAlert() {
 }
 
 async function apiFetch(url, options) {
-    const response = await fetch(url, {
-        ...options,
-        headers: {
-            ...(options && options.headers ? options.headers : {}),
-            'x-csrf-token': csrfToken
-        }
-    });
+    const requestLabel = options && options.requestLabel ? options.requestLabel : '';
+    const fetchOptions = { ...(options || {}) };
+    delete fetchOptions.requestLabel;
+    let response;
+    try {
+        response = await fetch(url, {
+            ...fetchOptions,
+            headers: {
+                ...(fetchOptions && fetchOptions.headers ? fetchOptions.headers : {}),
+                'x-csrf-token': csrfToken
+            }
+        });
+    } catch (error) {
+        const message = error && error.message ? error.message : 'Network request failed';
+        throw new Error(requestLabel ? requestLabel + ' failed: ' + message : message);
+    }
     if (!response.ok) {
         let message = 'Request failed';
         try {
             const body = await response.json();
             message = body.error || message;
         } catch {}
-        throw new Error(message);
+        throw new Error(requestLabel ? requestLabel + ' failed: ' + message : message);
     }
     if (response.status === 204) {
         return null;
@@ -831,6 +840,7 @@ async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}, progress)
     const initResult = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/chunked/init', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
+        requestLabel: 'Starting upload session',
         body: JSON.stringify({ uploads })
     });
     const completeBody = {
@@ -849,6 +859,7 @@ async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}, progress)
     const result = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/chunked/complete', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
+        requestLabel: 'Finalizing upload',
         body: JSON.stringify(completeBody)
     });
     mediaLibrary.set(result.media.id, result.media);
@@ -885,6 +896,7 @@ async function uploadChunkedImage(mediaId, rating, image, upload, progress) {
             + '&contentType=' + encodeURIComponent(image.contentType),
             {
                 method: 'PUT',
+                requestLabel: 'Uploading ' + rating.toUpperCase() + ' chunk ' + partNumber,
                 body: chunk
             }
         );
@@ -1405,6 +1417,7 @@ editImageArtistForm.addEventListener('submit', async (event) => {
             ? await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/' + encodeURIComponent(editTargetMediaId) + '/chunked/init', {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
+                requestLabel: 'Starting replacement upload session',
                 body: JSON.stringify({ uploads })
             })
             : null;
@@ -1423,6 +1436,7 @@ editImageArtistForm.addEventListener('submit', async (event) => {
         const result = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/' + encodeURIComponent(editTargetMediaId) + '/chunked/complete', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
+            requestLabel: 'Finalizing replacement upload',
             body: JSON.stringify(completeBody)
         });
         mediaLibrary.set(result.media.id, result.media);

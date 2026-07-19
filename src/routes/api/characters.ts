@@ -165,6 +165,12 @@ type ParsedChunkedMediaComplete = {
     nsfwUpload: CompletedChunkedUpload | null
 }
 
+class ChunkedUploadInitError extends Error {
+    constructor(readonly referenceId: string) {
+        super('Upload could not be initialized')
+    }
+}
+
 type JsonProfileImage = {
     data: string
 }
@@ -1104,7 +1110,32 @@ characterRoutes.post('/:id/media/chunked/init', async (c) => {
     }
 
     const mediaId = crypto.randomUUID()
-    const chunkedUploads = await createChunkedGalleryUploads(c.env.MEDIA_BUCKET, currentUser.id, character.id, mediaId, uploads.uploads)
+    const initReferenceId = crypto.randomUUID()
+    let chunkedUploads: Awaited<ReturnType<typeof createChunkedGalleryUploads>>
+
+    try {
+        chunkedUploads = await createChunkedGalleryUploads(c.env.MEDIA_BUCKET, currentUser.id, character.id, mediaId, uploads.uploads, {
+            referenceId: initReferenceId,
+            operation: 'create-media',
+        })
+    } catch (error) {
+        const referenceId = error instanceof ChunkedUploadInitError ? error.referenceId : initReferenceId
+        console.error('Chunked gallery upload init route failed', {
+            referenceId,
+            operation: 'create-media',
+            mediaId,
+            userId: currentUser.id,
+            characterId: character.id,
+            error: describeError(error),
+        })
+
+        return jsonResponse(
+            c,
+            ErrorResponseSchema,
+            {error: `Upload could not be initialized. Try again, or contact support with reference ${referenceId}.`},
+            503,
+        )
+    }
 
     return jsonResponse(c, ChunkedUploadInitResponseSchema, {mediaId, uploads: chunkedUploads})
 })
@@ -1674,7 +1705,32 @@ characterRoutes.post('/:id/media/:mediaId/chunked/init', async (c) => {
         return uploads
     }
 
-    const chunkedUploads = await createChunkedGalleryUploads(c.env.MEDIA_BUCKET, currentUser.id, character.id, media.id, uploads.uploads)
+    const initReferenceId = crypto.randomUUID()
+    let chunkedUploads: Awaited<ReturnType<typeof createChunkedGalleryUploads>>
+
+    try {
+        chunkedUploads = await createChunkedGalleryUploads(c.env.MEDIA_BUCKET, currentUser.id, character.id, media.id, uploads.uploads, {
+            referenceId: initReferenceId,
+            operation: 'replace-media',
+        })
+    } catch (error) {
+        const referenceId = error instanceof ChunkedUploadInitError ? error.referenceId : initReferenceId
+        console.error('Chunked gallery upload init route failed', {
+            referenceId,
+            operation: 'replace-media',
+            mediaId: media.id,
+            userId: currentUser.id,
+            characterId: character.id,
+            error: describeError(error),
+        })
+
+        return jsonResponse(
+            c,
+            ErrorResponseSchema,
+            {error: `Upload could not be initialized. Try again, or contact support with reference ${referenceId}.`},
+            503,
+        )
+    }
 
     return jsonResponse(c, ChunkedUploadInitResponseSchema, {mediaId: media.id, uploads: chunkedUploads})
 })
@@ -2384,6 +2440,10 @@ async function createChunkedGalleryUploads(
     characterId: string,
     mediaId: string,
     uploadInits: ChunkedUploadInit[],
+    diagnostics: {
+        referenceId: string
+        operation: 'create-media' | 'replace-media'
+    },
 ): Promise<
     Partial<
         Record<
@@ -2408,26 +2468,138 @@ async function createChunkedGalleryUploads(
             }
         >
     > = {}
+    const createdUploads: Array<{
+        rating: MediaRating
+        objectKey: string
+        upload: R2MultipartUpload
+    }> = []
 
-    for (const uploadInit of uploadInits) {
-        const imageKey = crypto.randomUUID()
-        const objectKey = characterMediaImageObjectKey(userId, characterId, mediaId, imageKey, uploadInit.rating, uploadInit.contentType)
-        const upload = await bucket.createMultipartUpload(objectKey, {
-            httpMetadata: {
-                cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
+    console.log('Chunked gallery upload init started', {
+        referenceId: diagnostics.referenceId,
+        operation: diagnostics.operation,
+        mediaId,
+        uploadCount: uploadInits.length,
+        uploads: uploadInits.map((upload) => ({rating: upload.rating, contentType: upload.contentType})),
+    })
+
+    try {
+        for (const uploadInit of uploadInits) {
+            const imageKey = crypto.randomUUID()
+            const objectKey = characterMediaImageObjectKey(
+                userId,
+                characterId,
+                mediaId,
+                imageKey,
+                uploadInit.rating,
+                uploadInit.contentType,
+            )
+
+            console.log('Creating R2 multipart upload for gallery image', {
+                referenceId: diagnostics.referenceId,
+                operation: diagnostics.operation,
+                mediaId,
+                rating: uploadInit.rating,
                 contentType: uploadInit.contentType,
-            },
+                objectKey,
+            })
+
+            const upload = await bucket.createMultipartUpload(objectKey, {
+                httpMetadata: {
+                    cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
+                    contentType: uploadInit.contentType,
+                },
+            })
+            createdUploads.push({rating: uploadInit.rating, objectKey, upload})
+
+            console.log('Created R2 multipart upload for gallery image', {
+                referenceId: diagnostics.referenceId,
+                operation: diagnostics.operation,
+                mediaId,
+                rating: uploadInit.rating,
+                uploadId: upload.uploadId,
+                imageKey,
+                objectKey,
+            })
+
+            uploads[uploadInit.rating] = {
+                uploadId: upload.uploadId,
+                imageKey,
+                contentType: uploadInit.contentType,
+                chunkSize: GALLERY_CHUNK_SIZE,
+            }
+        }
+    } catch (error) {
+        console.error('Chunked gallery upload init failed while creating R2 multipart uploads', {
+            referenceId: diagnostics.referenceId,
+            operation: diagnostics.operation,
+            mediaId,
+            createdUploads: createdUploads.map((created) => ({
+                rating: created.rating,
+                uploadId: created.upload.uploadId,
+                objectKey: created.objectKey,
+            })),
+            error: describeError(error),
         })
 
-        uploads[uploadInit.rating] = {
-            uploadId: upload.uploadId,
-            imageKey,
-            contentType: uploadInit.contentType,
-            chunkSize: GALLERY_CHUNK_SIZE,
-        }
+        await Promise.all(
+            createdUploads.map(async (created) => {
+                try {
+                    await created.upload.abort()
+                    console.warn('Aborted partially initialized R2 multipart upload', {
+                        referenceId: diagnostics.referenceId,
+                        operation: diagnostics.operation,
+                        mediaId,
+                        rating: created.rating,
+                        uploadId: created.upload.uploadId,
+                        objectKey: created.objectKey,
+                    })
+                } catch (abortError) {
+                    console.error('Unable to abort partially initialized R2 multipart upload', {
+                        referenceId: diagnostics.referenceId,
+                        operation: diagnostics.operation,
+                        mediaId,
+                        rating: created.rating,
+                        uploadId: created.upload.uploadId,
+                        objectKey: created.objectKey,
+                        error: describeError(abortError),
+                    })
+                }
+            }),
+        )
+
+        throw new ChunkedUploadInitError(diagnostics.referenceId)
     }
 
+    console.log('Chunked gallery upload init completed', {
+        referenceId: diagnostics.referenceId,
+        operation: diagnostics.operation,
+        mediaId,
+        uploads: Object.entries(uploads).map(([rating, upload]) => ({
+            rating,
+            uploadId: upload?.uploadId,
+            imageKey: upload?.imageKey,
+            contentType: upload?.contentType,
+            chunkSize: upload?.chunkSize,
+        })),
+    })
+
     return uploads
+}
+
+function describeError(error: unknown): string {
+    if (error instanceof Error) {
+        return error.message || error.name
+    }
+
+    if (typeof error === 'string') {
+        return error
+    }
+
+    try {
+        return JSON.stringify(error)
+    } catch {
+        return String(error)
+    }
 }
 
 function existingMediaVariantKey(media: CharacterMediaRecord, rating: MediaRating): string | null {

@@ -3091,6 +3091,68 @@ describe('character media uploads', () => {
         expect(mediaBucket.createMultipartUpload).not.toHaveBeenCalled()
     })
 
+    it('reports chunked upload init failures and aborts partially initialized multipart uploads', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const firstUpload = {
+            key: 'first-key',
+            uploadId: 'first-upload',
+            uploadPart: vi.fn(),
+            abort: vi.fn(async () => {}),
+            complete: vi.fn(),
+        } as unknown as R2MultipartUpload
+        vi.mocked(mediaBucket.createMultipartUpload)
+            .mockResolvedValueOnce(firstUpload)
+            .mockRejectedValueOnce(new Error('R2 multipart init failed'))
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+
+        try {
+            const response = await initChunkedMedia(
+                character.id,
+                {
+                    uploads: [
+                        {rating: 'sfw', contentType: 'image/png'},
+                        {rating: 'nsfw', contentType: 'image/jpeg'},
+                    ],
+                },
+                db,
+                {
+                    mediaBucket,
+                    sessionToken,
+                    csrfToken: await createCsrfToken(sessionToken),
+                },
+            )
+
+            expect(response.status).toBe(503)
+            const body = (await response.json()) as {error: string}
+            expect(body.error).toMatch(/^Upload could not be initialized\. Try again, or contact support with reference /)
+            expect(mediaBucket.createMultipartUpload).toHaveBeenCalledTimes(2)
+            expect(firstUpload.abort).toHaveBeenCalledTimes(1)
+            expect(errorSpy).toHaveBeenCalledWith(
+                'Chunked gallery upload init failed while creating R2 multipart uploads',
+                expect.objectContaining({
+                    error: 'R2 multipart init failed',
+                    createdUploads: [
+                        expect.objectContaining({
+                            rating: 'sfw',
+                            uploadId: 'first-upload',
+                        }),
+                    ],
+                }),
+            )
+        } finally {
+            logSpy.mockRestore()
+            warnSpy.mockRestore()
+            errorSpy.mockRestore()
+        }
+    })
+
     it.each([
         {
             rating: 'private',

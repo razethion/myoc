@@ -177,6 +177,12 @@ jobs:
             "main": "src/index.ts",
             "compatibility_date": "2026-06-10",
             "workers_dev": true,
+            "observability": {
+              "logs": {
+                "enabled": true,
+                "invocation_logs": true
+              }
+            },
             "containers": [
               {
                 "name": "$PREVIEW_CONTAINER_NAME",
