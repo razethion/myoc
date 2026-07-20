@@ -6293,11 +6293,13 @@ describe('characters internal helper coverage', () => {
         })
         expect(__charactersTestHooks.parseCompletedChunkedUpload(undefined)).toBeNull()
         expect(__charactersTestHooks.parseCompletedChunkedUpload('bad')).toEqual({error: 'upload is invalid'})
-        expect(__charactersTestHooks.parseCompletedChunkedUpload({
-            imageKey: 'image-key',
-            contentType: 'image/png',
-            parts: []
-        })).toEqual({
+        expect(
+            __charactersTestHooks.parseCompletedChunkedUpload({
+                imageKey: 'image-key',
+                contentType: 'image/png',
+                parts: [],
+            }),
+        ).toEqual({
             error: 'upload id is required',
         })
         expect(
@@ -6320,7 +6322,7 @@ describe('characters internal helper coverage', () => {
             __charactersTestHooks.parseCompletedChunkedUpload({
                 uploadId: 'upload-id',
                 imageKey: 'image-key',
-                contentType: 'image/png'
+                contentType: 'image/png',
             }),
         ).toEqual({error: 'uploaded parts are required'})
         expect(
@@ -6359,19 +6361,22 @@ describe('characters internal helper coverage', () => {
             ],
         })
         expect(
-            __charactersTestHooks.parseChunkedUploadPair({
-                uploadId: '',
-                imageKey: 'image-key',
-                contentType: 'image/png',
-                parts: []
-            }, null),
+            __charactersTestHooks.parseChunkedUploadPair(
+                {
+                    uploadId: '',
+                    imageKey: 'image-key',
+                    contentType: 'image/png',
+                    parts: [],
+                },
+                null,
+            ),
         ).toEqual({error: 'SFW upload id is required'})
         expect(
             __charactersTestHooks.parseChunkedUploadPair(null, {
                 uploadId: '',
                 imageKey: 'image-key',
                 contentType: 'image/png',
-                parts: []
+                parts: [],
             }),
         ).toEqual({error: 'NSFW upload id is required'})
     })
@@ -6452,22 +6457,28 @@ describe('characters internal helper coverage', () => {
             items: [{id: 'folder', parentFolderId: null, sortOrder: 0, type: 'folder'}],
         })
         expect(
-            __charactersTestHooks.flattenTreeItems([{
-                type: 'folder',
-                id: 'root',
-                children: [{type: 'character', id: 'child'}]
-            }]),
+            __charactersTestHooks.flattenTreeItems([
+                {
+                    type: 'folder',
+                    id: 'root',
+                    children: [{type: 'character', id: 'child'}],
+                },
+            ]),
         ).toEqual({
             items: [
                 {id: 'root', parentFolderId: null, sortOrder: 0, type: 'folder'},
                 {id: 'child', parentFolderId: 'root', sortOrder: 0, type: 'character'},
             ],
         })
-        expect(__charactersTestHooks.flattenTreeItems([{
-            type: 'folder',
-            id: 'root',
-            children: [{type: 'folder', id: 'root'}]
-        }])).toEqual({
+        expect(
+            __charactersTestHooks.flattenTreeItems([
+                {
+                    type: 'folder',
+                    id: 'root',
+                    children: [{type: 'folder', id: 'root'}],
+                },
+            ]),
+        ).toEqual({
             error: 'Tree item ids must be unique',
         })
         expect(__charactersTestHooks.flattenTreeItems([{type: 'other', id: 'item'}])).toEqual({
@@ -6481,11 +6492,15 @@ describe('characters internal helper coverage', () => {
         expect(__charactersTestHooks.flattenTreeItems([{type: 'character', id: 'character', children: []}])).toEqual({
             error: 'Characters cannot contain children',
         })
-        expect(__charactersTestHooks.flattenTreeItems([{
-            type: 'folder',
-            id: 'root',
-            children: [{type: 'other', id: 'child'}]
-        }])).toEqual({
+        expect(
+            __charactersTestHooks.flattenTreeItems([
+                {
+                    type: 'folder',
+                    id: 'root',
+                    children: [{type: 'other', id: 'child'}],
+                },
+            ]),
+        ).toEqual({
             error: 'Tree item type must be folder or character',
         })
         const tooDeepTree = [{type: 'folder', id: 'root', children: []}]
@@ -6497,10 +6512,12 @@ describe('characters internal helper coverage', () => {
         }
         expect(__charactersTestHooks.flattenTreeItems(tooDeepTree)).toEqual({error: 'Folder nesting is too deep'})
         expect(
-            __charactersTestHooks.flattenTreeItems(Array.from({length: 501}, (_, index) => ({
-                type: 'folder',
-                id: `folder-${index}`
-            }))),
+            __charactersTestHooks.flattenTreeItems(
+                Array.from({length: 501}, (_, index) => ({
+                    type: 'folder',
+                    id: `folder-${index}`,
+                })),
+            ),
         ).toEqual({
             error: 'Tree contains too many items',
         })
@@ -6515,11 +6532,13 @@ describe('characters internal helper coverage', () => {
                 ],
             }),
         ).toEqual({
-            tabs: [{
-                id: 'tab',
-                name: 'Tab',
-                rows: [{id: 'row', mediaIds: ['media-2', 'media-1'], forceFullWidth: false}]
-            }],
+            tabs: [
+                {
+                    id: 'tab',
+                    name: 'Tab',
+                    rows: [{id: 'row', mediaIds: ['media-2', 'media-1'], forceFullWidth: false}],
+                },
+            ],
             mediaIds: new Set(['media-2', 'media-1']),
         })
         expect(__charactersTestHooks.parseGalleryLayout({tabs: 'bad'})).toEqual({error: 'Gallery tabs are required'})
@@ -6527,11 +6546,13 @@ describe('characters internal helper coverage', () => {
         expect(__charactersTestHooks.parseGalleryLayout({tabs: ['bad']})).toEqual({error: 'Gallery tab must be an object'})
         expect(
             __charactersTestHooks.parseGalleryLayout({
-                tabs: [{
-                    id: 'tab',
-                    name: 'Tab',
-                    rows: Array.from({length: 501}, (_, index) => ({id: `row-${index}`, mediaIds: []}))
-                }],
+                tabs: [
+                    {
+                        id: 'tab',
+                        name: 'Tab',
+                        rows: Array.from({length: 501}, (_, index) => ({id: `row-${index}`, mediaIds: []})),
+                    },
+                ],
             }),
         ).toEqual({error: 'Gallery must contain 100 rows or fewer'})
         expect(__charactersTestHooks.parseGalleryLayout({tabs: [{id: '', name: 'Tab', rows: []}]})).toEqual({
@@ -6554,13 +6575,17 @@ describe('characters internal helper coverage', () => {
         expect(__charactersTestHooks.parseGalleryLayout({tabs: [{id: 'tab', name: 'Tab', rows: ['bad']}]})).toEqual({
             error: 'Gallery row must be an object',
         })
-        expect(__charactersTestHooks.parseGalleryLayout({
-            tabs: [{
-                id: 'tab',
-                name: 'Tab',
-                rows: [{id: '', mediaIds: []}]
-            }]
-        })).toEqual({
+        expect(
+            __charactersTestHooks.parseGalleryLayout({
+                tabs: [
+                    {
+                        id: 'tab',
+                        name: 'Tab',
+                        rows: [{id: '', mediaIds: []}],
+                    },
+                ],
+            }),
+        ).toEqual({
             error: 'Gallery row id is invalid',
         })
         expect(
@@ -6577,33 +6602,41 @@ describe('characters internal helper coverage', () => {
                 ],
             }),
         ).toEqual({error: 'Gallery row ids must be unique'})
-        expect(__charactersTestHooks.parseGalleryLayout({
-            tabs: [{
-                id: 'tab',
-                name: 'Tab',
-                rows: [{id: 'row', mediaIds: 'bad'}]
-            }]
-        })).toEqual({
+        expect(
+            __charactersTestHooks.parseGalleryLayout({
+                tabs: [
+                    {
+                        id: 'tab',
+                        name: 'Tab',
+                        rows: [{id: 'row', mediaIds: 'bad'}],
+                    },
+                ],
+            }),
+        ).toEqual({
             error: 'Gallery row media ids are required',
         })
         expect(
             __charactersTestHooks.parseGalleryLayout({
-                tabs: [{
-                    id: 'tab',
-                    name: 'Tab',
-                    rows: [{id: 'row', mediaIds: ['bad/media']}]
-                }]
+                tabs: [
+                    {
+                        id: 'tab',
+                        name: 'Tab',
+                        rows: [{id: 'row', mediaIds: ['bad/media']}],
+                    },
+                ],
             }),
         ).toEqual({
             error: 'Gallery media id is invalid',
         })
         expect(
             __charactersTestHooks.parseGalleryLayout({
-                tabs: [{
-                    id: 'tab',
-                    name: 'Tab',
-                    rows: [{id: 'row', mediaIds: ['media', 'media']}]
-                }]
+                tabs: [
+                    {
+                        id: 'tab',
+                        name: 'Tab',
+                        rows: [{id: 'row', mediaIds: ['media', 'media']}],
+                    },
+                ],
             }),
         ).toEqual({
             error: 'A media item can only appear once in each gallery tab',
@@ -6653,7 +6686,7 @@ describe('characters internal helper coverage', () => {
                     version: 1,
                     height: {meters: 101},
                     image: null,
-                    calibration: {headYPercent: 5, footYPercent: 95}
+                    calibration: {headYPercent: 5, footYPercent: 95},
                 }),
                 null,
                 null,
@@ -6665,7 +6698,7 @@ describe('characters internal helper coverage', () => {
                     version: 1,
                     height: {meters: 1.8},
                     image: null,
-                    calibration: {headYPercent: -1, footYPercent: 95}
+                    calibration: {headYPercent: -1, footYPercent: 95},
                 }),
                 null,
                 null,
@@ -6689,7 +6722,7 @@ describe('characters internal helper coverage', () => {
                     version: 1,
                     height: {meters: 1.8},
                     image: null,
-                    calibration: {headYPercent: 95, footYPercent: 96}
+                    calibration: {headYPercent: 95, footYPercent: 96},
                 }),
                 null,
                 null,
@@ -6771,7 +6804,7 @@ describe('characters internal helper coverage', () => {
 
         expect(__charactersTestHooks.expectedPreviewDimensions({width: 4000, height: 2000})).toEqual({
             width: 1600,
-            height: 800
+            height: 800,
         })
         expect(__charactersTestHooks.cloudflareExifOrientationTransform(2)).toEqual({flip: 'h'})
         expect(__charactersTestHooks.cloudflareExifOrientationTransform(3)).toEqual({rotate: 180})
@@ -6875,7 +6908,7 @@ describe('characters internal helper coverage', () => {
         })
         expect(__charactersTestHooks.readGalleryImageDimensions(createWebpBytes(12, 34), 'image/webp')).toEqual({
             width: 12,
-            height: 34
+            height: 34,
         })
         expect(__charactersTestHooks.readGalleryImageDimensions(new Uint8Array([1, 2]), 'image/unknown')).toBeNull()
         expect(
@@ -6954,7 +6987,7 @@ describe('characters internal helper coverage', () => {
         const onlyNsfwMedia = createMediaRecord({
             sfw_image_key: null,
             sfw_content_type: null,
-            sfw_preview_image_key: null
+            sfw_preview_image_key: null,
         })
         __charactersTestHooks.clearMediaVariant(onlyNsfwMedia, 'nsfw')
         expect(onlyNsfwMedia.nsfw_image_key).toBeNull()
@@ -7017,7 +7050,7 @@ describe('remaining character route edge coverage', () => {
                 {
                     method: 'POST',
                     body: JSON.stringify({characterIds: []}),
-                    headers: {'content-type': 'application/json'}
+                    headers: {'content-type': 'application/json'},
                 },
             ],
             [
@@ -7025,7 +7058,7 @@ describe('remaining character route edge coverage', () => {
                 {
                     method: 'PUT',
                     body: JSON.stringify({characterIds: []}),
-                    headers: {'content-type': 'application/json'}
+                    headers: {'content-type': 'application/json'},
                 },
             ],
             ['/characters/character-id/height-chart', {method: 'PUT', body: new FormData()}],
@@ -7034,7 +7067,7 @@ describe('remaining character route edge coverage', () => {
                 {
                     method: 'POST',
                     body: JSON.stringify({ratings: ['sfw']}),
-                    headers: {'content-type': 'application/json'}
+                    headers: {'content-type': 'application/json'},
                 },
             ],
             [
@@ -7062,7 +7095,7 @@ describe('remaining character route edge coverage', () => {
                 {
                     method: 'POST',
                     body: JSON.stringify({ratings: ['sfw']}),
-                    headers: {'content-type': 'application/json'}
+                    headers: {'content-type': 'application/json'},
                 },
             ],
             [
@@ -7211,7 +7244,7 @@ describe('remaining character route edge coverage', () => {
         const invalidIdDb = createMockDb({firstResults: [currentUserRecord]}).db
         const invalidIdResponse = await completeToyhouseImportItem('bad.id', {mediaId: 'media-id'}, invalidIdDb, {
             sessionToken,
-            csrfToken
+            csrfToken,
         })
         expect(invalidIdResponse.status).toBe(400)
         expect(await invalidIdResponse.json()).toEqual({error: 'Import item id is invalid'})
@@ -7219,7 +7252,7 @@ describe('remaining character route edge coverage', () => {
         const missingDb = createMockDb({firstResults: [currentUserRecord, null]}).db
         const missingResponse = await completeToyhouseImportItem('item-id', {mediaId: 'media-id'}, missingDb, {
             sessionToken,
-            csrfToken
+            csrfToken,
         })
         expect(missingResponse.status).toBe(404)
         expect(await missingResponse.json()).toEqual({error: 'Import item not found'})
@@ -7256,13 +7289,18 @@ describe('remaining character route edge coverage', () => {
         expect(await oppositeUploadResponse.json()).toEqual({error: 'Import item can only complete one media rating'})
 
         const capacityDb = createMockDb({firstResults: [currentUserRecord, sfwItem, {count: 500}]}).db
-        const capacityResponse = await completeToyhouseImportItem('item-id', {
-            mediaId: 'media-id',
-            sfwUpload: validUpload
-        }, capacityDb, {
-            sessionToken,
-            csrfToken,
-        })
+        const capacityResponse = await completeToyhouseImportItem(
+            'item-id',
+            {
+                mediaId: 'media-id',
+                sfwUpload: validUpload,
+            },
+            capacityDb,
+            {
+                sessionToken,
+                csrfToken,
+            },
+        )
         expect(capacityResponse.status).toBe(409)
         expect(await capacityResponse.json()).toEqual({error: 'Characters can contain 500 gallery images or fewer'})
     })
@@ -7297,7 +7335,7 @@ describe('remaining character route edge coverage', () => {
         const noUploadDb = createMockDb({firstResults: [currentUserRecord, character]}).db
         const noUploadResponse = await completeChunkedMedia(character.id, {mediaId: 'media-id'}, noUploadDb, {
             sessionToken,
-            csrfToken
+            csrfToken,
         })
         expect(noUploadResponse.status).toBe(400)
         expect(await noUploadResponse.json()).toEqual({error: 'At least one image is required'})
@@ -7345,7 +7383,7 @@ describe('remaining character route edge coverage', () => {
         const missingCharacterDb = createMockDb({firstResults: [currentUserRecord, null]}).db
         const missingCharacterResponse = await putGallery(character.id, {tabs: []}, missingCharacterDb, {
             sessionToken,
-            csrfToken
+            csrfToken,
         })
         expect(missingCharacterResponse.status).toBe(404)
         expect(await missingCharacterResponse.json()).toEqual({error: 'Character not found'})
@@ -7356,29 +7394,37 @@ describe('remaining character route edge coverage', () => {
         const csrfToken = await createCsrfToken(sessionToken)
 
         const invalidFolderImageDb = createMockDb({firstResults: [currentUserRecord]}).db
-        const invalidFolderImageResponse = await postFolder({
-            name: 'Folder',
-            folderImageData: 'bad'
-        }, invalidFolderImageDb, {
-            sessionToken,
-            csrfToken,
-        })
+        const invalidFolderImageResponse = await postFolder(
+            {
+                name: 'Folder',
+                folderImageData: 'bad',
+            },
+            invalidFolderImageDb,
+            {
+                sessionToken,
+                csrfToken,
+            },
+        )
         expect(invalidFolderImageResponse.status).toBe(400)
         expect(await invalidFolderImageResponse.json()).toEqual({error: 'Character profile image must be a base64 data URL'})
 
         const folderBucket = createMockR2Bucket()
         const folderFailureDb = createMockDb({
             firstResults: [currentUserRecord],
-            runError: new Error('insert failed')
+            runError: new Error('insert failed'),
         }).db
-        const folderFailureResponse = await postFolder({
-            name: 'Folder',
-            folderImageData: createPngDataUrl(16, 16)
-        }, folderFailureDb, {
-            mediaBucket: folderBucket,
-            sessionToken,
-            csrfToken,
-        })
+        const folderFailureResponse = await postFolder(
+            {
+                name: 'Folder',
+                folderImageData: createPngDataUrl(16, 16),
+            },
+            folderFailureDb,
+            {
+                mediaBucket: folderBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
         expect(folderFailureResponse.status).toBe(500)
         expect(folderBucket.delete).toHaveBeenCalled()
 
@@ -7397,7 +7443,7 @@ describe('remaining character route edge coverage', () => {
         const character = createCharacterRecord()
         const patchCharacterDb = createMockDb({
             firstResults: [currentUserRecord, character],
-            runError: new Error('update failed')
+            runError: new Error('update failed'),
         }).db
         const patchCharacterFailureResponse = await patchCharacter(character.id, {name: 'Updated'}, patchCharacterDb, {
             sessionToken,
@@ -7408,7 +7454,7 @@ describe('remaining character route edge coverage', () => {
         const heightChartBucket = createMockR2Bucket()
         const heightChartDb = createMockDb({
             firstResults: [currentUserRecord, character],
-            runError: new Error('height update failed')
+            runError: new Error('height update failed'),
         }).db
         const form = new FormData()
         form.set(
