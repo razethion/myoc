@@ -40,6 +40,22 @@ function sqlFragment(...tokens: string[]): string {
     return tokens.join(' ')
 }
 
+async function expectResolved<T>(promise: Promise<T>, expected: unknown): Promise<void> {
+    expect(await promise).toEqual(expected)
+}
+
+async function expectRejected(promise: Promise<unknown>, message: string): Promise<void> {
+    try {
+        await promise
+    } catch (error) {
+        expect(error).toBeInstanceOf(Error)
+        expect((error as Error).message).toContain(message)
+        return
+    }
+
+    throw new Error(`Expected promise to reject with: ${message}`)
+}
+
 type CharacterResponse = {
     character: {
         id: string
@@ -446,16 +462,38 @@ function expectCloudflarePreviewFetch(callIndex: number, expectedUrlWithoutQuery
     const input = call?.[0]
     const init = call?.[1]
     const url = String(input)
+    const expectedUrl = new URL(expectedUrlWithoutQuery)
+    const pathParts = expectedUrl.pathname.split('/')
+    const expectedSourceUrl = `${expectedUrl.origin}/${pathParts.slice(4).join('/')}`
+    const expectedImageOptions = Object.fromEntries(
+        (pathParts[3] ?? '').split(',').map((option) => {
+            const [key, rawValue] = option.split('=')
+            const value = rawValue === 'true' ? true : rawValue === 'false' ? false : Number(rawValue)
 
-    expect(url).toMatch(new RegExp(`^${escapeRegExp(expectedUrlWithoutQuery)}\\?preview_cache_bust=${uuidPattern}$`))
+            return [key, Number.isNaN(value) ? rawValue : value]
+        }),
+    )
+    const requestInit = init as RequestInit & {
+        cf?: {
+            cacheTtlByStatus?: Record<string, number>
+            image?: Record<string, boolean | number | string>
+        }
+    }
+
+    expect(url).toMatch(new RegExp(`^${escapeRegExp(expectedSourceUrl)}\\?preview_cache_bust=${uuidPattern}$`))
     expect(init).toEqual(
         expect.objectContaining({
+            cf: {
+                cacheTtlByStatus: {'404': 0, '500-599': 0},
+                image: expectedImageOptions,
+            },
             headers: expect.objectContaining({
                 accept: 'image/webp,image/*,*/*;q=0.8',
                 'cache-control': 'no-cache',
             }),
         }),
     )
+    expect(requestInit.cf?.image).toEqual(expectedImageOptions)
 
     return url
 }
@@ -6414,42 +6452,46 @@ describe('characters internal helper coverage', () => {
             json: vi.fn((body: unknown, status?: number) => new Response(JSON.stringify(body), {status})),
         } as never
 
-        await expect(__charactersTestHooks.parseChunkedUploadInitRequest(badJsonContext)).resolves.toMatchObject({status: 400})
-        await expect(__charactersTestHooks.parseChunkedMediaCompleteBody({req: badJsonReq} as never)).resolves.toEqual({
+        const invalidChunkedInitResponse = await __charactersTestHooks.parseChunkedUploadInitRequest(badJsonContext)
+        expect(invalidChunkedInitResponse).toMatchObject({status: 400})
+        await expectResolved(__charactersTestHooks.parseChunkedMediaCompleteBody({req: badJsonReq} as never), {
             error: 'Invalid JSON body',
             status: 400,
         })
-        await expect(
-            __charactersTestHooks.parseChunkedMediaCompleteBody({req: jsonReq({sfwArtist: 'x'.repeat(81)})} as never),
-        ).resolves.toEqual({error: 'SFW artist name must be 80 characters or fewer', status: 400})
-        await expect(
+        await expectResolved(__charactersTestHooks.parseChunkedMediaCompleteBody({req: jsonReq({sfwArtist: 'x'.repeat(81)})} as never), {
+            error: 'SFW artist name must be 80 characters or fewer',
+            status: 400,
+        })
+        await expectResolved(
             __charactersTestHooks.parseChunkedMediaCompleteBody({
                 req: jsonReq({sfwUpload: {uploadId: '', imageKey: 'image-key', contentType: 'image/png', parts: []}}),
             } as never),
-        ).resolves.toEqual({error: 'SFW upload id is required', status: 400})
+            {error: 'SFW upload id is required', status: 400},
+        )
 
-        await expect(
+        await expectResolved(
             __charactersTestHooks.parseCreateCharacterRequest({
                 req: jsonReq({}, 'text/plain'),
             } as never),
-        ).resolves.toEqual({error: 'JSON or multipart form data is required', status: 400})
-        await expect(__charactersTestHooks.parseCreateFolderRequest(badJsonReq as never)).resolves.toEqual({error: 'Invalid JSON body'})
-        await expect(__charactersTestHooks.parseCreateFolderRequest(formReq as never)).resolves.toEqual({
+            {error: 'JSON or multipart form data is required', status: 400},
+        )
+        await expectResolved(__charactersTestHooks.parseCreateFolderRequest(badJsonReq as never), {error: 'Invalid JSON body'})
+        await expectResolved(__charactersTestHooks.parseCreateFolderRequest(formReq as never), {
             name: 'Name From Form',
             parentFolderId: 'parent-folder',
             folderImage: null,
         })
-        await expect(__charactersTestHooks.parseCreateFolderRequest(noTypeReq as never)).resolves.toEqual({
+        await expectResolved(__charactersTestHooks.parseCreateFolderRequest(noTypeReq as never), {
             error: 'JSON or form data is required',
         })
-        await expect(__charactersTestHooks.parseDeleteCharacterRequest(badJsonReq as never)).resolves.toEqual({})
-        await expect(__charactersTestHooks.parseDeleteCharacterRequest(formReq as never)).resolves.toEqual({
+        await expectResolved(__charactersTestHooks.parseDeleteCharacterRequest(badJsonReq as never), {})
+        await expectResolved(__charactersTestHooks.parseDeleteCharacterRequest(formReq as never), {
             confirmName: 'Vyn',
             permanent: 'on',
             'delete-character-confirm-name': null,
             'delete-confirm-permanent': null,
         })
-        await expect(__charactersTestHooks.parseDeleteCharacterRequest(noTypeReq as never)).resolves.toEqual({})
+        await expectResolved(__charactersTestHooks.parseDeleteCharacterRequest(noTypeReq as never), {})
     })
 
     it('parses gallery tree and layout helper edge cases', () => {
@@ -6762,45 +6804,50 @@ describe('characters internal helper coverage', () => {
     })
 
     it('handles preview and image metadata helper branches', async () => {
-        await expect(
+        await expectRejected(
             __charactersTestHooks.previewFromResponse(
                 new Response('not found', {status: 404, headers: {'content-type': 'text/plain'}}),
                 completedImage,
                 'Preview',
             ),
-        ).rejects.toThrow('Preview failed with 404: not found')
-        await expect(
+            'Preview failed with 404: not found',
+        )
+        await expectRejected(
             __charactersTestHooks.previewFromResponse(
                 new Response(new Uint8Array([1]), {headers: {'content-type': 'image/jpeg'}}),
                 completedImage,
                 'Preview',
             ),
-        ).rejects.toThrow('Preview returned an unexpected content type (image/jpeg)')
-        await expect(
+            'Preview returned an unexpected content type (image/jpeg)',
+        )
+        await expectRejected(
             __charactersTestHooks.previewFromResponse(
                 new Response(new Uint8Array(), {headers: {'content-type': 'image/webp'}}),
                 completedImage,
                 'Preview',
             ),
-        ).rejects.toThrow('Preview is empty')
-        await expect(
+            'Preview is empty',
+        )
+        await expectRejected(
             __charactersTestHooks.previewFromResponse(
                 new Response(new Uint8Array([1]), {headers: {'content-type': 'image/webp'}}),
                 completedImage,
                 'Preview',
             ),
-        ).rejects.toThrow('Preview returned an invalid WebP image')
+            'Preview returned an invalid WebP image',
+        )
 
         const tinyWebp = createWebpBytes(1, 1)
         const oversizedForDimensions = new Uint8Array(__charactersTestHooks.maxPreviewByteSize(1, 1) + 1)
         oversizedForDimensions.set(tinyWebp)
-        await expect(
+        await expectRejected(
             __charactersTestHooks.previewFromResponse(
                 new Response(oversizedForDimensions, {headers: {'content-type': 'image/webp'}}),
                 {...completedImage, width: 1, height: 1, displayWidth: 1, displayHeight: 1},
                 'Preview',
             ),
-        ).rejects.toThrow('Preview is too large for its dimensions')
+            'Preview is too large for its dimensions',
+        )
 
         expect(__charactersTestHooks.expectedPreviewDimensions({width: 4000, height: 2000})).toEqual({
             width: 1600,
@@ -6814,14 +6861,15 @@ describe('characters internal helper coverage', () => {
         expect(__charactersTestHooks.cloudflareExifOrientationTransform(7)).toEqual({flip: 'h', rotate: 90})
         expect(__charactersTestHooks.cloudflareExifOrientationTransform(8)).toEqual({rotate: 270})
         expect(__charactersTestHooks.cloudflareExifOrientationTransform(null)).toEqual({})
-        await expect(
+        await expectRejected(
             __charactersTestHooks.generateMediaPreviewWithContainer(
                 {} as Parameters<typeof __charactersTestHooks.generateMediaPreviewWithContainer>[0],
                 'https://example.com/image.png',
                 completedImage,
             ),
-        ).rejects.toThrow('Preview container binding is not configured.')
-        await expect(
+            'Preview container binding is not configured.',
+        )
+        await expectRejected(
             __charactersTestHooks.putNsfwBlurImage(
                 undefined,
                 createMockR2Bucket(),
@@ -6836,13 +6884,14 @@ describe('characters internal helper coverage', () => {
                 },
                 [],
             ),
-        ).rejects.toThrow('Cloudflare Images binding is not configured.')
+            'Cloudflare Images binding is not configured.',
+        )
         const failingPreviewContainer = createMockPreviewContainer([
             new Error('container failed once'),
             new Error('container failed twice'),
             new Error('container failed finally'),
         ])
-        await expect(
+        await expectRejected(
             __charactersTestHooks.generateMediaPreviewWithContainer(
                 {
                     MYOC_DOCKER_SHARP_CONTAINER: failingPreviewContainer.namespace,
@@ -6851,7 +6900,8 @@ describe('characters internal helper coverage', () => {
                 'https://example.com/image.png',
                 completedImage,
             ),
-        ).rejects.toThrow('container failed finally')
+            'container failed finally',
+        )
     })
 
     it('reads image dimensions and profile image data URL helper branches', async () => {
@@ -7024,10 +7074,10 @@ describe('characters internal helper coverage', () => {
         expect(__charactersTestHooks.toPublicHeightChart(mediaPublicBaseUrl, 'current-user', 'character-id', null)).toBeNull()
         const deleteBucket = createMockR2Bucket()
         vi.mocked(deleteBucket.delete).mockRejectedValueOnce(new Error('delete failed'))
-        await expect(__charactersTestHooks.deleteR2Objects(deleteBucket, ['missing-key'])).resolves.toBeUndefined()
+        await expectResolved(__charactersTestHooks.deleteR2Objects(deleteBucket, ['missing-key']), undefined)
 
         const bucket = createMockR2Bucket()
-        await expect(
+        await expectRejected(
             __charactersTestHooks.completeChunkedGalleryUpload(
                 bucket,
                 'current-user',
@@ -7037,7 +7087,8 @@ describe('characters internal helper coverage', () => {
                 'sfw',
                 'SFW image',
             ),
-        ).rejects.toThrow('SFW image is empty')
+            'SFW image is empty',
+        )
     })
 })
 
