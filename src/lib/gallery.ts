@@ -1,4 +1,5 @@
 export const GALLERY_MAX_IMAGES_PER_ROW = 5
+export const GALLERY_CHUNK_SIZE = 5 * 1024 * 1024
 
 export function chunkGalleryItems<T>(items: T[], maxItemsPerRow = GALLERY_MAX_IMAGES_PER_ROW): T[][] {
     if (items.length === 0) {

@@ -3575,6 +3575,7 @@ describe('character media uploads', () => {
             }
         }
         expect(initBody.uploads.sfw.contentType).toBe('image/png')
+        expect(initBody.uploads.sfw.chunkSize).toBe(5 * 1024 * 1024)
 
         const pngFile = createPngFile(10000, 10000)
         const partResponse = await putChunkedMediaPart(

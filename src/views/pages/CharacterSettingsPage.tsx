@@ -1,5 +1,5 @@
 import type {CurrentUser} from '../../lib/auth/session'
-import {GALLERY_MAX_IMAGES_PER_ROW} from '../../lib/gallery'
+import {GALLERY_CHUNK_SIZE, GALLERY_MAX_IMAGES_PER_ROW} from '../../lib/gallery'
 import {characterMediaImageUrl, characterMediaPreviewImageUrl, characterProfileImageUrl} from '../../lib/media/url'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
@@ -109,6 +109,7 @@ function CharacterSettingsScript({
 const character = ${safeJson(character)};
 const csrfToken = ${safeJson(csrfToken)};
 const maxGalleryImagesPerRow = ${safeJson(GALLERY_MAX_IMAGES_PER_ROW)};
+const galleryChunkSize = ${safeJson(GALLERY_CHUNK_SIZE)};
 const mediaLibrary = new Map(${safeJson(media)}.map((item) => [item.id, item]));
 const tagLayouts = new Map(${safeJson(galleryTabs)}.map((tab) => [tab.id, normalizeInitialGalleryLayout(tab)]));
 let activeTagId = ${safeJson(galleryTabs[0]?.id ?? 'default')};
@@ -303,10 +304,70 @@ async function withRetry(label, task, onRetry) {
             if (error && error.retryable === false) break;
             if (attempt >= chunkUploadMaxAttempts) break;
             if (onRetry) onRetry(error, attempt);
-            await sleep(700 * attempt * attempt);
+            await sleep([1500, 5000, 10000][attempt - 1] || 10000);
         }
     }
     throw lastError || new Error(label + ' failed.');
+}
+
+function getUploadNetworkDiagnostics() {
+    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection || null;
+    return {
+        online: navigator.onLine,
+        connectionType: connection && connection.type ? connection.type : null,
+        effectiveType: connection && connection.effectiveType ? connection.effectiveType : null,
+        downlinkMbps: connection && typeof connection.downlink === 'number' ? connection.downlink : null,
+        rttMs: connection && typeof connection.rtt === 'number' ? connection.rtt : null,
+        saveData: connection && typeof connection.saveData === 'boolean' ? connection.saveData : null,
+        userAgent: navigator.userAgent
+    };
+}
+
+function createUploadNetworkError(label, reason, eventType, details) {
+    const diagnostics = getUploadNetworkDiagnostics();
+    const reasonMessage = reason && reason.message ? reason.message : String(reason || 'Network request failed');
+    const error = new Error(label + ' failed: ' + reasonMessage);
+    error.retryable = true;
+    error.uploadDiagnostics = {
+        ...diagnostics,
+        eventType: eventType || null,
+        errorName: reason && reason.name ? reason.name : null,
+        errorMessage: reasonMessage,
+        ...details
+    };
+    console.warn('Chunk upload network failure', error.uploadDiagnostics);
+    return error;
+}
+
+function uploadChunkWithXhr(url, chunk, label, onProgress) {
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', url, true);
+        xhr.withCredentials = true;
+        xhr.timeout = 120000;
+        xhr.setRequestHeader('x-csrf-token', csrfToken);
+        xhr.setRequestHeader('content-type', chunk.type || 'application/octet-stream');
+        xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable && onProgress) onProgress(event.loaded, event.total);
+        };
+        xhr.onload = () => {
+            let body = null;
+            try {
+                body = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+            } catch {}
+            if (xhr.status >= 200 && xhr.status < 300) {
+                resolve(body);
+                return;
+            }
+            const error = new Error(body && body.error ? body.error : 'Request failed with status ' + xhr.status);
+            error.retryable = xhr.status === 429 || xhr.status >= 500;
+            reject(error);
+        };
+        xhr.onerror = (event) => reject(createUploadNetworkError(label, new Error('Network request failed'), event.type, {size: chunk.size}));
+        xhr.onabort = (event) => reject(createUploadNetworkError(label, new Error('Upload request was aborted'), event.type, {size: chunk.size}));
+        xhr.ontimeout = (event) => reject(createUploadNetworkError(label, new Error('Upload request timed out'), event.type, {size: chunk.size}));
+        xhr.send(chunk);
+    });
 }
 
 function setLoading(button, isLoading, text) {
@@ -912,7 +973,7 @@ async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}, progress)
 async function uploadChunkedImage(mediaId, rating, image, upload, progress) {
     if (!upload) throw new Error('Upload could not be initialized.');
     const file = image.file;
-    const chunkSize = upload.chunkSize || (8 * 1024 * 1024);
+    const chunkSize = upload.chunkSize || galleryChunkSize;
     const parts = [];
     let partNumber = 1;
     const totalBytes = Math.max(file.size, 1);
@@ -920,7 +981,7 @@ async function uploadChunkedImage(mediaId, rating, image, upload, progress) {
     for (let offset = 0; offset < file.size; offset += chunkSize) {
         const chunk = file.slice(offset, Math.min(offset + chunkSize, file.size), image.contentType);
         const label = 'Uploading ' + rating.toUpperCase() + ' chunk ' + partNumber;
-        const part = await withRetry(label, async () => await apiFetch(
+        const part = await withRetry(label, async () => await uploadChunkWithXhr(
             '/api/characters/' + encodeURIComponent(character.id)
             + '/media/chunked/' + encodeURIComponent(mediaId)
             + '/' + encodeURIComponent(rating)
@@ -928,10 +989,15 @@ async function uploadChunkedImage(mediaId, rating, image, upload, progress) {
             + '/' + encodeURIComponent(String(partNumber))
             + '?imageKey=' + encodeURIComponent(upload.imageKey)
             + '&contentType=' + encodeURIComponent(image.contentType),
-            {
-                method: 'PUT',
-                requestLabel: label,
-                body: chunk
+            chunk,
+            label,
+            (loaded, total) => {
+                if (!progress || !total) return;
+                progress({
+                    status: 'Uploading',
+                    percent: 10 + (((offset + loaded) / totalBytes) * 80),
+                    detail: label + ' ' + Math.round((loaded / total) * 100) + '%'
+                });
             }
         ), (error, attempt) => {
             if (!progress) return;

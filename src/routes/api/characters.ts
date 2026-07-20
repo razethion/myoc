@@ -3,7 +3,7 @@ import {Hono} from 'hono'
 import {z} from 'zod'
 import {queueImageReview} from '../../lib/admin/imageApprovals'
 import {type CurrentUser, getCurrentUser, toSqlTimestamp} from '../../lib/auth/session'
-import {GALLERY_MAX_IMAGES_PER_ROW, shouldForceGalleryRowFullWidth} from '../../lib/gallery'
+import {GALLERY_CHUNK_SIZE, GALLERY_MAX_IMAGES_PER_ROW, shouldForceGalleryRowFullWidth} from '../../lib/gallery'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {
     CharacterFolderSchema,
@@ -264,7 +264,6 @@ const FOLDER_NAME_MAX_LENGTH = 80
 const FOLDER_ID_MAX_LENGTH = 128
 const CHARACTER_DESCRIPTION_MAX_LENGTH = 255
 const ARTIST_NAME_MAX_LENGTH = 80
-const GALLERY_CHUNK_SIZE = 8 * 1024 * 1024
 const GALLERY_MAX_TABS = 20
 const GALLERY_MAX_ROWS = 100
 const GALLERY_MAX_MEDIA_PLACEMENTS = 500

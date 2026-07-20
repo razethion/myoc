@@ -1,4 +1,5 @@
 import type {CurrentUser} from '../../lib/auth/session'
+import {GALLERY_CHUNK_SIZE} from '../../lib/gallery'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 
@@ -315,6 +316,7 @@ function ToyhouseClientImportScript({csrfToken, importPlan}: {csrfToken: string;
 
     const csrfToken = ${safeScriptJson(csrfToken)};
     const importPlan = ${safeScriptJson(importPlan)};
+    const galleryChunkSize = ${safeScriptJson(GALLERY_CHUNK_SIZE)};
     const status = root.querySelector('[data-toyhouse-client-import-status]');
     const detail = root.querySelector('[data-toyhouse-client-import-detail]');
     const bar = root.querySelector('[data-toyhouse-client-import-bar]');
@@ -346,10 +348,67 @@ function ToyhouseClientImportScript({csrfToken, importPlan}: {csrfToken: string;
                 if (error && error.retryable === false) break;
                 if (attempt >= maxAttempts) break;
                 setProgress(label + ' failed, retrying ' + attempt + ' of ' + (maxAttempts - 1), error && error.message ? error.message : String(error), completedImages, importPlan.totalImages);
-                await sleep(600 * attempt * attempt);
+                await sleep([1500, 5000, 10000][attempt - 1] || 10000);
             }
         }
         throw lastError || new Error(label + ' failed.');
+    }
+
+    function getUploadNetworkDiagnostics() {
+        const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection || null;
+        return {
+            online: navigator.onLine,
+            connectionType: connection && connection.type ? connection.type : null,
+            effectiveType: connection && connection.effectiveType ? connection.effectiveType : null,
+            downlinkMbps: connection && typeof connection.downlink === 'number' ? connection.downlink : null,
+            rttMs: connection && typeof connection.rtt === 'number' ? connection.rtt : null,
+            saveData: connection && typeof connection.saveData === 'boolean' ? connection.saveData : null,
+            userAgent: navigator.userAgent
+        };
+    }
+
+    function createUploadNetworkError(label, reason, eventType, details) {
+        const diagnostics = getUploadNetworkDiagnostics();
+        const reasonMessage = reason && reason.message ? reason.message : String(reason || 'Network request failed');
+        const error = new Error(label + ' failed: ' + reasonMessage);
+        error.retryable = true;
+        error.uploadDiagnostics = {
+            ...diagnostics,
+            eventType: eventType || null,
+            errorName: reason && reason.name ? reason.name : null,
+            errorMessage: reasonMessage,
+            ...details
+        };
+        console.warn('Chunk upload network failure', error.uploadDiagnostics);
+        return error;
+    }
+
+    function uploadChunkWithXhr(url, chunk, label) {
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('PUT', url, true);
+            xhr.withCredentials = true;
+            xhr.timeout = 120000;
+            xhr.setRequestHeader('x-csrf-token', csrfToken);
+            xhr.setRequestHeader('content-type', chunk.type || 'application/octet-stream');
+            xhr.onload = () => {
+                let body = null;
+                try {
+                    body = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+                } catch {}
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    resolve(body);
+                    return;
+                }
+                const error = new Error(body && body.error ? body.error : 'Request failed with status ' + xhr.status);
+                error.retryable = xhr.status === 429 || xhr.status >= 500;
+                reject(error);
+            };
+            xhr.onerror = (event) => reject(createUploadNetworkError(label, new Error('Network request failed'), event.type, {size: chunk.size}));
+            xhr.onabort = (event) => reject(createUploadNetworkError(label, new Error('Upload request was aborted'), event.type, {size: chunk.size}));
+            xhr.ontimeout = (event) => reject(createUploadNetworkError(label, new Error('Upload request timed out'), event.type, {size: chunk.size}));
+            xhr.send(chunk);
+        });
     }
 
     async function apiFetch(url, options) {
@@ -425,7 +484,7 @@ function ToyhouseClientImportScript({csrfToken, importPlan}: {csrfToken: string;
     }
 
     async function uploadChunk(characterId, mediaId, rating, upload, image, partNumber, chunk) {
-        return await withRetry('Uploading chunk ' + partNumber, async () => await apiFetch(
+        return await withRetry('Uploading chunk ' + partNumber, async () => await uploadChunkWithXhr(
             '/api/characters/' + encodeURIComponent(characterId)
             + '/media/chunked/' + encodeURIComponent(mediaId)
             + '/' + encodeURIComponent(rating)
@@ -433,10 +492,8 @@ function ToyhouseClientImportScript({csrfToken, importPlan}: {csrfToken: string;
             + '/' + encodeURIComponent(String(partNumber))
             + '?imageKey=' + encodeURIComponent(upload.imageKey)
             + '&contentType=' + encodeURIComponent(image.contentType),
-            {
-                method: 'PUT',
-                body: chunk
-            }
+            chunk,
+            'Uploading chunk ' + partNumber
         ));
     }
 
@@ -459,7 +516,7 @@ function ToyhouseClientImportScript({csrfToken, importPlan}: {csrfToken: string;
             upload = initResult.uploads[rating];
             if (!upload) throw new Error('Upload could not be initialized.');
 
-            const chunkSize = upload.chunkSize || (8 * 1024 * 1024);
+            const chunkSize = upload.chunkSize || galleryChunkSize;
             const parts = [];
             let partNumber = 1;
             for (let offset = 0; offset < image.blob.size; offset += chunkSize) {
