@@ -6504,7 +6504,7 @@ describe('characters internal helper coverage', () => {
             error: 'Tree item type must be folder or character',
         })
         const tooDeepTree = [{type: 'folder', id: 'root', children: []}]
-        let cursor = tooDeepTree[0] as { children: Array<{ type: string; id: string; children: unknown[] }> }
+        let cursor = tooDeepTree[0] as {children: Array<{type: string; id: string; children: unknown[]}>}
         for (let index = 0; index < 25; index += 1) {
             const child = {type: 'folder', id: `folder-${index}`, children: []}
             cursor.children.push(child)
