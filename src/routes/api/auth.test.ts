@@ -973,7 +973,7 @@ describe('POST /recovery/login', () => {
         })
     })
 
-    it('creates a session and forces account security review when recovery succeeds', async () => {
+    it('creates a session without forcing new recovery credentials when recovery succeeds', async () => {
         const recoveryPhrase = 'correct-horse-battery-staple'
         const user = {
             ...(await createTestUser('password123')),
@@ -992,18 +992,20 @@ describe('POST /recovery/login', () => {
 
         expect(response.status).toBe(200)
         expect(await response.json()).toMatchObject({
-            secureAccountRequired: true,
+            secureAccountRequired: false,
             user: {
                 id: user.id,
                 username: user.username,
             },
         })
         expectSessionCookie(response)
-        expect(boundStatements[1]?.sql).toContain('secure_account_required')
-        expect(boundStatements[1]?.sql).toContain('secure_account_required_at')
-        expect(boundStatements[1]?.sql).toContain('secure_account_required_passkey_id = NULL')
-        expect(boundStatements[1]?.binds).toHaveLength(2)
-        expect(boundStatements[1]?.binds[1]).toBe(user.id)
+        const recoveryUpdateSql = boundStatements[1]?.sql.replace(/\s+/g, ' ')
+        expect(recoveryUpdateSql).toContain('secure_account_required = 0')
+        expect(recoveryUpdateSql).toContain('secure_account_required_at = NULL')
+        expect(recoveryUpdateSql).toContain('secure_account_required_passkey_id = NULL')
+        expect(recoveryUpdateSql).not.toContain('recovery_phrase_hash = NULL')
+        expect(recoveryUpdateSql).not.toContain('recovery_phrase_confirmed_at = NULL')
+        expect(boundStatements[1]?.binds).toEqual([user.id])
         expect(boundStatements.some((statement) => statement.sql.includes(sqlFragment('DELETE', 'FROM', 'user_passkeys')))).toBe(false)
         expect(
             boundStatements.some(
@@ -1011,6 +1013,33 @@ describe('POST /recovery/login', () => {
             ),
         ).toBe(false)
         expect(db.batch).toHaveBeenCalledTimes(1)
+    })
+
+    it('still redirects successful browser recovery login to settings', async () => {
+        const recoveryPhrase = 'correct-horse-battery-staple'
+        const user = {
+            ...(await createTestUser('password123')),
+            recovery_phrase_hash: await hashRecoveryPhrase(recoveryPhrase),
+            banned_at: null,
+        }
+        const {db} = createMockDb({firstResults: [user]})
+
+        const response = await authPageActionRoutes.request(
+            'https://example.com/recovery/login',
+            {
+                method: 'POST',
+                body: JSON.stringify({username: user.username, recoveryPhrase}),
+                headers: {
+                    accept: 'text/html',
+                    'content-type': 'application/json',
+                },
+            },
+            {DB: db},
+        )
+
+        expect(response.status).toBe(302)
+        expect(response.headers.get('location')).toBe('/settings')
+        expectSessionCookie(response)
     })
 })
 

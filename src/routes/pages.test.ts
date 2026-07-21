@@ -983,6 +983,23 @@ describe('public page redirects', () => {
         expect(registerResponse.status).toBe(200)
     })
 
+    it('server-renders the password login form for password-manager autofill', async () => {
+        const response = await getAppPath('/login?method=password')
+        const html = await response.text()
+        const passwordPanel = html.match(/<div[^>]*data-login-panel="password"[^>]*>/)?.[0]
+        const passkeyPanel = html.match(/<div[^>]*data-login-panel="passkey"[^>]*>/)?.[0]
+
+        expect(response.status).toBe(200)
+        expect(passwordPanel).toBeDefined()
+        expect(passwordPanel).not.toContain('hidden')
+        expect(passkeyPanel).toContain('hidden')
+        expect(html).toContain('action="/login" autocomplete="on"')
+        expect(html).toContain('autocomplete="username" class="input input-bordered w-full" id="login-username"')
+        expect(html).toContain('autocomplete="current-password"')
+        expect(html).toContain('href="/login?method=password"')
+        expect(html).not.toContain('data-login-mode')
+    })
+
     it('ignores obsolete home page variant query parameters', async () => {
         const archiveResponse = await getAppPath('/?home=archive')
         const showcaseResponse = await getAppPath('/?home=showcase')
