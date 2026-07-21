@@ -90,7 +90,7 @@ const PasskeyRegistrationResponseSchema = responseSchema({
 })
 const RecoveryLoginResponseSchema = responseSchema({
     user: OwnUserSchema,
-    secureAccountRequired: z.literal(true),
+    secureAccountRequired: z.literal(false),
 })
 
 export const authPageActionRoutes = new Hono<{Bindings: Bindings}>()
@@ -608,15 +608,12 @@ authPageActionRoutes.post('/recovery/login', async (c) => {
 
     await c.env.DB.prepare(
         `UPDATE users
-         SET secure_account_required            = 1,
-             secure_account_required_at         = ?,
-             secure_account_required_passkey_id = NULL,
-             recovery_phrase_hash               = NULL,
-             recovery_phrase_set_at             = NULL,
-             recovery_phrase_confirmed_at       = NULL
+         SET secure_account_required            = 0,
+             secure_account_required_at         = NULL,
+             secure_account_required_passkey_id = NULL
          WHERE id = ?`,
     )
-        .bind(toSqlTimestamp(now), user.id)
+        .bind(user.id)
         .run()
 
     const sessionToken = await createSession(c.env.DB, user.id, now)
@@ -627,12 +624,8 @@ authPageActionRoutes.post('/recovery/login', async (c) => {
     }
 
     return jsonResponse(c, RecoveryLoginResponseSchema, {
-        user: toPublicUser({
-            ...user,
-            secure_account_required: 1,
-            recovery_phrase_confirmed_at: null,
-        }),
-        secureAccountRequired: true,
+        user: toPublicUser(user),
+        secureAccountRequired: false,
     })
 })
 

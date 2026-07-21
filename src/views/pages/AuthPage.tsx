@@ -3,9 +3,11 @@ import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 
 type AuthMode = 'login' | 'register'
+export type AuthLoginMethod = 'passkey' | 'password' | 'recovery'
 
 type AuthPageProps = {
     mode: AuthMode
+    loginMethod?: AuthLoginMethod
     currentUser?: CurrentUser | null
     guestInitial: string
     mediaBaseUrl: string
@@ -74,8 +76,6 @@ function AuthPageScript() {
         const passkeyRegisterForm = document.querySelector('[data-passkey-register-form]');
         const passwordRegisterForm = document.querySelector('[data-password-register-form]');
         const recoveryLoginForm = document.querySelector('[data-recovery-login-form]');
-        const loginPanels = document.querySelectorAll('[data-login-panel]');
-        const loginModeButtons = document.querySelectorAll('[data-login-mode]');
         const passwordToggleButtons = document.querySelectorAll('[data-password-toggle]');
         const passwordRegisterPanel = document.querySelector('[data-password-register-panel]');
         const showPasswordRegisterButton = document.querySelector('[data-show-password-register]');
@@ -100,19 +100,6 @@ function AuthPageScript() {
             for (const alert of alerts) {
                 alert.hidden = true;
                 alert.textContent = '';
-            }
-        }
-
-        function showLoginMode(mode, shouldFocus = true) {
-            for (const panel of loginPanels) {
-                panel.hidden = panel.dataset.loginPanel !== mode;
-            }
-
-            clearAlerts();
-
-            if (shouldFocus) {
-                const activePanel = document.querySelector('[data-login-panel="' + mode + '"]');
-                activePanel?.querySelector('input')?.focus();
             }
         }
 
@@ -220,9 +207,11 @@ function AuthPageScript() {
                 await beginPasskeyLogin(form, data.get('username'), true);
             });
 
-            requestAnimationFrame(() => {
-                beginPasskeyLogin(passkeyLoginForm, '', false);
-            });
+            if (!passkeyLoginForm.closest('[data-login-panel]')?.hidden) {
+                requestAnimationFrame(() => {
+                    beginPasskeyLogin(passkeyLoginForm, '', false);
+                });
+            }
         }
 
         if (passwordLoginForm) {
@@ -288,12 +277,6 @@ function AuthPageScript() {
                     username: data.get('username'),
                     password: data.get('password'),
                 });
-            });
-        }
-
-        for (const button of loginModeButtons) {
-            button.addEventListener('click', () => {
-                showLoginMode(button.dataset.loginMode, true);
             });
         }
 
@@ -379,7 +362,7 @@ function AuthPageScript() {
     return <script dangerouslySetInnerHTML={{__html: script}}></script>
 }
 
-export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPageProps) {
+export function AuthPage({mode, loginMethod = 'passkey', currentUser, guestInitial, mediaBaseUrl}: AuthPageProps) {
     const isLogin = mode === 'login'
 
     return (
@@ -398,7 +381,7 @@ export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPa
                                 <p class="mt-3 opacity-70">Sign in with a passkey, password, or recovery phrase.</p>
                             </div>
 
-                            <div class="mt-8" data-login-panel="passkey" id="login-panel-passkey">
+                            <div class="mt-8" data-login-panel="passkey" hidden={loginMethod !== 'passkey'} id="login-panel-passkey">
                                 <form action="/login/passkey/options" class="flex flex-col gap-5" data-passkey-login-form method="post">
                                     <div>
                                         <h2 class="text-2xl font-black">Sign in with a passkey</h2>
@@ -426,17 +409,17 @@ export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPa
 
                                 <div class="divider mt-6 text-xs opacity-60">Or use another method</div>
                                 <div class="grid gap-2 sm:grid-cols-2">
-                                    <button class="btn btn-outline" data-login-mode="password" type="button">
+                                    <a class="btn btn-outline" href="/login?method=password">
                                         Use password
-                                    </button>
-                                    <button class="btn btn-outline" data-login-mode="recovery" type="button">
+                                    </a>
+                                    <a class="btn btn-outline" href="/login?method=recovery">
                                         Use recovery phrase
-                                    </button>
+                                    </a>
                                 </div>
                             </div>
 
-                            <div class="mt-8" data-login-panel="password" hidden id="login-panel-password">
-                                <form action="/login" class="flex flex-col gap-5" data-password-login-form method="post">
+                            <div class="mt-8" data-login-panel="password" hidden={loginMethod !== 'password'} id="login-panel-password">
+                                <form action="/login" autocomplete="on" class="flex flex-col gap-5" data-password-login-form method="post">
                                     <div>
                                         <h2 class="text-2xl font-black">Sign in with your password</h2>
                                         <p class="mt-2 text-sm opacity-70">Enter your MyOC username and password.</p>
@@ -451,6 +434,7 @@ export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPa
                                         <input
                                             autocomplete="username"
                                             class="input input-bordered w-full"
+                                            id="login-username"
                                             name="username"
                                             required
                                             type="text"
@@ -490,16 +474,16 @@ export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPa
 
                                 <div class="divider mt-6 text-xs opacity-60">Use a different method</div>
                                 <div class="grid gap-2 sm:grid-cols-2">
-                                    <button class="btn btn-outline" data-login-mode="passkey" type="button">
+                                    <a class="btn btn-outline" href="/login?method=passkey">
                                         Use passkey
-                                    </button>
-                                    <button class="btn btn-outline" data-login-mode="recovery" type="button">
+                                    </a>
+                                    <a class="btn btn-outline" href="/login?method=recovery">
                                         Use recovery phrase
-                                    </button>
+                                    </a>
                                 </div>
                             </div>
 
-                            <div class="mt-8" data-login-panel="recovery" hidden id="login-panel-recovery">
+                            <div class="mt-8" data-login-panel="recovery" hidden={loginMethod !== 'recovery'} id="login-panel-recovery">
                                 <form action="/recovery/login" class="flex flex-col gap-5" data-recovery-login-form method="post">
                                     <div>
                                         <h2 class="text-2xl font-black">Sign in with a recovery phrase</h2>
@@ -542,12 +526,12 @@ export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPa
 
                                 <div class="divider mt-6 text-xs opacity-60">Use a different method</div>
                                 <div class="grid gap-2 sm:grid-cols-2">
-                                    <button class="btn btn-outline" data-login-mode="passkey" type="button">
+                                    <a class="btn btn-outline" href="/login?method=passkey">
                                         Use passkey
-                                    </button>
-                                    <button class="btn btn-outline" data-login-mode="password" type="button">
+                                    </a>
+                                    <a class="btn btn-outline" href="/login?method=password">
                                         Use password
-                                    </button>
+                                    </a>
                                 </div>
                             </div>
 

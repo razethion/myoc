@@ -23,7 +23,7 @@ import {AdminImageApprovalsPage} from '../views/pages/AdminImageApprovalsPage'
 import {type AdminOptionsFeedback, AdminOptionsPage} from '../views/pages/AdminOptionsPage'
 import {AdminPage, type AdminSection, isAdminSection} from '../views/pages/AdminPage'
 import {AdminReportsPage} from '../views/pages/AdminReportsPage'
-import {AuthPage} from '../views/pages/AuthPage'
+import {type AuthLoginMethod, AuthPage} from '../views/pages/AuthPage'
 import {
     type CharacterHeightChartEditorCharacter,
     type CharacterHeightChartEditorData,
@@ -134,6 +134,10 @@ function getRandomLetter(): string {
     return letters.charAt(Math.floor(Math.random() * letters.length))
 }
 
+function getLoginMethod(value: string | undefined): AuthLoginMethod {
+    return value === 'password' || value === 'recovery' ? value : 'passkey'
+}
+
 pageRoutes.get('/', async (c) => {
     const [currentUser, stats, discoverCharacters, galleryImages, heightChartCharacters] = await Promise.all([
         getCurrentUser(c),
@@ -165,7 +169,13 @@ pageRoutes.get('/login', async (c) => {
     }
 
     return c.html(
-        <AuthPage currentUser={currentUser} guestInitial={getRandomLetter()} mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL} mode="login" />,
+        <AuthPage
+            currentUser={currentUser}
+            guestInitial={getRandomLetter()}
+            loginMethod={getLoginMethod(c.req.query('method'))}
+            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+            mode="login"
+        />,
     )
 })
 
