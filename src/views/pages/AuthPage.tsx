@@ -73,9 +73,10 @@ function AuthPageScript() {
         const passkeyLoginForm = document.querySelector('[data-passkey-login-form]');
         const passkeyRegisterForm = document.querySelector('[data-passkey-register-form]');
         const passwordRegisterForm = document.querySelector('[data-password-register-form]');
-        const showPasswordLoginButton = document.querySelector('[data-show-password-login]');
-        const showRecoveryLoginButton = document.querySelector('[data-show-recovery-login]');
         const recoveryLoginForm = document.querySelector('[data-recovery-login-form]');
+        const loginPanels = document.querySelectorAll('[data-login-panel]');
+        const loginModeButtons = document.querySelectorAll('[data-login-mode]');
+        const passwordToggleButtons = document.querySelectorAll('[data-password-toggle]');
         const passwordRegisterPanel = document.querySelector('[data-password-register-panel]');
         const showPasswordRegisterButton = document.querySelector('[data-show-password-register]');
         const recoveryModal = document.querySelector('[data-recovery-modal]');
@@ -99,6 +100,19 @@ function AuthPageScript() {
             for (const alert of alerts) {
                 alert.hidden = true;
                 alert.textContent = '';
+            }
+        }
+
+        function showLoginMode(mode, shouldFocus = true) {
+            for (const panel of loginPanels) {
+                panel.hidden = panel.dataset.loginPanel !== mode;
+            }
+
+            clearAlerts();
+
+            if (shouldFocus) {
+                const activePanel = document.querySelector('[data-login-panel="' + mode + '"]');
+                activePanel?.querySelector('input')?.focus();
             }
         }
 
@@ -277,17 +291,25 @@ function AuthPageScript() {
             });
         }
 
-        if (showPasswordLoginButton && passwordLoginForm) {
-            showPasswordLoginButton.addEventListener('click', () => {
-                passwordLoginForm.hidden = false;
-                showPasswordLoginButton.hidden = true;
+        for (const button of loginModeButtons) {
+            button.addEventListener('click', () => {
+                showLoginMode(button.dataset.loginMode, true);
             });
         }
 
-        if (showRecoveryLoginButton && recoveryLoginForm) {
-            showRecoveryLoginButton.addEventListener('click', () => {
-                recoveryLoginForm.hidden = false;
-                showRecoveryLoginButton.hidden = true;
+        for (const button of passwordToggleButtons) {
+            const input = document.getElementById(button.getAttribute('aria-controls'));
+
+            if (!input) {
+                continue;
+            }
+
+            button.addEventListener('click', () => {
+                const shouldReveal = input.type === 'password';
+                input.type = shouldReveal ? 'text' : 'password';
+                button.textContent = shouldReveal ? 'Hide' : 'Show';
+                button.setAttribute('aria-label', shouldReveal ? 'Hide password' : 'Show password');
+                button.setAttribute('aria-pressed', String(shouldReveal));
             });
         }
 
@@ -370,125 +392,172 @@ export function AuthPage({mode, currentUser, guestInitial, mediaBaseUrl}: AuthPa
                 {isLogin ? (
                     <div class="relative z-10 mx-auto w-full max-w-md">
                         <section class="auth-card rounded-3xl p-6 sm:p-8">
-                            <form action="/login/passkey/options" class="flex flex-col gap-6" data-passkey-login-form method="post">
-                                <div class="text-center">
-                                    <span class="badge badge-primary badge-lg">Login</span>
-                                    <h1 class="mt-5 text-4xl font-black leading-none sm:text-5xl">Welcome back.</h1>
-                                    <p class="mt-3 opacity-70">Sign in with a passkey.</p>
-                                </div>
+                            <div class="text-center">
+                                <span class="badge badge-primary badge-lg">Login</span>
+                                <h1 class="mt-5 text-4xl font-black leading-none sm:text-5xl">Welcome back.</h1>
+                                <p class="mt-3 opacity-70">Sign in with a passkey, password, or recovery phrase.</p>
+                            </div>
 
-                                <div class="alert alert-error" data-auth-alert hidden></div>
-
-                                <label class="form-control w-full">
-                                    <div class="label">
-                                        <span class="label-text">Username</span>
+                            <div class="mt-8" data-login-panel="passkey" id="login-panel-passkey">
+                                <form action="/login/passkey/options" class="flex flex-col gap-5" data-passkey-login-form method="post">
+                                    <div>
+                                        <h2 class="text-2xl font-black">Sign in with a passkey</h2>
+                                        <p class="mt-2 text-sm opacity-70">Use your device's secure sign-in.</p>
                                     </div>
-                                    <input
-                                        autocomplete="username webauthn"
-                                        class="input input-bordered w-full"
-                                        name="username"
-                                        type="text"
-                                    />
-                                </label>
 
-                                <button class="btn btn-primary btn-block" type="submit">
-                                    Continue with Passkey
-                                </button>
+                                    <div class="alert alert-error" data-auth-alert hidden></div>
 
-                                <div class="flex flex-wrap justify-center gap-3 text-sm">
-                                    <button class="link link-primary font-semibold" data-show-password-login type="button">
+                                    <label class="form-control w-full">
+                                        <div class="label">
+                                            <span class="label-text">Username</span>
+                                        </div>
+                                        <input
+                                            autocomplete="username webauthn"
+                                            class="input input-bordered w-full"
+                                            name="username"
+                                            type="text"
+                                        />
+                                    </label>
+
+                                    <button class="btn btn-primary btn-block" type="submit">
+                                        Continue with Passkey
+                                    </button>
+                                </form>
+
+                                <div class="divider mt-6 text-xs opacity-60">Or use another method</div>
+                                <div class="grid gap-2 sm:grid-cols-2">
+                                    <button class="btn btn-outline" data-login-mode="password" type="button">
                                         Use password
                                     </button>
-                                    <button class="link link-primary font-semibold" data-show-recovery-login type="button">
+                                    <button class="btn btn-outline" data-login-mode="recovery" type="button">
                                         Use recovery phrase
                                     </button>
                                 </div>
+                            </div>
 
-                                <p class="text-center text-sm opacity-75">
-                                    New to MyOC?{' '}
-                                    <a class="link link-primary font-semibold" href="/register">
-                                        Create an account
-                                    </a>
-                                </p>
-                            </form>
-
-                            <form
-                                action="/login"
-                                class="mt-6 flex flex-col gap-4 border-t border-base-300 pt-6"
-                                data-password-login-form
-                                hidden
-                                method="post"
-                            >
-                                <div class="alert alert-error" data-auth-alert hidden></div>
-                                <label class="form-control w-full">
-                                    <div class="label">
-                                        <span class="label-text">Username</span>
+                            <div class="mt-8" data-login-panel="password" hidden id="login-panel-password">
+                                <form action="/login" class="flex flex-col gap-5" data-password-login-form method="post">
+                                    <div>
+                                        <h2 class="text-2xl font-black">Sign in with your password</h2>
+                                        <p class="mt-2 text-sm opacity-70">Enter your MyOC username and password.</p>
                                     </div>
-                                    <input
-                                        autocomplete="username"
-                                        class="input input-bordered w-full"
-                                        name="username"
-                                        required
-                                        type="text"
-                                    />
-                                </label>
 
-                                <label class="form-control w-full">
-                                    <div class="label">
-                                        <span class="label-text">Password</span>
+                                    <div class="alert alert-error" data-auth-alert hidden></div>
+
+                                    <label class="form-control w-full">
+                                        <div class="label">
+                                            <span class="label-text">Username</span>
+                                        </div>
+                                        <input
+                                            autocomplete="username"
+                                            class="input input-bordered w-full"
+                                            name="username"
+                                            required
+                                            type="text"
+                                        />
+                                    </label>
+
+                                    <label class="form-control w-full">
+                                        <div class="label">
+                                            <span class="label-text">Password</span>
+                                        </div>
+                                        <div class="input input-bordered flex w-full items-center gap-2 pr-2">
+                                            <input
+                                                autocomplete="current-password"
+                                                class="grow border-0 outline-0 focus:outline-0"
+                                                id="login-password"
+                                                name="password"
+                                                required
+                                                type="password"
+                                            />
+                                            <button
+                                                aria-controls="login-password"
+                                                aria-label="Show password"
+                                                aria-pressed="false"
+                                                class="btn btn-ghost btn-sm shrink-0"
+                                                data-password-toggle
+                                                type="button"
+                                            >
+                                                Show
+                                            </button>
+                                        </div>
+                                    </label>
+
+                                    <button class="btn btn-primary btn-block" type="submit">
+                                        Sign in with Password
+                                    </button>
+                                </form>
+
+                                <div class="divider mt-6 text-xs opacity-60">Use a different method</div>
+                                <div class="grid gap-2 sm:grid-cols-2">
+                                    <button class="btn btn-outline" data-login-mode="passkey" type="button">
+                                        Use passkey
+                                    </button>
+                                    <button class="btn btn-outline" data-login-mode="recovery" type="button">
+                                        Use recovery phrase
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="mt-8" data-login-panel="recovery" hidden id="login-panel-recovery">
+                                <form action="/recovery/login" class="flex flex-col gap-5" data-recovery-login-form method="post">
+                                    <div>
+                                        <h2 class="text-2xl font-black">Sign in with a recovery phrase</h2>
+                                        <p class="mt-2 text-sm opacity-70">Use the phrase you saved when you created your account.</p>
                                     </div>
-                                    <input
-                                        autocomplete="current-password"
-                                        class="input input-bordered w-full"
-                                        name="password"
-                                        required
-                                        type="password"
-                                    />
-                                </label>
 
-                                <button class="btn btn-secondary btn-block" type="submit">
-                                    Login with Password
-                                </button>
-                            </form>
+                                    <div class="alert alert-error" data-auth-alert hidden></div>
 
-                            <form
-                                action="/recovery/login"
-                                class="mt-6 flex flex-col gap-4 border-t border-base-300 pt-6"
-                                data-recovery-login-form
-                                hidden
-                                method="post"
-                            >
-                                <div class="alert alert-error" data-auth-alert hidden></div>
-                                <label class="form-control w-full">
-                                    <div class="label">
-                                        <span class="label-text">Username</span>
-                                    </div>
-                                    <input
-                                        autocomplete="username"
-                                        class="input input-bordered w-full"
-                                        name="username"
-                                        required
-                                        type="text"
-                                    />
-                                </label>
+                                    <label class="form-control w-full">
+                                        <div class="label">
+                                            <span class="label-text">Username</span>
+                                        </div>
+                                        <input
+                                            autocomplete="username"
+                                            class="input input-bordered w-full"
+                                            name="username"
+                                            required
+                                            type="text"
+                                        />
+                                    </label>
 
-                                <label class="form-control w-full">
-                                    <div class="label">
-                                        <span class="label-text">Recovery phrase</span>
-                                    </div>
-                                    <input
-                                        autocomplete="off"
-                                        class="input input-bordered w-full"
-                                        name="recoveryPhrase"
-                                        required
-                                        type="text"
-                                    />
-                                </label>
+                                    <label class="form-control w-full">
+                                        <div class="label">
+                                            <span class="label-text">Recovery phrase</span>
+                                        </div>
+                                        <input
+                                            autocomplete="off"
+                                            class="input input-bordered w-full"
+                                            name="recoveryPhrase"
+                                            placeholder="Enter your recovery phrase"
+                                            required
+                                            type="text"
+                                        />
+                                    </label>
 
-                                <button class="btn btn-secondary btn-block" type="submit">
-                                    Recover Account
-                                </button>
-                            </form>
+                                    <button class="btn btn-primary btn-block" type="submit">
+                                        Sign in with Recovery Phrase
+                                    </button>
+                                </form>
+
+                                <div class="divider mt-6 text-xs opacity-60">Use a different method</div>
+                                <div class="grid gap-2 sm:grid-cols-2">
+                                    <button class="btn btn-outline" data-login-mode="passkey" type="button">
+                                        Use passkey
+                                    </button>
+                                    <button class="btn btn-outline" data-login-mode="password" type="button">
+                                        Use password
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="mt-8 rounded-2xl border border-base-300 bg-base-200/50 p-4 text-center">
+                                <p class="font-semibold">New to MyOC?</p>
+                                <p class="mt-1 text-sm opacity-70">Create your account and start building your gallery.</p>
+                                <a class="btn btn-secondary btn-block mt-4" href="/register">
+                                    Create an account
+                                </a>
+                            </div>
                         </section>
                     </div>
                 ) : (
