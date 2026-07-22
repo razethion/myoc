@@ -72,6 +72,17 @@ describe('normalizeProfileImagePayload', () => {
             status: 400,
         })
     })
+
+    it('rejects oversized source bytes before invoking the Images binding', async () => {
+        const images = createImagesBinding({})
+        const bytes = new Uint8Array(3 * 1024 * 1024 + 1)
+
+        await expect(normalizeProfileImagePayload({contentType: 'image/png', bytes}, 'Profile photo', images)).resolves.toEqual({
+            error: 'Profile photo upload is too large',
+            status: 413,
+        })
+        expect(images.input).not.toHaveBeenCalled()
+    })
 })
 
 function createImagesBinding({

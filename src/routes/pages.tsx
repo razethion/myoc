@@ -7,7 +7,7 @@ import {listUserPasskeys, listUserSessions, toPasskeySummary} from '../lib/auth/
 import {type CurrentUser, canModerateImages, getCurrentUser, isAdminUser, toSqlTimestamp} from '../lib/auth/session'
 import {chunkGalleryItems, shouldForceGalleryRowFullWidth} from '../lib/gallery'
 import {getLeaderboardSnapshot} from '../lib/leaderboard'
-import {normalizeProfileImagePayload, PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR} from '../lib/media/profileImage'
+import {isProfileImageDataUrlTooLarge, normalizeProfileImagePayload, PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR} from '../lib/media/profileImage'
 import {
     characterHeightChartImageUrl,
     characterMediaImageUrl,
@@ -1413,6 +1413,10 @@ function readProfileImageDataUrl(value: string): {contentType: string; bytes: Ui
     }
 
     const [contentType, encodedBytes] = match.slice(1) as [string, string]
+
+    if (isProfileImageDataUrlTooLarge(encodedBytes)) {
+        return {error: 'Profile image upload is too large'}
+    }
 
     try {
         const binary = atob(encodedBytes)

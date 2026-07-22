@@ -596,6 +596,7 @@ function UserSettingsPageScript() {
                         method: 'POST',
                         headers: {
                             accept: 'application/json',
+                            'x-csrf-token': profilePhotoUploader.dataset.csrfToken || '',
                         },
                         body: formData,
                     });

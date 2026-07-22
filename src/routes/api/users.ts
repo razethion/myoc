@@ -2,8 +2,9 @@ import {Hono} from 'hono'
 import {z} from 'zod'
 import {getCurrentUser} from '../../lib/auth/session'
 import {jsonResponse} from '../../lib/http/jsonResponse'
+import {readFormDataUpTo} from '../../lib/http/requestBody'
 import {ErrorResponseSchema, responseSchema} from '../../lib/http/responseSchemas'
-import {normalizeProfileImagePayload, PROFILE_IMAGE_MAX_REQUEST_BYTES} from '../../lib/media/profileImage'
+import {normalizeProfileImagePayload, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/profileImage'
 import {profilePhotoObjectKey, profilePhotoUrl} from '../../lib/media/url'
 import {APP_VERSION} from '../../lib/releases'
 import type {Bindings} from '../../types/bindings'
@@ -47,13 +48,11 @@ userRoutes.post('/me/profile-photo', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
-    const contentLength = Number(c.req.header('content-length') ?? 0)
+    const form = await readFormDataUpTo(c.req.raw, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES)
 
-    if (contentLength > PROFILE_IMAGE_MAX_REQUEST_BYTES) {
+    if (!form) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Profile photo upload is too large'}, 413)
     }
-
-    const form = await c.req.formData()
     const file = form.get('profilePhoto')
 
     if (!(file instanceof File)) {

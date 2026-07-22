@@ -1,5 +1,6 @@
 import {describe, expect, it, vi} from 'vitest'
 import {createCsrfToken} from '../../lib/auth/session'
+import {PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/profileImage'
 import {
     createAvifFile,
     createBigEndianExifOrientationJpegFile,
@@ -480,7 +481,11 @@ function expectCloudflarePreviewFetch(callIndex: number, expectedUrlWithoutQuery
         }
     }
 
-    expect(url).toMatch(new RegExp(`^${escapeRegExp(expectedSourceUrl)}\\?preview_cache_bust=${uuidPattern}$`))
+    const parsedUrl = new URL(url)
+    expect(`${parsedUrl.origin}${parsedUrl.pathname}`).toBe(expectedSourceUrl)
+    expect(parsedUrl.searchParams.get('preview_cache_bust')).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    )
     expect(init).toEqual(
         expect.objectContaining({
             cf: {
@@ -496,10 +501,6 @@ function expectCloudflarePreviewFetch(callIndex: number, expectedUrlWithoutQuery
     expect(requestInit.cf?.image).toEqual(expectedImageOptions)
 
     return url
-}
-
-function escapeRegExp(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 async function initExistingChunkedMedia(
@@ -1470,6 +1471,34 @@ describe('POST /characters/folders', () => {
         expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 90})
     })
 
+    it('allows base64-expanded folder image JSON bodies to reach image validation', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const imagesBinding = createMockImagesBinding()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postFolder(
+            {
+                name: 'Main Characters',
+                parentFolderId: 'root',
+                folderImageData: `data:image/png;base64,${'A'.repeat(3 * 1024 * 1024)}`,
+            },
+            db,
+            {
+                imagesBinding,
+                mediaBucket,
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(201)
+        expect(imagesBinding.input).toHaveBeenCalledOnce()
+        expect(mediaBucket.put).toHaveBeenCalledOnce()
+    })
+
     it('creates a nested folder', async () => {
         const sessionToken = 'session-token'
         const {db, boundStatements} = createMockDb({
@@ -1635,7 +1664,7 @@ describe('POST /characters/folders/:id/image', () => {
         form.set('folderImage', createWebpFile())
 
         const response = await postFolderImage('folder-id', form, db, {
-            contentLength: String(3 * 1024 * 1024 + 1),
+            contentLength: String(PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES + 1),
             mediaBucket,
             sessionToken,
             csrfToken: await createCsrfToken(sessionToken),
@@ -1646,6 +1675,27 @@ describe('POST /characters/folders/:id/image', () => {
             error: 'Folder image upload is too large',
         })
         expect(db.prepare).not.toHaveBeenCalled()
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
+    it('allows multipart framing around a 3 MB folder image before image validation', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const folder = createFolderRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, folder],
+        })
+        const form = new FormData()
+        form.set('folderImage', new File([new Uint8Array(3 * 1024 * 1024)], 'folder.webp', {type: 'image/webp'}))
+
+        const response = await postFolderImage(folder.id, form, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Folder image must be 2 MB or smaller'})
         expect(mediaBucket.put).not.toHaveBeenCalled()
     })
 
@@ -2315,7 +2365,7 @@ describe('POST /characters', () => {
         form.set('new-character-profile-image', createWebpFile())
 
         const response = await postCharacter(form, db, {
-            contentLength: String(3 * 1024 * 1024 + 1),
+            contentLength: String(PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES + 1),
             mediaBucket,
             sessionToken,
         })
@@ -2325,6 +2375,55 @@ describe('POST /characters', () => {
             error: 'Character profile image upload is too large',
         })
         expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
+    it('allows multipart framing around a 3 MB character profile image before image validation', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+        const form = new FormData()
+        form.set('csrfToken', await createCsrfToken(sessionToken))
+        form.set('new-character-name', 'Ren')
+        form.set('new-character-profile-image', new File([new Uint8Array(3 * 1024 * 1024)], 'profile.webp', {type: 'image/webp'}))
+
+        const response = await postCharacter(form, db, {
+            mediaBucket,
+            sessionToken,
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Character profile image must be 2 MB or smaller'})
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
+    it('allows base64-expanded JSON profile image bodies to reach image validation', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const imagesBinding = createMockImagesBinding()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postCharacter(
+            {
+                name: 'Ren',
+                folderId: 'root',
+                profileImageData: `data:image/png;base64,${'A'.repeat(3 * 1024 * 1024)}`,
+            },
+            db,
+            {
+                imagesBinding,
+                mediaBucket,
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(201)
+        expect(imagesBinding.input).toHaveBeenCalledOnce()
+        expect(mediaBucket.put).toHaveBeenCalledOnce()
     })
 
     it('returns 409 when the character name already exists for the current user', async () => {
@@ -2556,7 +2655,7 @@ describe('POST /characters/:id/profile-image', () => {
         form.set('profileImage', createWebpFile())
 
         const response = await postProfileImage('character-id', form, db, {
-            contentLength: String(3 * 1024 * 1024 + 1),
+            contentLength: String(PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES + 1),
             mediaBucket,
             sessionToken,
             csrfToken: await createCsrfToken(sessionToken),
@@ -2567,6 +2666,27 @@ describe('POST /characters/:id/profile-image', () => {
             error: 'Character profile image upload is too large',
         })
         expect(db.prepare).not.toHaveBeenCalled()
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
+    it('allows multipart framing around a 3 MB character profile image before image validation', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord, character],
+        })
+        const form = new FormData()
+        form.set('profileImage', new File([new Uint8Array(3 * 1024 * 1024)], 'profile.webp', {type: 'image/webp'}))
+
+        const response = await postProfileImage(character.id, form, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Character profile image must be 2 MB or smaller'})
         expect(mediaBucket.put).not.toHaveBeenCalled()
     })
 
@@ -6916,6 +7036,10 @@ describe('characters internal helper coverage', () => {
         expect(__charactersTestHooks.readProfileImageDataUrl('data:image/png;base64,%%%%')).toEqual({
             error: 'Character profile image must be a base64 data URL',
             status: 400,
+        })
+        expect(__charactersTestHooks.readProfileImageDataUrl(`data:image/png;base64,${'A'.repeat(4 * 1024 * 1024 + 5)}`)).toEqual({
+            error: 'Character profile image upload is too large',
+            status: 413,
         })
         expect(__charactersTestHooks.readProfileImageDataUrl('data:IMAGE/PNG;base64,AQID')).toEqual({
             contentType: 'image/png',

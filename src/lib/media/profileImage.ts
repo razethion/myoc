@@ -6,7 +6,10 @@ const PROFILE_IMAGE_WEBP_QUALITY = 90
 const PROFILE_IMAGE_CONTENT_TYPE = 'image/webp'
 const PROFILE_IMAGE_CONVERTIBLE_CONTENT_TYPES = new Set(['image/png', 'image/jpeg'])
 export const PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR = 'Unexpected media, contact support'
-export const PROFILE_IMAGE_MAX_REQUEST_BYTES = 3 * 1024 * 1024
+const PROFILE_IMAGE_MAX_REQUEST_BYTES = 3 * 1024 * 1024
+const PROFILE_IMAGE_MAX_DATA_URL_BYTES = Math.ceil(PROFILE_IMAGE_MAX_REQUEST_BYTES / 3) * 4 + 4
+export const PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES = PROFILE_IMAGE_MAX_DATA_URL_BYTES + 16 * 1024
+export const PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES = PROFILE_IMAGE_MAX_REQUEST_BYTES + 64 * 1024
 
 type ProfileImagePayload = {
     contentType: string
@@ -52,9 +55,13 @@ export async function normalizeProfileImagePayload(
     | NormalizedProfileImagePayload
     | {
           error: string
-          status: 400
+          status: 400 | 413
       }
 > {
+    if (image.bytes.byteLength > PROFILE_IMAGE_MAX_REQUEST_BYTES) {
+        return {error: `${label} upload is too large`, status: 413}
+    }
+
     const contentType = image.contentType.toLowerCase()
     const normalizedImage: NormalizedProfileImagePayload | {error: string; status: 400} =
         contentType === PROFILE_IMAGE_CONTENT_TYPE
@@ -125,4 +132,8 @@ function streamFromBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
             controller.close()
         },
     })
+}
+
+export function isProfileImageDataUrlTooLarge(encodedBytes: string): boolean {
+    return encodedBytes.length > PROFILE_IMAGE_MAX_DATA_URL_BYTES
 }
