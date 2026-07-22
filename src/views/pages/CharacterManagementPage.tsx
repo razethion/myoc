@@ -340,7 +340,7 @@ function CharacterManagementScript({
 
         function renderFolderControls() {
             const selectedValue = selectedFolderId || 'root';
-            renderFolderSelect(document.getElementById('new-character-folder'), selectedValue);
+            renderFolderSelect(document.getElementById('new-character-folder'), 'root');
             renderFolderSelect(document.getElementById('new-folder-parent'), selectedValue);
         }
 

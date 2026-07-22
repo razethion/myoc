@@ -2532,6 +2532,7 @@ describe('GET /characters', () => {
         expect(html).toContain('https://m.myoc.art/characters/current-user/folders/folder-alpha/image/folder-alpha-image.webp')
         expect(html).toContain('https://m.myoc.art/characters/current-user/character-alpha/profile/alpha-profile.webp')
         expect(html).toContain('"folderId":"folder-alpha","characterId":"character-alpha","sortOrder":0')
+        expect(html).toContain("renderFolderSelect(document.getElementById('new-character-folder'), 'root')")
     })
 
     it('renders pointer-based drag sorting for mobile character management', async () => {
