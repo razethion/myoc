@@ -6917,6 +6917,10 @@ describe('characters internal helper coverage', () => {
             error: 'Character profile image must be a base64 data URL',
             status: 400,
         })
+        expect(__charactersTestHooks.readProfileImageDataUrl(`data:image/png;base64,${'A'.repeat(4 * 1024 * 1024 + 5)}`)).toEqual({
+            error: 'Character profile image upload is too large',
+            status: 413,
+        })
         expect(__charactersTestHooks.readProfileImageDataUrl('data:IMAGE/PNG;base64,AQID')).toEqual({
             contentType: 'image/png',
             bytes: new Uint8Array([1, 2, 3]),

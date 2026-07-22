@@ -135,6 +135,7 @@ async function postProfilePhoto(
             body: form,
             headers: {
                 cookie: `myoc_session=${options.sessionToken}`,
+                'x-csrf-token': options.csrfToken,
             },
         },
         {
@@ -983,6 +984,26 @@ describe('POST /users/me/profile-photo', () => {
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
             error: 'Profile photo must be 2 MB or smaller',
+        })
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
+    it('rejects oversized profile photo bodies without relying on Content-Length', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postProfilePhoto(db, mediaBucket, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+            file: new File([new Uint8Array(3 * 1024 * 1024)], 'profile-photo.webp', {type: 'image/webp'}),
+        })
+
+        expect(response.status).toBe(413)
+        expect(await response.json()).toEqual({
+            error: 'Profile photo upload is too large',
         })
         expect(mediaBucket.put).not.toHaveBeenCalled()
     })

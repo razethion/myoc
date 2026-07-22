@@ -5,6 +5,7 @@ import {queueImageReview} from '../../lib/admin/imageApprovals'
 import {type CurrentUser, getCurrentUser, toSqlTimestamp} from '../../lib/auth/session'
 import {GALLERY_CHUNK_SIZE, GALLERY_MAX_IMAGES_PER_ROW, shouldForceGalleryRowFullWidth} from '../../lib/gallery'
 import {jsonResponse} from '../../lib/http/jsonResponse'
+import {readFormDataUpTo, readJsonUpTo} from '../../lib/http/requestBody'
 import {
     CharacterFolderSchema,
     CharacterHeightChartSchema,
@@ -18,7 +19,7 @@ import {
     responseSchema,
 } from '../../lib/http/responseSchemas'
 import {getPngDimensions} from '../../lib/media/png'
-import {normalizeProfileImagePayload, PROFILE_IMAGE_MAX_REQUEST_BYTES} from '../../lib/media/profileImage'
+import {isProfileImageDataUrlTooLarge, normalizeProfileImagePayload, PROFILE_IMAGE_MAX_REQUEST_BYTES} from '../../lib/media/profileImage'
 import {
     characterFolderImageObjectKey,
     characterFolderImageUrl,
@@ -524,7 +525,7 @@ characterRoutes.post('/folders', async (c) => {
     const parsed = await parseCreateFolderRequest(c.req)
 
     if ('error' in parsed) {
-        return jsonResponse(c, ErrorResponseSchema, {error: parsed.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: parsed.error}, parsed.status ?? 400)
     }
 
     const nameResult = normalizeFolderName(parsed.name)
@@ -670,7 +671,11 @@ characterRoutes.post('/folders/:id/image', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Multipart form data is required'}, 400)
     }
 
-    const form = await c.req.formData()
+    const form = await readFormDataUpTo(c.req.raw, PROFILE_IMAGE_MAX_REQUEST_BYTES)
+
+    if (!form) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Folder image upload is too large'}, 413)
+    }
     const folder = await getOwnedFolder(c.env.DB, currentUser.id, c.req.param('id') ?? '')
 
     if (!folder) {
@@ -976,7 +981,7 @@ characterRoutes.post('/:id/profile-image', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Character profile image upload is too large'}, 413)
     }
 
-    const owned = await requireOwnedCharacterMultipartForm(c)
+    const owned = await requireOwnedCharacterMultipartForm(c, PROFILE_IMAGE_MAX_REQUEST_BYTES)
 
     if (owned instanceof Response) {
         return owned
@@ -2272,7 +2277,10 @@ async function requireOwnedCharacter(c: CharacterRouteContext): Promise<
 }
 
 /* istanbul ignore next -- exercised through route tests; remaining branch gaps are defensive content-type defaults. */
-async function requireOwnedCharacterMultipartForm(c: CharacterRouteContext): Promise<
+async function requireOwnedCharacterMultipartForm(
+    c: CharacterRouteContext,
+    maxBodyBytes?: number,
+): Promise<
     | {
           currentUser: CurrentUser
           character: CharacterRecord
@@ -2292,9 +2300,15 @@ async function requireOwnedCharacterMultipartForm(c: CharacterRouteContext): Pro
         return jsonResponse(c, ErrorResponseSchema, {error: 'Multipart form data is required'}, 400)
     }
 
+    const form = maxBodyBytes ? await readFormDataUpTo(c.req.raw, maxBodyBytes) : await c.req.formData()
+
+    if (!form) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Character profile image upload is too large'}, 413)
+    }
+
     return {
         ...owned,
-        form: await c.req.formData(),
+        form,
     }
 }
 
@@ -3094,13 +3108,12 @@ async function parseCreateCharacterRequest(c: CharacterRouteContext): Promise<
     const contentType = c.req.header('content-type') ?? ''
 
     if (contentType.includes('multipart/form-data')) {
-        const contentLength = Number(c.req.header('content-length') ?? 0)
+        const form = await readFormDataUpTo(c.req.raw, PROFILE_IMAGE_MAX_REQUEST_BYTES)
 
-        if (contentLength > PROFILE_IMAGE_MAX_REQUEST_BYTES) {
+        if (!form) {
             return {error: 'Character profile image upload is too large', status: 413}
         }
 
-        const form = await c.req.formData()
         const profileImage = form.get('profileImage') ?? form.get('new-character-profile-image')
 
         return {
@@ -3112,7 +3125,11 @@ async function parseCreateCharacterRequest(c: CharacterRouteContext): Promise<
 
     if (contentType.includes('application/json')) {
         try {
-            const body = await c.req.json<CreateCharacterRequest>()
+            const body = await readJsonUpTo<CreateCharacterRequest>(c.req.raw, PROFILE_IMAGE_MAX_REQUEST_BYTES)
+
+            if (!body) {
+                return {error: 'Character profile image upload is too large', status: 413}
+            }
 
             return {
                 name: body.name ?? body['new-character-name'],
@@ -3136,13 +3153,18 @@ async function parseCreateFolderRequest(req: CharacterRouteContext['req']): Prom
       }
     | {
           error: string
+          status?: 400 | 413
       }
 > {
     const contentType = req.header('content-type') ?? ''
 
     if (contentType.includes('application/json')) {
         try {
-            const body = await req.json<CreateFolderRequest>()
+            const body = await readJsonUpTo<CreateFolderRequest>(req.raw, PROFILE_IMAGE_MAX_REQUEST_BYTES)
+
+            if (!body) {
+                return {error: 'Folder image upload is too large', status: 413}
+            }
 
             return {
                 name: body.name ?? body['new-folder-name'],
@@ -4197,7 +4219,7 @@ async function validateProfileImage(
         return {error: `${label} is required`, status: 400}
     }
 
-    const profileImage = file instanceof File ? await readProfileImageFile(file) : readProfileImageDataUrl(file.data)
+    const profileImage = file instanceof File ? await readProfileImageFile(file) : readProfileImageDataUrl(file.data, label)
 
     if ('error' in profileImage) {
         return profileImage
@@ -4215,24 +4237,24 @@ async function validateProfileImage(
     }
 }
 
-async function readProfileImageFile(file: File): Promise<{
-    contentType: string
-    bytes: Uint8Array
-}> {
+async function readProfileImageFile(file: File): Promise<{contentType: string; bytes: Uint8Array}> {
     return {
         contentType: file.type,
         bytes: new Uint8Array(await file.arrayBuffer()),
     }
 }
 
-function readProfileImageDataUrl(value: string):
+function readProfileImageDataUrl(
+    value: string,
+    label = 'Character profile image',
+):
     | {
           contentType: string
           bytes: Uint8Array
       }
     | {
           error: string
-          status: 400
+          status: 400 | 413
       } {
     const match = /^data:([^;,]+);base64,(.+)$/i.exec(value)
 
@@ -4245,6 +4267,10 @@ function readProfileImageDataUrl(value: string):
     /* istanbul ignore if -- the data URL regex requires both capture groups to be non-empty. */
     if (!contentType || !encodedBytes) {
         return {error: 'Character profile image must be a base64 data URL', status: 400}
+    }
+
+    if (isProfileImageDataUrlTooLarge(encodedBytes)) {
+        return {error: `${label} upload is too large`, status: 413}
     }
 
     try {

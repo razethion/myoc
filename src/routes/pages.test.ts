@@ -8,7 +8,7 @@ import {createMockImagesBinding} from '../test/mockImages'
 import {createMockKVNamespace} from '../test/mockKV'
 import {createMockR2Bucket} from '../test/mockR2'
 import {resetWorkerBindings, workerEnv} from '../test/workerBindings'
-import {pageRoutes} from './pages'
+import {__pagesTestHooks, pageRoutes} from './pages'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
 const NON_HTML_CONTENT_SECURITY_POLICY = [
@@ -20,6 +20,14 @@ const NON_HTML_CONTENT_SECURITY_POLICY = [
     'sandbox',
 ].join('; ')
 const LEADERBOARD_CACHE_KEY = 'leaderboard:daily:v1'
+
+describe('page image helpers', () => {
+    it('rejects oversized imported profile image data URLs before decoding', () => {
+        expect(__pagesTestHooks.readProfileImageDataUrl(`data:image/png;base64,${'A'.repeat(4 * 1024 * 1024 + 5)}`)).toEqual({
+            error: 'Profile image upload is too large',
+        })
+    })
+})
 
 afterEach(async () => {
     vi.restoreAllMocks()
