@@ -98,7 +98,7 @@ const HOME_PAGE_FEATURE_BLOCKS = [
     },
     {
         title: 'Open source',
-        body: 'We\'re an open book. Contributions to our project are always welcome.',
+        body: "We're an open book. Contributions to our project are always welcome.",
     },
     {
         title: 'One clear goal',
