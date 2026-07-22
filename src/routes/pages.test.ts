@@ -8,7 +8,7 @@ import {createMockImagesBinding} from '../test/mockImages'
 import {createMockKVNamespace} from '../test/mockKV'
 import {createMockR2Bucket} from '../test/mockR2'
 import {resetWorkerBindings, workerEnv} from '../test/workerBindings'
-import {__pagesTestHooks, pageRoutes} from './pages'
+import {pageRoutes} from './pages'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
 const NON_HTML_CONTENT_SECURITY_POLICY = [
@@ -20,14 +20,6 @@ const NON_HTML_CONTENT_SECURITY_POLICY = [
     'sandbox',
 ].join('; ')
 const LEADERBOARD_CACHE_KEY = 'leaderboard:daily:v1'
-
-describe('page image helpers', () => {
-    it('rejects oversized imported profile image data URLs before decoding', () => {
-        expect(__pagesTestHooks.readProfileImageDataUrl(`data:image/png;base64,${'A'.repeat(4 * 1024 * 1024 + 5)}`)).toEqual({
-            error: 'Profile image upload is too large',
-        })
-    })
-})
 
 afterEach(async () => {
     vi.restoreAllMocks()
@@ -1917,6 +1909,61 @@ describe('GET /migrate', () => {
 
         expect(response.status).toBe(200)
         expect(html).toContain('Unexpected media, contact support')
+        expect(bucket.put).not.toHaveBeenCalled()
+    })
+
+    it('shows a media error when a Toyhou.se profile image data URL is oversized', async () => {
+        const payload = {
+            myocUserId: 'current-user',
+            profileUrl: 'https://toyhou.se/demo',
+            folderUrl: 'https://toyhou.se/demo/characters/folder:all',
+            pagesFetched: 1,
+            characters: [
+                {
+                    id: '9430171',
+                    images: [
+                        {
+                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png',
+                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/9430171_thumb.png',
+                        },
+                    ],
+                    imageCount: 1,
+                    name: 'Absinthe',
+                    thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485',
+                    url: 'https://toyhou.se/9430171.absinthe',
+                },
+            ],
+        }
+        const form = new FormData()
+        form.set('toyhousePayload', JSON.stringify(payload))
+        form.append('characterIds', '9430171')
+        form.set('profileImageDataUrl:9430171', `data:image/png;base64,${'A'.repeat(4 * 1024 * 1024 + 5)}`)
+        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png')
+
+        const db = createProfilePageDb({
+            currentUser: createCurrentUserRecord('demo'),
+        })
+        const bucket = createMockR2Bucket()
+        const response = await app.request(
+            'https://example.com/migrate/import/confirm',
+            {
+                body: form,
+                headers: {
+                    cookie: 'myoc_session=session-token',
+                },
+                method: 'POST',
+            },
+            {
+                CACHE: createMockKVNamespace(),
+                DB: db,
+                MEDIA_BUCKET: bucket,
+                MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+            },
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Profile image upload is too large')
         expect(bucket.put).not.toHaveBeenCalled()
     })
 

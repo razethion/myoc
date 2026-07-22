@@ -1,23 +1,29 @@
 import {describe, expect, it, vi} from 'vitest'
-import {readJsonUpTo, readRequestBodyUpTo} from './requestBody'
+import {readJsonUpTo} from './requestBody'
 
 describe('request body limits', () => {
     it('returns empty bytes when a request has no body', async () => {
-        await expect(readRequestBodyUpTo(new Request('https://example.com'), 10)).resolves.toEqual(new Uint8Array())
+        await expect(readJsonUpTo(new Request('https://example.com'), 10)).rejects.toThrow()
     })
 
     it('skips empty stream chunks', async () => {
         const reader = {
-            read: vi.fn().mockResolvedValueOnce({done: false, value: undefined}).mockResolvedValueOnce({done: true, value: undefined}),
+            read: vi
+                .fn()
+                .mockResolvedValueOnce({done: false, value: undefined})
+                .mockResolvedValueOnce({done: false, value: new TextEncoder().encode('{}')})
+                .mockResolvedValueOnce({done: true, value: undefined}),
             releaseLock: vi.fn(),
             cancel: vi.fn(),
         }
         const request = {
+            url: 'https://example.com',
+            method: 'POST',
             headers: new Headers(),
             body: {getReader: () => reader},
         } as unknown as Request
 
-        await expect(readRequestBodyUpTo(request, 10)).resolves.toEqual(new Uint8Array())
+        await expect(readJsonUpTo(request, 10)).resolves.toEqual({})
         expect(reader.releaseLock).toHaveBeenCalledOnce()
     })
 
@@ -36,7 +42,7 @@ describe('request body limits', () => {
             body: null,
         } as unknown as Request
 
-        await expect(readRequestBodyUpTo(request, 10)).resolves.toBeNull()
+        await expect(readJsonUpTo(request, 10)).resolves.toBeNull()
     })
 
     it('accepts a safe content-length within the limit', async () => {
@@ -45,6 +51,6 @@ describe('request body limits', () => {
             body: null,
         } as unknown as Request
 
-        await expect(readRequestBodyUpTo(request, 10)).resolves.toEqual(new Uint8Array())
+        await expect(readJsonUpTo(request, 10)).rejects.toThrow()
     })
 })

@@ -480,7 +480,11 @@ function expectCloudflarePreviewFetch(callIndex: number, expectedUrlWithoutQuery
         }
     }
 
-    expect(url).toMatch(new RegExp(`^${escapeRegExp(expectedSourceUrl)}\\?preview_cache_bust=${uuidPattern}$`))
+    const parsedUrl = new URL(url)
+    expect(`${parsedUrl.origin}${parsedUrl.pathname}`).toBe(expectedSourceUrl)
+    expect(parsedUrl.searchParams.get('preview_cache_bust')).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    )
     expect(init).toEqual(
         expect.objectContaining({
             cf: {
@@ -496,10 +500,6 @@ function expectCloudflarePreviewFetch(callIndex: number, expectedUrlWithoutQuery
     expect(requestInit.cf?.image).toEqual(expectedImageOptions)
 
     return url
-}
-
-function escapeRegExp(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 async function initExistingChunkedMedia(
@@ -2325,6 +2325,34 @@ describe('POST /characters', () => {
             error: 'Character profile image upload is too large',
         })
         expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
+    it('allows base64-expanded JSON profile image bodies to reach image validation', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const imagesBinding = createMockImagesBinding()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postCharacter(
+            {
+                name: 'Ren',
+                folderId: 'root',
+                profileImageData: `data:image/png;base64,${'A'.repeat(3 * 1024 * 1024)}`,
+            },
+            db,
+            {
+                imagesBinding,
+                mediaBucket,
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(201)
+        expect(imagesBinding.input).toHaveBeenCalledOnce()
+        expect(mediaBucket.put).toHaveBeenCalledOnce()
     })
 
     it('returns 409 when the character name already exists for the current user', async () => {

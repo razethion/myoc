@@ -19,7 +19,12 @@ import {
     responseSchema,
 } from '../../lib/http/responseSchemas'
 import {getPngDimensions} from '../../lib/media/png'
-import {isProfileImageDataUrlTooLarge, normalizeProfileImagePayload, PROFILE_IMAGE_MAX_REQUEST_BYTES} from '../../lib/media/profileImage'
+import {
+    isProfileImageDataUrlTooLarge,
+    normalizeProfileImagePayload,
+    PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES,
+    PROFILE_IMAGE_MAX_REQUEST_BYTES,
+} from '../../lib/media/profileImage'
 import {
     characterFolderImageObjectKey,
     characterFolderImageUrl,
@@ -3125,7 +3130,7 @@ async function parseCreateCharacterRequest(c: CharacterRouteContext): Promise<
 
     if (contentType.includes('application/json')) {
         try {
-            const body = await readJsonUpTo<CreateCharacterRequest>(c.req.raw, PROFILE_IMAGE_MAX_REQUEST_BYTES)
+            const body = await readJsonUpTo<CreateCharacterRequest>(c.req.raw, PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES)
 
             if (!body) {
                 return {error: 'Character profile image upload is too large', status: 413}

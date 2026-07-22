@@ -1435,10 +1435,6 @@ function readProfileImageDataUrl(value: string): {contentType: string; bytes: Ui
     }
 }
 
-export const __pagesTestHooks = {
-    readProfileImageDataUrl,
-}
-
 async function deleteR2Objects(bucket: R2Bucket, objectKeys: string[]): Promise<void> {
     for (const objectKey of objectKeys) {
         try {

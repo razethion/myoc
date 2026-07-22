@@ -1,4 +1,4 @@
-export async function readRequestBodyUpTo(request: Request, maxBytes: number): Promise<Uint8Array | null> {
+async function readRequestBodyUpTo(request: Request, maxBytes: number): Promise<Uint8Array | null> {
     const contentLength = request.headers.get('content-length')
 
     if (contentLength !== null) {
