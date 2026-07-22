@@ -23,7 +23,7 @@ import {
     isProfileImageDataUrlTooLarge,
     normalizeProfileImagePayload,
     PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES,
-    PROFILE_IMAGE_MAX_REQUEST_BYTES,
+    PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES,
 } from '../../lib/media/profileImage'
 import {
     characterFolderImageObjectKey,
@@ -660,7 +660,7 @@ characterRoutes.patch('/folders/:id', async (c) => {
 characterRoutes.post('/folders/:id/image', async (c) => {
     const contentLength = Number(c.req.header('content-length') ?? 0)
 
-    if (contentLength > PROFILE_IMAGE_MAX_REQUEST_BYTES) {
+    if (contentLength > PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Folder image upload is too large'}, 413)
     }
 
@@ -676,7 +676,7 @@ characterRoutes.post('/folders/:id/image', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Multipart form data is required'}, 400)
     }
 
-    const form = await readFormDataUpTo(c.req.raw, PROFILE_IMAGE_MAX_REQUEST_BYTES)
+    const form = await readFormDataUpTo(c.req.raw, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES)
 
     if (!form) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Folder image upload is too large'}, 413)
@@ -982,11 +982,11 @@ characterRoutes.patch('/:id', async (c) => {
 characterRoutes.post('/:id/profile-image', async (c) => {
     const contentLength = Number(c.req.header('content-length') ?? 0)
 
-    if (contentLength > PROFILE_IMAGE_MAX_REQUEST_BYTES) {
+    if (contentLength > PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Character profile image upload is too large'}, 413)
     }
 
-    const owned = await requireOwnedCharacterMultipartForm(c, PROFILE_IMAGE_MAX_REQUEST_BYTES)
+    const owned = await requireOwnedCharacterMultipartForm(c, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES)
 
     if (owned instanceof Response) {
         return owned
@@ -3113,7 +3113,7 @@ async function parseCreateCharacterRequest(c: CharacterRouteContext): Promise<
     const contentType = c.req.header('content-type') ?? ''
 
     if (contentType.includes('multipart/form-data')) {
-        const form = await readFormDataUpTo(c.req.raw, PROFILE_IMAGE_MAX_REQUEST_BYTES)
+        const form = await readFormDataUpTo(c.req.raw, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES)
 
         if (!form) {
             return {error: 'Character profile image upload is too large', status: 413}
@@ -3165,7 +3165,7 @@ async function parseCreateFolderRequest(req: CharacterRouteContext['req']): Prom
 
     if (contentType.includes('application/json')) {
         try {
-            const body = await readJsonUpTo<CreateFolderRequest>(req.raw, PROFILE_IMAGE_MAX_REQUEST_BYTES)
+            const body = await readJsonUpTo<CreateFolderRequest>(req.raw, PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES)
 
             if (!body) {
                 return {error: 'Folder image upload is too large', status: 413}

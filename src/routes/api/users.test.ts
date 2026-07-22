@@ -1,6 +1,7 @@
 import {compare} from 'bcryptjs'
 import {describe, expect, it, vi} from 'vitest'
 import {createCsrfToken} from '../../lib/auth/session'
+import {PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/profileImage'
 import {APP_VERSION} from '../../lib/releases'
 import {expectSessionCookie} from '../../test/assertions'
 import {
@@ -988,7 +989,7 @@ describe('POST /users/me/profile-photo', () => {
         expect(mediaBucket.put).not.toHaveBeenCalled()
     })
 
-    it('rejects oversized profile photo bodies without relying on Content-Length', async () => {
+    it('allows multipart framing around a 3 MB profile photo before image validation', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
         const {db} = createMockDb({
@@ -999,6 +1000,28 @@ describe('POST /users/me/profile-photo', () => {
             sessionToken,
             csrfToken: await createCsrfToken(sessionToken),
             file: new File([new Uint8Array(3 * 1024 * 1024)], 'profile-photo.webp', {type: 'image/webp'}),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Profile photo must be 2 MB or smaller',
+        })
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
+    it('rejects profile photo bodies that exceed the multipart allowance', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const {db} = createMockDb({
+            firstResults: [currentUserRecord],
+        })
+
+        const response = await postProfilePhoto(db, mediaBucket, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+            file: new File([new Uint8Array(PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES + 1)], 'profile-photo.webp', {
+                type: 'image/webp',
+            }),
         })
 
         expect(response.status).toBe(413)

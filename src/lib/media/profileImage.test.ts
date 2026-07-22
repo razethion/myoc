@@ -1,6 +1,6 @@
 import {describe, expect, it, vi} from 'vitest'
 import {createPngFile, createWebpBytes, createWebpFile} from '../../test/imageFixtures'
-import {normalizeProfileImagePayload, PROFILE_IMAGE_MAX_REQUEST_BYTES, PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR} from './profileImage'
+import {normalizeProfileImagePayload, PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR} from './profileImage'
 
 describe('normalizeProfileImagePayload', () => {
     it('accepts valid WebP profile images without Cloudflare Images', async () => {
@@ -75,7 +75,7 @@ describe('normalizeProfileImagePayload', () => {
 
     it('rejects oversized source bytes before invoking the Images binding', async () => {
         const images = createImagesBinding({})
-        const bytes = new Uint8Array(PROFILE_IMAGE_MAX_REQUEST_BYTES + 1)
+        const bytes = new Uint8Array(3 * 1024 * 1024 + 1)
 
         await expect(normalizeProfileImagePayload({contentType: 'image/png', bytes}, 'Profile photo', images)).resolves.toEqual({
             error: 'Profile photo upload is too large',
