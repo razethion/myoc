@@ -810,6 +810,9 @@ function createLightboxViewer(src, width, height) {
     galleryLightboxViewer = window.OpenSeadragon({
         id: 'lightbox-viewer',
         prefixUrl: '/vendor/openseadragon/images/',
+        // Keep the viewer on the 2D canvas drawer so transparent PNG/WebP pixels
+        // remain transparent instead of being flattened by the WebGL compositor.
+        drawer: 'canvas',
         crossOriginPolicy: 'Anonymous',
         ajaxWithCredentials: false,
         tileSources: {
