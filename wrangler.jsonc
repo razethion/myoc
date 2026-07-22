@@ -4,6 +4,9 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-06-10",
   "workers_dev": false,
+  "dev": {
+    "enable_containers": false
+  },
   "observability": {
     "logs": {
       "enabled": true,
