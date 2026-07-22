@@ -97,8 +97,8 @@ const HOME_PAGE_FEATURE_BLOCKS = [
         body: "MyOC runs on serverless infrastructure, backed by Cloudflare. We don't go down unless they do.",
     },
     {
-        title: 'Source-available (nerd)',
-        body: 'We always welcome contributions to our project. Judge my code on github @ razethion/myoc',
+        title: 'Open source',
+        body: "We're an open book. Contributions to our project are always welcome.",
     },
     {
         title: 'One clear goal',
