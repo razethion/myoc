@@ -2208,8 +2208,9 @@ export function CharacterPage({
                             </div>
 
                             <div class="min-w-0">
+
+                                <h1 class="mt-2 wrap-break-word text-2xl font-bold tracking-tight sm:text-5xl">{character.name}</h1>
                                 <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-base-content/70">
-                                    <span class="badge badge-outline badge-sm">Character</span>
                                     <span aria-hidden="true">by</span>
                                     <a
                                         class="inline-flex min-w-0 items-center gap-2 font-semibold text-base-content transition-colors hover:text-base-content/70"
@@ -2231,7 +2232,6 @@ export function CharacterPage({
                                         <span class="truncate">{profileUser.username}</span>
                                     </a>
                                 </div>
-                                <h1 class="mt-2 break-words text-4xl font-bold tracking-tight sm:text-5xl">{character.name}</h1>
                             </div>
                         </div>
 
@@ -2257,7 +2257,7 @@ export function CharacterPage({
                     </div>
 
                     {character.description ? (
-                        <div class="max-w-3xl pt-5">
+                        <div class="pt-5">
                             <p class="whitespace-pre-wrap text-base leading-7 text-base-content/70">{character.description}</p>
                         </div>
                     ) : null}
@@ -2266,7 +2266,6 @@ export function CharacterPage({
                 <section aria-labelledby="gallery-heading" class="mb-5">
                     <div class="flex flex-col gap-3 border-b border-base-300 pb-4 sm:flex-row sm:items-end sm:justify-between">
                         <div>
-                            <p class="text-xs font-semibold uppercase tracking-[0.18em] text-base-content/60">Portfolio</p>
                             <h2 class="mt-1 text-2xl font-semibold" id="gallery-heading">
                                 Gallery
                             </h2>
