@@ -358,6 +358,8 @@ function CharacterPageStyles() {
                 min-width: 0;
                 overflow: hidden;
                 position: relative;
+                -webkit-touch-callout: none;
+                user-select: none;
             }
 
             .justified-row:not(.row-force-full-width) {
@@ -375,18 +377,18 @@ function CharacterPageStyles() {
             }
 
             .gallery-image {
-                cursor: default;
                 display: block;
                 height: 100%;
                 object-fit: contain;
                 opacity: 1;
+                pointer-events: none;
                 transition: opacity 160ms ease;
                 user-select: none;
                 width: 100%;
                 -webkit-user-drag: none;
             }
 
-            .gallery-image.gallery-image-openable {
+            .gallery-media.gallery-media-openable {
                 cursor: zoom-in;
             }
 
@@ -394,13 +396,9 @@ function CharacterPageStyles() {
                 opacity: 0.35;
             }
 
-            .gallery-image:focus-visible {
+            .gallery-media.gallery-media-openable:focus-visible {
                 outline: 2px solid currentColor;
                 outline-offset: 3px;
-            }
-
-            .nsfw-media .gallery-image {
-                cursor: default;
             }
 
             .nsfw-media-warning {
@@ -1420,28 +1418,33 @@ function initGallerySortOptions() {
 
 function initLightbox(root = document) {
     root.querySelectorAll('.gallery-image').forEach((image) => {
-        if (image.dataset.lightboxBound === 'true') return;
-        image.dataset.lightboxBound = 'true';
+        const interactionTarget = image.closest('.gallery-media') || image;
+        if (interactionTarget.dataset.lightboxBound === 'true') return;
+        interactionTarget.dataset.lightboxBound = 'true';
         updateGalleryImageOpenState(image);
-        image.addEventListener('click', () => {
+        interactionTarget.addEventListener('click', (event) => {
+            if (event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) {
+                event.preventDefault();
+                return;
+            }
             if (image.dataset.longPressTriggered === 'true') {
                 delete image.dataset.longPressTriggered;
                 return;
             }
             requestGalleryImageAction(image, 'open');
         });
-        image.addEventListener('keydown', (event) => {
+        interactionTarget.addEventListener('keydown', (event) => {
             if (event.key !== 'Enter' && event.key !== ' ') return;
             event.preventDefault();
             requestGalleryImageAction(image, 'open');
         });
-        image.addEventListener('contextmenu', (event) => {
+        interactionTarget.addEventListener('contextmenu', (event) => {
             event.preventDefault();
             clearGalleryLongPressTimer();
             showGalleryContextMenu(image, event.clientX, event.clientY);
         });
-        image.addEventListener('dragstart', (event) => event.preventDefault());
-        bindGalleryLongPress(image);
+        interactionTarget.addEventListener('dragstart', (event) => event.preventDefault());
+        bindGalleryLongPress(interactionTarget, image);
     });
 }
 
@@ -1571,20 +1574,24 @@ function getGalleryImageDimensions(image) {
 
 function updateGalleryImageOpenState(image) {
     const isInteractive = image.dataset.nsfwHidden !== 'true' && Boolean(getGalleryOriginalUrl(image));
-    image.classList.toggle('gallery-image-openable', isInteractive);
+    const interactionTarget = image.closest('.gallery-media') || image;
+    interactionTarget.classList.toggle('gallery-media-openable', isInteractive);
+    image.removeAttribute('role');
+    image.removeAttribute('aria-label');
+    image.removeAttribute('tabindex');
 
     if (isInteractive) {
-        image.setAttribute('role', 'button');
-        image.setAttribute('aria-label', 'Open ' + (image.dataset.title || image.alt));
-        image.tabIndex = 0;
-        image.removeAttribute('aria-disabled');
+        interactionTarget.setAttribute('role', 'button');
+        interactionTarget.setAttribute('aria-label', 'Open ' + (image.dataset.title || image.alt));
+        interactionTarget.tabIndex = 0;
+        interactionTarget.removeAttribute('aria-disabled');
         return;
     }
 
-    image.removeAttribute('role');
-    image.removeAttribute('aria-label');
-    image.setAttribute('aria-disabled', 'true');
-    image.tabIndex = -1;
+    interactionTarget.removeAttribute('role');
+    interactionTarget.removeAttribute('aria-label');
+    interactionTarget.removeAttribute('tabindex');
+    interactionTarget.setAttribute('aria-disabled', 'true');
 }
 
 function setGalleryImageLoading(image, isLoading) {
@@ -1601,11 +1608,11 @@ function clearGalleryLongPressTimer() {
     }
 }
 
-function bindGalleryLongPress(image) {
+function bindGalleryLongPress(interactionTarget, image) {
     let startX = 0;
     let startY = 0;
 
-    image.addEventListener('pointerdown', (event) => {
+    interactionTarget.addEventListener('pointerdown', (event) => {
         if (event.pointerType !== 'touch') return;
         clearGalleryLongPressTimer();
         delete image.dataset.longPressTriggered;
@@ -1617,14 +1624,14 @@ function bindGalleryLongPress(image) {
             showGalleryContextMenu(image, event.clientX, event.clientY);
         }, 600);
     });
-    image.addEventListener('pointermove', (event) => {
+    interactionTarget.addEventListener('pointermove', (event) => {
         if (event.pointerType !== 'touch') return;
         if (Math.hypot(event.clientX - startX, event.clientY - startY) > 10) {
             clearGalleryLongPressTimer();
         }
     });
-    image.addEventListener('pointerup', clearGalleryLongPressTimer);
-    image.addEventListener('pointercancel', clearGalleryLongPressTimer);
+    interactionTarget.addEventListener('pointerup', clearGalleryLongPressTimer);
+    interactionTarget.addEventListener('pointercancel', clearGalleryLongPressTimer);
 }
 
 function hideGalleryContextMenu() {
@@ -1698,15 +1705,21 @@ function loadGalleryOriginalImage(image, onLoad, onError) {
     if (existingRequest?.src === originalSrc) {
         existingRequest.callbacks.push(onLoad);
         existingRequest.errorCallbacks.push(onError);
-        return;
+        return existingRequest;
     }
 
     galleryActiveOriginalRequest?.cancel();
     existingRequest?.cancel();
+    let resolveBlob;
+    const blobPromise = new Promise((resolve) => {
+        resolveBlob = resolve;
+    });
     const request = {
+        blobPromise,
         callbacks: [onLoad],
         errorCallbacks: [onError],
         retryCount: 0,
+        resolveBlob,
         settled: false,
         src: originalSrc,
     };
@@ -1771,6 +1784,7 @@ function loadGalleryOriginalImage(image, onLoad, onError) {
             URL.revokeObjectURL(request.objectUrl);
             request.objectUrl = '';
         }
+        request.resolveBlob(null);
         if (image.galleryOriginalRequest === request) {
             delete image.galleryOriginalRequest;
         }
@@ -1816,6 +1830,7 @@ function loadGalleryOriginalImage(image, onLoad, onError) {
                 if (request.settled) return;
                 const objectUrl = URL.createObjectURL(blob);
                 request.objectUrl = objectUrl;
+                request.resolveBlob(blob);
                 setGalleryFullscreenLoaderProgress(totalBytes, totalBytes);
                 setGalleryFullscreenLoaderStatus('Opening image viewer…');
                 finish(true, objectUrl, 0, 0);
@@ -1828,11 +1843,13 @@ function loadGalleryOriginalImage(image, onLoad, onError) {
                     startAttempt();
                     return;
                 }
+                request.resolveBlob(null);
                 finish(false, request.objectUrl || '', 0, 0);
             });
     };
 
     startAttempt();
+    return request;
 }
 
 function requestGalleryImageAction(image, action, options = {}) {
@@ -1848,18 +1865,14 @@ function requestGalleryImageAction(image, action, options = {}) {
         closeLightboxViewer({resetBookmark: false, updateHistory: false});
     }
 
-    loadGalleryOriginalImage(
+    const originalSrc = getGalleryOriginalUrl(image);
+    const request = loadGalleryOriginalImage(
         image,
         (original) => {
             if (action === 'open') {
                 openLightbox(image, original, options);
             } else if (action === 'download') {
                 downloadGalleryOriginal(original.src, image.dataset.title, original.sourceUrl).finally(() => {
-                    setGalleryFullscreenLoaderVisible(false);
-                    URL.revokeObjectURL(original.src);
-                });
-            } else if (action === 'copy') {
-                copyGalleryOriginal(original.src, original.sourceUrl).finally(() => {
                     setGalleryFullscreenLoaderVisible(false);
                     URL.revokeObjectURL(original.src);
                 });
@@ -1870,6 +1883,15 @@ function requestGalleryImageAction(image, action, options = {}) {
             setGalleryFullscreenLoaderStatus('Unable to load the full-resolution image');
         },
     );
+    if (action === 'copy') {
+        copyGalleryOriginal(request, originalSrc).finally(() => {
+            setGalleryFullscreenLoaderVisible(false);
+            if (request?.objectUrl) {
+                URL.revokeObjectURL(request.objectUrl);
+                request.objectUrl = '';
+            }
+        });
+    }
 }
 
 async function downloadGalleryOriginal(src, title, fallbackSrc = src) {
@@ -1883,16 +1905,30 @@ async function downloadGalleryOriginal(src, title, fallbackSrc = src) {
     }
 }
 
-async function copyGalleryOriginal(src, fallbackSrc = src) {
+function getGalleryClipboardMimeType(src) {
     try {
-        const response = await fetch(src, {credentials: 'omit', mode: 'cors'});
-        if (!response.ok) throw new Error('Copy failed');
-        const blob = await response.blob();
-        if (navigator.clipboard?.write && typeof window.ClipboardItem === 'function') {
-            await navigator.clipboard.write([new window.ClipboardItem({[blob.type]: blob})]);
-            return;
+        const pathname = new URL(src, window.location.href).pathname.toLowerCase();
+        if (pathname.endsWith('.jpg') || pathname.endsWith('.jpeg')) return 'image/jpeg';
+        if (pathname.endsWith('.gif')) return 'image/gif';
+        if (pathname.endsWith('.webp')) return 'image/webp';
+        if (pathname.endsWith('.avif')) return 'image/avif';
+    } catch {}
+    return 'image/png';
+}
+
+async function copyGalleryOriginal(request, fallbackSrc = request?.src) {
+    try {
+        if (!request?.blobPromise || !navigator.clipboard?.write || typeof window.ClipboardItem !== 'function') {
+            throw new Error('Image copy unavailable');
         }
-        throw new Error('Image copy unavailable');
+        const mimeType = getGalleryClipboardMimeType(request.src);
+        const item = new window.ClipboardItem({
+            [mimeType]: request.blobPromise.then((blob) => {
+                if (!blob) throw new Error('Copy failed');
+                return blob;
+            }),
+        });
+        await navigator.clipboard.write([item]);
     } catch {
         await navigator.clipboard?.writeText(fallbackSrc);
     }
@@ -2033,15 +2069,13 @@ function setGalleryMediaNsfwDisplay(media, displayNsfwMedia) {
     media.style.setProperty('--media-aspect', String(width / height));
 
     if (isHidden) {
-        image.tabIndex = -1;
-        image.removeAttribute('tabindex');
         media.classList.add('nsfw-media');
         if (warning) warning.hidden = false;
     } else {
         media.classList.remove('nsfw-media');
         if (warning) warning.hidden = true;
-        updateGalleryImageOpenState(image);
     }
+    updateGalleryImageOpenState(image);
 }
 
 function setNsfwMediaDisplay(displayNsfwMedia) {
