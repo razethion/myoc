@@ -628,7 +628,7 @@ function SettingsLink({characterId}: {characterId: string}) {
     return (
         <a
             aria-label="Content settings"
-            class="btn btn-square btn-ghost absolute right-3 top-4 sm:right-0"
+            class="btn btn-square btn-ghost absolute right-0 top-0"
             href={`/edit/${encodeURIComponent(characterId)}`}
             title="Settings"
         >
@@ -2187,74 +2187,111 @@ export function CharacterPage({
                 guestInitial={profileUser.username.trim().charAt(0).toUpperCase() || 'R'}
                 mediaBaseUrl={mediaBaseUrl}
             />
-            <main class="container relative mx-auto px-3 py-4 sm:px-0">
-                {canEdit ? <SettingsLink characterId={character.id} /> : null}
+            <main class="container mx-auto px-3 py-4 sm:px-4 lg:px-6">
+                <header class="relative mb-8 pr-12 sm:pr-14">
+                    {canEdit ? <SettingsLink characterId={character.id} /> : null}
 
-                <div class="mb-4 flex justify-center">
-                    <a class="flex items-center gap-3" href={`/u/${encodeURIComponent(profileUser.username)}`}>
-                        <img
-                            alt={`${profileUser.username} avatar`}
-                            class="h-12 w-12 rounded object-cover"
-                            decoding="async"
-                            height="48"
-                            loading="lazy"
-                            src={ownerProfileImageUrl}
-                            width="48"
-                        />
-                        <span class="text-lg font-light">{profileUser.username}</span>
-                    </a>
-                </div>
+                    <div class="flex flex-col gap-5 border-b border-base-300 pb-6 lg:flex-row lg:items-end lg:justify-between">
+                        <div class="flex min-w-0 items-center gap-4 sm:gap-5">
+                            <div class="avatar shrink-0">
+                                <div class="w-24 rounded-box bg-base-300 ring-1 ring-base-content/15 sm:w-32">
+                                    <img
+                                        alt={`${character.name} portrait`}
+                                        class="h-full w-full object-contain"
+                                        decoding="async"
+                                        height="128"
+                                        loading="lazy"
+                                        src={characterThumbnailUrl}
+                                        width="128"
+                                    />
+                                </div>
+                            </div>
 
-                <div class="mb-4 flex justify-center">
-                    <img
-                        alt={`${character.name} portrait`}
-                        class="h-28 w-28 rounded object-cover sm:h-32 sm:w-32"
-                        decoding="async"
-                        height="128"
-                        loading="lazy"
-                        src={characterThumbnailUrl}
-                        width="128"
-                    />
-                </div>
+                            <div class="min-w-0">
+                                <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-base-content/70">
+                                    <span class="badge badge-outline badge-sm">Character</span>
+                                    <span aria-hidden="true">by</span>
+                                    <a
+                                        class="inline-flex min-w-0 items-center gap-2 font-semibold text-base-content transition-colors hover:text-base-content/70"
+                                        href={`/u/${encodeURIComponent(profileUser.username)}`}
+                                    >
+                                        <span class="avatar shrink-0">
+                                            <div class="h-8 w-8 rounded-full ring-1 ring-base-content/10">
+                                                <img
+                                                    alt={`${profileUser.username} avatar`}
+                                                    class="h-full w-full object-cover"
+                                                    decoding="async"
+                                                    height="28"
+                                                    loading="lazy"
+                                                    src={ownerProfileImageUrl}
+                                                    width="28"
+                                                />
+                                            </div>
+                                        </span>
+                                        <span class="truncate">{profileUser.username}</span>
+                                    </a>
+                                </div>
+                                <h1 class="mt-2 break-words text-4xl font-bold tracking-tight sm:text-5xl">{character.name}</h1>
+                            </div>
+                        </div>
 
-                <h1 class="mb-4 break-words text-center text-5xl font-bold sm:text-6xl">{character.name}</h1>
-                {character.description ? (
-                    <p class="mx-auto mb-6 max-w-3xl whitespace-pre-wrap text-center font-light">{character.description}</p>
-                ) : null}
-
-                {character.hasHeightChart ? (
-                    <div class="mb-6 flex justify-center">
-                        <a class="btn btn-sm btn-outline rounded-full" href={sizeChartUrlForCharacter(character.id)}>
-                            View in Size Chart
-                        </a>
+                        {character.hasHeightChart || allowNsfwToggle ? (
+                            <div class="flex flex-wrap gap-2 lg:justify-end">
+                                {character.hasHeightChart ? (
+                                    <a class="btn btn-primary btn-sm" href={sizeChartUrlForCharacter(character.id)}>
+                                        View in Size Chart
+                                    </a>
+                                ) : null}
+                                {allowNsfwToggle ? (
+                                    <button
+                                        aria-pressed={displayNsfwMedia ? 'true' : 'false'}
+                                        class="btn btn-outline btn-sm"
+                                        data-display-nsfw-media={displayNsfwMedia ? 'true' : 'false'}
+                                        type="button"
+                                    >
+                                        {displayNsfwMedia ? 'Hide 18+ media' : 'Load 18+ media'}
+                                    </button>
+                                ) : null}
+                            </div>
+                        ) : null}
                     </div>
-                ) : null}
 
-                {allowNsfwToggle ? (
-                    <div class="mb-6 flex justify-center">
-                        <button
-                            aria-pressed={displayNsfwMedia ? 'true' : 'false'}
-                            class="btn btn-xs btn-outline rounded-full"
-                            data-display-nsfw-media={displayNsfwMedia ? 'true' : 'false'}
-                            type="button"
-                        >
-                            {displayNsfwMedia ? 'Hide 18+ media' : 'Load 18+ media'}
-                        </button>
+                    {character.description ? (
+                        <div class="max-w-3xl pt-5">
+                            <p class="whitespace-pre-wrap text-base leading-7 text-base-content/70">{character.description}</p>
+                        </div>
+                    ) : null}
+                </header>
+
+                <section aria-labelledby="gallery-heading" class="mb-5">
+                    <div class="flex flex-col gap-3 border-b border-base-300 pb-4 sm:flex-row sm:items-end sm:justify-between">
+                        <div>
+                            <p class="text-xs font-semibold uppercase tracking-[0.18em] text-base-content/60">Portfolio</p>
+                            <h2 class="mt-1 text-2xl font-semibold" id="gallery-heading">
+                                Gallery
+                            </h2>
+                        </div>
+
+                        {tabs.length > 1 ? (
+                            <div aria-label="Gallery sort options" class="tabs tabs-border max-w-full gap-1 overflow-x-auto" role="tablist">
+                                {tabs.map((tab, index) => (
+                                    <label class="shrink-0 cursor-pointer">
+                                        <input
+                                            checked={index === 0}
+                                            class="peer sr-only"
+                                            name="gallery-sort"
+                                            type="radio"
+                                            value={tab.name}
+                                        />
+                                        <span class="tab inline-flex border-b-2 border-transparent px-3 peer-checked:border-base-content peer-checked:font-semibold">
+                                            {displayGalleryTabName(tab.name)}
+                                        </span>
+                                    </label>
+                                ))}
+                            </div>
+                        ) : null}
                     </div>
-                ) : null}
-
-                {tabs.length > 1 ? (
-                    <fieldset aria-label="Gallery sort options" class="mb-6 flex flex-wrap justify-center gap-2">
-                        {tabs.map((tab, index) => (
-                            <label class="cursor-pointer">
-                                <input checked={index === 0} class="peer sr-only" name="gallery-sort" type="radio" value={tab.name} />
-                                <span class="btn btn-sm btn-outline rounded-full peer-checked:border-white peer-checked:bg-white peer-checked:text-black">
-                                    {displayGalleryTabName(tab.name)}
-                                </span>
-                            </label>
-                        ))}
-                    </fieldset>
-                ) : null}
+                </section>
 
                 {tabs.map((tab, tabIndex) => {
                     const visualRows =
