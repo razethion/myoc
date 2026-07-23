@@ -3389,23 +3389,43 @@ describe('GET /u/:username', () => {
             'src="https://m.myoc.art/characters/profile-user/character-1/media/sfw-media/sfw/preview/sfw-only-preview-key.webp"',
         )
         expect(html).toContain(
-            'data-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/sfw-media/sfw/sfw-only-key.png"',
+            'data-original-url="https://m.myoc.art/characters/profile-user/character-1/media/sfw-media/sfw/sfw-only-key.png"',
         )
         expect(html).toContain(
             'src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/preview/both-sfw-preview-key.webp"',
         )
         expect(html).toContain(
-            'data-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"',
+            'data-original-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"',
         )
         expect(html).toContain('loading="lazy"')
         expect(html).toContain('decoding="async"')
-        expect(html).toContain('data-gallery-image-loader')
-        expect(html).toContain('left: 0.5rem;')
-        expect(html).toContain('top: 0.5rem;')
-        expect(html).toContain('gallery-loader-spin')
-        expect(html).toContain('gallery-image-loader-spinner')
-        expect(html).not.toContain('data-gallery-image-loader-text')
+        expect(html).not.toContain('data-gallery-image-loader')
+        expect(html).not.toContain('gallery-loader-spin')
+        expect(html).not.toContain('gallery-image-loader-spinner')
         expect(html).not.toContain('Loading fullres...')
+        expect(html).toContain('id="gallery-fullscreen-loader"')
+        expect(html).toContain('.gallery-lightbox-shell .gallery-fullscreen-loader')
+        expect(html).toContain('id="gallery-context-menu"')
+        expect(html).toContain('imageLoaderLimit: 1')
+        expect(html).toContain('maxImageCacheCount: 1')
+        expect(html).toContain('galleryActiveOriginalRequest?.cancel()')
+        expect(html).toContain("cache: 'no-store'")
+        expect(html).not.toContain("cache: 'force-cache'")
+        expect(html).toContain('viewer.addOverlay')
+        expect(html).toContain("viewer.addHandler('tile-drawn'")
+        expect(html).toContain('Rendering image…')
+        expect(html).toContain("drawer: 'html'")
+        expect(html).toContain('Math.min(99, (loaded / total) * 99)')
+        expect(html).toContain('setGalleryFullscreenLoaderProgressComplete()')
+        expect(html).toContain('initGalleryFullscreenLoader()')
+        expect(html).toContain('[data-gallery-fullscreen-loader]')
+        expect(html).not.toContain('attachGalleryFullscreenLoaderToLightbox')
+        expect(html).not.toContain('restoreGalleryFullscreenLoaderToDocument')
+        expect(html).toContain('getGalleryImageDimensions(image)')
+        expect(html).not.toContain('setOpacity(0)')
+        expect(html).not.toContain('HTMLelements')
+        expect(html).not.toContain('galleryFullresQueue')
+        expect(html).not.toContain('data-fullres-src')
         expect(html).toContain('Load 18+ media')
         expect(html).toContain('data-display-nsfw-media="false"')
         expect(html).toContain(
@@ -3425,7 +3445,7 @@ describe('GET /u/:username', () => {
             'loading="lazy" src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/blur/nsfw-only-blur-key.webp"',
         )
         expect(html).not.toContain(
-            'data-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"',
+            'data-original-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"',
         )
         expect(html).toContain(
             'data-nsfw-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"',
@@ -3541,7 +3561,7 @@ describe('GET /u/:username', () => {
             'data-nsfw-preview-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/preview/nsfw-only-preview-key.webp"',
         )
         expect(html).not.toContain(
-            'data-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"',
+            'data-original-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"',
         )
     })
 
@@ -3610,7 +3630,7 @@ describe('GET /u/:username', () => {
         const html = await response.text()
 
         expect(response.status).toBe(200)
-        expect(html).toContain('class="gallery-media image-loading  rounded nsfw-media"')
+        expect(html).toContain('class="gallery-media image-loading rounded nsfw-media"')
         expect(html).toContain('src="data:image/svg+xml,')
         expect(html).toContain('class="nsfw-media-badge"')
         expect(html).toContain('<span>18+</span>')
@@ -3843,7 +3863,7 @@ describe('GET /u/:username', () => {
             'data-deferred-src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/preview/both-nsfw-preview-key.webp"',
         )
         expect(html).toContain(
-            'data-deferred-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/both-nsfw-key.png"',
+            'data-deferred-original-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/both-nsfw-key.png"',
         )
         expect(html).toContain(
             'data-safe-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"',
@@ -3852,7 +3872,7 @@ describe('GET /u/:username', () => {
             'data-deferred-src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/preview/both-sfw-preview-key.webp"',
         )
         expect(html).not.toContain(
-            'data-deferred-fullres-src="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"',
+            'data-deferred-original-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"',
         )
     })
 
