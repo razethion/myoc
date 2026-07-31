@@ -1360,7 +1360,7 @@ describe('GET /migrate', () => {
 
         expect(response.status).toBe(200)
         expect(response.headers.get('content-type')).toBe('image/png')
-        expect(await response.text()).toBe('image-bytes')
+        expect(new TextDecoder().decode(await response.arrayBuffer())).toBe('image-bytes')
         expect(fetchMock).toHaveBeenCalledWith('https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485', {
             redirect: 'follow',
         })
@@ -3414,7 +3414,15 @@ describe('GET /u/:username', () => {
         expect(html).toContain('id="gallery-context-menu"')
         expect(html).toContain('imageLoaderLimit: 1')
         expect(html).toContain('maxImageCacheCount: 1')
-        expect(html).toContain('galleryActiveOriginalRequest?.cancel()')
+        expect(html).not.toContain('galleryActiveOriginalRequest?.cancel()')
+        expect(html).toContain('galleryOriginalActionSequence')
+        expect(html).toContain('isGalleryOriginalActionActive(actionId)')
+        expect(html).toContain('if (request?.cancelled) return')
+        expect(html).toContain('objectUrlConsumers')
+        expect(html).toContain('objectUrlOwner: request')
+        expect(html).toContain('galleryLightboxObjectUrlOwner')
+        expect(html).toContain('request.releaseUnusedObjectUrl()')
+        expect(html).not.toContain('URL.revokeObjectURL(original.src)')
         expect(html).toContain("cache: 'no-store'")
         expect(html).not.toContain("cache: 'force-cache'")
         expect(html).toContain('viewer.addOverlay')

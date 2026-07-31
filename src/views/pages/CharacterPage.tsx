@@ -755,8 +755,10 @@ let galleryColorSampleLoader = null;
 let galleryColorSampleSrc = '';
 let galleryCurrentLightboxBookmarkId = '';
 let galleryLightboxObjectUrl = '';
+let galleryLightboxObjectUrlOwner = null;
 let galleryLightboxRequestId = 0;
-let galleryActiveOriginalRequest = null;
+let galleryOriginalActionSequence = 0;
+let galleryActiveOriginalActionId = 0;
 let gallerySuppressNextCloseBookmarkReset = false;
 let galleryContextMenuImage = null;
 let galleryContextMenuLongPressTimer = 0;
@@ -766,6 +768,9 @@ galleryColorSampleCanvas.height = 1;
 
 function openLightbox(image, original, options = {}) {
     if (!original?.src) return;
+    const actionId = options.originalActionId || 0;
+    const isCurrentAction = () => !actionId || isGalleryOriginalActionActive(actionId);
+    const objectUrlOwner = original.objectUrlOwner;
     const lightbox = document.getElementById('gallery-lightbox');
     const lightboxTitle = document.getElementById('lightbox-title');
     const lightboxCredit = document.getElementById('lightbox-credit');
@@ -778,7 +783,10 @@ function openLightbox(image, original, options = {}) {
     const height = Number(original.height || dimensions.height);
     const bookmarkId = image.dataset.bookmarkId || mediaBookmarkIdFromUrl(downloadSrc);
 
-    if (!lightbox || !src) return;
+    if (!lightbox || !src) {
+        objectUrlOwner?.releaseObjectUrl();
+        return;
+    }
 
     const requestId = ++galleryLightboxRequestId;
     galleryCurrentLightboxBookmarkId = bookmarkId;
@@ -797,19 +805,24 @@ function openLightbox(image, original, options = {}) {
     if (galleryLightboxObjectUrl && galleryLightboxObjectUrl !== src) {
         releaseGalleryLightboxObjectUrl();
     }
-    galleryLightboxObjectUrl = original.objectUrl || '';
-    setGalleryFullscreenLoaderStatus('Rendering image…');
+    if (galleryLightboxObjectUrl === src) {
+        objectUrlOwner?.releaseObjectUrl();
+    } else {
+        galleryLightboxObjectUrl = original.objectUrl || '';
+        galleryLightboxObjectUrlOwner = objectUrlOwner;
+    }
+    if (isCurrentAction()) setGalleryFullscreenLoaderStatus('Rendering image…');
     window.requestAnimationFrame(() => {
-        if (requestId !== galleryLightboxRequestId || !lightbox.open || galleryLightboxObjectUrl !== original.objectUrl) return;
+        if (!isCurrentAction() || requestId !== galleryLightboxRequestId || !lightbox.open || galleryLightboxObjectUrl !== original.objectUrl) return;
         window.requestAnimationFrame(() => {
-            if (requestId !== galleryLightboxRequestId || !lightbox.open || galleryLightboxObjectUrl !== original.objectUrl) return;
-            createLightboxViewer(src, width, height, downloadSrc, requestId);
+            if (!isCurrentAction() || requestId !== galleryLightboxRequestId || !lightbox.open || galleryLightboxObjectUrl !== original.objectUrl) return;
+            createLightboxViewer(src, width, height, downloadSrc, requestId, actionId);
         });
     });
 }
 
-function createLightboxViewer(src, width, height, sourceUrl = src, requestId = galleryLightboxRequestId) {
-    if (requestId !== galleryLightboxRequestId) return;
+function createLightboxViewer(src, width, height, sourceUrl = src, requestId = galleryLightboxRequestId, actionId = 0) {
+    if (requestId !== galleryLightboxRequestId || (actionId && !isGalleryOriginalActionActive(actionId))) return;
     closeLightboxViewer({preserveObjectUrl: true, resetBookmark: false});
 
     const viewerElement = document.getElementById('lightbox-viewer');
@@ -878,7 +891,10 @@ function createLightboxViewer(src, width, height, sourceUrl = src, requestId = g
     }
 
     galleryLightboxViewer = viewer;
-    const isCurrentViewer = () => galleryLightboxViewer === viewer && requestId === galleryLightboxRequestId;
+    const isCurrentViewer = () =>
+        galleryLightboxViewer === viewer &&
+        requestId === galleryLightboxRequestId &&
+        (!actionId || isGalleryOriginalActionActive(actionId));
     let viewerFrameDrawn = false;
     const revealViewer = () => {
         if (!isCurrentViewer() || viewerFrameDrawn) return;
@@ -930,9 +946,15 @@ function isGifImageUrl(src) {
 }
 
 function releaseGalleryLightboxObjectUrl() {
-    if (!galleryLightboxObjectUrl) return;
-    URL.revokeObjectURL(galleryLightboxObjectUrl);
+    const objectUrl = galleryLightboxObjectUrl;
+    const objectUrlOwner = galleryLightboxObjectUrlOwner;
     galleryLightboxObjectUrl = '';
+    galleryLightboxObjectUrlOwner = null;
+    if (objectUrlOwner?.releaseObjectUrl) {
+        objectUrlOwner.releaseObjectUrl();
+    } else if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+    }
 }
 
 function addGifLightboxOverlay(viewer, src, width, height) {
@@ -1575,6 +1597,16 @@ function getGalleryOriginalUrl(image) {
     return image.dataset.originalUrl || '';
 }
 
+function beginGalleryOriginalAction() {
+    galleryOriginalActionSequence += 1;
+    galleryActiveOriginalActionId = galleryOriginalActionSequence;
+    return galleryActiveOriginalActionId;
+}
+
+function isGalleryOriginalActionActive(actionId) {
+    return actionId === galleryActiveOriginalActionId;
+}
+
 function getGalleryImageDimensions(image) {
     return {
         height: Number(image.getAttribute('height')) || image.naturalHeight || image.height || 1,
@@ -1704,7 +1736,7 @@ function initGalleryContextMenu() {
     document.addEventListener('scroll', hideGalleryContextMenu, true);
 }
 
-function loadGalleryOriginalImage(image, onLoad, onError) {
+function loadGalleryOriginalImage(image, onLoad, onError, actionId) {
     const originalSrc = getGalleryOriginalUrl(image);
     if (!originalSrc) {
         onError?.();
@@ -1713,12 +1745,12 @@ function loadGalleryOriginalImage(image, onLoad, onError) {
 
     const existingRequest = image.galleryOriginalRequest;
     if (existingRequest?.src === originalSrc) {
+        existingRequest.loaderActionId = actionId;
         existingRequest.callbacks.push(onLoad);
         existingRequest.errorCallbacks.push(onError);
         return existingRequest;
     }
 
-    galleryActiveOriginalRequest?.cancel();
     existingRequest?.cancel();
     let resolveBlob;
     const blobPromise = new Promise((resolve) => {
@@ -1727,14 +1759,35 @@ function loadGalleryOriginalImage(image, onLoad, onError) {
     const request = {
         blobPromise,
         callbacks: [onLoad],
+        cancelled: false,
         errorCallbacks: [onError],
+        loaderActionId: actionId,
+        objectUrl: '',
+        objectUrlConsumers: 0,
         retryCount: 0,
         resolveBlob,
         settled: false,
         src: originalSrc,
     };
     image.galleryOriginalRequest = request;
-    galleryActiveOriginalRequest = request;
+
+    request.acquireObjectUrl = () => {
+        request.objectUrlConsumers += 1;
+    };
+    request.releaseObjectUrl = () => {
+        request.objectUrlConsumers = Math.max(0, request.objectUrlConsumers - 1);
+        if (request.objectUrlConsumers === 0 && request.objectUrl) {
+            URL.revokeObjectURL(request.objectUrl);
+            request.objectUrl = '';
+        }
+    };
+    request.releaseUnusedObjectUrl = () => {
+        if (request.objectUrlConsumers > 0 || !request.objectUrl) return;
+        URL.revokeObjectURL(request.objectUrl);
+        request.objectUrl = '';
+    };
+
+    const isLoaderActionActive = () => isGalleryOriginalActionActive(request.loaderActionId);
 
     const clearIdleTimeout = () => {
         if (request.idleTimer) {
@@ -1752,12 +1805,6 @@ function loadGalleryOriginalImage(image, onLoad, onError) {
         if (request.settled) return;
         request.settled = true;
         clearIdleTimeout();
-        if (request.objectUrl === objectUrl) {
-            request.objectUrl = '';
-        }
-        if (galleryActiveOriginalRequest === request) {
-            galleryActiveOriginalRequest = null;
-        }
         if (image.galleryOriginalRequest === request) {
             delete image.galleryOriginalRequest;
         }
@@ -1768,32 +1815,37 @@ function loadGalleryOriginalImage(image, onLoad, onError) {
             const original = {
                 height: height || dimensions.height,
                 objectUrl,
+                objectUrlOwner: request,
                 sourceUrl: request.src,
                 src: objectUrl,
                 width: width || dimensions.width,
             };
             request.callbacks.forEach((callback) => callback(original));
+            request.releaseUnusedObjectUrl();
         } else if (isCurrent) {
             if (objectUrl) URL.revokeObjectURL(objectUrl);
+            request.objectUrl = '';
+            request.objectUrlConsumers = 0;
             request.errorCallbacks.forEach((callback) => callback?.());
         } else if (objectUrl) {
             URL.revokeObjectURL(objectUrl);
+            request.objectUrl = '';
+            request.objectUrlConsumers = 0;
         }
     };
 
     request.cancel = () => {
         if (request.settled) return;
         request.settled = true;
+        request.cancelled = true;
         clearIdleTimeout();
-        if (galleryActiveOriginalRequest === request) {
-            galleryActiveOriginalRequest = null;
-        }
         request.controller?.abort();
         request.reader?.cancel();
         if (request.objectUrl) {
             URL.revokeObjectURL(request.objectUrl);
             request.objectUrl = '';
         }
+        request.objectUrlConsumers = 0;
         request.resolveBlob(null);
         if (image.galleryOriginalRequest === request) {
             delete image.galleryOriginalRequest;
@@ -1802,8 +1854,10 @@ function loadGalleryOriginalImage(image, onLoad, onError) {
 
     const startAttempt = () => {
         request.controller = new AbortController();
-        setGalleryFullscreenLoaderStatus(request.retryCount ? 'Retrying full-resolution image…' : 'Downloading full-resolution image…');
-        setGalleryFullscreenLoaderProgress(0, 0);
+        if (isLoaderActionActive()) {
+            setGalleryFullscreenLoaderStatus(request.retryCount ? 'Retrying full-resolution image…' : 'Downloading full-resolution image…');
+            setGalleryFullscreenLoaderProgress(0, 0);
+        }
         resetIdleTimeout();
         fetch(request.src, {cache: 'no-store', credentials: 'omit', mode: 'cors', signal: request.controller.signal})
             .then(async (response) => {
@@ -1813,7 +1867,7 @@ function loadGalleryOriginalImage(image, onLoad, onError) {
                 if (!response.body) {
                     const blob = await response.blob();
                     clearIdleTimeout();
-                    setGalleryFullscreenLoaderProgress(blob.size, blob.size);
+                    if (isLoaderActionActive()) setGalleryFullscreenLoaderProgress(blob.size, blob.size);
                     return {blob, totalBytes: blob.size};
                 }
 
@@ -1826,7 +1880,7 @@ function loadGalleryOriginalImage(image, onLoad, onError) {
                     if (result.done) break;
                     chunks.push(result.value);
                     loadedBytes += result.value.byteLength;
-                    setGalleryFullscreenLoaderProgress(loadedBytes, totalBytes);
+                    if (isLoaderActionActive()) setGalleryFullscreenLoaderProgress(loadedBytes, totalBytes);
                     resetIdleTimeout();
                 }
 
@@ -1841,8 +1895,10 @@ function loadGalleryOriginalImage(image, onLoad, onError) {
                 const objectUrl = URL.createObjectURL(blob);
                 request.objectUrl = objectUrl;
                 request.resolveBlob(blob);
-                setGalleryFullscreenLoaderProgress(totalBytes, totalBytes);
-                setGalleryFullscreenLoaderStatus('Opening image viewer…');
+                if (isLoaderActionActive()) {
+                    setGalleryFullscreenLoaderProgress(totalBytes, totalBytes);
+                    setGalleryFullscreenLoaderStatus('Opening image viewer…');
+                }
                 finish(true, objectUrl, 0, 0);
             })
             .catch(() => {
@@ -1867,6 +1923,7 @@ function requestGalleryImageAction(image, action, options = {}) {
         if (options.showBookmarkLoader) setGalleryFullscreenLoaderVisible(false);
         return;
     }
+    const actionId = beginGalleryOriginalAction();
     setGalleryFullscreenLoaderVisible(true);
     setGalleryFullscreenLoaderProgress(0, 0);
     setGalleryFullscreenLoaderStatus('Preparing full-resolution image…');
@@ -1880,26 +1937,31 @@ function requestGalleryImageAction(image, action, options = {}) {
         image,
         (original) => {
             if (action === 'open') {
-                openLightbox(image, original, options);
+                if (!isGalleryOriginalActionActive(actionId)) {
+                    request.releaseObjectUrl();
+                    return;
+                }
+                openLightbox(image, original, {...options, originalActionId: actionId});
             } else if (action === 'download') {
                 downloadGalleryOriginal(original.src, image.dataset.title, original.sourceUrl).finally(() => {
-                    setGalleryFullscreenLoaderVisible(false);
-                    URL.revokeObjectURL(original.src);
+                    if (isGalleryOriginalActionActive(actionId)) setGalleryFullscreenLoaderVisible(false);
+                    request.releaseObjectUrl();
                 });
             }
         },
         () => {
-            setGalleryFullscreenLoaderVisible(false);
-            setGalleryFullscreenLoaderStatus('Unable to load the full-resolution image');
+            if (isGalleryOriginalActionActive(actionId)) {
+                setGalleryFullscreenLoaderVisible(false);
+                setGalleryFullscreenLoaderStatus('Unable to load the full-resolution image');
+            }
         },
+        actionId,
     );
+    if (action === 'open' || action === 'download') request.acquireObjectUrl();
     if (action === 'copy') {
         copyGalleryOriginal(request, originalSrc).finally(() => {
-            setGalleryFullscreenLoaderVisible(false);
-            if (request?.objectUrl) {
-                URL.revokeObjectURL(request.objectUrl);
-                request.objectUrl = '';
-            }
+            if (isGalleryOriginalActionActive(actionId)) setGalleryFullscreenLoaderVisible(false);
+            request.releaseUnusedObjectUrl();
         });
     }
 }
@@ -1940,6 +2002,7 @@ async function copyGalleryOriginal(request, fallbackSrc = request?.src) {
         });
         await navigator.clipboard.write([item]);
     } catch {
+        if (request?.cancelled) return;
         await navigator.clipboard?.writeText(fallbackSrc);
     }
 }
@@ -2017,7 +2080,7 @@ function setGalleryImageSource(image, src) {
 function cancelGalleryOriginalLoad(image) {
     const request = image.galleryOriginalRequest;
     request?.cancel();
-    if (request) setGalleryFullscreenLoaderVisible(false);
+    if (request && isGalleryOriginalActionActive(request.loaderActionId)) setGalleryFullscreenLoaderVisible(false);
 }
 
 function setGalleryMediaImageSource(image, previewSrc, originalSrc) {
