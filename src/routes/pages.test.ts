@@ -3417,7 +3417,7 @@ describe('GET /u/:username', () => {
         expect(html).not.toContain('galleryActiveOriginalRequest?.cancel()')
         expect(html).toContain('galleryOriginalActionSequence')
         expect(html).toContain('isGalleryOriginalActionActive(actionId)')
-        expect(html).toContain('if (request?.cancelled) return')
+        expect(html).toContain('if (request?.cancelled || (actionId && !isGalleryOriginalActionActive(actionId))) return')
         expect(html).toContain('objectUrlConsumers')
         expect(html).toContain('objectUrlOwner: request')
         expect(html).toContain('galleryLightboxObjectUrlOwner')
@@ -3440,7 +3440,10 @@ describe('GET /u/:username', () => {
         expect(html).toContain('event.shiftKey || event.altKey || event.ctrlKey || event.metaKey')
         expect(html).toContain('blobPromise')
         expect(html).toContain('new window.ClipboardItem')
-        expect(html).toContain('copyGalleryOriginal(request, originalSrc)')
+        expect(html).toContain('copyGalleryOriginal(request, originalSrc, actionId)')
+        expect(html).toContain(
+            "const blob = await request.blobPromise;\n        if (!blob) throw new Error('Copy failed');\n        if (actionId && !isGalleryOriginalActionActive(actionId)) return;",
+        )
         expect(html).toContain('initGalleryFullscreenLoader()')
         expect(html).toContain('[data-gallery-fullscreen-loader]')
         expect(html).not.toContain('attachGalleryFullscreenLoaderToLightbox')

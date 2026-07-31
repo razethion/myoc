@@ -1963,7 +1963,7 @@ function requestGalleryImageAction(image, action, options = {}) {
     );
     if (action === 'open' || action === 'download') request.acquireObjectUrl();
     if (action === 'copy') {
-        copyGalleryOriginal(request, originalSrc).finally(() => {
+        copyGalleryOriginal(request, originalSrc, actionId).finally(() => {
             if (isGalleryOriginalActionActive(actionId)) setGalleryFullscreenLoaderVisible(false);
             request.releaseUnusedObjectUrl();
         });
@@ -1992,21 +1992,19 @@ function getGalleryClipboardMimeType(src) {
     return 'image/png';
 }
 
-async function copyGalleryOriginal(request, fallbackSrc = request?.src) {
+async function copyGalleryOriginal(request, fallbackSrc = request?.src, actionId = 0) {
     try {
         if (!request?.blobPromise || !navigator.clipboard?.write || typeof window.ClipboardItem !== 'function') {
             throw new Error('Image copy unavailable');
         }
         const mimeType = getGalleryClipboardMimeType(request.src);
-        const item = new window.ClipboardItem({
-            [mimeType]: request.blobPromise.then((blob) => {
-                if (!blob) throw new Error('Copy failed');
-                return blob;
-            }),
-        });
+        const blob = await request.blobPromise;
+        if (!blob) throw new Error('Copy failed');
+        if (actionId && !isGalleryOriginalActionActive(actionId)) return;
+        const item = new window.ClipboardItem({[mimeType]: blob});
         await navigator.clipboard.write([item]);
     } catch {
-        if (request?.cancelled) return;
+        if (request?.cancelled || (actionId && !isGalleryOriginalActionActive(actionId))) return;
         await navigator.clipboard?.writeText(fallbackSrc);
     }
 }
