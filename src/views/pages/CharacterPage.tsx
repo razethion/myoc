@@ -382,10 +382,18 @@ function CharacterPageStyles() {
                 object-fit: contain;
                 opacity: 1;
                 pointer-events: none;
-                transition: opacity 160ms ease;
                 user-select: none;
                 width: 100%;
                 -webkit-user-drag: none;
+            }
+
+            .gallery-image-placeholder {
+                border-radius: inherit;
+                pointer-events: none;
+            }
+
+            .gallery-media:not(.image-loading) .gallery-image-placeholder {
+                display: none;
             }
 
             .gallery-media.gallery-media-openable {
@@ -393,7 +401,8 @@ function CharacterPageStyles() {
             }
 
             .gallery-media.image-loading .gallery-image {
-                opacity: 0.35;
+                color: transparent;
+                opacity: 0;
             }
 
             .gallery-media.gallery-media-openable:focus-visible {
@@ -671,7 +680,7 @@ function GalleryImage({allowNsfwToggle, deferMediaLoad, media}: {allowNsfwToggle
 
     return (
         <div
-            class={`gallery-media ${deferMediaLoad ? '' : 'image-loading'} rounded ${media.isNsfwHidden ? 'nsfw-media' : ''}`}
+            class={`gallery-media image-loading rounded ${media.isNsfwHidden ? 'nsfw-media' : ''}`}
             data-nsfw-alt={canToggleNsfw ? media.nsfwImageAlt : undefined}
             data-nsfw-height={canToggleNsfw ? String(revealHeight) : undefined}
             data-nsfw-preview-url={canToggleNsfw && nsfwDisplayPreviewUrl ? nsfwDisplayPreviewUrl : undefined}
@@ -690,6 +699,7 @@ function GalleryImage({allowNsfwToggle, deferMediaLoad, media}: {allowNsfwToggle
             data-safe-width={canToggleNsfw && media.safeDisplayWidth ? String(media.safeDisplayWidth) : undefined}
             style={style}
         >
+            <div aria-hidden="true" class="gallery-image-placeholder skeleton absolute inset-0"></div>
             <img
                 alt={media.imageAlt}
                 class="gallery-image"
@@ -2188,7 +2198,7 @@ export function CharacterPage({
                 mediaBaseUrl={mediaBaseUrl}
             />
             <main class="container mx-auto px-3 py-4 sm:px-4 lg:px-6">
-                <header class="relative mb-8 pr-12 sm:pr-14">
+                <header class="relative mb-8">
                     {canEdit ? <SettingsLink characterId={character.id} /> : null}
 
                     <div class="flex flex-col gap-5 border-b border-base-300 pb-6 lg:flex-row lg:items-end lg:justify-between">
@@ -2208,7 +2218,6 @@ export function CharacterPage({
                             </div>
 
                             <div class="min-w-0">
-
                                 <h1 class="mt-2 wrap-break-word text-2xl font-bold tracking-tight sm:text-5xl">{character.name}</h1>
                                 <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-base-content/70">
                                     <span aria-hidden="true">by</span>

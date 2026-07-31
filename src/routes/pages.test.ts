@@ -3399,7 +3399,7 @@ describe('GET /u/:username', () => {
         )
         expect(html).toContain('loading="lazy"')
         expect(html).toContain('decoding="async"')
-        expect(html).toContain('class="relative mb-8 pr-12 sm:pr-14"')
+        expect(html).toContain('class="relative mb-8"')
         expect(html).toContain('class="badge badge-outline badge-sm">Character</span>')
         expect(html).toContain('class="h-8 w-8 rounded-full ring-1 ring-base-content/10"')
         expect(html).toContain('id="gallery-heading"')
