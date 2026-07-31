@@ -3564,43 +3564,38 @@ describe('character media uploads', () => {
             body: new Uint8Array([1]),
             error: 'Part number must be between 1 and 10000',
         },
-    ])('rejects invalid chunked upload part requests with $error', async ({
-        rating,
-        mediaId,
-        imageKey,
-        contentType,
-        partNumber,
-        body,
-        error,
-    }) => {
-        const sessionToken = 'session-token'
-        const mediaBucket = createMockR2Bucket()
-        const character = createCharacterRecord()
-        const {db} = createMockDb({
-            firstResults: [currentUserRecord, character],
-        })
+    ])(
+        'rejects invalid chunked upload part requests with $error',
+        async ({rating, mediaId, imageKey, contentType, partNumber, body, error}) => {
+            const sessionToken = 'session-token'
+            const mediaBucket = createMockR2Bucket()
+            const character = createCharacterRecord()
+            const {db} = createMockDb({
+                firstResults: [currentUserRecord, character],
+            })
 
-        const response = await putChunkedMediaPart(
-            character.id,
-            mediaId,
-            rating,
-            'upload-id',
-            partNumber,
-            imageKey,
-            body,
-            db,
-            {
-                mediaBucket,
-                sessionToken,
-                csrfToken: await createCsrfToken(sessionToken),
-            },
-            contentType,
-        )
+            const response = await putChunkedMediaPart(
+                character.id,
+                mediaId,
+                rating,
+                'upload-id',
+                partNumber,
+                imageKey,
+                body,
+                db,
+                {
+                    mediaBucket,
+                    sessionToken,
+                    csrfToken: await createCsrfToken(sessionToken),
+                },
+                contentType,
+            )
 
-        expect(response.status).toBe(400)
-        expect(await response.json()).toEqual({error})
-        expect(mediaBucket.resumeMultipartUpload).not.toHaveBeenCalled()
-    })
+            expect(response.status).toBe(400)
+            expect(await response.json()).toEqual({error})
+            expect(mediaBucket.resumeMultipartUpload).not.toHaveBeenCalled()
+        },
+    )
 
     it('rejects chunked upload parts with no request body', async () => {
         const sessionToken = 'session-token'

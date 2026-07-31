@@ -2,7 +2,7 @@
   "$schema": "./node_modules/knip/schema.json",
   "workspaces": {
     ".": {
-      "entry": ["scripts/*.mjs!", "src/styles/app.css!"],
+      "entry": ["scripts/*.mjs!"],
       "project": ["src/**/*.{ts,tsx,css}!", "scripts/*.mjs!"]
     },
     "containers/myoc-docker-sharp": {
