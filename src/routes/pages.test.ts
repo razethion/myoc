@@ -3422,6 +3422,9 @@ describe('GET /u/:username', () => {
         expect(html).toContain('objectUrlOwner: request')
         expect(html).toContain('galleryLightboxObjectUrlOwner')
         expect(html).toContain('request.releaseUnusedObjectUrl()')
+        expect(html).toContain(
+            "} else if (action === 'download') {\n                if (!isGalleryOriginalActionActive(actionId)) {\n                    request.releaseObjectUrl();\n                    return;\n                }\n                downloadGalleryOriginal(original.src",
+        )
         expect(html).not.toContain('URL.revokeObjectURL(original.src)')
         expect(html).toContain("cache: 'no-store'")
         expect(html).not.toContain("cache: 'force-cache'")

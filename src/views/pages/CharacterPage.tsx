@@ -1943,6 +1943,10 @@ function requestGalleryImageAction(image, action, options = {}) {
                 }
                 openLightbox(image, original, {...options, originalActionId: actionId});
             } else if (action === 'download') {
+                if (!isGalleryOriginalActionActive(actionId)) {
+                    request.releaseObjectUrl();
+                    return;
+                }
                 downloadGalleryOriginal(original.src, image.dataset.title, original.sourceUrl).finally(() => {
                     if (isGalleryOriginalActionActive(actionId)) setGalleryFullscreenLoaderVisible(false);
                     request.releaseObjectUrl();
