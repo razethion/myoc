@@ -46,7 +46,7 @@ function createHtmlContentSecurityPolicy(nonce: string, mediaPublicBaseUrl: stri
         "style-src-attr 'unsafe-inline'",
         `img-src ${imageSources.join(' ')}`,
         "font-src 'self' data:",
-        "connect-src 'self'",
+        `connect-src 'self' ${mediaSource}`,
         `media-src ${mediaSources.join(' ')}`,
         "manifest-src 'self'",
         "worker-src 'none'",

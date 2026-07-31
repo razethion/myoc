@@ -9,6 +9,18 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
     {
+        version: '2026.07.31.01',
+        releasedOn: 'July 31, 2026',
+        title: 'Character page refresh',
+        summary: 'Character pages now have a cleaner layout and smoother gallery interactions.',
+        changes: [
+            'Reworked the character page layout and character header.',
+            'Added gallery placeholders, deferred loading, and image-load retries to reduce visual flashing.',
+            'Added a progress loader while full-resolution images load in the viewer.',
+            'Added right-click and long-press image actions for downloading, copying, or opening original files.',
+        ],
+    },
+    {
         version: '2026.07.14.01',
         releasedOn: 'July 14, 2026',
         title: 'Better image viewer',

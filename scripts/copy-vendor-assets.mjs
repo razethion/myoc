@@ -14,7 +14,7 @@ await copyFile('node_modules/cropperjs/dist/cropper.min.js', 'public/vendor/crop
 await mkdir('public/vendor/openseadragon', {recursive: true})
 await copyFile(openseadragonScriptPath, 'public/vendor/openseadragon/openseadragon.min.js')
 await copyFile(openseadragonSourceMapPath, 'public/vendor/openseadragon/openseadragon.min.js.map')
-await copyFile('vendor/openseadragon/OpenSeadragonHTMLelements.js', 'public/vendor/openseadragon/OpenSeadragonHTMLelements.js')
+await rm('public/vendor/openseadragon/OpenSeadragonHTMLelements.js', {force: true})
 await copyFile('vendor/openseadragon/openseadragon-bookmark-url.js', 'public/vendor/openseadragon/openseadragon-bookmark-url.js')
 await cp(join(openseadragonAssetPath, 'images'), 'public/vendor/openseadragon/images', {recursive: true})
 
