@@ -2291,7 +2291,7 @@ export function CharacterPage({
                                             type="radio"
                                             value={tab.name}
                                         />
-                                        <span class="tab inline-flex border-b-2 border-transparent px-3 peer-checked:border-base-content peer-checked:font-semibold">
+                                        <span class="tab inline-flex border-b-2 px-3 peer-checked:border-base-content peer-checked:font-semibold">
                                             {displayGalleryTabName(tab.name)}
                                         </span>
                                     </label>
