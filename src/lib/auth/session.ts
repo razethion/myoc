@@ -30,6 +30,7 @@ export type CurrentUser = {
     profilePhotoKey: string | null
     bio: string
     displayNsfwMedia: boolean
+    showUnapprovedMedia: boolean
     lastSeenVersion: string | null
     recoveryPhraseConfirmed?: boolean
     secureAccountRequired?: boolean
@@ -83,6 +84,7 @@ export async function getCurrentUser(c: Context<{Bindings: Bindings}>): Promise<
                 users.profile_photo_key,
                 users.bio,
                 users.display_nsfw_media,
+                users.show_unapproved_media,
                 users.last_seen_version,
                 users.recovery_phrase_confirmed_at,
                 users.secure_account_required,
@@ -104,6 +106,7 @@ export async function getCurrentUser(c: Context<{Bindings: Bindings}>): Promise<
             profile_photo_key: string | null
             bio: string
             display_nsfw_media: number
+            show_unapproved_media?: number
             last_seen_version: string | null
             recovery_phrase_confirmed_at: string | null
             secure_account_required: number | null
@@ -123,6 +126,7 @@ export async function getCurrentUser(c: Context<{Bindings: Bindings}>): Promise<
         profilePhotoKey: user.profile_photo_key,
         bio: user.bio,
         displayNsfwMedia: Boolean(user.display_nsfw_media),
+        showUnapprovedMedia: user.show_unapproved_media !== 0,
         lastSeenVersion: user.last_seen_version ?? null,
         recoveryPhraseConfirmed: Boolean(user.recovery_phrase_confirmed_at),
         secureAccountRequired: Boolean(user.secure_account_required),

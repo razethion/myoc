@@ -117,6 +117,7 @@ describe('passkey database helpers', () => {
                 profilePhotoKey: null,
                 bio: '',
                 displayNsfwMedia: false,
+                showUnapprovedMedia: true,
                 lastSeenVersion: null,
                 csrfToken: 'csrf-token',
             }),
