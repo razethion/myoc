@@ -94,6 +94,9 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
                                     <span>Library</span>
                                 </li>
                                 <li>
+                                    <a href="/recent">Recent uploads</a>
+                                </li>
+                                <li>
                                     <a href="/leaderboard">Leaderboard</a>
                                 </li>
                                 <li>
@@ -171,6 +174,9 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
                                 <ul class="menu dropdown-content bg-base-100 rounded-box z-50 mt-3 w-52 p-2 shadow">
                                     <li class="menu-title">
                                         <span>Explore</span>
+                                    </li>
+                                    <li>
+                                        <a href="/recent">Recent uploads</a>
                                     </li>
                                     <li>
                                         <a href="/leaderboard">Leaderboard</a>
