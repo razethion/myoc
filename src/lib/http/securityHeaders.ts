@@ -27,12 +27,18 @@ export function securityHeaders(c: Context<{Bindings: Bindings}>, next: Next): P
     return applySecurityHeaders(c, next)
 }
 
-function createHtmlContentSecurityPolicy(nonce: string, mediaPublicBaseUrl: string, requestUrl: string): string {
+function createHtmlContentSecurityPolicy(
+    nonce: string,
+    mediaPublicBaseUrl: string,
+    requestUrl: string,
+    recentFeedPublicBaseUrl?: string,
+): string {
     // CropperJS and the chart editors generate inline style attributes and runtime style elements.
     const mediaSource = cspSourceOrigin(mediaPublicBaseUrl)
     const toyhouseImageSources = isToyhouseMigrationPage(requestUrl) ? TOYHOUSE_IMAGE_SOURCES : []
     const imageSources = ["'self'", 'data:', 'blob:', mediaSource, ...toyhouseImageSources].filter(Boolean)
     const mediaSources = ["'self'", mediaSource].filter(Boolean)
+    const connectionSources = ["'self'", mediaSource, cspSourceOrigin(recentFeedPublicBaseUrl ?? '')].filter(Boolean)
 
     return [
         "default-src 'self'",
@@ -47,7 +53,7 @@ function createHtmlContentSecurityPolicy(nonce: string, mediaPublicBaseUrl: stri
         "style-src-attr 'unsafe-inline'",
         `img-src ${imageSources.join(' ')}`,
         "font-src 'self' data:",
-        `connect-src 'self' ${mediaSource}`,
+        `connect-src ${connectionSources.join(' ')}`,
         `media-src ${mediaSources.join(' ')}`,
         "manifest-src 'self'",
         "worker-src 'none'",
@@ -69,7 +75,15 @@ async function applySecurityHeaders(c: Context<{Bindings: Bindings}>, next: Next
     }
 
     const nonce = createCspNonce()
-    headers.set('Content-Security-Policy', createHtmlContentSecurityPolicy(nonce, c.env.MEDIA_PUBLIC_BASE_URL, c.req.url))
+    headers.set(
+        'Content-Security-Policy',
+        createHtmlContentSecurityPolicy(
+            nonce,
+            c.env.MEDIA_PUBLIC_BASE_URL,
+            c.req.url,
+            c.env.RECENT_FEED_PUBLIC_BASE_URL,
+        ),
+    )
     headers.delete('Content-Length')
 
     c.res = new HTMLRewriter().on('script', new NonceAttributeHandler(nonce)).transform(copyResponseWithHeaders(c.res, headers))

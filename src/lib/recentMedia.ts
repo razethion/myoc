@@ -5,11 +5,12 @@ export const RECENT_MEDIA_PAGE_SIZE = 24
 export const RECENT_MEDIA_MAX_PAGE_SIZE = 30
 const RECENT_MEDIA_CACHE_TTL_SECONDS = 2 * 60
 
-const RECENT_MEDIA_CACHE_VERSION = 'v3'
+const RECENT_MEDIA_CACHE_VERSION = 'v4'
 const RECENT_MEDIA_CURSOR_MAX_LENGTH = 256
 
-const RecentMediaItemSchema = z.object({
+export const RecentMediaItemSchema = z.object({
     id: z.string(),
+    groupId: z.string(),
     alt: z.string(),
     width: z.number().positive(),
     height: z.number().positive(),
@@ -28,9 +29,13 @@ const RecentMediaItemSchema = z.object({
     }),
 })
 
-const RecentMediaPageSchema = z.object({
+export const RecentMediaPageSchema = z.object({
     items: z.array(RecentMediaItemSchema),
     nextCursor: z.string().nullable(),
+    nextPosition: z.number().int().nonnegative().nullable().default(null),
+    publicRootUrl: z.string().url().nullable().default(null),
+    generation: z.string().nullable().default(null),
+    publishedAt: z.string().nullable().default(null),
 })
 
 export type RecentMediaItem = z.infer<typeof RecentMediaItemSchema>
@@ -48,7 +53,7 @@ type RecentMediaCursor = {
     id: string
 }
 
-type RecentMediaRow = {
+export type RecentMediaRow = {
     id: string
     user_id: string
     character_id: string
@@ -78,6 +83,11 @@ type RecentMediaRow = {
     owner_profile_photo_key: string | null
 }
 
+export type RecentMediaSourceCursor = {
+    createdAt: string
+    id: string
+}
+
 export class InvalidRecentMediaCursorError extends Error {
     constructor() {
         super('Recent media cursor is invalid')
@@ -90,7 +100,7 @@ export async function getRecentMediaPage(
     mediaBaseUrl: string,
     options: RecentMediaOptions = {},
 ): Promise<RecentMediaPage> {
-    const limit = normalizeLimit(options.limit)
+    const limit = normalizeRecentMediaLimit(options.limit)
     const showNsfw = options.showNsfw === true
     const showUnapproved = options.showUnapproved !== false
     const rawCursor = options.cursor?.trim() || null
@@ -108,6 +118,10 @@ export async function getRecentMediaPage(
     const page = {
         items: visibleRows.map((row) => recentMediaItemFromRow(row, mediaBaseUrl, showNsfw, showUnapproved)),
         nextCursor: rows.length > limit && lastVisibleRow ? encodeCursor(lastVisibleRow) : null,
+        nextPosition: null,
+        publicRootUrl: null,
+        generation: null,
+        publishedAt: null,
     } satisfies RecentMediaPage
 
     await putCachedRecentMediaPage(cache, cacheKey, page)
@@ -115,7 +129,7 @@ export async function getRecentMediaPage(
     return page
 }
 
-function normalizeLimit(limit: number | undefined): number {
+export function normalizeRecentMediaLimit(limit: number | undefined): number {
     if (!Number.isInteger(limit) || !limit) {
         return RECENT_MEDIA_PAGE_SIZE
     }
@@ -224,7 +238,7 @@ function variantEligibilitySql(rating: 'sfw' | 'nsfw', showUnapproved: boolean):
            AND character_media.${rating}_preview_image_key IS NOT NULL${approvalClause})`
 }
 
-function isEligibleVariant(row: RecentMediaRow, rating: 'sfw' | 'nsfw', showUnapproved: boolean): boolean {
+function isEligibleRecentMediaVariant(row: RecentMediaRow, rating: 'sfw' | 'nsfw', showUnapproved: boolean): boolean {
     const imageKey = rating === 'sfw' ? row.sfw_image_key : row.nsfw_image_key
     const previewImageKey = rating === 'sfw' ? row.sfw_preview_image_key : row.nsfw_preview_image_key
 
@@ -243,7 +257,7 @@ function isEligibleVariant(row: RecentMediaRow, rating: 'sfw' | 'nsfw', showUnap
 }
 
 function recentMediaItemFromRow(row: RecentMediaRow, mediaBaseUrl: string, showNsfw: boolean, showUnapproved: boolean): RecentMediaItem {
-    const rating = showNsfw && isEligibleVariant(row, 'nsfw', showUnapproved) ? 'nsfw' : 'sfw'
+    const rating = showNsfw && isEligibleRecentMediaVariant(row, 'nsfw', showUnapproved) ? 'nsfw' : 'sfw'
     const imageKey = rating === 'nsfw' ? row.nsfw_image_key : row.sfw_image_key
     const previewImageKey = rating === 'nsfw' ? row.nsfw_preview_image_key : row.sfw_preview_image_key
     const contentType = rating === 'nsfw' ? row.nsfw_content_type : row.sfw_content_type
@@ -257,6 +271,7 @@ function recentMediaItemFromRow(row: RecentMediaRow, mediaBaseUrl: string, showN
 
     return {
         id: row.id,
+        groupId: JSON.stringify([row.user_id, row.character_id]),
         alt: `${row.character_name} character art`,
         width: width > 0 ? width : 1,
         height: height > 0 ? height : 1,
@@ -274,6 +289,138 @@ function recentMediaItemFromRow(row: RecentMediaRow, mediaBaseUrl: string, showN
             initial: row.owner_username.trim().charAt(0).toUpperCase() || 'U',
         },
     }
+}
+
+export function recentMediaItemsFromRows(
+    rows: RecentMediaRow[],
+    mediaBaseUrl: string,
+    showNsfw: boolean,
+    showUnapproved: boolean,
+): RecentMediaItem[] {
+    return rows
+        .filter((row) => {
+            const sfwEligible = isEligibleRecentMediaVariant(row, 'sfw', showUnapproved)
+            return showNsfw ? sfwEligible || isEligibleRecentMediaVariant(row, 'nsfw', showUnapproved) : sfwEligible
+        })
+        .map((row) => recentMediaItemFromRow(row, mediaBaseUrl, showNsfw, showUnapproved))
+}
+
+export async function queryRecentMediaSourceRows(db: D1Database, hour?: string): Promise<RecentMediaRow[]> {
+    const range = hour ? recentMediaHourRange(hour) : null
+    const rangeClause = range ? 'WHERE character_media.created_at >= ? AND character_media.created_at < ?' : ''
+    const statement = db.prepare(
+        `SELECT character_media.id,
+                character_media.user_id,
+                character_media.character_id,
+                character_media.sfw_image_key,
+                character_media.sfw_preview_image_key,
+                character_media.sfw_content_type,
+                character_media.sfw_width,
+                character_media.sfw_height,
+                character_media.sfw_preview_width,
+                character_media.sfw_preview_height,
+                character_media.sfw_review_status,
+                character_media.sfw_approved_at,
+                character_media.nsfw_image_key,
+                character_media.nsfw_preview_image_key,
+                character_media.nsfw_content_type,
+                character_media.nsfw_width,
+                character_media.nsfw_height,
+                character_media.nsfw_preview_width,
+                character_media.nsfw_preview_height,
+                character_media.nsfw_review_status,
+                character_media.nsfw_approved_at,
+                character_media.created_at,
+                character_media.updated_at,
+                characters.name              AS character_name,
+                characters.profile_image_key AS character_profile_image_key,
+                users.username               AS owner_username,
+                users.profile_photo_key      AS owner_profile_photo_key
+         FROM character_media
+         INNER JOIN characters ON characters.id = character_media.character_id
+         INNER JOIN users ON users.id = characters.user_id
+         ${rangeClause}
+         ORDER BY character_media.created_at DESC, character_media.id DESC`,
+    )
+    const result = range ? await statement.bind(range.start, range.end).all<RecentMediaRow>() : await statement.bind().all<RecentMediaRow>()
+
+    return result.results ?? []
+}
+
+export async function queryRecentMediaSourceRowsPage(
+    db: D1Database,
+    cursor: RecentMediaSourceCursor | null,
+    limit: number,
+): Promise<RecentMediaRow[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 5000) {
+        throw new Error('Recent media source page limit is invalid')
+    }
+
+    const cursorClause = cursor
+        ? `WHERE (character_media.created_at < ?
+                   OR (character_media.created_at = ? AND character_media.id < ?))`
+        : ''
+    const statement = db.prepare(
+        `SELECT character_media.id,
+                character_media.user_id,
+                character_media.character_id,
+                character_media.sfw_image_key,
+                character_media.sfw_preview_image_key,
+                character_media.sfw_content_type,
+                character_media.sfw_width,
+                character_media.sfw_height,
+                character_media.sfw_preview_width,
+                character_media.sfw_preview_height,
+                character_media.sfw_review_status,
+                character_media.sfw_approved_at,
+                character_media.nsfw_image_key,
+                character_media.nsfw_preview_image_key,
+                character_media.nsfw_content_type,
+                character_media.nsfw_width,
+                character_media.nsfw_height,
+                character_media.nsfw_preview_width,
+                character_media.nsfw_preview_height,
+                character_media.nsfw_review_status,
+                character_media.nsfw_approved_at,
+                character_media.created_at,
+                character_media.updated_at,
+                characters.name              AS character_name,
+                characters.profile_image_key AS character_profile_image_key,
+                users.username               AS owner_username,
+                users.profile_photo_key      AS owner_profile_photo_key
+         FROM character_media
+         INNER JOIN characters ON characters.id = character_media.character_id
+         INNER JOIN users ON users.id = characters.user_id
+         ${cursorClause}
+         ORDER BY character_media.created_at DESC, character_media.id DESC
+         LIMIT ?`,
+    )
+    const result = cursor
+        ? await statement.bind(cursor.createdAt, cursor.createdAt, cursor.id, limit).all<RecentMediaRow>()
+        : await statement.bind(limit).all<RecentMediaRow>()
+
+    return result.results ?? []
+}
+
+export function recentMediaHour(row: Pick<RecentMediaRow, 'created_at'>): string {
+    return row.created_at.slice(0, 13).replace(' ', 'T')
+}
+
+function recentMediaHourRange(hour: string): {start: string; end: string} {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}$/.test(hour)) {
+        throw new Error('Recent media hour is invalid')
+    }
+
+    const startDate = new Date(`${hour}:00:00Z`)
+
+    if (Number.isNaN(startDate.getTime())) {
+        throw new Error('Recent media hour is invalid')
+    }
+
+    const endDate = new Date(startDate.getTime() + 60 * 60 * 1000)
+    const sqlTimestamp = (value: Date) => value.toISOString().slice(0, 19).replace('T', ' ')
+
+    return {start: sqlTimestamp(startDate), end: sqlTimestamp(endDate)}
 }
 
 function encodeCursor(row: Pick<RecentMediaRow, 'created_at' | 'id'>): string {

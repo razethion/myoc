@@ -4,6 +4,8 @@ export {ContainerProxy} from '@cloudflare/containers'
 
 import {runAdminJob} from './lib/admin/jobs'
 import {securityHeaders} from './lib/http/securityHeaders'
+import {cleanupRecentFeed} from './lib/recentMedia/cleanup'
+import {publishRecentFeed} from './lib/recentMedia/publisher'
 import {apiRoutes} from './routes/api'
 import {pageRoutes, renderNotFoundPage} from './routes/pages'
 import type {Bindings} from './types/bindings'
@@ -13,6 +15,8 @@ export {MyocDockerSharpContainer} from './containers/MyocDockerSharpContainer'
 const D1_BACKUP_CRON = '0 8 * * *'
 const R2_MEDIA_CLEANUP_CRON = '0 9 * * *'
 const LEADERBOARD_REFRESH_CRON = '0 10 * * *'
+const RECENT_FEED_RECOVERY_CRON = '* * * * *'
+const RECENT_FEED_CLEANUP_CRON = '30 9 * * *'
 
 const app = new Hono<{Bindings: Bindings}>()
 
@@ -27,6 +31,11 @@ const worker = app as typeof app & {
 }
 
 worker.scheduled = (event, env, ctx) => {
+    if (event.cron === RECENT_FEED_RECOVERY_CRON) {
+        ctx.waitUntil(publishRecentFeed(env))
+        return
+    }
+
     if (event.cron === D1_BACKUP_CRON) {
         ctx.waitUntil(
             runAdminJob(env, 'd1-backup', {
@@ -44,6 +53,11 @@ worker.scheduled = (event, env, ctx) => {
                 triggerSource: 'cron',
             }),
         )
+        return
+    }
+
+    if (event.cron === RECENT_FEED_CLEANUP_CRON) {
+        ctx.waitUntil(cleanupRecentFeed(env))
         return
     }
 

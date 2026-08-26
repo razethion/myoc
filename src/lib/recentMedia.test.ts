@@ -59,6 +59,7 @@ describe('recent media feed', () => {
         expect(firstPage.items).toHaveLength(RECENT_MEDIA_PAGE_SIZE)
         expect(firstPage.items[0]).toEqual({
             id: 'media-00',
+            groupId: '["user-1","character-1"]',
             alt: 'Quartz Dragon character art',
             width: 600,
             height: 800,
@@ -76,16 +77,18 @@ describe('recent media feed', () => {
                 initial: 'D',
             },
         })
+        expect(firstPage.generation).toBeNull()
+        expect(firstPage.publishedAt).toBeNull()
         expect(firstPage.nextCursor).toBeTruthy()
         expect(cachedPage).toEqual(firstPage)
         expect(db.prepare).toHaveBeenCalledTimes(1)
         expect(boundStatements[0]?.binds).toEqual([RECENT_MEDIA_PAGE_SIZE + 1])
         expect(boundStatements[0]?.sql).toContain('ORDER BY character_media.created_at DESC, character_media.id DESC')
-        expect(cache.get).toHaveBeenCalledWith('recent-media:v3:24:n0:u1:first', {
+        expect(cache.get).toHaveBeenCalledWith('recent-media:v4:24:n0:u1:first', {
             type: 'json',
             cacheTtl: RECENT_MEDIA_CACHE_TTL_SECONDS,
         })
-        expect(cache.put).toHaveBeenCalledWith('recent-media:v3:24:n0:u1:first', JSON.stringify(firstPage), {
+        expect(cache.put).toHaveBeenCalledWith('recent-media:v4:24:n0:u1:first', JSON.stringify(firstPage), {
             expirationTtl: RECENT_MEDIA_CACHE_TTL_SECONDS,
         })
     })

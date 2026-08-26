@@ -1,6 +1,8 @@
 import {beforeEach, describe, expect, it, vi} from 'vitest'
 import worker from './index'
 import {runAdminJob} from './lib/admin/jobs'
+import {cleanupRecentFeed} from './lib/recentMedia/cleanup'
+import {publishRecentFeed} from './lib/recentMedia/publisher'
 import {createWorkerEnv} from './test/workerBindings'
 
 vi.mock('./lib/admin/jobs', async (importOriginal) => {
@@ -16,6 +18,18 @@ vi.mock('./lib/admin/jobs', async (importOriginal) => {
     }
 })
 
+vi.mock('./lib/recentMedia/publisher', () => ({
+    publishRecentFeed: vi.fn(async () => ({status: 'disabled'})),
+}))
+
+vi.mock('./lib/recentMedia/cleanup', () => ({
+    cleanupRecentFeed: vi.fn(async () => ({
+        retainedGenerations: 0,
+        deletedGenerations: 0,
+        deletedObjects: 0,
+    })),
+}))
+
 const env = createWorkerEnv()
 
 describe('worker scheduled handler', () => {
@@ -24,18 +38,28 @@ describe('worker scheduled handler', () => {
     })
 
     it.each([
+        ['* * * * *', 'recent-feed'],
         ['0 8 * * *', 'd1-backup'],
         ['0 9 * * *', 'r2-media-cleanup'],
+        ['30 9 * * *', 'recent-feed-cleanup'],
         ['0 10 * * *', 'leaderboard-refresh'],
     ] as const)('runs the %s cron as %s', async (cron, jobName) => {
         const {ctx, waitUntilPromises} = createExecutionContext()
 
         worker.scheduled({cron} as ScheduledEvent, env, ctx)
 
-        expect(runAdminJob).toHaveBeenCalledWith(env, jobName, {
-            cron,
-            triggerSource: 'cron',
-        })
+        if (jobName === 'recent-feed') {
+            expect(publishRecentFeed).toHaveBeenCalledWith(env)
+            expect(runAdminJob).not.toHaveBeenCalled()
+        } else if (jobName === 'recent-feed-cleanup') {
+            expect(cleanupRecentFeed).toHaveBeenCalledWith(env)
+            expect(runAdminJob).not.toHaveBeenCalled()
+        } else {
+            expect(runAdminJob).toHaveBeenCalledWith(env, jobName, {
+                cron,
+                triggerSource: 'cron',
+            })
+        }
         expect(ctx.waitUntil).toHaveBeenCalledTimes(1)
         await Promise.all(waitUntilPromises)
     })
@@ -45,12 +69,12 @@ describe('worker scheduled handler', () => {
         const {ctx} = createExecutionContext()
 
         try {
-            worker.scheduled({cron: '* * * * *'} as ScheduledEvent, env, ctx)
+            worker.scheduled({cron: '15 4 * * *'} as ScheduledEvent, env, ctx)
 
             expect(runAdminJob).not.toHaveBeenCalled()
             expect(ctx.waitUntil).not.toHaveBeenCalled()
             expect(warn).toHaveBeenCalledWith('Unhandled scheduled cron trigger', {
-                cron: '* * * * *',
+                cron: '15 4 * * *',
             })
         } finally {
             warn.mockRestore()

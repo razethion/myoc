@@ -43,25 +43,77 @@ const row = {
 }
 
 describe('recent media routes', () => {
+    it('reports the public root and unsafe pending changes', async () => {
+        const {db, boundStatements} = createMockDb({
+            firstResults: [
+                {
+                    generation: 'r7-demo',
+                    rootKey: 'generations/v1/roots/r7-demo.json',
+                    publishedAt: '2026-08-25T12:05:00.000Z',
+                    unsafePending: 1,
+                },
+            ],
+        })
+        const response = await app.request(
+            'https://example.com/api/recent-media/state',
+            {},
+            createWorkerEnv({
+                CACHE: createMockKVNamespace(),
+                DB: db,
+                RECENT_FEED_PUBLIC_BASE_URL: 'https://feed-data.myoc.art',
+            }),
+        )
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            generation: 'r7-demo',
+            publishedAt: '2026-08-25T12:05:00.000Z',
+            publicRootUrl: 'https://feed-data.myoc.art/generations/v1/roots/r7-demo.json',
+            unsafePending: true,
+        })
+        expect(response.headers.get('Cache-Control')).toBe('public, max-age=5, must-revalidate')
+        expect(boundStatements).toHaveLength(1)
+        expect(boundStatements[0]).toMatchObject({binds: []})
+        expect(boundStatements[0]?.sql).toContain('dirty.revision > state.published_revision')
+        expect(boundStatements[0]?.sql).toContain('dirty.urgent = 1')
+    })
+
     it('renders a full-width desktop grid and a one-card mobile feed', async () => {
         const {db, boundStatements} = createMockDb({allResults: [[row]]})
         const cache = createMockKVNamespace()
         const response = await app.request(
             'https://example.com/recent',
             {},
-            createWorkerEnv({CACHE: cache, DB: db, MEDIA_PUBLIC_BASE_URL: 'https://m.myoc.art'}),
+            createWorkerEnv({
+                CACHE: cache,
+                DB: db,
+                MEDIA_PUBLIC_BASE_URL: 'https://m.myoc.art',
+                RECENT_FEED_PUBLIC_BASE_URL: 'https://feed-data.myoc.art',
+            }),
         )
         const html = await response.text()
 
         expect(response.status).toBe(200)
+        expect(response.headers.get('Content-Security-Policy')).toContain('connect-src')
+        expect(response.headers.get('Content-Security-Policy')).toContain('https://feed-data.myoc.art')
         expect(html).toContain('<title>Recently uploaded media | MyOC</title>')
         expect(html).toContain('Recently uploaded')
         expect(html).not.toContain('The latest approved character art')
         expect(html).toContain('Show NSFW media</button>')
         expect(html).toContain('Hide unapproved</button>')
+        expect(html).toContain('data-recent-stack-default="true"')
+        expect(html).toContain('aria-label="Expand multiple uploads by default"')
+        expect(html).toContain('Expand uploads</button>')
         expect(html).toContain('data-show-nsfw="false"')
         expect(html).toContain('data-show-unapproved="true"')
-        expect(html).toContain('recent-media-row contents md:flex')
+        expect(html).toContain('data-generation=""')
+        expect(html).toContain('data-media-origin="https://m.myoc.art"')
+        expect(html).toContain('data-next-position=""')
+        expect(html).toContain('data-public-root-url=""')
+        expect(html).toContain('data-recent-update="true"')
+        expect(html).toContain('New uploads are available.')
+        expect(html).toContain('data-recent-refresh="true"')
+        expect(html).toContain('recent-media-row min-w-0 max-w-full contents md:flex')
         expect(html).toContain('recent-media-tile card card-border')
         expect(html).toContain('card-body p-3 md:hidden')
         expect(html.indexOf('data-recent-media-image')).toBeLessThan(html.indexOf('data-mobile-credits'))
@@ -80,10 +132,109 @@ describe('recent media routes', () => {
         expect(html).toContain('href="/u/demo_owner/Quartz%20Dragon"')
         expect(html).toContain('src="https://m.myoc.art/characters/user-1/character-1/media/media-newest/sfw/preview/preview-key.webp"')
         expect(html).toContain('data-recent-sentinel')
+        const scriptStart = html.indexOf('const recentFeed =')
+        const scriptEnd = html.indexOf('</script>', scriptStart)
+        expect(() => new Function(html.slice(scriptStart, scriptEnd))).not.toThrow()
+        expect(html).toContain("params.set('generation', generation)")
+        expect(html).toContain("fetch('/api/recent-media/state'")
+        expect(html).toContain('51000 + Math.floor(Math.random() * 18001)')
+        expect(html).toContain('response.status === 410')
+        expect(html).toContain('itemIds: new Set()')
+        expect(html).toContain('async function loadRecentDirectPage()')
+        expect(html).toContain('if (useDirectFeed) await verifyRecentDirectState()')
+        expect(html).toContain('body.unsafePending || body.generation !== recentState.generation')
+        expect(html).toContain("credentials: 'omit'")
+        expect(html).toContain("mode: 'cors'")
+        expect(html).toContain("'generations/v1/manifests/' + variant + '/years/'")
+        expect(html).toContain("'generations/v1/blocks/' + variant + '/' + hour + '/'")
+        expect(html).toContain('url.origin === recentState.mediaOrigin')
+        expect(html).toContain('root.generation !== recentState.generation')
+        expect(html).toContain('recentState.directPosition = readRecentDirectPosition(body.nextPosition)')
         expect(boundStatements[0]?.sql).not.toContain("character_media.sfw_review_status = 'approved'")
-        expect(cache.put).toHaveBeenCalledWith('recent-media:v3:24:n0:u1:first', expect.any(String), {
+        expect(cache.put).toHaveBeenCalledWith('recent-media:v4:24:n0:u1:first', expect.any(String), {
             expirationTtl: RECENT_MEDIA_CACHE_TTL_SECONDS,
         })
+    })
+
+    it('stacks only adjacent uploads from the same user and character', async () => {
+        const rows = [
+            row,
+            {...row, id: 'media-next', created_at: '2026-08-23 12:58:00'},
+            {
+                ...row,
+                id: 'media-other-character',
+                character_id: 'character-2',
+                character_name: 'Amber Griffin',
+                character_profile_image_key: 'amber-profile',
+                created_at: '2026-08-23 12:57:00',
+            },
+            {...row, id: 'media-older', created_at: '2026-08-23 12:56:00'},
+        ]
+        const {db} = createMockDb({allResults: [rows]})
+        const response = await app.request(
+            'https://example.com/recent',
+            {},
+            createWorkerEnv({CACHE: createMockKVNamespace(), DB: db, MEDIA_PUBLIC_BASE_URL: 'https://m.myoc.art'}),
+        )
+        const html = await response.text()
+        const feedMarkup = html.slice(html.indexOf('<section'), html.indexOf('</section>') + '</section>'.length)
+
+        expect(response.status).toBe(200)
+        expect(feedMarkup.match(/data-recent-stack="true"/g)).toHaveLength(1)
+        expect(feedMarkup).toContain('class="recent-media-tile relative min-w-0"')
+        expect(feedMarkup).toContain('class="h-full w-full md:absolute md:inset-0"')
+        expect(feedMarkup).toContain('data-stack-id="recent-stack-media-newest"')
+        expect(feedMarkup.match(/data-stack-id="recent-stack-media-newest"/g)).toHaveLength(2)
+        expect(feedMarkup).toContain('aria-expanded="false"')
+        expect(feedMarkup).toContain('Show all 2 uploads for Quartz Dragon by demo_owner')
+        expect(feedMarkup).toContain('Multiple uploads</span>')
+        expect(feedMarkup).toContain('Show all 2 uploads</span>')
+        expect(feedMarkup).toContain('opacity-90 transition-opacity hover:opacity-100 focus-visible:opacity-100')
+        expect(feedMarkup).not.toContain('data-stack-plate')
+        expect(feedMarkup).not.toContain('recent-media-stack stack')
+        expect(feedMarkup).not.toContain('shadow-xl')
+        expect(feedMarkup).toContain('data-recent-stack-items="true"')
+        expect(feedMarkup).toContain('"id":"media-next"')
+        expect(feedMarkup).not.toContain('data-media-id="media-next"')
+        expect(feedMarkup).toContain('data-media-id="media-other-character"')
+        expect(feedMarkup).toContain('data-media-id="media-older"')
+        expect(html).toContain('function reconcileRecentRows()')
+        expect(html).toContain('nodes.slice(rowIndex * 5, rowIndex * 5 + 5)')
+        expect(html).toContain('setRecentStackExpanded(record, !record.expanded)')
+        expect(html).toContain("const recentStackDefaultKey = 'myoc:recent-media:expand-groups'")
+        expect(html).toContain('expandGroupsByDefault: readRecentStackDefault()')
+        expect(html).toContain('setAllRecentStacksExpanded(recentState.expandGroupsByDefault)')
+        expect(html).toContain('if (recentState.expandGroupsByDefault) reconcileRecentRows()')
+        expect(html).toContain("localStorage.getItem(recentStackDefaultKey) === 'true'")
+        expect(html).toContain("localStorage.setItem(recentStackDefaultKey, expanded ? 'true' : 'false')")
+        expect(html).toContain('if (changed) reconcileRecentRows()')
+        expect(html).toContain('if (record.id === currentId || record.expanded || record.cards.length === 1) continue;')
+        expect(html).not.toContain('function replaceRecentRows(rows, entries)')
+        expect(html).not.toContain("'grid w-full flex-none grid-cols-1")
+        expect(html).not.toContain('recentFeed.replaceChildren();\n            entries.forEach')
+    })
+
+    it('packs each complete gallery row with five entries', async () => {
+        const rows = Array.from({length: 6}, (_, index) => ({
+            ...row,
+            id: `media-${index + 1}`,
+            character_id: `character-${index + 1}`,
+            character_name: `Character ${index + 1}`,
+            created_at: `2026-08-23 12:${String(59 - index).padStart(2, '0')}:00`,
+        }))
+        const {db} = createMockDb({allResults: [rows]})
+        const response = await app.request(
+            'https://example.com/recent',
+            {},
+            createWorkerEnv({CACHE: createMockKVNamespace(), DB: db, MEDIA_PUBLIC_BASE_URL: 'https://m.myoc.art'}),
+        )
+        const html = await response.text()
+        const feedMarkup = html.slice(html.indexOf('<section'), html.indexOf('</section>') + '</section>'.length)
+
+        expect(response.status).toBe(200)
+        expect(feedMarkup.match(/data-recent-row="true"/g)).toHaveLength(2)
+        expect(feedMarkup.match(/data-recent-row-size="5"/g)).toHaveLength(1)
+        expect(feedMarkup.match(/data-recent-row-size="1"/g)).toHaveLength(1)
     })
 
     it('uses account defaults for NSFW and unapproved media', async () => {
@@ -132,7 +283,7 @@ describe('recent media routes', () => {
         expect(html).toContain('Show unapproved</button>')
         expect(html).toContain('/nsfw/preview/nsfw-preview.webp')
         expect(mediaQuery?.sql).toContain("character_media.nsfw_review_status = 'approved'")
-        expect(cache.put).toHaveBeenCalledWith('recent-media:v3:24:n1:u0:first', expect.any(String), {
+        expect(cache.put).toHaveBeenCalledWith('recent-media:v4:24:n1:u0:first', expect.any(String), {
             expirationTtl: RECENT_MEDIA_CACHE_TTL_SECONDS,
         })
     })
