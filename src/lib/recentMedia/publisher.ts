@@ -10,6 +10,7 @@ import {
 } from '../recentMedia'
 import {
     getRecentFeedConfig,
+    RECENT_FEED_INITIAL_ITEMS,
     RECENT_FEED_SCHEMA_VERSION,
     RECENT_FEED_VARIANTS,
     type RecentFeedConfig,
@@ -36,8 +37,8 @@ import {
     RecentFeedYearManifestSchema,
     type RecentFeedYearReference,
 } from './model'
+import {readRecentFeedTreeItems} from './tree'
 
-const RECENT_FEED_POINTER_CACHE_KEY = 'recent-feed:v1:latest'
 const RECENT_FEED_BOOTSTRAP_ROW_BUDGET = 1000
 const RECENT_FEED_BOOTSTRAP_HOUR_BUDGET = 24
 const RECENT_FEED_MAX_BLOCKS_PER_HOUR = 4096
@@ -45,7 +46,6 @@ const RECENT_FEED_BOOTSTRAP_MAX_ROOTS_BYTES = 1024 * 1024
 const RECENT_FEED_BOOTSTRAP_IMMEDIATE_DELETE_LIMIT = 1000
 
 type RecentFeedPublisherEnv = {
-    CACHE?: KVNamespace
     DB: D1Database
     MEDIA_PUBLIC_BASE_URL: string
     RECENT_FEED_BLOCK_ITEMS?: string
@@ -164,13 +164,18 @@ export async function publishRecentFeed(
 
     try {
         const state = await getRecentFeedState(env.DB)
+        let previousRoot: RecentFeedRoot | null = null
 
         if (!state.root_key || state.bootstrap_revision !== null) {
             return await continueRecentFeedBootstrap(env, config, state, leaseOwner, startedAt, options.now ?? new Date())
         }
 
         if (state.requested_revision <= state.published_revision) {
-            return {status: 'current', generation: state.generation ?? undefined, revision: state.published_revision}
+            previousRoot = await readJson(env.RECENT_FEED_BUCKET, state.root_key, RecentFeedRootSchema)
+
+            if (previousRoot.initialItems) {
+                return {status: 'current', generation: state.generation ?? undefined, revision: state.published_revision}
+            }
         }
 
         const targetRevision = state.requested_revision
@@ -180,8 +185,7 @@ export async function publishRecentFeed(
         await renewPublicationLease(env.DB, leaseOwner)
         const sourceRowsByHour = await loadSourceRowsByHour(env.DB, dirtyHours, fullBuild)
         await renewPublicationLease(env.DB, leaseOwner)
-        const previousRoot =
-            fullBuild || !state.root_key ? null : await readJson(env.RECENT_FEED_BUCKET, state.root_key, RecentFeedRootSchema)
+        previousRoot ??= fullBuild || !state.root_key ? null : await readJson(env.RECENT_FEED_BUCKET, state.root_key, RecentFeedRootSchema)
         const metrics: WriteMetrics = {objectsWritten: 0, bytesWritten: 0}
         const variantRoots = {} as RecentFeedRoot['variants']
 
@@ -203,8 +207,12 @@ export async function publishRecentFeed(
             await renewPublicationLease(env.DB, leaseOwner)
         }
 
+        const initialItems = await buildRecentFeedInitialItems(env.RECENT_FEED_BUCKET, variantRoots)
+        await renewPublicationLease(env.DB, leaseOwner)
         const publishedAt = (options.now ?? new Date()).toISOString()
-        const generationDigest = await sha256Hex(JSON.stringify({throughRevision: targetRevision, publishedAt, variants: variantRoots}))
+        const generationDigest = await sha256Hex(
+            JSON.stringify({throughRevision: targetRevision, publishedAt, variants: variantRoots, initialItems}),
+        )
         const generation = `r${targetRevision}-${generationDigest.slice(0, 16)}`
         const rootKey = `generations/v1/roots/${generation}-${generationDigest.slice(16, 48)}.json`
         const existingRoot = await env.RECENT_FEED_BUCKET.get(rootKey)
@@ -216,6 +224,7 @@ export async function publishRecentFeed(
                   throughRevision: targetRevision,
                   publishedAt,
                   variants: variantRoots,
+                  initialItems,
               }
 
         if (!existingRoot) {
@@ -230,14 +239,6 @@ export async function publishRecentFeed(
         }
 
         await checkpointPublication(env.DB, leaseOwner, targetRevision, pointer, variantRoots, metrics)
-
-        if (env.CACHE) {
-            try {
-                await env.CACHE.put(RECENT_FEED_POINTER_CACHE_KEY, JSON.stringify(pointer), {expirationTtl: 60})
-            } catch {
-                // D1 remains the pointer authority when KV is unavailable.
-            }
-        }
 
         const itemCounts = Object.fromEntries(RECENT_FEED_VARIANTS.map((variant) => [variant, variantRoots[variant].itemCount])) as Record<
             RecentFeedVariant,
@@ -274,30 +275,7 @@ export async function publishRecentFeed(
     }
 }
 
-export async function getRecentFeedPointer(db: D1Database, cache?: KVNamespace): Promise<RecentFeedPointer | null> {
-    if (cache) {
-        try {
-            const cached = await cache.get<unknown>(RECENT_FEED_POINTER_CACHE_KEY, {type: 'json', cacheTtl: 30})
-            const parsed = cached && typeof cached === 'object' ? cached : null
-
-            if (
-                parsed &&
-                'generation' in parsed &&
-                'rootKey' in parsed &&
-                'publishedAt' in parsed &&
-                'throughRevision' in parsed &&
-                typeof parsed.generation === 'string' &&
-                typeof parsed.rootKey === 'string' &&
-                typeof parsed.publishedAt === 'string' &&
-                typeof parsed.throughRevision === 'number'
-            ) {
-                return parsed as RecentFeedPointer
-            }
-        } catch {
-            // Fall through to the authoritative D1 pointer.
-        }
-    }
-
+export async function getRecentFeedPointer(db: D1Database): Promise<RecentFeedPointer | null> {
     const state = await getRecentFeedState(db)
 
     return state.generation && state.root_key && state.published_at
@@ -308,6 +286,26 @@ export async function getRecentFeedPointer(db: D1Database, cache?: KVNamespace):
               throughRevision: state.published_revision,
           }
         : null
+}
+
+async function buildRecentFeedInitialItems(
+    bucket: R2Bucket,
+    variants: RecentFeedRoot['variants'],
+): Promise<NonNullable<RecentFeedRoot['initialItems']>> {
+    const entries = await Promise.all(
+        RECENT_FEED_VARIANTS.map(async (variant) => {
+            const root = variants[variant]
+            const items = await readRecentFeedTreeItems(bucket, root, variant, 0, Math.min(root.itemCount, RECENT_FEED_INITIAL_ITEMS))
+
+            if (items.length !== Math.min(root.itemCount, RECENT_FEED_INITIAL_ITEMS)) {
+                throw new Error(`Recent feed initial items do not match the ${variant} root`)
+            }
+
+            return [variant, items] as const
+        }),
+    )
+
+    return Object.fromEntries(entries) as NonNullable<RecentFeedRoot['initialItems']>
 }
 
 async function acquirePublicationLease(db: D1Database, owner: string): Promise<boolean> {
@@ -1081,8 +1079,12 @@ async function continueRecentFeedBootstrap(
         }
     }
 
+    const initialItems = await buildRecentFeedInitialItems(env.RECENT_FEED_BUCKET, variantRoots)
+    await renewPublicationLease(env.DB, leaseOwner)
     const publishedAt = now.toISOString()
-    const generationDigest = await sha256Hex(JSON.stringify({throughRevision: targetRevision, publishedAt, variants: variantRoots}))
+    const generationDigest = await sha256Hex(
+        JSON.stringify({throughRevision: targetRevision, publishedAt, variants: variantRoots, initialItems}),
+    )
     const generation = `r${targetRevision}-${generationDigest.slice(0, 16)}`
     const rootKey = `generations/v1/roots/${generation}-${generationDigest.slice(16, 48)}.json`
     const root: RecentFeedRoot = {
@@ -1091,6 +1093,7 @@ async function continueRecentFeedBootstrap(
         throughRevision: targetRevision,
         publishedAt,
         variants: variantRoots,
+        initialItems,
     }
 
     await putJsonIfMissing(env.RECENT_FEED_BUCKET, rootKey, JSON.stringify(root), config.immutableCacheControl, metrics)
@@ -1100,14 +1103,6 @@ async function continueRecentFeedBootstrap(
     const pointer: RecentFeedPointer = {generation, rootKey, publishedAt, throughRevision: targetRevision}
     await checkpointInitialPublication(env.DB, leaseOwner, pointer, variantRoots, totalMetrics)
     await deleteBootstrapCheckpointKeys(env.RECENT_FEED_BUCKET, checkpointKeysToDelete)
-
-    if (env.CACHE) {
-        try {
-            await env.CACHE.put(RECENT_FEED_POINTER_CACHE_KEY, JSON.stringify(pointer), {expirationTtl: 60})
-        } catch {
-            // D1 remains the pointer authority when KV is unavailable.
-        }
-    }
 
     const itemCounts = Object.fromEntries(RECENT_FEED_VARIANTS.map((variant) => [variant, variantRoots[variant].itemCount])) as Record<
         RecentFeedVariant,
@@ -1345,7 +1340,7 @@ async function checkpointPublication(
                  last_error = NULL,
                  updated_at = CURRENT_TIMESTAMP
              WHERE singleton = 1
-               AND published_revision < ?
+               AND published_revision <= ?
                AND lease_owner = ?
                AND lease_expires_at > CURRENT_TIMESTAMP`,
         )

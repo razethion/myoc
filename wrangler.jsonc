@@ -52,10 +52,10 @@
     "D1_DATABASE_ID": "909ada8f-fc57-47ad-83e1-18ffe863debb",
     "MEDIA_PUBLIC_BASE_URL": "https://m.myoc.art",
     "RECENT_FEED_BLOCK_ITEMS": "96",
-    "RECENT_FEED_CLEANUP_ENABLED": "false",
-    "RECENT_FEED_PUBLISH_ENABLED": "false",
+    "RECENT_FEED_CLEANUP_ENABLED": "true",
+    "RECENT_FEED_PUBLISH_ENABLED": "true",
     "RECENT_FEED_PUBLIC_BASE_URL": "https://feed-data.myoc.art",
-    "RECENT_FEED_READ_MODE": "d1",
+    "RECENT_FEED_READ_MODE": "r2",
     "RECENT_FEED_RETENTION_DAYS": "30"
   },
   "secrets": {

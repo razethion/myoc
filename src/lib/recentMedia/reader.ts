@@ -1,23 +1,9 @@
 import {z} from 'zod'
 import {normalizeRecentMediaLimit, type RecentMediaItem, type RecentMediaOptions, type RecentMediaPage} from '../recentMedia'
-import {getRecentFeedConfig, RECENT_FEED_VARIANTS, type RecentFeedVariant, recentFeedPublicObjectUrl, recentFeedVariant} from './config'
-import {
-    RecentFeedBlockSchema,
-    type RecentFeedDayManifest,
-    RecentFeedDayManifestSchema,
-    type RecentFeedDayReference,
-    type RecentFeedHourReference,
-    type RecentFeedMonthManifest,
-    RecentFeedMonthManifestSchema,
-    type RecentFeedMonthReference,
-    type RecentFeedPointer,
-    RecentFeedRootSchema,
-    type RecentFeedVariantRoot,
-    type RecentFeedYearManifest,
-    RecentFeedYearManifestSchema,
-    type RecentFeedYearReference,
-} from './model'
+import {getRecentFeedConfig, RECENT_FEED_VARIANTS, recentFeedPublicObjectUrl, recentFeedVariant} from './config'
+import {type RecentFeedPointer, RecentFeedRootSchema} from './model'
 import {getRecentFeedPointer} from './publisher'
+import {readRecentFeedTreeItems} from './tree'
 
 const RecentFeedCursorPayloadSchema = z.object({
     version: z.literal(1),
@@ -27,7 +13,6 @@ const RecentFeedCursorPayloadSchema = z.object({
 })
 
 type RecentFeedReaderEnv = {
-    CACHE?: KVNamespace
     DB: D1Database
     RECENT_FEED_BLOCK_ITEMS?: string
     RECENT_FEED_BUCKET: R2Bucket
@@ -87,7 +72,7 @@ export async function getGeneratedRecentMediaPage(
     }
 
     const generation = cursor?.generation ?? options.generation?.trim() ?? null
-    const pointer = generation ? await getGenerationPointer(env.DB, generation) : await getRecentFeedPointer(env.DB, env.CACHE)
+    const pointer = generation ? await getGenerationPointer(env.DB, generation) : await getRecentFeedPointer(env.DB)
 
     if (!pointer) {
         throw generation ? new RecentFeedGenerationExpiredError() : new RecentFeedUnavailableError()
@@ -113,6 +98,10 @@ export async function getGeneratedRecentMediaPage(
     if (variantRoot.itemCount !== sumItemCounts(variantRoot.years)) {
         throw new RecentFeedUnavailableError('Recent feed variant does not match its root')
     }
+    const initialItems = root.initialItems?.[requestedVariant]
+    if (initialItems && initialItems.length > variantRoot.itemCount) {
+        throw new RecentFeedUnavailableError('Recent feed initial items do not match its root')
+    }
     const position = cursor?.position ?? 0
 
     if (position > variantRoot.itemCount) {
@@ -122,29 +111,36 @@ export async function getGeneratedRecentMediaPage(
     const limit = normalizeRecentMediaLimit(options.limit)
     const items: RecentMediaItem[] = []
     const objectCache = new Map<string, unknown>()
+    const useInitialItems = initialItems !== undefined && position < initialItems.length
     let consumed = 0
 
-    while (items.length < limit && position + consumed < variantRoot.itemCount) {
-        const scanned = await readGeneratedItems(
-            env.RECENT_FEED_BUCKET,
-            variantRoot,
-            requestedVariant,
-            position + consumed,
-            Math.max(limit * 2, 30),
-            objectCache,
-        )
+    while (
+        items.length < limit &&
+        position + consumed < variantRoot.itemCount &&
+        (!useInitialItems || position + consumed < initialItems.length)
+    ) {
+        const scannedItems = useInitialItems
+            ? initialItems.slice(position + consumed, position + consumed + Math.max(limit * 2, 30))
+            : await readRecentFeedTreeItems(
+                  env.RECENT_FEED_BUCKET,
+                  variantRoot,
+                  requestedVariant,
+                  position + consumed,
+                  Math.max(limit * 2, 30),
+                  objectCache,
+              )
 
-        if (scanned.items.length === 0) {
+        if (scannedItems.length === 0) {
             break
         }
 
         const revokedIds = await getRevokedMediaIds(
             env.DB,
-            scanned.items.map((item) => item.id),
+            scannedItems.map((item) => item.id),
             root.throughRevision,
         )
 
-        for (const item of scanned.items) {
+        for (const item of scannedItems) {
             consumed += 1
 
             if (!revokedIds.has(item.id)) {
@@ -192,217 +188,6 @@ async function getGenerationPointer(db: D1Database, generation: string): Promise
         )
         .bind(generation)
         .first<RecentFeedPointer>()
-}
-
-async function readGeneratedItems(
-    bucket: R2Bucket,
-    root: RecentFeedVariantRoot,
-    variant: RecentFeedVariant,
-    position: number,
-    maximum: number,
-    objectCache: Map<string, unknown>,
-): Promise<{items: RecentMediaItem[]}> {
-    const items: RecentMediaItem[] = []
-    let remainingPosition = position
-
-    for (const reference of root.years) {
-        if (remainingPosition >= reference.itemCount) {
-            remainingPosition -= reference.itemCount
-            continue
-        }
-
-        const manifest = await readCachedJson(bucket, reference.key, RecentFeedYearManifestSchema, objectCache)
-        assertYearManifest(manifest, reference, variant)
-        await readYearItems(bucket, manifest, variant, remainingPosition, maximum, items, objectCache)
-        remainingPosition = 0
-
-        if (items.length >= maximum) {
-            break
-        }
-    }
-
-    return {items}
-}
-
-async function readYearItems(
-    bucket: R2Bucket,
-    year: RecentFeedYearManifest,
-    variant: RecentFeedVariant,
-    position: number,
-    maximum: number,
-    items: RecentMediaItem[],
-    objectCache: Map<string, unknown>,
-): Promise<void> {
-    let remainingPosition = position
-
-    for (const reference of year.months) {
-        if (remainingPosition >= reference.itemCount) {
-            remainingPosition -= reference.itemCount
-            continue
-        }
-
-        const manifest = await readCachedJson(bucket, reference.key, RecentFeedMonthManifestSchema, objectCache)
-        assertMonthManifest(manifest, reference, variant, year.year)
-        await readMonthItems(bucket, manifest, variant, remainingPosition, maximum, items, objectCache)
-        remainingPosition = 0
-
-        if (items.length >= maximum) {
-            return
-        }
-    }
-}
-
-async function readMonthItems(
-    bucket: R2Bucket,
-    month: RecentFeedMonthManifest,
-    variant: RecentFeedVariant,
-    position: number,
-    maximum: number,
-    items: RecentMediaItem[],
-    objectCache: Map<string, unknown>,
-): Promise<void> {
-    let remainingPosition = position
-
-    for (const reference of month.days) {
-        if (remainingPosition >= reference.itemCount) {
-            remainingPosition -= reference.itemCount
-            continue
-        }
-
-        const manifest = await readCachedJson(bucket, reference.key, RecentFeedDayManifestSchema, objectCache)
-        assertDayManifest(manifest, reference, variant, month.month)
-        await readDayItems(bucket, manifest, variant, remainingPosition, maximum, items, objectCache)
-        remainingPosition = 0
-
-        if (items.length >= maximum) {
-            return
-        }
-    }
-}
-
-async function readDayItems(
-    bucket: R2Bucket,
-    day: RecentFeedDayManifest,
-    variant: RecentFeedVariant,
-    position: number,
-    maximum: number,
-    items: RecentMediaItem[],
-    objectCache: Map<string, unknown>,
-): Promise<void> {
-    let remainingPosition = position
-
-    for (const hour of day.hours) {
-        if (remainingPosition >= hour.itemCount) {
-            remainingPosition -= hour.itemCount
-            continue
-        }
-
-        await readHourItems(bucket, hour, variant, remainingPosition, maximum, items, objectCache)
-        remainingPosition = 0
-
-        if (items.length >= maximum) {
-            return
-        }
-    }
-}
-
-async function readHourItems(
-    bucket: R2Bucket,
-    hour: RecentFeedHourReference,
-    variant: RecentFeedVariant,
-    position: number,
-    maximum: number,
-    items: RecentMediaItem[],
-    objectCache: Map<string, unknown>,
-): Promise<void> {
-    let remainingPosition = position
-
-    for (const reference of hour.blocks) {
-        if (remainingPosition >= reference.itemCount) {
-            remainingPosition -= reference.itemCount
-            continue
-        }
-
-        const block = await readCachedJson(bucket, reference.key, RecentFeedBlockSchema, objectCache)
-
-        if (block.variant !== variant || block.hour !== hour.hour || block.items.length !== reference.itemCount) {
-            throw new RecentFeedUnavailableError('Recent feed block does not match its reference')
-        }
-
-        items.push(...block.items.slice(remainingPosition, remainingPosition + (maximum - items.length)))
-        remainingPosition = 0
-
-        if (items.length >= maximum) {
-            return
-        }
-    }
-}
-
-function assertYearManifest(manifest: RecentFeedYearManifest, reference: RecentFeedYearReference, variant: RecentFeedVariant): void {
-    if (
-        manifest.variant !== variant ||
-        manifest.year !== reference.year ||
-        manifest.itemCount !== reference.itemCount ||
-        manifest.itemCount !== sumItemCounts(manifest.months) ||
-        manifest.months.some((month) => !month.month.startsWith(`${manifest.year}-`))
-    ) {
-        throw new RecentFeedUnavailableError('Recent feed year manifest does not match its reference')
-    }
-}
-
-function assertMonthManifest(
-    manifest: RecentFeedMonthManifest,
-    reference: RecentFeedMonthReference,
-    variant: RecentFeedVariant,
-    year: string,
-): void {
-    if (
-        manifest.variant !== variant ||
-        manifest.month !== reference.month ||
-        !manifest.month.startsWith(`${year}-`) ||
-        manifest.itemCount !== reference.itemCount ||
-        manifest.itemCount !== sumItemCounts(manifest.days) ||
-        manifest.days.some((day) => !day.day.startsWith(`${manifest.month}-`))
-    ) {
-        throw new RecentFeedUnavailableError('Recent feed month manifest does not match its reference')
-    }
-}
-
-function assertDayManifest(
-    manifest: RecentFeedDayManifest,
-    reference: RecentFeedDayReference,
-    variant: RecentFeedVariant,
-    month: string,
-): void {
-    if (
-        manifest.variant !== variant ||
-        manifest.day !== reference.day ||
-        !manifest.day.startsWith(`${month}-`) ||
-        manifest.itemCount !== reference.itemCount ||
-        manifest.itemCount !== sumItemCounts(manifest.hours) ||
-        manifest.hours.some((hour) => !hour.hour.startsWith(`${manifest.day}T`) || hour.itemCount !== sumItemCounts(hour.blocks))
-    ) {
-        throw new RecentFeedUnavailableError('Recent feed day manifest does not match its reference')
-    }
-}
-
-async function readCachedJson<T>(bucket: R2Bucket, key: string, schema: z.ZodType<T>, objectCache: Map<string, unknown>): Promise<T> {
-    const cached = objectCache.get(key)
-
-    if (cached !== undefined) {
-        return schema.parse(cached)
-    }
-
-    const object = await bucket.get(key)
-
-    if (!object) {
-        throw new RecentFeedUnavailableError(`Recent feed object is missing: ${key}`)
-    }
-
-    const value: unknown = await object.json<unknown>()
-    const parsed = schema.parse(value)
-    objectCache.set(key, parsed)
-    return parsed
 }
 
 function sumItemCounts(values: Array<{itemCount: number}>): number {

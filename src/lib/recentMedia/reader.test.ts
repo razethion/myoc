@@ -117,9 +117,68 @@ describe('generated recent media reader', () => {
         expect(page.nextPosition).toBe(36)
         expect(page.nextCursor).not.toBeNull()
     })
+
+    it('reads the embedded initial items with one R2 request', async () => {
+        const bucket = createMockR2Bucket()
+        const items = Array.from({length: 60}, (_, index) => recentItem(`media-${index}`))
+        await seedFeed(bucket, items, {initialItems: true})
+        const stateRow = {
+            requested_revision: 7,
+            published_revision: 7,
+            generation: pointer.generation,
+            root_key: pointer.rootKey,
+            published_at: pointer.publishedAt,
+            lease_owner: null,
+        }
+        const db = createMockDb({firstResults: [stateRow], allResults: [[]]}).db
+
+        const page = await getGeneratedRecentMediaPage(
+            {
+                DB: db,
+                RECENT_FEED_BUCKET: bucket,
+                RECENT_FEED_CURSOR_SECRET: 'test-secret-with-at-least-thirty-two-characters',
+            },
+            {limit: 30, showUnapproved: true},
+        )
+
+        expect(page.items.map((item) => item.id)).toEqual(items.slice(0, 30).map((item) => item.id))
+        expect(page.nextPosition).toBe(30)
+        expect(page.nextCursor).not.toBeNull()
+        expect(bucket.get).toHaveBeenCalledTimes(1)
+        expect(bucket.get).toHaveBeenCalledWith(rootKey)
+    })
+
+    it('consumes revoked embedded items without extra R2 requests', async () => {
+        const bucket = createMockR2Bucket()
+        const items = Array.from({length: 60}, (_, index) => recentItem(`media-${index}`))
+        await seedFeed(bucket, items, {initialItems: true})
+        const stateRow = {
+            requested_revision: 7,
+            published_revision: 7,
+            generation: pointer.generation,
+            root_key: pointer.rootKey,
+            published_at: pointer.publishedAt,
+            lease_owner: null,
+        }
+        const revoked = items.slice(0, 35).map((item) => ({media_id: item.id}))
+        const db = createMockDb({firstResults: [stateRow], allResults: [revoked, []]}).db
+
+        const page = await getGeneratedRecentMediaPage(
+            {
+                DB: db,
+                RECENT_FEED_BUCKET: bucket,
+                RECENT_FEED_CURSOR_SECRET: 'test-secret-with-at-least-thirty-two-characters',
+            },
+            {limit: 24, showUnapproved: true},
+        )
+
+        expect(page.items.map((item) => item.id)).toEqual(items.slice(35, 59).map((item) => item.id))
+        expect(page.nextPosition).toBe(59)
+        expect(bucket.get).toHaveBeenCalledTimes(1)
+    })
 })
 
-async function seedFeed(bucket: R2Bucket, items: RecentMediaItem[]): Promise<void> {
+async function seedFeed(bucket: R2Bucket, items: RecentMediaItem[], options: {initialItems?: boolean} = {}): Promise<void> {
     const variantRoot = {itemCount: items.length, years: [{year: '2026', key: yearKey, itemCount: items.length}]}
     const currentItems = items.slice(0, 1)
     const previousItems = items.slice(1)
@@ -140,6 +199,16 @@ async function seedFeed(bucket: R2Bucket, items: RecentMediaItem[]): Promise<voi
                 'n1-u0': variantRoot,
                 'n1-u1': variantRoot,
             },
+            ...(options.initialItems
+                ? {
+                      initialItems: {
+                          'n0-u0': items,
+                          'n0-u1': items,
+                          'n1-u0': items,
+                          'n1-u1': items,
+                      },
+                  }
+                : {}),
         }),
     )
     await bucket.put(
