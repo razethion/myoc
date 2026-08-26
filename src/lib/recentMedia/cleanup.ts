@@ -115,7 +115,7 @@ export async function cleanupRecentFeed(env: RecentFeedCleanupEnv, now = new Dat
         )
             .bind(cutoff, MINIMUM_RETAINED_GENERATIONS, MAXIMUM_DELETIONS_PER_RUN)
             .all<GenerationRow>()
-        const generations = generationsResult.results ?? []
+        const generations = generationsResult.results
         const expiredRootKeys = generations.map((generation) => generation.root_key)
 
         for (let offset = 0; offset < generations.length; offset += D1_DELETE_BATCH_SIZE) {
@@ -263,7 +263,7 @@ async function loadRetainedRootKeys(db: D1Database): Promise<string[] | null> {
             )
             .bind(cursor, RETAINED_ROOT_PAGE_SIZE)
             .all<RootKeyRow>()
-        const rows = result.results ?? []
+        const rows = result.results
 
         if (rootKeys.length + rows.length > MAXIMUM_RETAINED_ROOTS) {
             return null
@@ -280,9 +280,9 @@ async function loadRetainedRootKeys(db: D1Database): Promise<string[] | null> {
             return rootKeys
         }
 
-        cursor = rows.at(-1)?.root_key ?? ''
+        cursor = (rows.at(-1) as RootKeyRow).root_key
 
-        if (!cursor || rootKeys.length === MAXIMUM_RETAINED_ROOTS) {
+        if (rootKeys.length === MAXIMUM_RETAINED_ROOTS) {
             const probe = await db
                 .prepare(
                     `SELECT root_key
@@ -300,7 +300,7 @@ async function loadRetainedRootKeys(db: D1Database): Promise<string[] | null> {
                 )
                 .bind(cursor)
                 .all<RootKeyRow>()
-            return (probe.results?.length ?? 0) === 0 ? rootKeys : null
+            return probe.results.length === 0 ? rootKeys : null
         }
     }
 }

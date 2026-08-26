@@ -490,7 +490,7 @@ async function checkpointRecentFeedBootstrap(
     db: D1Database,
     leaseOwner: string,
     revision: number,
-    cursor: {createdAt: string; id: string} | null,
+    cursor: {createdAt: string; id: string},
     roots: RecentFeedRoot['variants'],
     activeKey: string | null,
     metrics: WriteMetrics,
@@ -514,16 +514,7 @@ async function checkpointRecentFeedBootstrap(
                AND lease_owner = ?
                AND lease_expires_at > CURRENT_TIMESTAMP`,
         )
-        .bind(
-            cursor?.createdAt ?? null,
-            cursor?.id ?? null,
-            rootsJson,
-            activeKey,
-            metrics.objectsWritten,
-            metrics.bytesWritten,
-            revision,
-            leaseOwner,
-        )
+        .bind(cursor.createdAt, cursor.id, rootsJson, activeKey, metrics.objectsWritten, metrics.bytesWritten, revision, leaseOwner)
         .run()
 
     const state = await getRecentFeedState(db)
@@ -531,8 +522,8 @@ async function checkpointRecentFeedBootstrap(
     if (
         state.bootstrap_revision !== revision ||
         state.lease_owner !== leaseOwner ||
-        state.bootstrap_cursor_created_at !== (cursor?.createdAt ?? null) ||
-        state.bootstrap_cursor_id !== (cursor?.id ?? null) ||
+        state.bootstrap_cursor_created_at !== cursor.createdAt ||
+        state.bootstrap_cursor_id !== cursor.id ||
         state.bootstrap_active_key !== activeKey
     ) {
         throw new Error('Recent feed bootstrap checkpoint was rejected')
@@ -691,9 +682,7 @@ async function finalizeBootstrapHour(
         }
 
         seenKeys.add(key)
-        if (checkpointKeys.length < RECENT_FEED_BOOTSTRAP_IMMEDIATE_DELETE_LIMIT) {
-            checkpointKeys.push(key)
-        }
+        checkpointKeys.push(key)
         const segment = await readJson(bucket, key, BootstrapActiveSegmentSchema)
 
         if (segment.hour !== active.hour) {
@@ -722,7 +711,11 @@ async function finalizeBootstrapHour(
         references[variant] = variantState.itemCount === 0 ? null : {hour: active.hour, itemCount: variantState.itemCount, blocks}
     }
 
-    return {hour: active.hour, references, checkpointKeys}
+    return {
+        hour: active.hour,
+        references,
+        checkpointKeys: checkpointKeys.slice(0, RECENT_FEED_BOOTSTRAP_IMMEDIATE_DELETE_LIMIT),
+    }
 }
 
 function addCompletedHourReferences(
@@ -1055,7 +1048,15 @@ async function continueRecentFeedBootstrap(
 
     if (!sourceComplete) {
         const activeKey = activeHour ? await writeBootstrapActiveSegment(env.RECENT_FEED_BUCKET, targetRevision, activeHour) : null
-        await checkpointRecentFeedBootstrap(env.DB, leaseOwner, targetRevision, nextCursor, variantRoots, activeKey, totalMetrics)
+        await checkpointRecentFeedBootstrap(
+            env.DB,
+            leaseOwner,
+            targetRevision,
+            nextCursor as {createdAt: string; id: string},
+            variantRoots,
+            activeKey,
+            totalMetrics,
+        )
         await deleteBootstrapCheckpointKeys(env.RECENT_FEED_BUCKET, checkpointKeysToDelete)
 
         console.log(
