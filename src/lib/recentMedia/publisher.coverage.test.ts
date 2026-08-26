@@ -37,54 +37,93 @@ describe('recent feed publisher coverage', () => {
         expect(result).toEqual({status: 'busy'})
     })
 
-    it('returns the current generation and reads validated cache pointers before D1', async () => {
+    it('returns the current generation and reads its pointer from D1', async () => {
         const harness = createDb({
             generation: 'r4-old',
             root_key: 'roots/old.json',
             published_at: '2026-08-25T12:00:00.000Z',
             published_revision: 4,
         })
-        await expect(publishRecentFeed(envFor(harness))).resolves.toEqual({status: 'current', generation: 'r4-old', revision: 4})
+        const bucket = createMockR2Bucket()
+        await bucket.put(
+            'roots/old.json',
+            JSON.stringify({
+                schemaVersion: 1,
+                generation: 'r4-old',
+                throughRevision: 4,
+                publishedAt: '2026-08-25T12:00:00.000Z',
+                variants: emptyVariants(),
+                initialItems: emptyInitialItems(),
+            }),
+        )
+        await expect(publishRecentFeed({...envFor(harness), RECENT_FEED_BUCKET: bucket})).resolves.toEqual({
+            status: 'current',
+            generation: 'r4-old',
+            revision: 4,
+        })
 
         const pointer = {generation: 'r4-old', rootKey: 'roots/old.json', publishedAt: '2026-08-25T12:00:00.000Z', throughRevision: 4}
-        const cache = {get: vi.fn(async () => pointer)}
-        await expect(getRecentFeedPointer(harness.db, cache as never)).resolves.toEqual(pointer)
-        expect(cache.get).toHaveBeenCalledOnce()
+        await expect(getRecentFeedPointer(harness.db)).resolves.toEqual(pointer)
     })
 
-    it('falls back from bad and unavailable cache values to the D1 pointer', async () => {
+    it('upgrades an old root format without a new source revision', async () => {
+        const harness = createDb()
+        const bucket = createMockR2Bucket()
+        await bucket.put(
+            'roots/old.json',
+            JSON.stringify({
+                schemaVersion: 1,
+                generation: 'r1-old',
+                throughRevision: 1,
+                publishedAt: '2026-08-24T13:00:00.000Z',
+                variants: emptyVariants(),
+            }),
+        )
+
+        await expect(
+            publishRecentFeed({...envFor(harness), RECENT_FEED_BUCKET: bucket}, {now: new Date('2026-08-26T13:00:00.000Z')}),
+        ).resolves.toMatchObject({status: 'published', revision: 1, dirtyHours: 0})
+
+        expect(harness.state.generation).not.toBe('r1-old')
+        const root = await bucket.get(harness.state.root_key ?? '')
+        await expect(root?.json()).resolves.toMatchObject({initialItems: emptyInitialItems()})
+    })
+
+    it('returns a D1 pointer or null', async () => {
         const harness = createDb({
             generation: 'r2-live',
             root_key: 'roots/live.json',
             published_at: '2026-08-25T12:00:00.000Z',
             published_revision: 2,
         })
-        const invalid = {get: vi.fn(async () => ({generation: 2}))}
-        const unavailable = {get: vi.fn(async () => Promise.reject(new Error('KV unavailable')))}
         const expected = {generation: 'r2-live', rootKey: 'roots/live.json', publishedAt: '2026-08-25T12:00:00.000Z', throughRevision: 2}
 
-        await expect(getRecentFeedPointer(harness.db, invalid as never)).resolves.toEqual(expected)
-        await expect(getRecentFeedPointer(harness.db, unavailable as never)).resolves.toEqual(expected)
+        await expect(getRecentFeedPointer(harness.db)).resolves.toEqual(expected)
 
         const empty = createDb({generation: null, root_key: null, published_at: null})
         await expect(getRecentFeedPointer(empty.db)).resolves.toBeNull()
     })
 
-    it('publishes a full normal revision and tolerates an unavailable pointer cache', async () => {
+    it('publishes a full normal revision without a KV pointer write', async () => {
         const harness = createDb(
             {requested_revision: 2, published_revision: 1},
             [{dirty_hour: '*', revision: 2, urgent: 0}],
             [recentRow('media-1')],
         )
-        const cache = {put: vi.fn(async () => Promise.reject(new Error('KV unavailable')))}
-        const result = await publishRecentFeed({...envFor(harness), CACHE: cache as never}, {now: new Date('2026-08-25T13:00:00.000Z')})
+        const bucket = createMockR2Bucket()
+        const result = await publishRecentFeed(
+            {...envFor(harness), RECENT_FEED_BUCKET: bucket},
+            {now: new Date('2026-08-25T13:00:00.000Z')},
+        )
 
         expect(result).toMatchObject({status: 'published', revision: 2, dirtyHours: 1})
         expect(harness.state.published_revision).toBe(2)
         expect(harness.state.generation).toMatch(/^r2-/)
         expect(harness.dirtyRows).toEqual([])
-        expect(cache.put).toHaveBeenCalledOnce()
         expect(harness.state.lease_owner).toBeNull()
+        const root = await bucket.get(harness.state.root_key ?? '')
+        const rootBody = await root?.json<{initialItems: Record<string, Array<{id: string}>>}>()
+        expect(rootBody?.initialItems['n0-u1']?.map((item) => item.id)).toEqual(['media-1'])
     })
 
     it('reuses an already written normal root on a safe retry', async () => {
@@ -266,13 +305,10 @@ describe('recent feed publisher coverage', () => {
             [],
             [recentRow('newer'), older],
         )
-        const cache = {put: vi.fn(async () => Promise.reject(new Error('cache unavailable')))}
-
-        const result = await publishRecentFeed({...envFor(harness), CACHE: cache as never}, {now: new Date('2026-08-25T13:00:00.000Z')})
+        const result = await publishRecentFeed(envFor(harness), {now: new Date('2026-08-25T13:00:00.000Z')})
 
         expect(result).toMatchObject({status: 'published', revision: 1, dirtyHours: 2, bootstrapRows: 2})
         expect(harness.state.bootstrap_revision).toBeNull()
-        expect(cache.put).toHaveBeenCalledOnce()
     })
 
     it('reports initial checkpoint conflicts and release failures without hiding the publication error', async () => {
@@ -515,10 +551,22 @@ describe('recent feed publisher coverage', () => {
         expect(root.years.map((year) => year.year)).toEqual(['2026', '2025'])
     })
 
-    it('covers null cache entries and null current generations', async () => {
+    it('covers null current generations', async () => {
         const current = createDb({generation: null, requested_revision: 1, published_revision: 1})
-        await expect(publishRecentFeed(envFor(current))).resolves.toEqual({status: 'current', revision: 1})
-        await expect(getRecentFeedPointer(current.db, {get: vi.fn(async () => null)} as never)).resolves.toBeNull()
+        const bucket = createMockR2Bucket()
+        await bucket.put(
+            'roots/old.json',
+            JSON.stringify({
+                schemaVersion: 1,
+                generation: 'r1-old',
+                throughRevision: 1,
+                publishedAt: '2026-08-24T13:00:00.000Z',
+                variants: emptyVariants(),
+                initialItems: emptyInitialItems(),
+            }),
+        )
+        await expect(publishRecentFeed({...envFor(current), RECENT_FEED_BUCKET: bucket})).resolves.toEqual({status: 'current', revision: 1})
+        await expect(getRecentFeedPointer(current.db)).resolves.toBeNull()
     })
 })
 
@@ -532,6 +580,20 @@ async function bootstrapProgress(count: number) {
 
 function checkpointRows(count: number): RecentMediaRow[] {
     return Array.from({length: count}, (_, index) => recentRow(`checkpoint-${String(count - index).padStart(4, '0')}`))
+}
+
+function emptyVariants(): Record<(typeof RECENT_FEED_VARIANTS)[number], {itemCount: number; years: never[]}> {
+    return Object.fromEntries(RECENT_FEED_VARIANTS.map((variant) => [variant, {itemCount: 0, years: []}])) as Record<
+        (typeof RECENT_FEED_VARIANTS)[number],
+        {itemCount: number; years: never[]}
+    >
+}
+
+function emptyInitialItems(): Record<(typeof RECENT_FEED_VARIANTS)[number], never[]> {
+    return Object.fromEntries(RECENT_FEED_VARIANTS.map((variant) => [variant, []])) as Record<
+        (typeof RECENT_FEED_VARIANTS)[number],
+        never[]
+    >
 }
 
 async function checkpointSegment(bucket: R2Bucket, key: string | null): Promise<BootstrapSegment> {

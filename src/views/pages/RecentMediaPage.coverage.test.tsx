@@ -94,6 +94,8 @@ describe('RecentMediaPage coverage', () => {
         expect(html).toContain('<span class="text-sm font-bold">A</span>')
         expect(html).toContain('artist-third avatar')
         expect(html).toContain('data-recent-stack-items="true"')
+        expect(html).toContain('[12][0-9]')
+        expect(html).toContain('[01][0-9]')
     })
 
     it('renders a direct-feed position for a guest with inactive filters', async () => {

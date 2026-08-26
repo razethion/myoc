@@ -571,7 +571,7 @@ function RecentMediaScript() {
             const count = validateRecentReferences(
                 manifest.days,
                 'day',
-                new RegExp('^' + reference.month + '-(?:0[1-9]|[12]\\d|3[01])$'),
+                new RegExp('^' + reference.month + '-(?:0[1-9]|[12][0-9]|3[01])$'),
                 'generations/v1/manifests/' + variant + '/days/',
                 31,
             );
@@ -598,7 +598,7 @@ function RecentMediaScript() {
             for (const hour of manifest.hours) {
                 if (!isRecentRecord(hour)
                     || typeof hour.hour !== 'string'
-                    || !new RegExp('^' + reference.day + 'T(?:[01]\\d|2[0-3])$').test(hour.hour)
+                    || !new RegExp('^' + reference.day + 'T(?:[01][0-9]|2[0-3])$').test(hour.hour)
                     || hours.has(hour.hour)
                     || (previousHour && previousHour <= hour.hour)
                     || !isRecentCount(hour.itemCount, false)) {

@@ -1,5 +1,6 @@
 export const RECENT_FEED_SCHEMA_VERSION = 1
 export const RECENT_FEED_VARIANTS = ['n0-u0', 'n0-u1', 'n1-u0', 'n1-u1'] as const
+export const RECENT_FEED_INITIAL_ITEMS = 60
 
 export type RecentFeedVariant = (typeof RECENT_FEED_VARIANTS)[number]
 type RecentFeedReadMode = 'd1' | 'shadow' | 'r2'

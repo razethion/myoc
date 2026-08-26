@@ -1,6 +1,6 @@
 import {z} from 'zod'
 import {RecentMediaItemSchema} from '../recentMedia'
-import {RECENT_FEED_SCHEMA_VERSION, RECENT_FEED_VARIANTS} from './config'
+import {RECENT_FEED_INITIAL_ITEMS, RECENT_FEED_SCHEMA_VERSION, RECENT_FEED_VARIANTS} from './config'
 
 const RecentFeedObjectKeySchema = z.string().min(1).max(1024)
 const RecentFeedItemCountSchema = z.number().int().nonnegative()
@@ -85,6 +85,14 @@ export const RecentFeedRootSchema = z.object({
         'n1-u0': RecentFeedVariantRootSchema,
         'n1-u1': RecentFeedVariantRootSchema,
     }),
+    initialItems: z
+        .object({
+            'n0-u0': z.array(RecentMediaItemSchema).max(RECENT_FEED_INITIAL_ITEMS),
+            'n0-u1': z.array(RecentMediaItemSchema).max(RECENT_FEED_INITIAL_ITEMS),
+            'n1-u0': z.array(RecentMediaItemSchema).max(RECENT_FEED_INITIAL_ITEMS),
+            'n1-u1': z.array(RecentMediaItemSchema).max(RECENT_FEED_INITIAL_ITEMS),
+        })
+        .optional(),
 })
 
 const RecentFeedPointerSchema = z.object({
