@@ -215,7 +215,8 @@ jobs:
               "remote": true
             },
             "vars": {
-              "MEDIA_PUBLIC_BASE_URL": "https://m.dev.myoc.art"
+              "MEDIA_PUBLIC_BASE_URL": "https://m.dev.myoc.art",
+              "RECENT_FEED_PUBLIC_BASE_URL": "https://feed-data.dev.myoc.art"
             },
             "secrets": {
               "required": ["PREVIEW_PROCESSOR_TOKEN"]
@@ -231,6 +232,10 @@ jobs:
               {
                 "binding": "MEDIA_BUCKET",
                 "bucket_name": "myoc-dev"
+              },
+              {
+                "binding": "RECENT_FEED_BUCKET",
+                "bucket_name": "myoc-recent-feed-dev"
               }
             ]
           }
