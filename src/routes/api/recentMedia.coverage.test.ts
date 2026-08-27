@@ -1,8 +1,7 @@
 import {beforeEach, describe, expect, it, vi} from 'vitest'
 import {getCurrentUser} from '../../lib/auth/session'
-import {InvalidRecentMediaCursorError, type RecentMediaPage} from '../../lib/recentMedia'
-import {InvalidRecentFeedCursorError, RecentFeedGenerationExpiredError} from '../../lib/recentMedia/reader'
-import {getConfiguredRecentMediaPage} from '../../lib/recentMedia/service'
+import type {RecentMediaPage} from '../../lib/recentMedia'
+import {getGeneratedRecentMediaPage, InvalidRecentFeedCursorError, RecentFeedGenerationExpiredError} from '../../lib/recentMedia/reader'
 import {createMockDb} from '../../test/mockD1'
 import type {Bindings} from '../../types/bindings'
 import {recentMediaRoutes} from './recentMedia'
@@ -11,12 +10,13 @@ vi.mock('../../lib/auth/session', () => ({
     getCurrentUser: vi.fn(),
 }))
 
-vi.mock('../../lib/recentMedia/service', () => ({
-    getConfiguredRecentMediaPage: vi.fn(),
+vi.mock('../../lib/recentMedia/reader', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('../../lib/recentMedia/reader')>()),
+    getGeneratedRecentMediaPage: vi.fn(),
 }))
 
 const mockedGetCurrentUser = vi.mocked(getCurrentUser)
-const mockedGetConfiguredRecentMediaPage = vi.mocked(getConfiguredRecentMediaPage)
+const mockedGetGeneratedRecentMediaPage = vi.mocked(getGeneratedRecentMediaPage)
 
 const emptyPage: RecentMediaPage = {
     items: [],
@@ -37,8 +37,8 @@ function requestEnv(db: D1Database, overrides: Record<string, unknown> = {}): Bi
 
 beforeEach(() => {
     mockedGetCurrentUser.mockReset()
-    mockedGetConfiguredRecentMediaPage.mockReset()
-    mockedGetConfiguredRecentMediaPage.mockResolvedValue(emptyPage)
+    mockedGetGeneratedRecentMediaPage.mockReset()
+    mockedGetGeneratedRecentMediaPage.mockResolvedValue(emptyPage)
 })
 
 describe('GET /recent-media', () => {
@@ -50,7 +50,7 @@ describe('GET /recent-media', () => {
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({error: 'Recent media query is invalid'})
         expect(mockedGetCurrentUser).not.toHaveBeenCalled()
-        expect(mockedGetConfiguredRecentMediaPage).not.toHaveBeenCalled()
+        expect(mockedGetGeneratedRecentMediaPage).not.toHaveBeenCalled()
     })
 
     it('uses anonymous account defaults when both visibility filters are omitted', async () => {
@@ -69,7 +69,7 @@ describe('GET /recent-media', () => {
             publishedAt: null,
         })
         expect(mockedGetCurrentUser).toHaveBeenCalledTimes(1)
-        expect(mockedGetConfiguredRecentMediaPage).toHaveBeenCalledWith(
+        expect(mockedGetGeneratedRecentMediaPage).toHaveBeenCalledWith(
             expect.anything(),
             expect.objectContaining({
                 limit: 24,
@@ -88,14 +88,14 @@ describe('GET /recent-media', () => {
 
         const nsfwDefaultResponse = await recentMediaRoutes.request('https://example.com/?unapproved=false&limit=3', {}, requestEnv(db))
         expect(nsfwDefaultResponse.status).toBe(200)
-        expect(mockedGetConfiguredRecentMediaPage).toHaveBeenLastCalledWith(
+        expect(mockedGetGeneratedRecentMediaPage).toHaveBeenLastCalledWith(
             expect.anything(),
             expect.objectContaining({limit: 3, showNsfw: true, showUnapproved: false}),
         )
 
         const unapprovedDefaultResponse = await recentMediaRoutes.request('https://example.com/?nsfw=false&limit=4', {}, requestEnv(db))
         expect(unapprovedDefaultResponse.status).toBe(200)
-        expect(mockedGetConfiguredRecentMediaPage).toHaveBeenLastCalledWith(
+        expect(mockedGetGeneratedRecentMediaPage).toHaveBeenLastCalledWith(
             expect.anything(),
             expect.objectContaining({limit: 4, showNsfw: false, showUnapproved: false}),
         )
@@ -112,7 +112,7 @@ describe('GET /recent-media', () => {
 
         expect(response.status).toBe(200)
         expect(mockedGetCurrentUser).not.toHaveBeenCalled()
-        expect(mockedGetConfiguredRecentMediaPage).toHaveBeenCalledWith(expect.anything(), {
+        expect(mockedGetGeneratedRecentMediaPage).toHaveBeenCalledWith(expect.anything(), {
             cursor: 'cursor-value',
             generation: 'generation-value',
             limit: 2,
@@ -121,7 +121,7 @@ describe('GET /recent-media', () => {
         })
 
         await recentMediaRoutes.request('https://example.com/?nsfw=false&unapproved=false', {}, requestEnv(db))
-        expect(mockedGetConfiguredRecentMediaPage).toHaveBeenLastCalledWith(expect.anything(), {
+        expect(mockedGetGeneratedRecentMediaPage).toHaveBeenLastCalledWith(expect.anything(), {
             cursor: undefined,
             generation: undefined,
             limit: 24,
@@ -130,12 +130,12 @@ describe('GET /recent-media', () => {
         })
     })
 
-    it('maps invalid media and feed cursors to bad requests', async () => {
+    it('maps invalid feed cursors to bad requests', async () => {
         const {db} = createMockDb()
-        const errors = [new InvalidRecentMediaCursorError(), new InvalidRecentFeedCursorError()]
+        const errors = [new InvalidRecentFeedCursorError()]
 
         for (const error of errors) {
-            mockedGetConfiguredRecentMediaPage.mockRejectedValueOnce(error)
+            mockedGetGeneratedRecentMediaPage.mockRejectedValueOnce(error)
 
             const response = await recentMediaRoutes.request('https://example.com/?nsfw=true&unapproved=true', {}, requestEnv(db))
 
@@ -146,7 +146,7 @@ describe('GET /recent-media', () => {
 
     it('maps expired generations to a 410 response', async () => {
         const {db} = createMockDb()
-        mockedGetConfiguredRecentMediaPage.mockRejectedValueOnce(new RecentFeedGenerationExpiredError())
+        mockedGetGeneratedRecentMediaPage.mockRejectedValueOnce(new RecentFeedGenerationExpiredError())
 
         const response = await recentMediaRoutes.request('https://example.com/?nsfw=true&unapproved=true', {}, requestEnv(db))
 
@@ -160,7 +160,7 @@ describe('GET /recent-media', () => {
     it('rethrows unexpected feed errors', async () => {
         const {db} = createMockDb()
         const error = new Error('feed unavailable')
-        mockedGetConfiguredRecentMediaPage.mockRejectedValueOnce(error)
+        mockedGetGeneratedRecentMediaPage.mockRejectedValueOnce(error)
 
         const response = await recentMediaRoutes.request('https://example.com/?nsfw=true&unapproved=true', {}, requestEnv(db))
 

@@ -1,5 +1,4 @@
 import type {CurrentUser} from '../../lib/auth/session'
-import {chunkGalleryItems} from '../../lib/gallery'
 import type {RecentMediaItem, RecentMediaPage as RecentMediaPageData} from '../../lib/recentMedia'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
@@ -17,6 +16,9 @@ type RecentMediaGroup = {
     key: string
     items: [RecentMediaItem, ...RecentMediaItem[]]
 }
+
+const RECENT_DESKTOP_MIN_TILES_PER_ROW = 4
+const RECENT_MAX_TILES_PER_ROW = 5
 
 function recentMediaGroupKey(item: RecentMediaItem): string {
     return item.groupId
@@ -39,21 +41,60 @@ function groupSequentialRecentMediaItems(items: RecentMediaItem[]): RecentMediaG
     return groups
 }
 
+function chunkRecentMediaGroups(groups: RecentMediaGroup[]): RecentMediaGroup[][] {
+    if (groups.length === 0) return []
+
+    const rowCount = Math.max(1, Math.ceil(groups.length / RECENT_MAX_TILES_PER_ROW))
+    const minimumRowSize = Math.floor(groups.length / rowCount)
+    if (minimumRowSize < RECENT_DESKTOP_MIN_TILES_PER_ROW && groups.length > RECENT_MAX_TILES_PER_ROW) {
+        return [groups.slice(0, RECENT_MAX_TILES_PER_ROW), ...chunkRecentMediaGroups(groups.slice(RECENT_MAX_TILES_PER_ROW))]
+    }
+    const largerRowCount = groups.length % rowCount
+    const rows: RecentMediaGroup[][] = []
+    let groupIndex = 0
+
+    for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+        const rowSize = minimumRowSize + (rowIndex < largerRowCount ? 1 : 0)
+        rows.push(groups.slice(groupIndex, groupIndex + rowSize))
+        groupIndex += rowSize
+    }
+
+    return rows
+}
+
 function RecentStackToggle({count, item}: {count: number; item: RecentMediaItem}) {
+    const moreCount = count - 1
+    const uploadLabel = moreCount === 1 ? 'upload' : 'uploads'
+
     return (
         <button
             aria-expanded="false"
-            aria-label={`Show all ${count} uploads for ${item.character.name} by ${item.user.username}`}
-            class="btn btn-neutral absolute inset-x-3 top-3 z-20 h-auto min-h-12 min-w-0 justify-start px-3 py-2 opacity-90 transition-opacity hover:opacity-100 focus-visible:opacity-100 motion-reduce:transition-none"
+            aria-label={`Show ${moreCount} more ${uploadLabel} for ${item.character.name} by ${item.user.username}`}
+            class="btn btn-neutral absolute inset-x-3 top-3 z-20 h-auto min-h-12 min-w-0 justify-between gap-2 px-3 py-2 opacity-90 transition-opacity hover:opacity-100 focus-visible:opacity-100 motion-reduce:transition-none"
             data-recent-stack-toggle
             type="button"
         >
-            <span class="min-w-0 text-left leading-tight">
-                <span class="block text-xs font-bold uppercase tracking-wider opacity-70">Multiple uploads</span>
-                <span class="block font-bold" data-recent-stack-action>
-                    Show all {count} uploads
-                </span>
+            <span class="min-w-0 truncate text-left font-bold" data-recent-stack-action>
+                Show {moreCount} more {uploadLabel}
             </span>
+            <svg
+                aria-hidden="true"
+                class="h-5 w-5 shrink-0"
+                data-recent-stack-indicator
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                xmlns="http://www.w3.org/2000/svg"
+            >
+                <path d="M5 12h14" stroke-linecap="round" stroke-width="2" />
+                <path
+                    class="transition-opacity motion-reduce:transition-none"
+                    d="M12 5v14"
+                    data-recent-stack-indicator-vertical
+                    stroke-linecap="round"
+                    stroke-width="2"
+                />
+            </svg>
         </button>
     )
 }
@@ -272,8 +313,12 @@ function RecentMediaScript() {
         const recentUpdateMessage = document.querySelector('[data-recent-update-message]');
         const recentRefreshButton = document.querySelector('[data-recent-refresh]');
         const recentStackDefaultKey = 'myoc:recent-media:expand-groups';
+        const recentBlockCacheLimit = 8;
         const recentDirectPageSize = 24;
         const recentManifestCacheLimit = 256;
+        const recentDesktopMinTilesPerRow = ${RECENT_DESKTOP_MIN_TILES_PER_ROW};
+        const recentMaximumTilesPerRow = ${RECENT_MAX_TILES_PER_ROW};
+        const recentStateVerificationTtlMs = 5000;
         const recentFeedSchemaVersion = 1;
 
         function readRecentStackDefault() {
@@ -293,7 +338,7 @@ function RecentMediaScript() {
         }
 
         const recentState = {
-            cursor: recentFeed?.dataset.nextCursor || '',
+            directBlockCache: new Map(),
             directManifestCache: new Map(),
             directPosition: readRecentDirectPosition(recentFeed?.dataset.nextPosition),
             directRoot: null,
@@ -302,13 +347,19 @@ function RecentMediaScript() {
             expandGroupsByDefault: readRecentStackDefault(),
             generation: recentFeed?.dataset.generation || '',
             availableGeneration: '',
+            autoLoadFrame: 0,
             generationExpired: false,
             inFlight: false,
             hasMore: recentFeed?.dataset.hasMore === 'true',
             itemIds: new Set(),
+            layoutGroups: [],
             mediaOrigin: readRecentMediaOrigin(recentFeed?.dataset.mediaOrigin),
+            nextLayoutGroupId: 0,
+            renderedEntryCount: 0,
+            sentinelNear: false,
             stateInFlight: null,
             statePollId: 0,
+            stateVerifiedAt: 0,
             showNsfw: recentFeed?.dataset.showNsfw === 'true',
             showUnapproved: recentFeed?.dataset.showUnapproved !== 'false',
             stackGroups: new Map(),
@@ -616,7 +667,14 @@ function RecentMediaScript() {
         }
 
         async function readRecentBlock(reference, variant, hour) {
-            const block = await fetchRecentFeedJson(recentFeedObjectUrl(reference.key), false);
+            const url = recentFeedObjectUrl(reference.key);
+            if (recentState.directBlockCache.has(url)) {
+                const cached = recentState.directBlockCache.get(url);
+                recentState.directBlockCache.delete(url);
+                recentState.directBlockCache.set(url, cached);
+                return cached;
+            }
+            const block = await fetchRecentFeedJson(url, false);
             if (!isRecentRecord(block)
                 || block.schemaVersion !== recentFeedSchemaVersion
                 || block.variant !== variant
@@ -626,23 +684,32 @@ function RecentMediaScript() {
                 || !block.items.every(isRecentMediaItem)) {
                 throw new Error('The recent uploads block was invalid.');
             }
+            recentState.directBlockCache.set(url, block);
+            while (recentState.directBlockCache.size > recentBlockCacheLimit) {
+                const oldestKey = recentState.directBlockCache.keys().next().value;
+                if (typeof oldestKey !== 'string') break;
+                recentState.directBlockCache.delete(oldestKey);
+            }
             return block;
         }
 
         async function collectRecentReferences(references, position, limit, loadChild, collectChild) {
-            const items = [];
+            const requests = [];
             let offset = position;
+            let remaining = limit;
             for (const reference of references) {
-                if (items.length >= limit) break;
+                if (remaining === 0) break;
                 if (offset >= reference.itemCount) {
                     offset -= reference.itemCount;
                     continue;
                 }
-                const child = await loadChild(reference);
-                items.push(...await collectChild(child, offset, limit - items.length));
+                const childOffset = offset;
+                const childLimit = Math.min(remaining, reference.itemCount - childOffset);
+                requests.push((async () => collectChild(await loadChild(reference), childOffset, childLimit))());
+                remaining -= childLimit;
                 offset = 0;
             }
-            return items;
+            return (await Promise.all(requests)).flat();
         }
 
         async function collectRecentBlocks(hour, position, limit, variant) {
@@ -797,15 +864,30 @@ function RecentMediaScript() {
         }
 
         function createRecentStackToggle() {
-            const button = recentElement('button', 'btn btn-neutral absolute inset-x-3 top-3 z-20 h-auto min-h-12 min-w-0 justify-start px-3 py-2 opacity-90 transition-opacity hover:opacity-100 focus-visible:opacity-100 motion-reduce:transition-none');
+            const button = recentElement('button', 'btn btn-neutral absolute inset-x-3 top-3 z-20 h-auto min-h-12 min-w-0 justify-between gap-2 px-3 py-2 opacity-90 transition-opacity hover:opacity-100 focus-visible:opacity-100 motion-reduce:transition-none');
             button.dataset.recentStackToggle = '';
             button.type = 'button';
-            const label = recentElement('span', 'min-w-0 text-left leading-tight');
-            label.append(recentElement('span', 'block text-xs font-bold uppercase tracking-wider opacity-70', 'Multiple uploads'));
-            const action = recentElement('span', 'block font-bold');
+            const action = recentElement('span', 'min-w-0 truncate text-left font-bold');
             action.dataset.recentStackAction = '';
-            label.append(action);
-            button.append(label);
+            const indicator = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            indicator.dataset.recentStackIndicator = '';
+            indicator.setAttribute('aria-hidden', 'true');
+            indicator.setAttribute('class', 'h-5 w-5 shrink-0');
+            indicator.setAttribute('fill', 'none');
+            indicator.setAttribute('stroke', 'currentColor');
+            indicator.setAttribute('viewBox', '0 0 24 24');
+            const horizontalPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            horizontalPath.setAttribute('d', 'M5 12h14');
+            horizontalPath.setAttribute('stroke-linecap', 'round');
+            horizontalPath.setAttribute('stroke-width', '2');
+            const verticalPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            verticalPath.dataset.recentStackIndicatorVertical = '';
+            verticalPath.setAttribute('class', 'transition-opacity motion-reduce:transition-none');
+            verticalPath.setAttribute('d', 'M12 5v14');
+            verticalPath.setAttribute('stroke-linecap', 'round');
+            verticalPath.setAttribute('stroke-width', '2');
+            indicator.append(horizontalPath, verticalPath);
+            button.append(action, indicator);
             return button;
         }
 
@@ -827,14 +909,20 @@ function RecentMediaScript() {
 
             if (button) {
                 const action = button.querySelector('[data-recent-stack-action]');
+                const indicatorVertical = button.querySelector('[data-recent-stack-indicator-vertical]');
+                const moreCount = Math.max(1, count - 1);
+                const uploadLabel = moreCount === 1 ? 'upload' : 'uploads';
                 button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
                 button.setAttribute(
                     'aria-label',
                     expanded
-                        ? 'Collapse ' + count + ' uploads for ' + stack.dataset.characterName + ' by ' + stack.dataset.uploaderName
-                        : 'Show all ' + count + ' uploads for ' + stack.dataset.characterName + ' by ' + stack.dataset.uploaderName,
+                        ? 'Hide ' + moreCount + ' ' + uploadLabel + ' for ' + stack.dataset.characterName + ' by ' + stack.dataset.uploaderName
+                        : 'Show ' + moreCount + ' more ' + uploadLabel + ' for ' + stack.dataset.characterName + ' by ' + stack.dataset.uploaderName,
                 );
-                if (action) action.textContent = (expanded ? 'Collapse ' : 'Show all ') + count + ' uploads';
+                if (action) action.textContent = expanded
+                    ? 'Hide ' + moreCount + ' ' + uploadLabel
+                    : 'Show ' + moreCount + ' more ' + uploadLabel;
+                indicatorVertical?.classList.toggle('opacity-0', expanded);
             }
         }
 
@@ -910,6 +998,8 @@ function RecentMediaScript() {
         }
 
         function createRecentStack(firstCard, key, items, requestedStackId) {
+            const previousParent = firstCard.parentNode;
+            const previousNextSibling = firstCard.nextSibling;
             const stackId = requestedStackId || 'recent-stack-' + firstCard.dataset.mediaId;
             const stack = recentElement('div', 'recent-media-tile relative min-w-0');
             stack.dataset.recentStack = '';
@@ -928,46 +1018,148 @@ function RecentMediaScript() {
             setRecentStackCardState(firstCard, true, 0);
             content.append(firstCard);
             stack.append(content);
-            return registerRecentStack(stack, items, recentState.expandGroupsByDefault);
+            const record = registerRecentStack(stack, items, recentState.expandGroupsByDefault);
+            if (previousParent) previousParent.insertBefore(stack, previousNextSibling);
+            return record;
         }
 
-        function createRecentRow() {
+        function createRecentRow(layoutGroupId) {
             const row = recentElement('div', 'recent-media-row min-w-0 max-w-full contents md:flex');
             row.dataset.recentRow = '';
+            row.dataset.recentLayoutGroup = layoutGroupId;
             return row;
         }
 
-        function recentLayoutNodes() {
-            return recentState.entries.flatMap((entry) =>
+        function recentLayoutNodes(entries) {
+            return entries.flatMap((entry) =>
                 entry.kind === 'stack' && entry.expanded ? entry.cards : [entry.kind === 'stack' ? entry.stack : entry.node],
             );
+        }
+
+        function recentMinimumTilesPerRow() {
+            if (window.innerWidth >= 1280) return recentDesktopMinTilesPerRow;
+            if (window.innerWidth >= 1024) return 3;
+            if (window.innerWidth >= 768) return 2;
+            return 1;
+        }
+
+        function recentRowSizes(itemCount, minimumRowSize = recentMinimumTilesPerRow()) {
+            if (itemCount === 0) return [];
+            const rowCount = Math.max(1, Math.ceil(itemCount / recentMaximumTilesPerRow));
+            const balancedMinimum = Math.floor(itemCount / rowCount);
+            if (balancedMinimum < minimumRowSize && itemCount > recentMaximumTilesPerRow) {
+                return [recentMaximumTilesPerRow, ...recentRowSizes(itemCount - recentMaximumTilesPerRow, minimumRowSize)];
+            }
+            const largerRowCount = itemCount % rowCount;
+            return Array.from(
+                {length: rowCount},
+                (_, rowIndex) => balancedMinimum + (rowIndex < largerRowCount ? 1 : 0),
+            );
+        }
+
+        function recentCanFillRows(itemCount, minimumRowSize = recentMinimumTilesPerRow()) {
+            if (itemCount === 0) return false;
+            return Math.ceil(itemCount / recentMaximumTilesPerRow) <= Math.floor(itemCount / minimumRowSize);
         }
 
         function recentRowMatches(row, nodes) {
             return row.childElementCount === nodes.length && nodes.every((node, index) => row.children[index] === node);
         }
 
+        function renderRecentLayoutGroup(group) {
+            if (!recentFeed) return;
+            const nodes = recentLayoutNodes(group.entries);
+            const rows = Array.from(recentFeed.querySelectorAll(':scope > [data-recent-row]'))
+                .filter((row) => row.dataset.recentLayoutGroup === group.id);
+            const fixedRowSizes = Array.isArray(group.fixedRowSizes) ? group.fixedRowSizes : [];
+            const fixedNodeCount = fixedRowSizes.reduce((total, size) => total + size, 0);
+            const rowSizes = fixedNodeCount <= nodes.length
+                ? [...fixedRowSizes, ...recentRowSizes(nodes.length - fixedNodeCount)]
+                : recentRowSizes(nodes.length);
+            let nodeIndex = 0;
+            let insertionRow = rows.at(-1) || null;
+
+            for (let rowIndex = 0; rowIndex < rowSizes.length; rowIndex += 1) {
+                const rowSize = rowSizes[rowIndex];
+                const targetNodes = nodes.slice(nodeIndex, nodeIndex + rowSize);
+                const row = rows[rowIndex] || createRecentRow(group.id);
+                if (!row.isConnected) {
+                    if (insertionRow?.isConnected) insertionRow.after(row);
+                    else recentFeed.append(row);
+                }
+                if (!recentRowMatches(row, targetNodes)) row.replaceChildren(...targetNodes);
+                const rowSizeValue = String(targetNodes.length);
+                if (row.dataset.recentRowSize !== rowSizeValue) row.dataset.recentRowSize = rowSizeValue;
+                insertionRow = row;
+                nodeIndex += rowSize;
+            }
+
+            rows.slice(rowSizes.length).forEach((row) => row.remove());
+        }
+
+        function stabilizeRecentStackLayout(record, button) {
+            if (!recentFeed || !button) return recentState.layoutGroups.find((group) => group.entries.includes(record));
+            const clickedRow = button.closest('[data-recent-row]');
+            const layoutGroup = recentState.layoutGroups.find((group) => group.entries.includes(record));
+            const layoutGroupIndex = recentState.layoutGroups.indexOf(layoutGroup);
+            if (!clickedRow || !layoutGroup || layoutGroupIndex < 0) return layoutGroup;
+
+            const targetRows = Array.from(recentFeed.querySelectorAll(':scope > [data-recent-row]'))
+                .filter((row) => row.dataset.recentLayoutGroup === layoutGroup.id);
+            const clickedRowIndex = targetRows.indexOf(clickedRow);
+            if (clickedRowIndex < 0) return layoutGroup;
+
+            const groupsToMerge = recentState.layoutGroups.slice(layoutGroupIndex);
+            const mergedGroupIds = new Set(groupsToMerge.map((group) => group.id));
+            layoutGroup.entries = groupsToMerge.flatMap((group) => group.entries);
+            layoutGroup.fixedRowSizes = targetRows
+                .slice(0, clickedRowIndex + 1)
+                .map((row) => row.childElementCount);
+            recentFeed.querySelectorAll(':scope > [data-recent-row]').forEach((row) => {
+                if (mergedGroupIds.has(row.dataset.recentLayoutGroup)) row.dataset.recentLayoutGroup = layoutGroup.id;
+            });
+            recentState.layoutGroups.splice(layoutGroupIndex, groupsToMerge.length, layoutGroup);
+            return layoutGroup;
+        }
+
         function reconcileRecentRows() {
             if (!recentFeed) return;
             const focusedElement = document.activeElement;
             const restoreFocus = focusedElement instanceof HTMLElement && recentFeed.contains(focusedElement);
-            const nodes = recentLayoutNodes();
-            const rows = Array.from(recentFeed.querySelectorAll(':scope > [data-recent-row]'));
-            const rowCount = Math.ceil(nodes.length / 5);
-
-            for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
-                const targetNodes = nodes.slice(rowIndex * 5, rowIndex * 5 + 5);
-                const row = rows[rowIndex] || createRecentRow();
-                if (!row.isConnected) recentFeed.append(row);
-                if (!recentRowMatches(row, targetNodes)) row.replaceChildren(...targetNodes);
-                const rowSize = String(targetNodes.length);
-                if (row.dataset.recentRowSize !== rowSize) row.dataset.recentRowSize = rowSize;
-            }
-
-            rows.slice(rowCount).forEach((row) => row.remove());
+            recentState.layoutGroups.forEach(renderRecentLayoutGroup);
             if (restoreFocus && focusedElement.isConnected && document.activeElement !== focusedElement) {
                 focusedElement.focus({preventScroll: true});
             }
+        }
+
+        function replaceRecentEntry(currentEntry, replacementEntry) {
+            const entryIndex = recentState.entries.indexOf(currentEntry);
+            if (entryIndex >= 0) recentState.entries[entryIndex] = replacementEntry;
+            for (const group of recentState.layoutGroups) {
+                const groupIndex = group.entries.indexOf(currentEntry);
+                if (groupIndex >= 0) group.entries[groupIndex] = replacementEntry;
+            }
+        }
+
+        function commitRecentPendingRows(force = false) {
+            if (!recentFeed) return;
+            const pendingEntries = recentState.entries.slice(recentState.renderedEntryCount);
+            const pendingNodes = recentLayoutNodes(pendingEntries);
+            const minimumRowSize = recentMinimumTilesPerRow();
+            if (!force && !recentCanFillRows(pendingNodes.length, minimumRowSize)) return;
+
+            if (pendingEntries.length > 0) {
+                const lastGroup = recentState.layoutGroups.at(-1);
+                if (force && !recentCanFillRows(pendingNodes.length, minimumRowSize) && lastGroup) {
+                    lastGroup.entries.push(...pendingEntries);
+                    renderRecentLayoutGroup(lastGroup);
+                } else {
+                    const group = {id: String(recentState.nextLayoutGroupId++), entries: pendingEntries};
+                    recentState.layoutGroups.push(group);
+                    renderRecentLayoutGroup(group);
+                }
+            }
+            recentState.renderedEntryCount = recentState.entries.length;
         }
 
         function hydrateRecentStack(record) {
@@ -1009,9 +1201,16 @@ function RecentMediaScript() {
 
         function setRecentStackExpanded(record, expanded) {
             const button = record.cards[0]?.querySelector('[data-recent-stack-toggle]');
+            const anchorTop = button?.getBoundingClientRect().top;
+            const layoutGroup = stabilizeRecentStackLayout(record, button);
             if (!applyRecentStackExpanded(record, expanded)) return;
             if (!expanded) evictCollapsedStackCards(record.id);
-            reconcileRecentRows();
+            if (layoutGroup) renderRecentLayoutGroup(layoutGroup);
+            else reconcileRecentRows();
+            if (button?.isConnected && Number.isFinite(anchorTop)) {
+                const offset = button.getBoundingClientRect().top - anchorTop;
+                if (Math.abs(offset) >= 1) window.scrollBy(0, offset);
+            }
             button?.focus({preventScroll: true});
         }
 
@@ -1025,8 +1224,8 @@ function RecentMediaScript() {
         }
 
         function appendRecentItems(items) {
-            if (!recentFeed) return;
-            let layoutChanged = false;
+            if (!recentFeed) return false;
+            let renderedLayoutChanged = false;
 
             for (const item of items) {
                 if (!item || typeof item.id !== 'string' || recentState.itemIds.has(item.id)) continue;
@@ -1038,7 +1237,7 @@ function RecentMediaScript() {
                     lastEntry.items.push(item);
                     if (lastEntry.expanded) {
                         hydrateRecentStack(lastEntry);
-                        layoutChanged = true;
+                        renderedLayoutChanged = true;
                     }
                     updateRecentStack(lastEntry.stack);
                     continue;
@@ -1046,17 +1245,16 @@ function RecentMediaScript() {
 
                 if (lastEntry?.kind === 'card' && lastEntry.key === key) {
                     const stackEntry = createRecentStack(lastEntry.node, key, [item]);
-                    recentState.entries[recentState.entries.length - 1] = stackEntry;
-                    layoutChanged = true;
+                    replaceRecentEntry(lastEntry, stackEntry);
+                    renderedLayoutChanged = renderedLayoutChanged || stackEntry.expanded;
                     continue;
                 }
 
                 const card = createRecentMediaCard(item, false);
                 recentState.entries.push({key, kind: 'card', node: card});
-                layoutChanged = true;
             }
 
-            if (layoutChanged) reconcileRecentRows();
+            return renderedLayoutChanged;
         }
 
         function updateRecentFilterButtons() {
@@ -1094,23 +1292,32 @@ function RecentMediaScript() {
             if (recentUnapprovedButton) recentUnapprovedButton.disabled = loading;
             if (recentStackDefaultButton) recentStackDefaultButton.disabled = loading;
             if (recentRefreshButton) recentRefreshButton.disabled = loading;
+            updateRecentEndState();
         }
 
         function updateRecentEndState() {
             const isEmpty = !recentFeed || recentFeed.childElementCount === 0;
             recentSentinel?.classList.toggle('hidden', !recentState.hasMore);
             recentEnd?.classList.toggle('hidden', recentState.hasMore || isEmpty);
-            recentEmpty?.classList.toggle('hidden', !isEmpty);
+            recentEmpty?.classList.toggle('hidden', !isEmpty || recentState.inFlight || recentState.hasMore);
         }
 
-        async function requestRecentMediaPage(cursor, showNsfw, showUnapproved, generation) {
+        function scheduleRecentAutoLoad() {
+            if (recentState.autoLoadFrame || recentState.inFlight || !recentState.hasMore || !recentState.sentinelNear) return;
+            recentState.autoLoadFrame = window.requestAnimationFrame(() => {
+                recentState.autoLoadFrame = 0;
+                if (!recentState.inFlight && recentState.hasMore && recentState.sentinelNear) {
+                    void loadRecentMedia();
+                }
+            });
+        }
+
+        async function requestRecentMediaPage(showNsfw, showUnapproved) {
             const params = new URLSearchParams({
                 limit: '24',
                 nsfw: showNsfw ? 'true' : 'false',
                 unapproved: showUnapproved ? 'true' : 'false',
             });
-            if (cursor) params.set('cursor', cursor);
-            if (generation) params.set('generation', generation);
             const response = await fetch('/api/recent-media?' + params.toString(), {headers: {accept: 'application/json'}});
             const body = await response.json().catch(() => ({}));
 
@@ -1120,8 +1327,6 @@ function RecentMediaScript() {
                 throw error;
             }
             if (!Array.isArray(body.items)) throw new Error('The recent uploads response was invalid.');
-            if (body.items.length === 0 && body.nextCursor) throw new Error('Recent uploads pagination returned no media.');
-            if (generation && body.generation !== generation) throw new Error('The recent uploads generation changed unexpectedly.');
 
             return body;
         }
@@ -1144,33 +1349,63 @@ function RecentMediaScript() {
         }
 
         function adoptRecentPageSource(body) {
-            recentState.cursor = typeof body.nextCursor === 'string' ? body.nextCursor : '';
             recentState.generation = typeof body.generation === 'string' ? body.generation : '';
+            recentState.directBlockCache.clear();
             recentState.directManifestCache.clear();
             recentState.directRoot = null;
+            recentState.stateVerifiedAt = 0;
 
             const rootUrl = readRecentRootUrl(body.publicRootUrl);
             const position = readRecentDirectPosition(body.nextPosition);
             const hasDirectPage = Boolean(recentState.generation && rootUrl && position !== null);
             recentState.directRootUrl = hasDirectPage ? rootUrl : '';
             recentState.directPosition = hasDirectPage ? position : null;
-            recentState.hasMore = hasDirectPage || Boolean(recentState.cursor);
+            recentState.hasMore = hasDirectPage;
 
             if (recentFeed) {
                 recentFeed.dataset.generation = recentState.generation;
-                recentFeed.dataset.nextCursor = recentState.cursor;
                 recentFeed.dataset.nextPosition = recentState.directPosition === null ? '' : String(recentState.directPosition);
                 recentFeed.dataset.publicRootUrl = recentState.directRootUrl;
             }
         }
 
-        function replaceRecentPage(body) {
+        async function appendRecentDirectPagesUntilRowsAreReady() {
+            let renderedLayoutChanged = false;
+            do {
+                const body = await loadRecentDirectPage();
+                if (!body) throw new Error('Could not load uploads.');
+                renderedLayoutChanged = appendRecentItems(body.items) || renderedLayoutChanged;
+                recentState.directPosition = readRecentDirectPosition(body.nextPosition);
+                recentState.hasMore = recentState.directPosition !== null;
+                const pendingEntries = recentState.entries.slice(recentState.renderedEntryCount);
+                const pendingCount = recentLayoutNodes(pendingEntries).length;
+                if (!recentState.hasMore || recentCanFillRows(pendingCount)) break;
+            } while (true);
+
+            if (recentFeed) {
+                recentFeed.dataset.nextPosition = recentState.directPosition === null
+                    ? ''
+                    : String(recentState.directPosition);
+            }
+            return renderedLayoutChanged;
+        }
+
+        async function replaceRecentPage(body) {
             recentState.entries = [];
+            recentState.layoutGroups = [];
+            recentState.nextLayoutGroupId = 0;
+            recentState.renderedEntryCount = 0;
             recentState.stackGroups.clear();
             recentState.itemIds.clear();
             recentFeed?.replaceChildren();
-            appendRecentItems(body.items);
             adoptRecentPageSource(body);
+            appendRecentItems(body.items);
+            commitRecentPendingRows(!recentState.hasMore);
+            if (recentFeed?.childElementCount === 0 && recentState.hasMore) {
+                const renderedLayoutChanged = await appendRecentDirectPagesUntilRowsAreReady();
+                commitRecentPendingRows(!recentState.hasMore);
+                if (renderedLayoutChanged) reconcileRecentRows();
+            }
             hideRecentUpdate();
             if (recentLoadButton) recentLoadButton.textContent = 'Load more';
             updateRecentEndState();
@@ -1203,6 +1438,8 @@ function RecentMediaScript() {
                 if (body.unsafePending || body.generation !== recentState.generation) {
                     recentState.availableGeneration = body.generation;
                     showRecentUpdate(body.unsafePending);
+                } else {
+                    recentState.stateVerifiedAt = Date.now();
                 }
             } catch {
                 // Keep the pinned list when the optional update check is unavailable.
@@ -1210,6 +1447,7 @@ function RecentMediaScript() {
         }
 
         async function verifyRecentDirectState() {
+            if (Date.now() - recentState.stateVerifiedAt < recentStateVerificationTtlMs) return;
             const body = await requestRecentMediaState();
             if (!body) throw new Error('Could not confirm the current upload list.');
             if (body.unsafePending || body.generation !== recentState.generation) {
@@ -1217,6 +1455,7 @@ function RecentMediaScript() {
                 showRecentUpdate(true);
                 throw recentGenerationExpiredError();
             }
+            recentState.stateVerifiedAt = Date.now();
         }
 
         function stopRecentStatePolling() {
@@ -1263,12 +1502,12 @@ function RecentMediaScript() {
             recentError?.classList.add('hidden');
 
             try {
-                const body = await requestRecentMediaPage('', showNsfw, showUnapproved, '');
+                const body = await requestRecentMediaPage(showNsfw, showUnapproved);
                 if (persistUnapproved) await persistUnapprovedPreference(showUnapproved);
 
-                replaceRecentPage(body);
                 recentState.showNsfw = showNsfw;
                 recentState.showUnapproved = showUnapproved;
+                await replaceRecentPage(body);
                 updateRecentFilterButtons();
                 startRecentStatePolling();
             } catch (error) {
@@ -1281,37 +1520,15 @@ function RecentMediaScript() {
 
         async function loadRecentMedia() {
             if (recentState.inFlight || !recentState.hasMore) return;
-            const useDirectFeed = Boolean(recentState.directRootUrl && recentState.directPosition !== null);
-            if (!useDirectFeed && !recentState.cursor) return;
+            if (!recentState.directRootUrl || recentState.directPosition === null) return;
             setRecentLoading(true);
             recentError?.classList.add('hidden');
 
             try {
-                if (useDirectFeed) await verifyRecentDirectState();
-                const body = useDirectFeed
-                    ? await loadRecentDirectPage()
-                    : await requestRecentMediaPage(
-                          recentState.cursor,
-                          recentState.showNsfw,
-                          recentState.showUnapproved,
-                          recentState.generation,
-                      );
-                if (!body) throw new Error('Could not load uploads.');
-
-                appendRecentItems(body.items);
-                if (useDirectFeed) {
-                    recentState.directPosition = readRecentDirectPosition(body.nextPosition);
-                    recentState.hasMore = recentState.directPosition !== null;
-                    if (recentFeed) {
-                        recentFeed.dataset.nextPosition = recentState.directPosition === null
-                            ? ''
-                            : String(recentState.directPosition);
-                    }
-                } else {
-                    recentState.cursor = typeof body.nextCursor === 'string' ? body.nextCursor : '';
-                    recentState.hasMore = Boolean(recentState.cursor);
-                    if (recentFeed) recentFeed.dataset.nextCursor = recentState.cursor;
-                }
+                await verifyRecentDirectState();
+                const renderedLayoutChanged = await appendRecentDirectPagesUntilRowsAreReady();
+                commitRecentPendingRows(!recentState.hasMore);
+                if (renderedLayoutChanged) reconcileRecentRows();
                 updateRecentEndState();
             } catch (error) {
                 if (error?.code === 'recent-generation-expired') {
@@ -1330,29 +1547,41 @@ function RecentMediaScript() {
             }
         }
 
-        recentFeed?.querySelectorAll('[data-recent-row] > [data-recent-entry]').forEach((entry) => {
-            entry.querySelectorAll('[data-media-id]').forEach((card) => {
-                if (card.dataset.mediaId) recentState.itemIds.add(card.dataset.mediaId);
-            });
-            if (entry.matches('[data-recent-stack]')) {
-                const data = entry.querySelector('[data-recent-stack-items]');
-                let items = [];
-                try {
-                    const parsed = JSON.parse(data?.textContent || '[]');
-                    if (Array.isArray(parsed)) items = parsed;
-                } catch {
-                    items = [];
-                }
-                items.forEach((item) => {
-                    if (item && typeof item.id === 'string') recentState.itemIds.add(item.id);
+        const initialRecentRows = Array.from(recentFeed?.querySelectorAll(':scope > [data-recent-row]') || []);
+        if (initialRecentRows.length > 0) {
+            const layoutGroup = {id: String(recentState.nextLayoutGroupId++), entries: []};
+            initialRecentRows.forEach((row) => {
+                row.dataset.recentLayoutGroup = layoutGroup.id;
+                row.querySelectorAll(':scope > [data-recent-entry]').forEach((entry) => {
+                    entry.querySelectorAll('[data-media-id]').forEach((card) => {
+                        if (card.dataset.mediaId) recentState.itemIds.add(card.dataset.mediaId);
+                    });
+                    let recentEntry;
+                    if (entry.matches('[data-recent-stack]')) {
+                        const data = entry.querySelector('[data-recent-stack-items]');
+                        let items = [];
+                        try {
+                            const parsed = JSON.parse(data?.textContent || '[]');
+                            if (Array.isArray(parsed)) items = parsed;
+                        } catch {
+                            items = [];
+                        }
+                        items.forEach((item) => {
+                            if (item && typeof item.id === 'string') recentState.itemIds.add(item.id);
+                        });
+                        data?.remove();
+                        recentEntry = registerRecentStack(entry, items, recentState.expandGroupsByDefault);
+                    } else {
+                        recentEntry = {key: entry.dataset.uploadKey, kind: 'card', node: entry};
+                    }
+                    recentState.entries.push(recentEntry);
+                    layoutGroup.entries.push(recentEntry);
                 });
-                data?.remove();
-                recentState.entries.push(registerRecentStack(entry, items, recentState.expandGroupsByDefault));
-            } else {
-                recentState.entries.push({key: entry.dataset.uploadKey, kind: 'card', node: entry});
-            }
-        });
-        if (recentState.expandGroupsByDefault) reconcileRecentRows();
+            });
+            recentState.layoutGroups.push(layoutGroup);
+        }
+        recentState.renderedEntryCount = recentState.entries.length;
+        if (recentState.expandGroupsByDefault || window.innerWidth < 1280) reconcileRecentRows();
         document.querySelectorAll('[data-recent-media-image]').forEach(bindRecentImage);
         recentFeed?.addEventListener('click', (event) => {
             const button = event.target.closest('[data-recent-stack-toggle]');
@@ -1381,8 +1610,8 @@ function RecentMediaScript() {
             setRecentLoading(true);
             recentError?.classList.add('hidden');
             try {
-                const body = await requestRecentMediaPage('', recentState.showNsfw, recentState.showUnapproved, '');
-                replaceRecentPage(body);
+                const body = await requestRecentMediaPage(recentState.showNsfw, recentState.showUnapproved);
+                await replaceRecentPage(body);
                 startRecentStatePolling();
             } catch (error) {
                 if (recentErrorMessage) recentErrorMessage.textContent = error instanceof Error ? error.message : 'Could not refresh uploads.';
@@ -1398,9 +1627,15 @@ function RecentMediaScript() {
 
         if ('IntersectionObserver' in window && recentSentinel) {
             const observer = new IntersectionObserver((entries) => {
-                if (entries.some((entry) => entry.isIntersecting)) loadRecentMedia();
-            }, {rootMargin: '1000px 0px'});
+                const entry = entries.at(-1);
+                recentState.sentinelNear = Boolean(entry?.isIntersecting);
+                if (recentState.sentinelNear) scheduleRecentAutoLoad();
+            }, {rootMargin: '400px 0px'});
             observer.observe(recentSentinel);
+        }
+        window.addEventListener('scroll', scheduleRecentAutoLoad, {passive: true});
+        for (const breakpoint of ['(min-width: 768px)', '(min-width: 1024px)', '(min-width: 1280px)']) {
+            window.matchMedia(breakpoint).addEventListener('change', reconcileRecentRows);
         }
 
         updateRecentFilterButtons();
@@ -1412,8 +1647,8 @@ function RecentMediaScript() {
 }
 
 export function RecentMediaPage({currentUser, guestInitial, mediaBaseUrl, page, showNsfw, showUnapproved}: RecentMediaPageProps) {
-    const rows = chunkGalleryItems(groupSequentialRecentMediaItems(page.items))
-    const hasMore = Boolean(page.nextCursor) || page.nextPosition !== null
+    const rows = chunkRecentMediaGroups(groupSequentialRecentMediaItems(page.items))
+    const hasMore = Boolean(page.generation && page.publicRootUrl && page.nextPosition !== null)
 
     return (
         <BaseLayout title="Recently uploaded media | MyOC">
@@ -1474,7 +1709,6 @@ export function RecentMediaPage({currentUser, guestInitial, mediaBaseUrl, page, 
                     data-has-more={hasMore ? 'true' : 'false'}
                     data-generation={page.generation ?? ''}
                     data-media-origin={mediaBaseUrl}
-                    data-next-cursor={page.nextCursor ?? ''}
                     data-next-position={page.nextPosition ?? ''}
                     data-public-root-url={page.publicRootUrl ?? ''}
                     data-csrf-token={currentUser?.csrfToken ?? ''}
@@ -1485,7 +1719,12 @@ export function RecentMediaPage({currentUser, guestInitial, mediaBaseUrl, page, 
                     id="recent-media-feed"
                 >
                     {rows.map((row) => (
-                        <div class="recent-media-row min-w-0 max-w-full contents md:flex" data-recent-row data-recent-row-size={row.length}>
+                        <div
+                            class="recent-media-row min-w-0 max-w-full contents md:flex"
+                            data-recent-layout-group="0"
+                            data-recent-row
+                            data-recent-row-size={row.length}
+                        >
                             {row.map((group) => (
                                 <RecentMediaGroupCard group={group} />
                             ))}
@@ -1495,7 +1734,7 @@ export function RecentMediaPage({currentUser, guestInitial, mediaBaseUrl, page, 
 
                 <div
                     class={
-                        page.items.length === 0
+                        page.items.length === 0 && !hasMore
                             ? 'card card-border mx-auto mt-10 max-w-lg bg-base-200 text-center'
                             : 'card card-border mx-auto mt-10 hidden max-w-lg bg-base-200 text-center'
                     }

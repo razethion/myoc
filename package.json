@@ -24,6 +24,7 @@
     "ci": "npm run lint && npm run typecheck && npm run coverage:ci && npm run deadcode && npm run containers:check",
     "db:prepare:local": "wrangler d1 migrations apply myoc-db --local && wrangler d1 execute myoc-db --local --file seeds/development.sql",
     "env:clone:prod-to-dev": "node scripts/clone-prod-to-dev.mjs",
+    "recent-feed:backfill": "node scripts/backfill-recent-feed.mjs",
     "deploy": "npm run build && wrangler deploy --minify"
   },
   "dependencies": {

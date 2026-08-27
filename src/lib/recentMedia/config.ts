@@ -3,7 +3,6 @@ export const RECENT_FEED_VARIANTS = ['n0-u0', 'n0-u1', 'n1-u0', 'n1-u1'] as cons
 export const RECENT_FEED_INITIAL_ITEMS = 60
 
 export type RecentFeedVariant = (typeof RECENT_FEED_VARIANTS)[number]
-type RecentFeedReadMode = 'd1' | 'shadow' | 'r2'
 
 export type RecentFeedConfig = {
     blockItems: number
@@ -12,7 +11,6 @@ export type RecentFeedConfig = {
     immutableCacheControl: string
     publishEnabled: boolean
     publicBaseUrl: string | null
-    readMode: RecentFeedReadMode
     retentionDays: number
 }
 
@@ -22,7 +20,6 @@ type RecentFeedConfigEnv = {
     RECENT_FEED_CURSOR_SECRET?: string
     RECENT_FEED_PUBLISH_ENABLED?: string
     RECENT_FEED_PUBLIC_BASE_URL?: string
-    RECENT_FEED_READ_MODE?: string
     RECENT_FEED_RETENTION_DAYS?: string
 }
 
@@ -36,7 +33,6 @@ export function getRecentFeedConfig(env: RecentFeedConfigEnv): RecentFeedConfig 
         immutableCacheControl: `public, max-age=${retentionDays * 24 * 60 * 60}, immutable`,
         publishEnabled: env.RECENT_FEED_PUBLISH_ENABLED === 'true',
         publicBaseUrl: publicBaseUrl(env.RECENT_FEED_PUBLIC_BASE_URL),
-        readMode: readMode(env.RECENT_FEED_READ_MODE),
         retentionDays,
     }
 }
@@ -82,8 +78,4 @@ function cursorSecret(value: string | undefined): string | null {
     const normalized = value?.trim()
 
     return normalized && new TextEncoder().encode(normalized).byteLength >= 32 ? normalized : null
-}
-
-function readMode(value: string | undefined): RecentFeedReadMode {
-    return value === 'shadow' || value === 'r2' ? value : 'd1'
 }
