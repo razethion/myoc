@@ -20,7 +20,6 @@ type RecentFeedReaderEnv = {
     RECENT_FEED_CURSOR_SECRET?: string
     RECENT_FEED_PUBLIC_BASE_URL?: string
     RECENT_FEED_PUBLISH_ENABLED?: string
-    RECENT_FEED_READ_MODE?: string
     RECENT_FEED_RETENTION_DAYS?: string
 }
 
@@ -42,10 +41,6 @@ class RecentFeedUnavailableError extends Error {
     constructor(message = 'The generated recent media feed is unavailable') {
         super(message)
     }
-}
-
-export function isRecentFeedCursor(value: string | null | undefined): boolean {
-    return value?.startsWith('r1.') === true
 }
 
 export async function getGeneratedRecentMediaPage(

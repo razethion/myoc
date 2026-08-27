@@ -1,8 +1,6 @@
 import {describe, expect, it, vi} from 'vitest'
 import {createMockDb} from '../test/mockD1'
 import {
-    getRecentMediaPage,
-    InvalidRecentMediaCursorError,
     normalizeRecentMediaLimit,
     queryRecentMediaSourceRows,
     queryRecentMediaSourceRowsPage,
@@ -46,10 +44,6 @@ function row(overrides: Partial<RecentMediaRow> = {}): RecentMediaRow {
     }
 }
 
-function cursor(value: unknown): string {
-    return btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
-}
-
 describe('recent media coverage', () => {
     it('normalizes every limit boundary', () => {
         expect(normalizeRecentMediaLimit(undefined)).toBe(24)
@@ -59,18 +53,6 @@ describe('recent media coverage', () => {
         expect(normalizeRecentMediaLimit(30)).toBe(30)
         expect(normalizeRecentMediaLimit(31)).toBe(30)
         expect(normalizeRecentMediaLimit(1.5)).toBe(24)
-    })
-
-    it('continues after cache failures and rejects invalid cached data', async () => {
-        const {db} = createMockDb({allResults: [[]]})
-        const cache = {
-            get: vi.fn().mockRejectedValueOnce(new Error('read failure')).mockResolvedValueOnce({items: 'not-an-array'}),
-            put: vi.fn().mockRejectedValue(new Error('write failure')),
-        } as unknown as KVNamespace
-
-        await expect(getRecentMediaPage(cache, db, mediaBaseUrl)).resolves.toMatchObject({items: []})
-        await expect(getRecentMediaPage(cache, db, mediaBaseUrl, {limit: 1})).resolves.toMatchObject({items: []})
-        expect(db.prepare).toHaveBeenCalledTimes(2)
     })
 
     it('filters variants and creates each fallback value', () => {
@@ -122,12 +104,6 @@ describe('recent media coverage', () => {
         expect(recentMediaItemsFromRows([nsfwOriginalSize], mediaBaseUrl, true, true)[0]).toMatchObject({width: 1000, height: 1400})
     })
 
-    it('reports an ineligible query row instead of returning a broken URL', async () => {
-        const {db} = createMockDb({allResults: [[row({sfw_image_key: null})]]})
-
-        await expect(getRecentMediaPage(undefined, db, mediaBaseUrl)).rejects.toThrow('ineligible media variant')
-    })
-
     it('queries source rows for all hours and returns an empty list when D1 omits results', async () => {
         const allHours = createMockDb({allResults: [[row()]]})
         const oneHour = createMockDb({allResults: [[row()]]})
@@ -135,14 +111,13 @@ describe('recent media coverage', () => {
         await expect(queryRecentMediaSourceRows(allHours.db)).resolves.toHaveLength(1)
         await expect(queryRecentMediaSourceRows(oneHour.db, '2026-08-23T12')).resolves.toHaveLength(1)
         expect(allHours.boundStatements[0]?.binds).toEqual([])
-        expect(allHours.boundStatements[0]?.sql).not.toContain('WHERE character_media.created_at')
+        expect(allHours.boundStatements[0]?.sql).toContain('WHERE ((character_media.sfw_image_key IS NOT NULL')
         expect(oneHour.boundStatements[0]?.binds).toEqual(['2026-08-23 12:00:00', '2026-08-23 13:00:00'])
-        expect(oneHour.boundStatements[0]?.sql).toContain('WHERE character_media.created_at >= ?')
+        expect(oneHour.boundStatements[0]?.sql).toContain('AND character_media.created_at >= ?')
 
         const missingResults = {
             prepare: vi.fn(() => ({bind: vi.fn(() => ({all: vi.fn(async () => ({}))}))})),
         } as unknown as D1Database
-        await expect(getRecentMediaPage(undefined, missingResults, mediaBaseUrl)).resolves.toMatchObject({items: []})
         await expect(queryRecentMediaSourceRows(missingResults)).resolves.toEqual([])
         await expect(queryRecentMediaSourceRows(missingResults, '2026-08-23T12')).resolves.toEqual([])
     })
@@ -168,36 +143,6 @@ describe('recent media coverage', () => {
             prepare: vi.fn(() => ({bind: vi.fn(() => ({all: vi.fn(async () => ({}))}))})),
         } as unknown as D1Database
         await expect(queryRecentMediaSourceRowsPage(missingResults, null, 2)).resolves.toEqual([])
-    })
-
-    it('reads valid cursors and rejects each invalid cursor shape before D1 runs', async () => {
-        const valid = createMockDb({allResults: [[]]})
-        await expect(
-            getRecentMediaPage(undefined, valid.db, mediaBaseUrl, {cursor: cursor(['2026-08-23 12:00:00', 'media-1'])}),
-        ).resolves.toMatchObject({items: []})
-        expect(valid.boundStatements).toHaveLength(1)
-
-        const invalidValues = [
-            'a'.repeat(257),
-            'not+a+cursor',
-            'a',
-            cursor([]),
-            cursor(['at', 'id', 'extra']),
-            cursor([1, 'id']),
-            cursor(['at', 1]),
-            cursor(['', 'id']),
-            cursor(['a'.repeat(65), 'id']),
-            cursor(['at', '']),
-            cursor(['at', 'a'.repeat(129)]),
-        ]
-
-        for (const value of invalidValues) {
-            const {boundStatements, db} = createMockDb()
-            await expect(getRecentMediaPage(undefined, db, mediaBaseUrl, {cursor: value})).rejects.toBeInstanceOf(
-                InvalidRecentMediaCursorError,
-            )
-            expect(boundStatements).toEqual([])
-        }
     })
 
     it('reads the hour prefix from a source row', () => {

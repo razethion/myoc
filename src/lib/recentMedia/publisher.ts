@@ -53,7 +53,6 @@ type RecentFeedPublisherEnv = {
     RECENT_FEED_CLEANUP_ENABLED?: string
     RECENT_FEED_CURSOR_SECRET?: string
     RECENT_FEED_PUBLISH_ENABLED?: string
-    RECENT_FEED_READ_MODE?: string
     RECENT_FEED_RETENTION_DAYS?: string
 }
 

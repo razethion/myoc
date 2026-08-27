@@ -1,9 +1,8 @@
-export type Bindings = Omit<Env, 'CLOUDFLARE_ACCOUNT_ID' | 'D1_DATABASE_ID' | 'RECENT_FEED_READ_MODE'> & {
+export type Bindings = Omit<Env, 'CLOUDFLARE_ACCOUNT_ID' | 'D1_DATABASE_ID'> & {
     CLOUDFLARE_ACCOUNT_ID: string
     D1_DATABASE_ID: string
     D1_REST_API_TOKEN: string
     RECENT_FEED_CURSOR_SECRET?: string
     RECENT_FEED_CLEANUP_ENABLED?: string
     RECENT_FEED_PUBLIC_BASE_URL?: string
-    RECENT_FEED_READ_MODE?: string
 }

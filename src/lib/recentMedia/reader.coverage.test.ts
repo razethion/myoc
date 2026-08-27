@@ -2,7 +2,7 @@ import {afterEach, describe, expect, it, vi} from 'vitest'
 import {createMockDb} from '../../test/mockD1'
 import {createMockR2Bucket} from '../../test/mockR2'
 import type {RecentMediaItem} from '../recentMedia'
-import {getGeneratedRecentMediaPage, InvalidRecentFeedCursorError, isRecentFeedCursor, RecentFeedGenerationExpiredError} from './reader'
+import {getGeneratedRecentMediaPage, InvalidRecentFeedCursorError, RecentFeedGenerationExpiredError} from './reader'
 
 const secret = 'test-secret-with-at-least-thirty-two-characters'
 const keys = {
@@ -20,14 +20,6 @@ afterEach(() => {
 })
 
 describe('generated recent media reader coverage', () => {
-    it('recognizes generated cursor prefixes', () => {
-        expect(isRecentFeedCursor('r1.cursor.signature')).toBe(true)
-        expect(isRecentFeedCursor('r2.cursor.signature')).toBe(false)
-        expect(isRecentFeedCursor('')).toBe(false)
-        expect(isRecentFeedCursor(null)).toBe(false)
-        expect(isRecentFeedCursor(undefined)).toBe(false)
-    })
-
     it('rejects unavailable feeds, invalid generations, and absent roots', async () => {
         const bucket = createMockR2Bucket()
         const db = createMockDb().db

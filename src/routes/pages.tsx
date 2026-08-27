@@ -14,7 +14,7 @@ import {
     characterMediaPreviewImageUrl,
     characterProfileImageObjectKey,
 } from '../lib/media/url'
-import {getConfiguredRecentMediaPage} from '../lib/recentMedia/service'
+import {getGeneratedRecentMediaPage} from '../lib/recentMedia/reader'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import {searchAll} from '../lib/search'
 import type {UserSocialLink} from '../lib/socialLinks'
@@ -620,7 +620,7 @@ pageRoutes.get('/recent', async (c) => {
     const currentUser = await getCurrentUser(c)
     const showNsfw = Boolean(currentUser?.displayNsfwMedia)
     const showUnapproved = currentUser?.showUnapprovedMedia !== false
-    const page = await getConfiguredRecentMediaPage(c.env, {
+    const page = await getGeneratedRecentMediaPage(c.env, {
         showNsfw,
         showUnapproved,
     })

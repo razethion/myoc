@@ -3,15 +3,9 @@ import {z} from 'zod'
 import {getCurrentUser} from '../../lib/auth/session'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {ErrorResponseSchema, responseSchema} from '../../lib/http/responseSchemas'
-import {
-    InvalidRecentMediaCursorError,
-    RECENT_MEDIA_MAX_PAGE_SIZE,
-    RECENT_MEDIA_PAGE_SIZE,
-    RecentMediaPageSchema,
-} from '../../lib/recentMedia'
+import {RECENT_MEDIA_MAX_PAGE_SIZE, RECENT_MEDIA_PAGE_SIZE, RecentMediaPageSchema} from '../../lib/recentMedia'
 import {getRecentFeedConfig, recentFeedPublicObjectUrl} from '../../lib/recentMedia/config'
-import {InvalidRecentFeedCursorError, RecentFeedGenerationExpiredError} from '../../lib/recentMedia/reader'
-import {getConfiguredRecentMediaPage} from '../../lib/recentMedia/service'
+import {getGeneratedRecentMediaPage, InvalidRecentFeedCursorError, RecentFeedGenerationExpiredError} from '../../lib/recentMedia/reader'
 import type {Bindings} from '../../types/bindings'
 
 const RecentMediaQuerySchema = z.object({
@@ -44,7 +38,7 @@ recentMediaRoutes.get('/', async (c) => {
     try {
         const needsAccountDefaults = query.data.nsfw === undefined || query.data.unapproved === undefined
         const currentUser = needsAccountDefaults ? await getCurrentUser(c) : null
-        const page = await getConfiguredRecentMediaPage(c.env, {
+        const page = await getGeneratedRecentMediaPage(c.env, {
             cursor: query.data.cursor,
             generation: query.data.generation,
             limit: query.data.limit,
@@ -55,7 +49,7 @@ recentMediaRoutes.get('/', async (c) => {
 
         return jsonResponse(c, RecentMediaPageSchema, page)
     } catch (error) {
-        if (error instanceof InvalidRecentMediaCursorError || error instanceof InvalidRecentFeedCursorError) {
+        if (error instanceof InvalidRecentFeedCursorError) {
             return jsonResponse(c, ErrorResponseSchema, {error: error.message}, 400)
         }
 

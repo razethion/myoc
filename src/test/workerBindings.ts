@@ -9,7 +9,6 @@ export const workerEnv = env as Bindings
 export function createWorkerEnv(overrides: Partial<Bindings> = {}): Bindings {
     return {
         ...workerEnv,
-        RECENT_FEED_READ_MODE: 'd1',
         ...overrides,
     }
 }

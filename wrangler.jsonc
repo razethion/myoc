@@ -55,7 +55,6 @@
     "RECENT_FEED_CLEANUP_ENABLED": "true",
     "RECENT_FEED_PUBLISH_ENABLED": "true",
     "RECENT_FEED_PUBLIC_BASE_URL": "https://feed-data.myoc.art",
-    "RECENT_FEED_READ_MODE": "r2",
     "RECENT_FEED_RETENTION_DAYS": "30"
   },
   "secrets": {

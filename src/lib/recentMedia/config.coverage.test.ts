@@ -2,7 +2,7 @@ import {describe, expect, it} from 'vitest'
 import {getRecentFeedConfig, type RecentFeedVariant, recentFeedPublicObjectUrl, recentFeedVariant, recentFeedVariantOptions} from './config'
 
 describe('recent feed config coverage', () => {
-    it('uses defaults and normalizes boolean and read mode settings', () => {
+    it('uses defaults and normalizes boolean settings', () => {
         expect(getRecentFeedConfig({})).toEqual({
             blockItems: 96,
             cleanupEnabled: false,
@@ -10,18 +10,14 @@ describe('recent feed config coverage', () => {
             immutableCacheControl: 'public, max-age=2592000, immutable',
             publishEnabled: false,
             publicBaseUrl: null,
-            readMode: 'd1',
             retentionDays: 30,
         })
         expect(
             getRecentFeedConfig({
                 RECENT_FEED_CLEANUP_ENABLED: 'true',
                 RECENT_FEED_PUBLISH_ENABLED: 'true',
-                RECENT_FEED_READ_MODE: 'shadow',
             }),
-        ).toMatchObject({cleanupEnabled: true, publishEnabled: true, readMode: 'shadow'})
-        expect(getRecentFeedConfig({RECENT_FEED_READ_MODE: 'r2'}).readMode).toBe('r2')
-        expect(getRecentFeedConfig({RECENT_FEED_READ_MODE: 'other'}).readMode).toBe('d1')
+        ).toMatchObject({cleanupEnabled: true, publishEnabled: true})
     })
 
     it('clamps integer settings and uses fallback values for non-integers', () => {
