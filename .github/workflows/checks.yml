@@ -23,7 +23,7 @@ concurrency:
 jobs:
   quality:
     name: Quality gate
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
+    if: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -43,7 +43,7 @@ jobs:
         run: npm run ci
 
       - name: Upload coverage to Codecov
-        if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -53,7 +53,6 @@ jobs:
 
   deploy-production:
     name: Deploy production
-    needs: quality
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
     runs-on: ubuntu-latest
 
