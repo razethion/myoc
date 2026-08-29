@@ -7,6 +7,7 @@ dist/
 .vscode/*
 .ai/
 .agents/
+.codex/
 AGENTS.md
 skills-lock.json
 !.vscode/launch.json
