@@ -1035,7 +1035,11 @@ describe('public page redirects', () => {
         expect(firstHtml).toContain('/u/demo_owner/Quartz%20Dragon')
         expect(firstHtml).toContain('preview-thumb-key.webp')
 
-        await db.batch([db.prepare('DELETE FROM character_media'), db.prepare('DELETE FROM characters'), db.prepare('DELETE FROM users')])
+        await db.batch([
+            db.prepare('DELETE FROM character_media WHERE id = ?').bind('media-1'),
+            db.prepare('DELETE FROM characters WHERE id = ?').bind('character-1'),
+            db.prepare('DELETE FROM users WHERE id = ?').bind('owner-1'),
+        ])
         const cachedResponse = await getAppPath('/', db, {}, cache)
         const cachedHtml = await cachedResponse.text()
 

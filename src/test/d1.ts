@@ -173,7 +173,12 @@ async function resetTestDatabase(): Promise<void> {
 }
 
 async function clearTestDatabase(db: D1Database = testDb): Promise<void> {
-    await db.batch(TEST_DATA_TABLES.map((table) => db.prepare(`DELETE FROM ${table}`)))
+    await db.batch(
+        TEST_DATA_TABLES.map((table) =>
+            // nosemgrep: myoc.sql.no-delete-without-where -- This helper clears the isolated test database before each test.
+            db.prepare(`DELETE FROM ${table}`),
+        ),
+    )
 }
 
 export async function seedUser(seed: UserSeed, db: D1Database = testDb): Promise<void> {
