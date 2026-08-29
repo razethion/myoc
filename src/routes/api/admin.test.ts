@@ -381,13 +381,38 @@ describe('POST /admin/image-approvals/:mediaId', () => {
     })
 
     it('moves an SFW image to NSFW without preview objects when no preview key exists', async () => {
-        await seedApprovalMedia({id: mediaId, userId: ownerId, characterId, sfwPreviewImageKey: null})
+        await seedApprovalMedia({
+            id: mediaId,
+            userId: ownerId,
+            characterId,
+            sfwPreviewImageKey: null,
+            sfwPreviewWidth: null,
+            sfwPreviewHeight: null,
+            sfwPreviewByteSize: null,
+        })
         const mediaBucket = createMockR2Bucket()
         await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png', new Uint8Array([1, 2, 3]))
         const response = await postImageApproval(mediaId, {sfwAction: 'mark_nsfw'}, mediaBucket)
+        const media = await queryOne<{
+            nsfw_preview_image_key: string | null
+            nsfw_preview_width: number | null
+            nsfw_preview_height: number | null
+            nsfw_preview_byte_size: number | null
+        }>(
+            `SELECT nsfw_preview_image_key, nsfw_preview_width, nsfw_preview_height, nsfw_preview_byte_size
+             FROM character_media WHERE id = ?`,
+            [mediaId],
+        )
+
         expect(response.status).toBe(200)
         await expectStoredBytes(mediaBucket, 'characters/owner-1/character-1/media/media-1/nsfw/sfw-key.png', new Uint8Array([1, 2, 3]))
         expect(await mediaBucket.get('characters/owner-1/character-1/media/media-1/nsfw/preview/sfw-preview-key.webp')).toBeNull()
+        expect(media).toEqual({
+            nsfw_preview_image_key: null,
+            nsfw_preview_width: null,
+            nsfw_preview_height: null,
+            nsfw_preview_byte_size: null,
+        })
     })
 
     it('moves an NSFW image to SFW and deletes the old blur image', async () => {

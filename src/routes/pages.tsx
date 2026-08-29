@@ -1395,7 +1395,9 @@ function hydrateToyhouseClientImportPlan(
     return {
         characters: planCharacters.map((character) => ({
             ...character,
-            images: character.images.map((image) => hydrateToyhouseImportImage(image, itemStates.get(image.importItemId))),
+            images: character.images.map((image) =>
+                hydrateToyhouseImportImage(image, itemStates.get(image.importItemId) as ToyhouseImportItemRecord),
+            ),
         })),
         createdCharacters: staged.createdCharacters,
         importJobId,
@@ -1406,9 +1408,9 @@ function hydrateToyhouseClientImportPlan(
 
 function hydrateToyhouseImportImage(
     image: PendingToyhouseImportImage,
-    state: ToyhouseImportItemRecord | undefined,
+    state: ToyhouseImportItemRecord,
 ): ToyhouseClientImportPlan['characters'][number]['images'][number] {
-    return state ? {...image, mediaId: state.media_id, status: state.status} : image
+    return {...image, mediaId: state.media_id, status: state.status}
 }
 
 async function hasActiveToyhouseImportJob(db: D1Database, userId: string): Promise<boolean> {

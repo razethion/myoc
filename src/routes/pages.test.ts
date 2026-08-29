@@ -1116,7 +1116,7 @@ describe('public page redirects', () => {
                             version: 1,
                         }),
                         id: 'invalid-height-chart',
-                        name: 'RAZETH',
+                        name: 'Ivo',
                         user_id: 'user-razeth',
                         username: 'razeth',
                     },

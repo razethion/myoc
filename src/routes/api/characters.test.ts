@@ -1,7 +1,7 @@
 import {env} from 'cloudflare:workers'
 import {describe, expect, it, vi} from 'vitest'
 import {createCsrfToken} from '../../lib/auth/session'
-import {PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/profileImage'
+import {PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/profileImage'
 import {
     queryAll,
     queryOne,
@@ -904,6 +904,43 @@ describe('POST /characters/folders/tree', () => {
         expect(await response.json()).toEqual({
             error: 'Folder tree items are required',
         })
+    })
+
+    it.each([
+        {
+            items: [null],
+            error: 'Tree item must be an object',
+        },
+        {
+            items: [{type: 'folder', id: 'bad id'}],
+            error: 'Tree item id is invalid',
+        },
+        {
+            items: [
+                {type: 'folder', id: 'duplicate'},
+                {type: 'folder', id: 'duplicate'},
+            ],
+            error: 'Tree item ids must be unique',
+        },
+        {
+            items: [{type: 'folder', id: 'folder', children: 'invalid'}],
+            error: 'Folder children must be an array',
+        },
+        {
+            items: Array.from({length: 501}, (_, index) => ({type: 'folder', id: `folder-${index}`})),
+            error: 'Tree contains too many items',
+        },
+    ])('rejects invalid folder tree data with $error', async ({items, error}) => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser(sessionToken)
+
+        const response = await postFolderTree({items}, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error})
     })
 
     it('rejects character items in the folder-only tree', async () => {
@@ -2219,6 +2256,47 @@ describe('POST /characters', () => {
         expect(mediaBucket.put).not.toHaveBeenCalled()
     })
 
+    it('returns 400 when a multipart character profile image is missing', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        await seedCurrentUser(sessionToken)
+        const form = new FormData()
+        form.set('name', 'Vyn')
+        form.set('folderId', 'root')
+
+        const response = await postCharacter(form, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Character profile image is required'})
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
+    it('rejects streamed character JSON above the request limit', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        await seedCurrentUser(sessionToken)
+        const requestBody = JSON.stringify({
+            name: 'Vyn',
+            folderId: 'root',
+            profileImageData: 'a'.repeat(PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES),
+        })
+
+        const response = await postCharacter(requestBody, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(413)
+        expect(await response.json()).toEqual({error: 'Character profile image upload is too large'})
+        expect(await queryAll<{id: string}>('SELECT id FROM characters', [], db)).toEqual([])
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
     it('returns 404 when the selected folder does not belong to the current user', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
@@ -3075,6 +3153,33 @@ describe('PUT /characters/:id/height-chart', () => {
         })
     })
 
+    it('rejects incomplete height chart data without deleting an object', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const form = new FormData()
+        form.set(
+            'heightChartJson',
+            JSON.stringify({
+                version: 1,
+                height: {meters: 1.82},
+                image: null,
+            }),
+        )
+
+        const response = await putHeightChart(character.id, form, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Height and calibration data are required'})
+        expect(mediaBucket.delete).not.toHaveBeenCalled()
+    })
+
     it('uses the character profile image column when loading the owned character', async () => {
         const sessionToken = 'session-token'
         const character = createCharacterRecord()
@@ -3093,7 +3198,6 @@ describe('PUT /characters/:id/height-chart', () => {
                     headYPercent: 5,
                     footYPercent: 95,
                     footIsVirtual: false,
-                    nameTagXPercent: 50,
                 },
             }),
         )
@@ -3110,7 +3214,10 @@ describe('PUT /characters/:id/height-chart', () => {
             db,
         )
         expect(stored?.profile_image_key).toBe('profile-image-key')
-        expect(JSON.parse(stored?.height_chart_json ?? '')).toMatchObject({height: {meters: 1.82}})
+        expect(JSON.parse(stored?.height_chart_json ?? '')).toMatchObject({
+            height: {meters: 1.82},
+            calibration: {nameTagXPercent: 50},
+        })
     })
 
     it('rejects unsupported height chart image content types', async () => {
@@ -4270,7 +4377,7 @@ describe('character media uploads', () => {
         }
     }, 10_000)
 
-    it('falls back to the container when Cloudflare returns a non-WebP preview response', async () => {
+    it('falls back to the container when Cloudflare omits the preview content type', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
         const previewContainer = createMockPreviewContainer(
@@ -4330,11 +4437,7 @@ describe('character media uploads', () => {
             },
             db,
             {
-                cloudflarePreviewResponse: new Response(new Uint8Array([1, 2, 3]), {
-                    headers: {
-                        'content-type': 'image/jpeg',
-                    },
-                }),
+                cloudflarePreviewResponse: new Response(new Uint8Array([1, 2, 3])),
                 mediaBucket,
                 previewContainer: previewContainer.namespace,
                 sessionToken,
@@ -4958,6 +5061,51 @@ describe('character media uploads', () => {
             `characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.png`,
         )
         expect(await queryOne<{id: string}>('SELECT id FROM character_media WHERE id = ?', [initBody.mediaId], db)).toBeNull()
+        expect(await queryOne<{id: string}>('SELECT id FROM character_media WHERE id = ?', [initBody.mediaId], db)).toBeNull()
+    })
+
+    it('rejects a completed chunked gallery upload with no bytes', async () => {
+        const {sessionToken, mediaBucket, character, db, csrfToken, initBody} = await createChunkedSfwUploadTestContext()
+        const pngFile = createPngFile(800, 600)
+        const partResponse = await putChunkedMediaPart(
+            character.id,
+            initBody.mediaId,
+            'sfw',
+            initBody.uploads.sfw.uploadId,
+            1,
+            initBody.uploads.sfw.imageKey,
+            pngFile,
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+        const uploadedPart = (await partResponse.json()) as R2UploadedPart
+        vi.mocked(mediaBucket.resumeMultipartUpload).mockReturnValueOnce({
+            complete: vi.fn(async () => ({size: 0})),
+        } as unknown as R2MultipartUpload)
+
+        const response = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/png',
+                    parts: [uploadedPart],
+                },
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
+        const objectKey = `characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.png`
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'SFW image is empty'})
+        expect(mediaBucket.delete).toHaveBeenCalledWith(objectKey)
         expect(await queryOne<{id: string}>('SELECT id FROM character_media WHERE id = ?', [initBody.mediaId], db)).toBeNull()
     })
 
@@ -5645,6 +5793,56 @@ describe('character media uploads', () => {
         ).toEqual({sfw_image_key: media.sfw_image_key, nsfw_image_key: null})
     })
 
+    it('updates an artist without reopening an approved image review', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        const media = createMediaRecord({character_id: character.id})
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        await seedMediaRecord(media)
+        await db.batch([
+            db
+                .prepare(
+                    `UPDATE character_media
+                     SET sfw_review_status = 'approved',
+                         sfw_reviewed_at = '2026-01-02 00:00:00',
+                         sfw_approved_at = '2026-01-02 00:00:00',
+                         sfw_homepage_allowed = 1
+                     WHERE id = ?`,
+                )
+                .bind(media.id),
+            db.prepare('DELETE FROM admin_image_review_queue WHERE media_id = ?').bind(media.id),
+        ])
+
+        const response = await completeExistingChunkedMedia(character.id, media.id, {sfwArtist: 'Updated Artist'}, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+        const stored = await queryOne<{
+            sfw_artist: string
+            sfw_review_status: string
+            sfw_reviewed_at: string | null
+            sfw_approved_at: string | null
+            sfw_homepage_allowed: number
+        }>(
+            `SELECT sfw_artist, sfw_review_status, sfw_reviewed_at, sfw_approved_at, sfw_homepage_allowed
+             FROM character_media WHERE id = ?`,
+            [media.id],
+            db,
+        )
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toMatchObject({media: {sfwArtist: 'Updated Artist'}})
+        expect(stored).toEqual({
+            sfw_artist: 'Updated Artist',
+            sfw_review_status: 'approved',
+            sfw_reviewed_at: '2026-01-02 00:00:00',
+            sfw_approved_at: '2026-01-02 00:00:00',
+            sfw_homepage_allowed: 1,
+        })
+        expect(await queryOne('SELECT media_id FROM admin_image_review_queue WHERE media_id = ?', [media.id], db)).toBeNull()
+    })
+
     it('removes the SFW variant from existing media while preserving NSFW media', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
@@ -6012,6 +6210,97 @@ describe('PUT /characters/:id/gallery', () => {
         expect(await response.json()).toEqual({
             error: 'Gallery must contain between 1 and 20 tabs',
         })
+        expect(await queryAll<{id: string}>('SELECT id FROM character_gallery_tabs', [], db)).toEqual([])
+    })
+
+    it.each([
+        {
+            body: {tabs: [null]},
+            error: 'Gallery tab must be an object',
+        },
+        {
+            body: {tabs: [{id: 'bad id', name: 'default'}]},
+            error: 'Gallery tab id is invalid',
+        },
+        {
+            body: {
+                tabs: [
+                    {id: 'duplicate-tab', name: 'default'},
+                    {id: 'duplicate-tab', name: 'second'},
+                ],
+            },
+            error: 'Gallery tab ids must be unique',
+        },
+        {
+            body: {tabs: [{id: 'tab-one'}]},
+            error: 'Gallery tab name is required',
+        },
+        {
+            body: {tabs: [{id: 'tab-one', name: 'default', rows: 'invalid'}]},
+            error: 'Gallery tab rows are required',
+        },
+        {
+            body: {
+                tabs: [
+                    {
+                        id: 'tab-one',
+                        name: 'default',
+                        rows: Array.from({length: 101}, (_, index) => ({id: `row-${index}`, mediaIds: []})),
+                    },
+                ],
+            },
+            error: 'Gallery must contain 100 rows or fewer',
+        },
+        {
+            body: {tabs: [{id: 'tab-one', name: 'default', rows: [null]}]},
+            error: 'Gallery row must be an object',
+        },
+        {
+            body: {tabs: [{id: 'tab-one', name: 'default', rows: [{id: 'bad id', mediaIds: []}]}]},
+            error: 'Gallery row id is invalid',
+        },
+        {
+            body: {
+                tabs: [
+                    {
+                        id: 'tab-one',
+                        name: 'default',
+                        rows: [
+                            {id: 'duplicate-row', mediaIds: []},
+                            {id: 'duplicate-row', mediaIds: []},
+                        ],
+                    },
+                ],
+            },
+            error: 'Gallery row ids must be unique',
+        },
+        {
+            body: {tabs: [{id: 'tab-one', name: 'default', rows: [{id: 'row-one', mediaIds: 'invalid'}]}]},
+            error: 'Gallery row media ids are required',
+        },
+        {
+            body: {tabs: [{id: 'tab-one', name: 'default', rows: [{id: 'row-one', mediaIds: ['bad id']}]}]},
+            error: 'Gallery media id is invalid',
+        },
+        {
+            body: {
+                tabs: [{id: 'tab-one', name: 'default', rows: [{id: 'row-one', mediaIds: ['duplicate-media', 'duplicate-media']}]}],
+            },
+            error: 'A media item can only appear once in each gallery tab',
+        },
+    ])('rejects invalid gallery data with $error', async ({body, error}) => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+
+        const response = await putGallery(character.id, body, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error})
         expect(await queryAll<{id: string}>('SELECT id FROM character_gallery_tabs', [], db)).toEqual([])
     })
 

@@ -170,6 +170,7 @@ adminRoutes.post('/image-approvals/:mediaId', async (c) => {
 
     const media = await getModerationMedia(c.env.DB, mediaId)
 
+    /* istanbul ignore if -- the lease foreign key requires media; this guards a concurrent deletion. */
     if (!media) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Media not found'}, 404)
     }
