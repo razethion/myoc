@@ -2671,10 +2671,11 @@ describe('MigratePage', () => {
     })
 
     it('uses safe defaults for optional Toyhou.se character review data', () => {
+        const csrfAttack = '</script><script data-migrate-xss>globalThis.migrateXss = true</script>'
         const html = MigratePage({
             currentUser: {
                 bio: '',
-                csrfToken: 'csrf-token',
+                csrfToken: csrfAttack,
                 displayNsfwMedia: false,
                 email: 'demo@example.test',
                 id: 'current-user',
@@ -2710,10 +2711,15 @@ describe('MigratePage', () => {
             showSetupForm: false,
             siteUrl: 'https://example.com',
         }).toString()
+        const reviewHtml = html.slice(html.indexOf('data-toyhouse-import-review'))
 
         expect(html).toContain('Create new character')
         expect(html).toContain('0 images found')
         expect(html).not.toContain('(null listed)')
+        expect(reviewHtml).toContain(
+            'const csrfToken = "\\u003c/script>\\u003cscript data-migrate-xss>globalThis.migrateXss = true\\u003c/script>"',
+        )
+        expect(reviewHtml).not.toContain(csrfAttack)
     })
 })
 

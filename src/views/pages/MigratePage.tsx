@@ -1146,6 +1146,7 @@ function ToyhouseImportReviewScript({csrfToken}: {csrfToken: string}) {
 })();
 `
 
+    // nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml -- safeScriptJson escapes the dynamic CSRF token before interpolation.
     return <script dangerouslySetInnerHTML={{__html: script}}></script>
 }
 
