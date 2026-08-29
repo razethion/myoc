@@ -58,16 +58,6 @@
   },
   "overrides": [
     {
-      "includes": ["src/views/pages/adminImageApprovalsScript.ts"],
-      "linter": {
-        "rules": {
-          "suspicious": {
-            "noTemplateCurlyInString": "off"
-          }
-        }
-      }
-    },
-    {
       "includes": ["containers/myoc-docker-sharp/server.mjs"],
       "linter": {
         "rules": {

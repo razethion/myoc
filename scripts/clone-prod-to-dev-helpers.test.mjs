@@ -1,5 +1,5 @@
 import {describe, expect, it, vi} from 'vitest'
-import {executeD1ImportStatements, insertTableName, readR2CloneProgress} from '../../scripts/clone-prod-to-dev-helpers.mjs'
+import {executeD1ImportStatements, insertTableName, readR2CloneProgress} from './clone-prod-to-dev-helpers.mjs'
 
 describe('clone production data helpers', () => {
     it('executes D1 statements and reports useful counts', () => {

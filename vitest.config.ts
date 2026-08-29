@@ -25,7 +25,7 @@ export default defineConfig({
             exclude: ['src/test/**'],
             provider: 'istanbul',
         },
-        include: ['src/**/*.test.mjs', 'src/**/*.test.ts', 'src/**/*.test.tsx'],
+        include: ['scripts/**/*.test.mjs', 'src/**/*.test.mjs', 'src/**/*.test.ts', 'src/**/*.test.tsx'],
         reporters: ['dot'],
         silent: 'passed-only',
     },
