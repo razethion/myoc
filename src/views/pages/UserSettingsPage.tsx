@@ -1,5 +1,6 @@
 import type {PasskeySummary, SessionSummary} from '../../lib/auth/passkeys'
 import type {CurrentUser} from '../../lib/auth/session'
+import {fallbackAvatarDataUrl} from '../../lib/media/avatar'
 import {profilePhotoUrl} from '../../lib/media/url'
 import {createSettingsSocialLinks, FIXED_SOCIAL_LINKS, type FixedSocialPlatform, type UserSocialLink} from '../../lib/socialLinks'
 import {Navbar} from '../components/Navbar'
@@ -19,8 +20,7 @@ function avatarUrlFor(user: CurrentUser, mediaBaseUrl: string): string {
         return profilePhotoUrl(mediaBaseUrl, user.id, user.profilePhotoKey)
     }
 
-    const letter = user.username.trim().charAt(0).toUpperCase() || 'U'
-    return `https://ui-avatars.com/api/?name=${encodeURIComponent(letter)}&background=ccc&color=000`
+    return fallbackAvatarDataUrl(user.username)
 }
 
 function formatSecurityDate(value: string | null): string {

@@ -1,4 +1,5 @@
 import type {CurrentUser} from '../../lib/auth/session'
+import {fallbackAvatarDataUrl} from '../../lib/media/avatar'
 import {characterFolderImageUrl, characterProfileImageUrl, profilePhotoUrl} from '../../lib/media/url'
 import {FIXED_SOCIAL_LINKS, type SocialPlatform, type UserSocialLink} from '../../lib/socialLinks'
 import {Navbar} from '../components/Navbar'
@@ -37,8 +38,7 @@ function profileImageFor(user: ProfilePageUser, mediaBaseUrl: string): string {
         return profilePhotoUrl(mediaBaseUrl, user.id, user.profilePhotoKey)
     }
 
-    const letter = user.username.trim().charAt(0).toUpperCase() || 'U'
-    return `https://ui-avatars.com/api/?name=${encodeURIComponent(letter)}&background=ccc&color=000`
+    return fallbackAvatarDataUrl(user.username)
 }
 
 function FolderIcon() {
@@ -226,7 +226,7 @@ function ProfilePageHead({
             <meta content={imageUrl} property="og:image" />
             <meta content="512" property="og:image:width" />
             <meta content="512" property="og:image:height" />
-            <meta content={profileUser.profilePhotoKey ? 'image/webp' : 'image/png'} property="og:image:type" />
+            <meta content={profileUser.profilePhotoKey ? 'image/webp' : 'image/svg+xml'} property="og:image:type" />
             <meta content={imageAlt} property="og:image:alt" />
 
             <meta content="summary" name="twitter:card" />

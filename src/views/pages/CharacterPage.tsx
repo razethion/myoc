@@ -1,5 +1,6 @@
 import type {CurrentUser} from '../../lib/auth/session'
 import {chunkGalleryItems, shouldForceGalleryRowFullWidth} from '../../lib/gallery'
+import {fallbackAvatarDataUrl} from '../../lib/media/avatar'
 import {
     characterMediaImageUrl,
     characterMediaNsfwBlurImageUrl,
@@ -97,8 +98,7 @@ function profileImageFor(user: ProfilePageUser, mediaBaseUrl: string): string {
         return profilePhotoUrl(mediaBaseUrl, user.id, user.profilePhotoKey)
     }
 
-    const letter = user.username.trim().charAt(0).toUpperCase() || 'U'
-    return `https://ui-avatars.com/api/?name=${encodeURIComponent(letter)}&background=ccc&color=000`
+    return fallbackAvatarDataUrl(user.username)
 }
 
 function encodeLayoutValue(layout: unknown): string {

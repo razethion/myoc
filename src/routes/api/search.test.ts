@@ -1,4 +1,5 @@
 import {describe, expect, it} from 'vitest'
+import {fallbackAvatarDataUrl} from '../../lib/media/avatar'
 import {createMockDb} from '../../test/mockD1'
 import {createMockR2Bucket} from '../../test/mockR2'
 import {apiRoutes} from '../api'
@@ -98,7 +99,7 @@ describe('GET /api/search', () => {
                     id: 'user-1',
                     username: 'Alice',
                     bio: 'Makes tiny dragons',
-                    profilePhotoUrl: 'https://ui-avatars.com/api/?name=A&background=ccc&color=000',
+                    profilePhotoUrl: fallbackAvatarDataUrl('Alice'),
                     profileUrl: '/u/Alice',
                     characterCount: 2,
                 },

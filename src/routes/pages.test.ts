@@ -340,9 +340,7 @@ describe('security headers', () => {
         expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'script-src-attr')).toBe("script-src-attr 'none'")
         expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'style-src-elem')).toBe("style-src-elem 'self' 'unsafe-inline'")
         expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'style-src-attr')).toBe("style-src-attr 'unsafe-inline'")
-        expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'img-src')).toBe(
-            "img-src 'self' data: blob: https://m.myoc.art https://file.toyhou.se https://f2.toyhou.se",
-        )
+        expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'img-src')).toBe("img-src 'self' data: blob: https://m.myoc.art")
         expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'media-src')).toBe("media-src 'self' https://m.myoc.art")
         expect(contentSecurityPolicy).not.toContain(' https:;')
         expect(contentSecurityPolicy).toContain('upgrade-insecure-requests')
@@ -350,6 +348,24 @@ describe('security headers', () => {
         expect(executableScriptTags.every((tag) => tag.includes(`nonce="${nonce}"`))).toBe(true)
         expect(structuredDataScriptTags.length).toBeGreaterThan(0)
         expect(structuredDataScriptTags.every((tag) => !tag.includes('nonce='))).toBe(true)
+    })
+
+    it('allows direct Toyhou.se image previews only on migration pages', async () => {
+        const response = await getAppPath(
+            '/migrate',
+            createProfilePageDb({
+                currentUser: createCurrentUserRecord('demo'),
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+        const contentSecurityPolicy = expectSecurityHeaders(response)
+
+        expect(response.status).toBe(200)
+        expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'img-src')).toBe(
+            "img-src 'self' data: blob: https://m.myoc.art https://file.toyhou.se https://f2.toyhou.se",
+        )
     })
 
     it('adds a locked-down content security policy to API responses', async () => {
