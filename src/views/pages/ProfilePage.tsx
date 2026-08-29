@@ -1,4 +1,5 @@
 import type {CurrentUser} from '../../lib/auth/session'
+import {fallbackAvatarDataUrl} from '../../lib/media/avatar'
 import {characterFolderImageUrl, characterProfileImageUrl, profilePhotoUrl} from '../../lib/media/url'
 import {FIXED_SOCIAL_LINKS, type SocialPlatform, type UserSocialLink} from '../../lib/socialLinks'
 import {Navbar} from '../components/Navbar'
@@ -31,14 +32,15 @@ type ProfilePageProps = {
 const socialLabelByPlatform = Object.fromEntries(
     FIXED_SOCIAL_LINKS.map((link) => [link.platform, link.label.replace(' / X', '')]),
 ) as Record<Exclude<SocialPlatform, 'custom'>, string>
+const PROFILE_FALLBACK_SOCIAL_IMAGE_PATH = '/assets/myocbanner.webp'
+const PROFILE_FALLBACK_SOCIAL_IMAGE_ALT = 'MyOC original-character gallery'
 
 function profileImageFor(user: ProfilePageUser, mediaBaseUrl: string): string {
     if (user.profilePhotoKey) {
         return profilePhotoUrl(mediaBaseUrl, user.id, user.profilePhotoKey)
     }
 
-    const letter = user.username.trim().charAt(0).toUpperCase() || 'U'
-    return `https://ui-avatars.com/api/?name=${encodeURIComponent(letter)}&background=ccc&color=000`
+    return fallbackAvatarDataUrl(user.username)
 }
 
 function FolderIcon() {
@@ -180,36 +182,38 @@ function profilePageDescription(profileUser: ProfilePageUser, fallback: string):
 function ProfilePageHead({
     currentFolder,
     folderPath,
-    imageUrl,
     metaDescriptionFallback,
     pageTitle,
+    profileImageUrl,
     profileUser,
     siteUrl,
 }: {
     currentFolder: CharacterManagementFolder | null
     folderPath: CharacterManagementFolder[]
-    imageUrl: string
     metaDescriptionFallback: string
     pageTitle: string
+    profileImageUrl: string
     profileUser: ProfilePageUser
     siteUrl: string
 }) {
     const canonicalPath = currentFolder ? folderUrl(profileUser.username, folderPath) : profileUrl(profileUser.username)
     const canonicalUrl = absoluteUrl(siteUrl, canonicalPath)
     const description = profilePageDescription(profileUser, metaDescriptionFallback)
-    const imageAlt = `${profileUser.username} profile photo`
+    const hasProfilePhoto = Boolean(profileUser.profilePhotoKey)
+    const socialImageUrl = hasProfilePhoto ? profileImageUrl : absoluteUrl(siteUrl, PROFILE_FALLBACK_SOCIAL_IMAGE_PATH)
+    const socialImageAlt = hasProfilePhoto ? `${profileUser.username} profile photo` : PROFILE_FALLBACK_SOCIAL_IMAGE_ALT
     const structuredData = {
         '@context': 'https://schema.org',
         '@type': 'ProfilePage',
         name: pageTitle,
         url: canonicalUrl,
         description,
-        image: imageUrl,
+        image: socialImageUrl,
         mainEntity: {
             '@type': 'Person',
             name: profileUser.username,
-            image: imageUrl,
             url: canonicalUrl,
+            ...(hasProfilePhoto ? {image: profileImageUrl} : {}),
         },
     }
 
@@ -223,17 +227,17 @@ function ProfilePageHead({
             <meta content="profile" property="og:type" />
             <meta content={canonicalUrl} property="og:url" />
             <meta content="MyOC" property="og:site_name" />
-            <meta content={imageUrl} property="og:image" />
-            <meta content="512" property="og:image:width" />
-            <meta content="512" property="og:image:height" />
-            <meta content={profileUser.profilePhotoKey ? 'image/webp' : 'image/png'} property="og:image:type" />
-            <meta content={imageAlt} property="og:image:alt" />
+            <meta content={socialImageUrl} property="og:image" />
+            <meta content={hasProfilePhoto ? '512' : '1200'} property="og:image:width" />
+            <meta content={hasProfilePhoto ? '512' : '630'} property="og:image:height" />
+            <meta content="image/webp" property="og:image:type" />
+            <meta content={socialImageAlt} property="og:image:alt" />
 
-            <meta content="summary" name="twitter:card" />
+            <meta content={hasProfilePhoto ? 'summary' : 'summary_large_image'} name="twitter:card" />
             <meta content={pageTitle} name="twitter:title" />
             <meta content={description} name="twitter:description" />
-            <meta content={imageUrl} name="twitter:image" />
-            <meta content={imageAlt} name="twitter:image:alt" />
+            <meta content={socialImageUrl} name="twitter:image" />
+            <meta content={socialImageAlt} name="twitter:image:alt" />
 
             <script dangerouslySetInnerHTML={{__html: serializeJsonForHtmlScript(structuredData)}} type="application/ld+json"></script>
         </>
@@ -303,9 +307,9 @@ export function ProfilePage({
                 <ProfilePageHead
                     currentFolder={currentFolder}
                     folderPath={folderPath}
-                    imageUrl={profileImageUrl}
                     metaDescriptionFallback={metaDescriptionFallback}
                     pageTitle={pageTitle}
+                    profileImageUrl={profileImageUrl}
                     profileUser={profileUser}
                     siteUrl={siteUrl}
                 />

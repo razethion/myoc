@@ -1,3 +1,4 @@
+import {fallbackAvatarDataUrl} from './media/avatar'
 import {characterProfileImageUrl, profilePhotoUrl} from './media/url'
 
 const SEARCH_QUERY_MAX_LENGTH = 80
@@ -308,7 +309,7 @@ function toUserSearchResult(row: UserSearchRow, mediaBaseUrl: string): SearchUse
         bio: row.bio,
         profilePhotoUrl: row.profile_photo_key
             ? profilePhotoUrl(mediaBaseUrl, row.id, row.profile_photo_key)
-            : fallbackAvatarUrl(row.username),
+            : fallbackAvatarDataUrl(row.username),
         profileUrl: userProfileUrl(row.username),
         characterCount: Number(row.character_count ?? 0),
     }
@@ -327,10 +328,4 @@ function toCharacterSearchResult(row: CharacterSearchRow, mediaBaseUrl: string):
 
 function userProfileUrl(username: string): string {
     return `/u/${encodeURIComponent(username)}`
-}
-
-function fallbackAvatarUrl(name: string): string {
-    const letter = name.trim().charAt(0).toUpperCase() || 'U'
-
-    return `https://ui-avatars.com/api/?name=${encodeURIComponent(letter)}&background=ccc&color=000`
 }
