@@ -3295,6 +3295,11 @@ describe('GET /u/:username', () => {
         expect(scriptTags.some((tag) => tag.includes('data-json-ld-xss'))).toBe(false)
         expect(html).not.toContain('<script data-json-ld-xss>')
         expect(html).toContain('\\u003c/script\\u003e\\u003cscript data-json-ld-xss\\u003e')
+        expect(html).toContain(
+            '<meta content="https://m.myoc.art/characters/profile-user/character-1/profile/character-profile-key.webp" property="og:image"/>',
+        )
+        expect(html).toContain('<meta content="image/webp" property="og:image:type"/>')
+        expect(html).not.toContain('<meta content="data:image/svg+xml')
     })
 
     it('renders a public character page with safe gallery media by default', async () => {
@@ -4052,6 +4057,34 @@ describe('GET /u/:username', () => {
         expect(scriptTags.some((tag) => tag.includes('data-json-ld-xss'))).toBe(false)
         expect(html).not.toContain('<script data-json-ld-xss>')
         expect(html).toContain('\\u003c/script\\u003e\\u003cscript data-json-ld-xss\\u003e')
+    })
+
+    it('uses a fetchable social image when the profile has no uploaded photo', async () => {
+        const response = await getProfile(
+            'demo',
+            createProfilePageDb({
+                profileUser: {
+                    id: 'profile-user',
+                    username: 'demo',
+                    profile_photo_key: null,
+                    bio: '',
+                },
+            }),
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('<meta content="https://example.com/assets/myocbanner.webp" property="og:image"/>')
+        expect(html).toContain('<meta content="1200" property="og:image:width"/>')
+        expect(html).toContain('<meta content="630" property="og:image:height"/>')
+        expect(html).toContain('<meta content="image/webp" property="og:image:type"/>')
+        expect(html).toContain('<meta content="summary_large_image" name="twitter:card"/>')
+        expect(html).toContain('<meta content="https://example.com/assets/myocbanner.webp" name="twitter:image"/>')
+        expect(html).toContain('"image":"https://example.com/assets/myocbanner.webp"')
+        expect(html).toContain('"mainEntity":{"@type":"Person","name":"demo","url":"https://example.com/u/demo"}')
+        expect(html).not.toContain('<meta content="data:image/svg+xml')
+        expect(html).not.toContain('"image":"data:image/svg+xml')
+        expect(html).toContain('src="data:image/svg+xml;charset=utf-8,')
     })
 
     it('renders a folder page from folder name path segments', async () => {
