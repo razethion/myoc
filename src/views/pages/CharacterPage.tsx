@@ -10,6 +10,7 @@ import {
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 import {absoluteUrl, compactDescription} from '../meta'
+import {serializeJsonForHtmlScript} from '../scriptJson'
 import type {ProfilePageUser} from './ProfilePage'
 
 export type CharacterPageCharacter = {
@@ -89,15 +90,6 @@ type DisplayMedia = CharacterPageMedia & {
     safeDisplayUrl: string | null
     safeDisplayWidth: number | null
     safeImageAlt: string | null
-}
-
-function safeJson(value: unknown): string {
-    return JSON.stringify(value)
-        .replace(/</g, '\\u003c')
-        .replace(/>/g, '\\u003e')
-        .replace(/&/g, '\\u0026')
-        .replace(/\u2028/g, '\\u2028')
-        .replace(/\u2029/g, '\\u2029')
 }
 
 function profileImageFor(user: ProfilePageUser, mediaBaseUrl: string): string {
@@ -203,7 +195,7 @@ function CharacterPageHead({
             <meta content={imageUrl} name="twitter:image" />
             <meta content={imageAlt} name="twitter:image:alt" />
 
-            <script dangerouslySetInnerHTML={{__html: JSON.stringify(structuredData)}} type="application/ld+json"></script>
+            <script dangerouslySetInnerHTML={{__html: serializeJsonForHtmlScript(structuredData)}} type="application/ld+json"></script>
         </>
     )
 }
@@ -741,9 +733,9 @@ function CharacterPageScript({
     persistNsfwTogglePreference: boolean
 }) {
     const script = `
-const defaultTabName = ${safeJson(defaultTabName)};
-const allowNsfwToggle = ${safeJson(allowNsfwToggle)};
-const persistNsfwTogglePreference = ${safeJson(persistNsfwTogglePreference)};
+const defaultTabName = ${serializeJsonForHtmlScript(defaultTabName)};
+const allowNsfwToggle = ${serializeJsonForHtmlScript(allowNsfwToggle)};
+const persistNsfwTogglePreference = ${serializeJsonForHtmlScript(persistNsfwTogglePreference)};
 const guestNsfwStorageKey = 'myoc:guest-display-nsfw-media';
 const galleryImageMaxRetries = 3;
 const galleryOriginalMaxRetries = 3;
