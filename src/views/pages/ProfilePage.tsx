@@ -4,6 +4,7 @@ import {FIXED_SOCIAL_LINKS, type SocialPlatform, type UserSocialLink} from '../.
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 import {absoluteUrl, compactDescription} from '../meta'
+import {serializeJsonForHtmlScript} from '../scriptJson'
 import type {CharacterFolderPlacement, CharacterManagementCharacter, CharacterManagementFolder} from './CharacterManagementPage'
 
 export type ProfilePageUser = {
@@ -234,7 +235,7 @@ function ProfilePageHead({
             <meta content={imageUrl} name="twitter:image" />
             <meta content={imageAlt} name="twitter:image:alt" />
 
-            <script dangerouslySetInnerHTML={{__html: JSON.stringify(structuredData)}} type="application/ld+json"></script>
+            <script dangerouslySetInnerHTML={{__html: serializeJsonForHtmlScript(structuredData)}} type="application/ld+json"></script>
         </>
     )
 }

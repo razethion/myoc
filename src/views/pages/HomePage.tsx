@@ -3,6 +3,7 @@ import {characterMediaImageUrl, characterMediaPreviewImageUrl, characterProfileI
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 import {absoluteUrl} from '../meta'
+import {serializeJsonForHtmlScript} from '../scriptJson'
 
 export type HomePageStats = {
     users: number
@@ -236,7 +237,7 @@ function HomePageHead({siteUrl, stats}: {siteUrl: string; stats: HomePageStats})
             <meta content={imageUrl} name="twitter:image" />
             <meta content={HOME_PAGE_IMAGE_ALT} name="twitter:image:alt" />
 
-            <script dangerouslySetInnerHTML={{__html: JSON.stringify(structuredData)}} type="application/ld+json"></script>
+            <script dangerouslySetInnerHTML={{__html: serializeJsonForHtmlScript(structuredData)}} type="application/ld+json"></script>
             <HomePageMotionStyles />
         </>
     )

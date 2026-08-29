@@ -3252,6 +3252,35 @@ describe('GET /admin', () => {
 })
 
 describe('GET /u/:username', () => {
+    it('keeps a hostile character description inside structured data', async () => {
+        const attack = '</script><script data-json-ld-xss>globalThis.jsonLdXss = true</script>'
+        const response = await getProfilePath(
+            '/u/demo/RAZETH',
+            createProfilePageDb({
+                profileUser: {
+                    id: 'profile-user',
+                    username: 'demo',
+                    profile_photo_key: null,
+                    bio: '',
+                },
+                characterSettings: {
+                    id: 'character-1',
+                    user_id: 'profile-user',
+                    name: 'RAZETH',
+                    profile_image_key: 'character-profile-key',
+                    description: attack,
+                },
+            }),
+        )
+        const html = await response.text()
+        const scriptTags = html.match(/<script\b[^>]*>/gi) ?? []
+
+        expect(response.status).toBe(200)
+        expect(scriptTags.some((tag) => tag.includes('data-json-ld-xss'))).toBe(false)
+        expect(html).not.toContain('<script data-json-ld-xss>')
+        expect(html).toContain('\\u003c/script\\u003e\\u003cscript data-json-ld-xss\\u003e')
+    })
+
     it('renders a public character page with safe gallery media by default', async () => {
         const response = await getProfilePath(
             '/u/demo/RAZETH',
@@ -3985,6 +4014,28 @@ describe('GET /u/:username', () => {
         expect(html).toContain('/u/demo/Main%20Characters')
         expect(html).toContain('/u/demo/RAZETH')
         expect(html).not.toContain('Some text goes here')
+    })
+
+    it('keeps a hostile profile bio inside structured data', async () => {
+        const attack = '</script><script data-json-ld-xss>globalThis.jsonLdXss = true</script>'
+        const response = await getProfile(
+            'demo',
+            createProfilePageDb({
+                profileUser: {
+                    id: 'profile-user',
+                    username: 'demo',
+                    profile_photo_key: null,
+                    bio: attack,
+                },
+            }),
+        )
+        const html = await response.text()
+        const scriptTags = html.match(/<script\b[^>]*>/gi) ?? []
+
+        expect(response.status).toBe(200)
+        expect(scriptTags.some((tag) => tag.includes('data-json-ld-xss'))).toBe(false)
+        expect(html).not.toContain('<script data-json-ld-xss>')
+        expect(html).toContain('\\u003c/script\\u003e\\u003cscript data-json-ld-xss\\u003e')
     })
 
     it('renders a folder page from folder name path segments', async () => {
