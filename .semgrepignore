@@ -16,3 +16,6 @@ worker-configuration.d.ts
 .idea/
 .ai/
 .agents/
+
+# Semgrep rule fixtures
+**/*.semgrep-test.tsx

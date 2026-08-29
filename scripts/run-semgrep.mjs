@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const semgrepAutoArgs = ['scan', '--config', 'auto', '.']
+const semgrepTestArgs = ['test', '--config', '.semgrep.yml', 'semgrep-tests/scriptJson.semgrep-test.tsx']
 const semgrepCustomArgs = ['scan', '--config', '.semgrep.yml', '--error', '.']
 
 function hasCommand(command) {
@@ -48,19 +49,22 @@ function getPythonUserScript(command) {
 
 if (hasCommand('semgrep')) {
     const autoStatus = run('semgrep', semgrepAutoArgs)
-    process.exit(autoStatus === 0 ? run('semgrep', semgrepCustomArgs) : autoStatus)
+    const testStatus = autoStatus === 0 ? run('semgrep', semgrepTestArgs) : autoStatus
+    process.exit(testStatus === 0 ? run('semgrep', semgrepCustomArgs) : testStatus)
 }
 
 const pythonSemgrep = getPythonUserScript('semgrep')
 if (pythonSemgrep) {
     const autoStatus = run(pythonSemgrep, semgrepAutoArgs)
-    process.exit(autoStatus === 0 ? run(pythonSemgrep, semgrepCustomArgs) : autoStatus)
+    const testStatus = autoStatus === 0 ? run(pythonSemgrep, semgrepTestArgs) : autoStatus
+    process.exit(testStatus === 0 ? run(pythonSemgrep, semgrepCustomArgs) : testStatus)
 }
 
 if (hasCommand('docker')) {
     const dockerArgs = ['run', '--rm', '-v', `${repoRoot}:/src`, '-w', '/src', 'semgrep/semgrep', 'semgrep']
     const autoStatus = run('docker', [...dockerArgs, ...semgrepAutoArgs])
-    process.exit(autoStatus === 0 ? run('docker', [...dockerArgs, ...semgrepCustomArgs]) : autoStatus)
+    const testStatus = autoStatus === 0 ? run('docker', [...dockerArgs, ...semgrepTestArgs]) : autoStatus
+    process.exit(testStatus === 0 ? run('docker', [...dockerArgs, ...semgrepCustomArgs]) : testStatus)
 }
 
 console.error(
