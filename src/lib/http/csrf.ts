@@ -3,9 +3,11 @@ import {getCookie} from 'hono/cookie'
 import type {Bindings} from '../../types/bindings'
 import {getSessionCookieName, isValidCsrfToken} from '../auth/session'
 import {jsonResponse} from './jsonResponse'
+import {readFormDataUpTo} from './requestBody'
 import {ErrorResponseSchema} from './responseSchemas'
 
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+const CSRF_FORM_MAX_BYTES = 64 * 1024
 const PUBLIC_UNSAFE_PATHS = new Set([
     '/login',
     '/login/passkey/options',
@@ -49,12 +51,31 @@ async function getCsrfToken(c: Context<{Bindings: Bindings}>): Promise<string | 
 
     const contentType = c.req.header('content-type') ?? ''
 
-    if (!contentType.includes('application/x-www-form-urlencoded') && !contentType.includes('multipart/form-data')) {
+    if (contentType.includes('multipart/form-data')) {
+        return await readMultipartCsrfToken(c.req.raw.clone())
+    }
+
+    if (!contentType.includes('application/x-www-form-urlencoded')) {
         return null
     }
 
-    const form = await c.req.raw.clone().formData()
-    const formToken = form.get('csrfToken')
+    try {
+        const form = await readFormDataUpTo(c.req.raw.clone(), CSRF_FORM_MAX_BYTES)
+        const formToken = form?.get('csrfToken')
 
-    return typeof formToken === 'string' ? formToken : null
+        return typeof formToken === 'string' ? formToken : null
+    } catch {
+        return null
+    }
+}
+
+async function readMultipartCsrfToken(request: Request): Promise<string | null> {
+    try {
+        const form = await request.formData()
+        const formToken = form.get('csrfToken')
+
+        return typeof formToken === 'string' ? formToken : null
+    } catch {
+        return null
+    }
 }

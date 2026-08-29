@@ -4,6 +4,7 @@ const DATABASE_NAME = 'myoc-db'
 const BACKUP_PREFIX = 'd1/myoc-db'
 const EXPORT_POLL_ATTEMPTS = 10
 const EXPORT_POLL_DELAY_MS = 2_000
+const R2_MULTIPART_PART_BYTES = 5 * 1024 * 1024
 
 type D1BackupEnv = Pick<Bindings, 'CLOUDFLARE_ACCOUNT_ID' | 'D1_DATABASE_ID' | 'D1_REST_API_TOKEN' | 'DB_BACKUP_BUCKET'>
 
@@ -59,10 +60,10 @@ export async function backupD1Database(env: D1BackupEnv, now = new Date(), optio
     const generatedAt = now.toISOString()
     const key = createBackupKey(now)
     const fetcher = options.fetch ?? fetch
-    const dumpSql = await exportD1DatabaseSql(env, fetcher, options)
-    const stats = countSqlDumpStats(dumpSql)
-    const gzipBytes = await gzipText(dumpSql)
-    const backupObject = await env.DB_BACKUP_BUCKET.put(key, gzipBytes, {
+    const dumpStream = await exportD1DatabaseSqlStream(env, fetcher, options)
+    const statsCounter = createSqlStatsCounter()
+    const gzipStream = dumpStream.pipeThrough(statsCounter.stream).pipeThrough(new CompressionStream('gzip'))
+    const backupObject = await uploadMultipartStream(env.DB_BACKUP_BUCKET, key, gzipStream, {
         httpMetadata: {
             contentType: 'application/sql',
             contentEncoding: 'gzip',
@@ -77,14 +78,108 @@ export async function backupD1Database(env: D1BackupEnv, now = new Date(), optio
         key,
         databaseName: DATABASE_NAME,
         generatedAt,
-        schemaObjects: stats.schemaObjects,
-        tables: stats.tables,
-        rows: stats.rows,
+        schemaObjects: statsCounter.stats.schemaObjects,
+        tables: statsCounter.stats.tables,
+        rows: statsCounter.stats.rows,
         compressedBytes: backupObject.size,
     }
 
-    console.log('D1 database backup complete', summary)
+    console.log(JSON.stringify({message: 'D1 database backup complete', ...summary}))
     return summary
+}
+
+async function uploadMultipartStream(
+    bucket: R2Bucket,
+    key: string,
+    stream: ReadableStream<Uint8Array>,
+    options: R2MultipartOptions,
+): Promise<R2Object> {
+    const upload = await bucket.createMultipartUpload(key, options)
+
+    try {
+        const parts = await uploadStreamParts(upload, stream)
+        return await upload.complete(parts)
+    } catch (error) {
+        await abortMultipartUpload(upload, key)
+        throw error
+    }
+}
+
+async function uploadStreamParts(upload: R2MultipartUpload, stream: ReadableStream<Uint8Array>): Promise<R2UploadedPart[]> {
+    const reader = stream.getReader()
+    const writer = new MultipartPartWriter(upload)
+
+    try {
+        while (true) {
+            const {done, value} = await reader.read()
+
+            if (done) {
+                return await writer.finish()
+            }
+
+            await writer.write(value)
+        }
+    } catch (error) {
+        await Promise.allSettled([reader.cancel(error)])
+        throw error
+    } finally {
+        reader.releaseLock()
+    }
+}
+
+class MultipartPartWriter {
+    private buffer = new Uint8Array(R2_MULTIPART_PART_BYTES)
+    private bufferedBytes = 0
+    private nextPartNumber = 1
+    private readonly parts: R2UploadedPart[] = []
+
+    constructor(private readonly upload: R2MultipartUpload) {}
+
+    async write(chunk: Uint8Array): Promise<void> {
+        let chunkOffset = 0
+
+        while (chunkOffset < chunk.byteLength) {
+            const bytesToCopy = Math.min(this.buffer.byteLength - this.bufferedBytes, chunk.byteLength - chunkOffset)
+            this.buffer.set(chunk.subarray(chunkOffset, chunkOffset + bytesToCopy), this.bufferedBytes)
+            this.bufferedBytes += bytesToCopy
+            chunkOffset += bytesToCopy
+
+            if (this.bufferedBytes === this.buffer.byteLength) {
+                await this.uploadBufferedPart()
+            }
+        }
+    }
+
+    async finish(): Promise<R2UploadedPart[]> {
+        /* istanbul ignore else -- The gzip stream always emits a final chunk. */
+        if (this.bufferedBytes > 0) {
+            await this.uploadBufferedPart()
+        }
+
+        return this.parts
+    }
+
+    private async uploadBufferedPart(): Promise<void> {
+        const bytes = this.bufferedBytes === this.buffer.byteLength ? this.buffer : this.buffer.slice(0, this.bufferedBytes)
+        this.parts.push(await this.upload.uploadPart(this.nextPartNumber, bytes))
+        this.nextPartNumber += 1
+        this.buffer = new Uint8Array(R2_MULTIPART_PART_BYTES)
+        this.bufferedBytes = 0
+    }
+}
+
+async function abortMultipartUpload(upload: R2MultipartUpload, key: string): Promise<void> {
+    try {
+        await upload.abort()
+    } catch (error) {
+        console.warn(
+            JSON.stringify({
+                message: 'Unable to abort incomplete D1 backup upload',
+                key,
+                error: error instanceof Error ? error.message : String(error),
+            }),
+        )
+    }
 }
 
 function createBackupKey(now: Date): string {
@@ -104,17 +199,21 @@ function createBackupKey(now: Date): string {
     return `${BACKUP_PREFIX}/${year}/${month}/${day}/${DATABASE_NAME}-${timestamp}.sql.gz`
 }
 
-async function exportD1DatabaseSql(env: D1BackupEnv, fetcher: typeof fetch, options: BackupOptions): Promise<string> {
+async function exportD1DatabaseSqlStream(
+    env: D1BackupEnv,
+    fetcher: typeof fetch,
+    options: BackupOptions,
+): Promise<ReadableStream<Uint8Array>> {
     const exportUrl = createD1ExportUrl(env)
     const apiToken = requireEnvString(env.D1_REST_API_TOKEN, 'D1_REST_API_TOKEN')
     const signedUrl = await createD1ExportSignedUrl(exportUrl, apiToken, fetcher, options)
     const dumpResponse = await fetcher(signedUrl)
 
-    if (!dumpResponse.ok) {
+    if (!dumpResponse.ok || !dumpResponse.body) {
         throw new Error(`D1 export dump download failed with HTTP ${dumpResponse.status}`)
     }
 
-    return await dumpResponse.text()
+    return dumpResponse.body
 }
 
 function createD1ExportUrl(env: D1BackupEnv): string {
@@ -143,26 +242,39 @@ async function createD1ExportSignedUrl(
 
     for (let attempt = 1; attempt <= pollAttempts; attempt += 1) {
         const response = await postD1Export<ExportStartResult>(exportUrl, apiToken, fetcher, createD1ExportRequestBody(currentBookmark))
-        const signedUrl = response.result?.signed_url
+        const signedUrl = readSignedExportUrl(response)
 
-        if (typeof signedUrl === 'string' && signedUrl.length > 0) {
+        if (signedUrl) {
             return signedUrl
         }
 
-        if (response.status === 'error') {
-            throw new Error(`D1 export failed: ${typeof response.error === 'string' ? response.error : 'Unknown error'}`)
-        }
-
-        if (typeof response.at_bookmark === 'string' && response.at_bookmark.length > 0) {
-            currentBookmark = response.at_bookmark
-        }
-
-        if (attempt < pollAttempts) {
-            await wait(pollDelayMs)
-        }
+        throwIfD1ExportFailed(response)
+        currentBookmark = readExportBookmark(response) ?? currentBookmark
+        await waitForNextPoll(attempt, pollAttempts, pollDelayMs)
     }
 
     throw new Error(`D1 export did not return a signed dump URL after ${pollAttempts} attempts`)
+}
+
+function readSignedExportUrl(response: ExportStartResult): string | null {
+    const signedUrl = response.result?.signed_url
+    return typeof signedUrl === 'string' && signedUrl.length > 0 ? signedUrl : null
+}
+
+function throwIfD1ExportFailed(response: ExportStartResult): void {
+    if (response.status === 'error') {
+        throw new Error(`D1 export failed: ${typeof response.error === 'string' ? response.error : 'Unknown error'}`)
+    }
+}
+
+function readExportBookmark(response: ExportStartResult): string | null {
+    return typeof response.at_bookmark === 'string' && response.at_bookmark.length > 0 ? response.at_bookmark : null
+}
+
+async function waitForNextPoll(attempt: number, pollAttempts: number, pollDelayMs: number): Promise<void> {
+    if (attempt < pollAttempts) {
+        await wait(pollDelayMs)
+    }
 }
 
 function createD1ExportRequestBody(currentBookmark: string | undefined): D1ExportRequestBody {
@@ -209,21 +321,61 @@ function d1ApiErrorMessage(payload: D1ExportApiResponse<unknown>): string {
     return messages.length > 0 ? messages.join('; ') : 'Unknown error'
 }
 
-async function gzipText(text: string): Promise<Uint8Array> {
-    const gzipStream = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'))
-    return new Uint8Array(await new Response(gzipStream).arrayBuffer())
-}
+function createSqlStatsCounter(): {stream: TransformStream<Uint8Array, Uint8Array>; stats: BackupStats} {
+    const stats: BackupStats = {schemaObjects: 0, tables: 0, rows: 0}
+    const decoder = new TextDecoder()
+    let linePrefix = ''
 
-function countSqlDumpStats(sql: string): BackupStats {
     return {
-        schemaObjects: countMatches(sql, /^\s*CREATE\s+(?:UNIQUE\s+)?(?:TABLE|INDEX|TRIGGER|VIEW)\b/gim),
-        tables: countMatches(sql, /^\s*CREATE\s+TABLE\b/gim),
-        rows: countMatches(sql, /^\s*INSERT\s+INTO\b/gim),
+        stats,
+        stream: new TransformStream<Uint8Array, Uint8Array>({
+            transform(chunk, controller) {
+                linePrefix = countCompleteSqlLines(linePrefix, decoder.decode(chunk, {stream: true}), stats)
+                controller.enqueue(chunk)
+            },
+            flush() {
+                linePrefix = countCompleteSqlLines(linePrefix, decoder.decode(), stats)
+
+                if (linePrefix) {
+                    countSqlLine(linePrefix, stats)
+                }
+            },
+        }),
     }
 }
 
-function countMatches(value: string, pattern: RegExp): number {
-    return [...value.matchAll(pattern)].length
+function countCompleteSqlLines(linePrefix: string, text: string, stats: BackupStats): string {
+    const lines = text.split('\n')
+
+    if (lines.length === 1) {
+        return appendSqlLinePrefix(linePrefix, lines[0] as string)
+    }
+
+    countSqlLine(appendSqlLinePrefix(linePrefix, lines[0] as string), stats)
+
+    for (const line of lines.slice(1, -1)) {
+        countSqlLine(line.slice(0, 128), stats)
+    }
+
+    return (lines.at(-1) as string).slice(0, 128)
+}
+
+function appendSqlLinePrefix(current: string, value: string): string {
+    return (current + value).slice(0, 128)
+}
+
+function countSqlLine(line: string, stats: BackupStats): void {
+    if (/^\s*CREATE\s+(?:UNIQUE\s+)?(?:TABLE|INDEX|TRIGGER|VIEW)\b/i.test(line)) {
+        stats.schemaObjects += 1
+    }
+
+    if (/^\s*CREATE\s+TABLE\b/i.test(line)) {
+        stats.tables += 1
+    }
+
+    if (/^\s*INSERT\s+INTO\b/i.test(line)) {
+        stats.rows += 1
+    }
 }
 
 async function wait(ms: number): Promise<void> {

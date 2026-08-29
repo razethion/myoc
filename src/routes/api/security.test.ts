@@ -2,7 +2,7 @@ import {type VerifiedRegistrationResponse, verifyRegistrationResponse} from '@si
 import {beforeEach, describe, expect, it, vi} from 'vitest'
 import {hashRecoveryPhrase, verifyRecoveryPhrase} from '../../lib/auth/passkeys'
 import {createCsrfToken} from '../../lib/auth/session'
-import {createMockDb, sqlFragment} from '../../test/mockD1'
+import {countRows, queryAll, queryOne, seedChallenge, seedPasskey, seedSession, seedUser, useTestDatabase} from '../../test/d1'
 import {apiRoutes} from '../api'
 
 vi.mock('@simplewebauthn/server', async (importOriginal) => {
@@ -15,10 +15,37 @@ vi.mock('@simplewebauthn/server', async (importOriginal) => {
 })
 
 const sessionToken = 'session-token'
+const db = useTestDatabase()
 
 beforeEach(() => {
     vi.mocked(verifyRegistrationResponse).mockReset()
 })
+
+type CurrentUserOverrides = {
+    passwordHash?: string
+    webauthnUserId?: string | null
+    recoveryPhraseHash?: string | null
+    recoveryPhraseConfirmedAt?: string | null
+    secureAccountRequired?: boolean
+    secureAccountRequiredAt?: string | null
+    secureAccountRequiredPasskeyId?: string | null
+}
+
+async function seedCurrentUser(overrides: CurrentUserOverrides = {}): Promise<void> {
+    await seedUser({
+        id: 'user-1',
+        email: 'test@example.com',
+        username: 'testuser',
+        passwordHash: overrides.passwordHash ?? 'password-hash',
+        webauthnUserId: overrides.webauthnUserId === undefined ? 'webauthn-user-1' : overrides.webauthnUserId,
+        recoveryPhraseHash: overrides.recoveryPhraseHash ?? null,
+        recoveryPhraseConfirmedAt: overrides.recoveryPhraseConfirmedAt ?? null,
+        secureAccountRequired: overrides.secureAccountRequired ?? false,
+        secureAccountRequiredAt: overrides.secureAccountRequiredAt ?? null,
+        secureAccountRequiredPasskeyId: overrides.secureAccountRequiredPasskeyId ?? null,
+    })
+    await seedSession({id: 'current-session', userId: 'user-1', token: sessionToken})
+}
 
 async function securityRequest(
     path: string,
@@ -58,8 +85,6 @@ async function securityRequest(
 
 describe('POST /security/passkeys/options', () => {
     it('returns 401 when the user is not logged in', async () => {
-        const {db} = createMockDb()
-
         const response = await securityRequest('/passkeys/options', db, {
             sessionToken: null,
         })
@@ -68,17 +93,16 @@ describe('POST /security/passkeys/options', () => {
         expect(await response.json()).toEqual({
             error: 'Authentication required',
         })
-        expect(db.prepare).not.toHaveBeenCalled()
     })
 
     it('creates a registration challenge for the current user', async () => {
-        const existingPasskey = createPasskey({
-            credential_id: 'existing-credential',
+        await seedCurrentUser()
+        await seedPasskey({
+            id: 'passkey-1',
+            userId: 'user-1',
+            credentialId: 'existing-credential',
+            webauthnUserId: 'webauthn-user-1',
             transports: 'internal,usb',
-        })
-        const {db, boundStatements} = createMockDb({
-            firstResults: [createCurrentUser(), createSecurityUser()],
-            allResults: [[existingPasskey]],
         })
 
         const response = await securityRequest('/passkeys/options', db)
@@ -107,26 +131,31 @@ describe('POST /security/passkeys/options', () => {
             },
         ])
 
-        const challengeInsert = boundStatements.find((statement) =>
-            statement.sql.includes(sqlFragment('INSERT', 'INTO', 'webauthn_challenges')),
-        )
-        expect(challengeInsert?.binds.slice(1, 7)).toEqual([
-            'user-1',
-            'test@example.com',
-            'testuser',
-            'webauthn-user-1',
-            'registration',
-            body.options.challenge,
-        ])
-        expect(db.batch).toHaveBeenCalledTimes(1)
+        expect(
+            await queryOne<{
+                user_id: string
+                email: string
+                username: string
+                webauthn_user_id: string
+                ceremony: string
+                challenge: string
+            }>('SELECT user_id, email, username, webauthn_user_id, ceremony, challenge FROM webauthn_challenges WHERE id = ?', [
+                body.challengeId,
+            ]),
+        ).toEqual({
+            user_id: 'user-1',
+            email: 'test@example.com',
+            username: 'testuser',
+            webauthn_user_id: 'webauthn-user-1',
+            ceremony: 'registration',
+            challenge: body.options.challenge,
+        })
     })
 })
 
 describe('POST /security/passkeys/verify', () => {
     it('returns 400 for invalid JSON', async () => {
-        const {db} = createMockDb({
-            firstResults: [createCurrentUser()],
-        })
+        await seedCurrentUser()
 
         const response = await securityRequest('/passkeys/verify', db, {
             body: '{bad json',
@@ -140,9 +169,7 @@ describe('POST /security/passkeys/verify', () => {
     })
 
     it('returns 400 when the challenge is missing', async () => {
-        const {db} = createMockDb({
-            firstResults: [createCurrentUser()],
-        })
+        await seedCurrentUser()
 
         const response = await securityRequest('/passkeys/verify', db, {
             body: {
@@ -158,14 +185,19 @@ describe('POST /security/passkeys/verify', () => {
     })
 
     it('returns 400 when the stored challenge is expired or owned by another user', async () => {
-        const {db} = createMockDb({
-            firstResults: [
-                createCurrentUser(),
-                {
-                    ...createChallenge(),
-                    user_id: 'other-user',
-                },
-            ],
+        await seedCurrentUser()
+        await seedUser({
+            id: 'other-user',
+            email: 'other@example.test',
+            username: 'otheruser',
+            webauthnUserId: 'other-webauthn-user',
+        })
+        await seedChallenge({
+            id: 'challenge-1',
+            userId: 'other-user',
+            webauthnUserId: 'other-webauthn-user',
+            ceremony: 'registration',
+            challenge: 'stored-challenge',
         })
 
         const response = await securityRequest('/passkeys/verify', db, {
@@ -183,8 +215,13 @@ describe('POST /security/passkeys/verify', () => {
     })
 
     it('stores the verified passkey and removes the challenge', async () => {
-        const {db, boundStatements} = createMockDb({
-            firstResults: [createCurrentUser(), createChallenge()],
+        await seedCurrentUser({webauthnUserId: null})
+        await seedChallenge({
+            id: 'challenge-1',
+            userId: 'user-1',
+            webauthnUserId: 'webauthn-user-1',
+            ceremony: 'registration',
+            challenge: 'stored-challenge',
         })
         const verification: VerifiedRegistrationResponse = {
             verified: true,
@@ -228,41 +265,49 @@ describe('POST /security/passkeys/verify', () => {
             }),
         )
 
-        const updateUser = boundStatements.find((statement) => statement.sql.includes('secure_account_required_passkey_id'))
-        const passkeyInsert = boundStatements.find((statement) => statement.sql.includes(sqlFragment('INSERT', 'INTO', 'user_passkeys')))
-        const challengeDelete = boundStatements.find((statement) =>
-            statement.sql.includes(sqlFragment('DELETE', 'FROM', 'webauthn_challenges')),
-        )
-        expect(updateUser?.binds[0]).toBe('webauthn-user-1')
-        expect(updateUser?.binds[2]).toBe('user-1')
-        expect(passkeyInsert?.binds.slice(1, 10)).toEqual([
-            'user-1',
-            'credential-id',
-            'AQID',
-            'webauthn-user-1',
-            9,
-            'multiDevice',
-            1,
-            'internal,usb',
-            'Laptop',
-        ])
-        expect(challengeDelete?.binds).toEqual(['challenge-1'])
-        expect(db.batch).toHaveBeenCalledTimes(1)
+        expect(await queryOne<{webauthn_user_id: string}>('SELECT webauthn_user_id FROM users WHERE id = ?', ['user-1'])).toEqual({
+            webauthn_user_id: 'webauthn-user-1',
+        })
+        expect(
+            await queryOne<{
+                user_id: string
+                credential_id: string
+                public_key: string
+                webauthn_user_id: string
+                counter: number
+                device_type: string
+                backed_up: number
+                transports: string
+                name: string
+            }>(
+                `SELECT user_id, credential_id, public_key, webauthn_user_id, counter, device_type, backed_up, transports, name
+                 FROM user_passkeys
+                 WHERE user_id = ?`,
+                ['user-1'],
+            ),
+        ).toEqual({
+            user_id: 'user-1',
+            credential_id: 'credential-id',
+            public_key: 'AQID',
+            webauthn_user_id: 'webauthn-user-1',
+            counter: 9,
+            device_type: 'multiDevice',
+            backed_up: 1,
+            transports: 'internal,usb',
+            name: 'Laptop',
+        })
+        expect(await queryOne('SELECT id FROM webauthn_challenges WHERE id = ?', ['challenge-1'])).toBeNull()
     })
 })
 
 describe('DELETE /security/passkeys/:id', () => {
     it('prevents deleting the only passkey on a passkey-only account', async () => {
-        const passkey = createPasskey({id: 'passkey-1'})
-        const {db} = createMockDb({
-            firstResults: [
-                createCurrentUser(),
-                createSecurityUser({
-                    password_hash: 'passkey-only:disabled',
-                }),
-                passkey,
-            ],
-            allResults: [[passkey]],
+        await seedCurrentUser({passwordHash: 'passkey-only:disabled'})
+        await seedPasskey({
+            id: 'passkey-1',
+            userId: 'user-1',
+            credentialId: 'credential-id',
+            webauthnUserId: 'webauthn-user-1',
         })
 
         const response = await securityRequest('/passkeys/passkey-1', db, {
@@ -273,13 +318,16 @@ describe('DELETE /security/passkeys/:id', () => {
         expect(await response.json()).toEqual({
             error: 'Add another passkey before removing this one',
         })
+        expect(await countRows('user_passkeys')).toBe(1)
     })
 
     it('deletes a passkey when another sign-in method remains', async () => {
-        const passkey = createPasskey({id: 'passkey-1'})
-        const {db, boundStatements} = createMockDb({
-            firstResults: [createCurrentUser(), createSecurityUser(), passkey],
-            allResults: [[passkey]],
+        await seedCurrentUser()
+        await seedPasskey({
+            id: 'passkey-1',
+            userId: 'user-1',
+            credentialId: 'credential-id',
+            webauthnUserId: 'webauthn-user-1',
         })
 
         const response = await securityRequest('/passkeys/passkey-1', db, {
@@ -288,17 +336,13 @@ describe('DELETE /security/passkeys/:id', () => {
 
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ok: true})
-
-        const passkeyDelete = boundStatements.find((statement) => statement.sql.includes(sqlFragment('DELETE', 'FROM', 'user_passkeys')))
-        expect(passkeyDelete?.binds).toEqual(['user-1', 'passkey-1'])
+        expect(await countRows('user_passkeys')).toBe(0)
     })
 })
 
 describe('POST /security/recovery/regenerate', () => {
     it('stores a new recovery phrase hash and returns the plaintext phrase once', async () => {
-        const {db, boundStatements} = createMockDb({
-            firstResults: [createCurrentUser()],
-        })
+        await seedCurrentUser({recoveryPhraseConfirmedAt: '2026-06-10 12:05:00'})
 
         const response = await securityRequest('/recovery/regenerate', db)
 
@@ -310,17 +354,20 @@ describe('POST /security/recovery/regenerate', () => {
         expect(body.recoveryPhrase.split('-')).toHaveLength(4)
         expect(body.recoveryPhraseNeedsConfirmation).toBe(true)
 
-        const updateUser = boundStatements.find((statement) => statement.sql.includes('recovery_phrase_hash'))
-        expect(updateUser?.binds[2]).toBe('user-1')
-        expect(await verifyRecoveryPhrase(body.recoveryPhrase, updateUser?.binds[0] as string)).toBe(true)
+        const saved = await queryOne<{
+            recovery_phrase_hash: string
+            recovery_phrase_set_at: string
+            recovery_phrase_confirmed_at: string | null
+        }>('SELECT recovery_phrase_hash, recovery_phrase_set_at, recovery_phrase_confirmed_at FROM users WHERE id = ?', ['user-1'])
+        expect(saved?.recovery_phrase_set_at).toEqual(expect.any(String))
+        expect(saved?.recovery_phrase_confirmed_at).toBeNull()
+        expect(await verifyRecoveryPhrase(body.recoveryPhrase, saved?.recovery_phrase_hash ?? '')).toBe(true)
     })
 })
 
 describe('POST /security/recovery/confirm', () => {
     it('returns 400 when the recovery phrase is missing', async () => {
-        const {db} = createMockDb({
-            firstResults: [createCurrentUser()],
-        })
+        await seedCurrentUser()
 
         const response = await securityRequest('/recovery/confirm', db, {
             body: {},
@@ -333,9 +380,7 @@ describe('POST /security/recovery/confirm', () => {
     })
 
     it('returns 400 when no phrase has been regenerated', async () => {
-        const {db} = createMockDb({
-            firstResults: [createCurrentUser(), createSecurityUser()],
-        })
+        await seedCurrentUser()
 
         const response = await securityRequest('/recovery/confirm', db, {
             body: {
@@ -350,13 +395,8 @@ describe('POST /security/recovery/confirm', () => {
     })
 
     it('returns 400 when the recovery phrase does not match', async () => {
-        const {db} = createMockDb({
-            firstResults: [
-                createCurrentUser(),
-                createSecurityUser({
-                    recovery_phrase_hash: await hashRecoveryPhrase('correct-horse-battery-staple'),
-                }),
-            ],
+        await seedCurrentUser({
+            recoveryPhraseHash: await hashRecoveryPhrase('correct-horse-battery-staple'),
         })
 
         const response = await securityRequest('/recovery/confirm', db, {
@@ -369,16 +409,16 @@ describe('POST /security/recovery/confirm', () => {
         expect(await response.json()).toEqual({
             error: 'Recovery phrase does not match',
         })
+        expect(
+            await queryOne<{recovery_phrase_confirmed_at: string | null}>('SELECT recovery_phrase_confirmed_at FROM users WHERE id = ?', [
+                'user-1',
+            ]),
+        ).toEqual({recovery_phrase_confirmed_at: null})
     })
 
     it('marks the recovery phrase as confirmed', async () => {
-        const {db, boundStatements} = createMockDb({
-            firstResults: [
-                createCurrentUser(),
-                createSecurityUser({
-                    recovery_phrase_hash: await hashRecoveryPhrase('correct-horse-battery-staple'),
-                }),
-            ],
+        await seedCurrentUser({
+            recoveryPhraseHash: await hashRecoveryPhrase('correct-horse-battery-staple'),
         })
 
         const response = await securityRequest('/recovery/confirm', db, {
@@ -389,33 +429,36 @@ describe('POST /security/recovery/confirm', () => {
 
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ok: true})
-
-        const updateUser = boundStatements.find((statement) => statement.sql.includes('recovery_phrase_confirmed_at = ?'))
-        expect(updateUser?.binds[1]).toBe('user-1')
+        expect(
+            (
+                await queryOne<{recovery_phrase_confirmed_at: string | null}>(
+                    'SELECT recovery_phrase_confirmed_at FROM users WHERE id = ?',
+                    ['user-1'],
+                )
+            )?.recovery_phrase_confirmed_at,
+        ).toEqual(expect.any(String))
     })
 })
 
 describe('POST /security/sessions/revoke-others', () => {
     it('deletes every session except the current one', async () => {
-        const {db, boundStatements} = createMockDb({
-            firstResults: [createCurrentUser()],
-        })
+        await seedCurrentUser()
+        await seedSession({id: 'other-session-1', userId: 'user-1', token: 'other-token-1'})
+        await seedSession({id: 'other-session-2', userId: 'user-1', token: 'other-token-2'})
 
         const response = await securityRequest('/sessions/revoke-others', db)
 
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ok: true})
-
-        const sessionDelete = boundStatements.find((statement) => statement.sql.includes('id <> ?'))
-        expect(sessionDelete?.binds).toEqual(['user-1', 'current-session'])
+        expect(await queryAll<{id: string}>('SELECT id FROM sessions WHERE user_id = ? ORDER BY id', ['user-1'])).toEqual([
+            {id: 'current-session'},
+        ])
     })
 })
 
 describe('POST /security/sessions/:id/revoke', () => {
     it('rejects attempts to revoke the current session', async () => {
-        const {db} = createMockDb({
-            firstResults: [createCurrentUser()],
-        })
+        await seedCurrentUser()
 
         const response = await securityRequest('/sessions/current-session/revoke', db)
 
@@ -423,34 +466,26 @@ describe('POST /security/sessions/:id/revoke', () => {
         expect(await response.json()).toEqual({
             error: 'Use logout to end your current session',
         })
+        expect(await countRows('sessions')).toBe(1)
     })
 
     it('deletes the requested other session', async () => {
-        const {db, boundStatements} = createMockDb({
-            firstResults: [createCurrentUser()],
-        })
+        await seedCurrentUser()
+        await seedSession({id: 'other-session', userId: 'user-1', token: 'other-token'})
 
         const response = await securityRequest('/sessions/other-session/revoke', db)
 
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ok: true})
-
-        const sessionDelete = boundStatements.find((statement) => statement.sql.includes('id = ?'))
-        expect(sessionDelete?.binds).toEqual(['user-1', 'other-session'])
+        expect(await queryAll<{id: string}>('SELECT id FROM sessions WHERE user_id = ? ORDER BY id', ['user-1'])).toEqual([
+            {id: 'current-session'},
+        ])
     })
 })
 
 describe('POST /security/complete', () => {
     it('requires at least one passkey for a normal security completion', async () => {
-        const {db} = createMockDb({
-            firstResults: [
-                createCurrentUser(),
-                createSecurityUser({
-                    recovery_phrase_confirmed_at: '2026-06-10 12:05:00',
-                }),
-            ],
-            allResults: [[]],
-        })
+        await seedCurrentUser({recoveryPhraseConfirmedAt: '2026-06-10 12:05:00'})
 
         const response = await securityRequest('/complete', db)
 
@@ -461,10 +496,12 @@ describe('POST /security/complete', () => {
     })
 
     it('requires a confirmed recovery phrase before disabling password login', async () => {
-        const passkey = createPasskey({id: 'passkey-1'})
-        const {db} = createMockDb({
-            firstResults: [createCurrentUser(), createSecurityUser()],
-            allResults: [[passkey]],
+        await seedCurrentUser()
+        await seedPasskey({
+            id: 'passkey-1',
+            userId: 'user-1',
+            credentialId: 'credential-id',
+            webauthnUserId: 'webauthn-user-1',
         })
 
         const response = await securityRequest('/complete', db)
@@ -476,15 +513,17 @@ describe('POST /security/complete', () => {
     })
 
     it('disables password login after passkey and recovery phrase setup are complete', async () => {
-        const passkey = createPasskey({id: 'passkey-1'})
-        const {db, boundStatements} = createMockDb({
-            firstResults: [
-                createCurrentUser(),
-                createSecurityUser({
-                    recovery_phrase_confirmed_at: '2026-06-10 12:05:00',
-                }),
-            ],
-            allResults: [[passkey]],
+        await seedCurrentUser({
+            recoveryPhraseConfirmedAt: '2026-06-10 12:05:00',
+            secureAccountRequired: true,
+            secureAccountRequiredAt: '2026-06-10 12:00:00',
+            secureAccountRequiredPasskeyId: 'passkey-1',
+        })
+        await seedPasskey({
+            id: 'passkey-1',
+            userId: 'user-1',
+            credentialId: 'credential-id',
+            webauthnUserId: 'webauthn-user-1',
         })
 
         const response = await securityRequest('/complete', db)
@@ -492,77 +531,25 @@ describe('POST /security/complete', () => {
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ok: true})
 
-        const updateUser = boundStatements.find((statement) => statement.sql.includes('SET password_hash'))
-        expect(updateUser?.binds[0]).toMatch(/^passkey-only:/)
-        expect(updateUser?.binds[1]).toBe('user-1')
+        const saved = await queryOne<{
+            password_hash: string
+            secure_account_required: number
+            secure_account_required_at: string | null
+            secure_account_required_passkey_id: string | null
+        }>(
+            `SELECT password_hash, secure_account_required, secure_account_required_at, secure_account_required_passkey_id
+             FROM users
+             WHERE id = ?`,
+            ['user-1'],
+        )
+        expect(saved?.password_hash).toMatch(/^passkey-only:/)
+        expect(saved).toMatchObject({
+            secure_account_required: 0,
+            secure_account_required_at: null,
+            secure_account_required_passkey_id: null,
+        })
     })
 })
-
-function createCurrentUser(overrides: Record<string, unknown> = {}) {
-    return {
-        id: 'user-1',
-        session_id: 'current-session',
-        email: 'test@example.com',
-        username: 'testuser',
-        role: 'user',
-        profile_photo_key: null,
-        bio: '',
-        display_nsfw_media: 0,
-        last_seen_version: null,
-        recovery_phrase_confirmed_at: null,
-        secure_account_required: 0,
-        passkey_prompt_seen_at: null,
-        ...overrides,
-    }
-}
-
-function createSecurityUser(overrides: Record<string, unknown> = {}) {
-    return {
-        id: 'user-1',
-        email: 'test@example.com',
-        username: 'testuser',
-        password_hash: 'password-hash',
-        webauthn_user_id: 'webauthn-user-1',
-        recovery_phrase_hash: null,
-        recovery_phrase_confirmed_at: null,
-        secure_account_required: 0,
-        secure_account_required_at: null,
-        secure_account_required_passkey_id: null,
-        ...overrides,
-    }
-}
-
-function createPasskey(overrides: Record<string, unknown> = {}) {
-    return {
-        id: 'passkey-1',
-        user_id: 'user-1',
-        credential_id: 'credential-id',
-        public_key: 'AQID',
-        webauthn_user_id: 'webauthn-user-1',
-        counter: 0,
-        device_type: 'singleDevice',
-        backed_up: 0,
-        transports: null,
-        name: 'Laptop',
-        created_at: '2026-06-10 12:00:00',
-        last_used_at: null,
-        ...overrides,
-    }
-}
-
-function createChallenge(overrides: Record<string, unknown> = {}) {
-    return {
-        id: 'challenge-1',
-        user_id: 'user-1',
-        email: null,
-        username: null,
-        webauthn_user_id: 'webauthn-user-1',
-        ceremony: 'registration',
-        challenge: 'stored-challenge',
-        expires_at: '2026-06-10 12:05:00',
-        ...overrides,
-    }
-}
 
 function createRegistrationCredential() {
     return {

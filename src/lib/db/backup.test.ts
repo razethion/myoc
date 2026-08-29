@@ -93,9 +93,8 @@ describe('backupD1Database', () => {
             }),
         )
         expect(fetcher).toHaveBeenNthCalledWith(3, 'https://example.test/dump.sql')
-        expect(backupBucket.put).toHaveBeenCalledWith(
+        expect(backupBucket.createMultipartUpload).toHaveBeenCalledWith(
             summary.key,
-            expect.any(Uint8Array),
             expect.objectContaining({
                 httpMetadata: {
                     contentEncoding: 'gzip',
@@ -107,10 +106,86 @@ describe('backupD1Database', () => {
                 },
             }),
         )
+        expect(backupBucket.put).not.toHaveBeenCalled()
 
         const object = await backupBucket.get(summary.key)
         expect(object).not.toBeNull()
         expect(await gunzipObject(object)).toBe(EXPORT_SQL)
+    })
+
+    it('uploads compressed backups in valid multipart chunks', async () => {
+        const backupBucket = createMockR2Bucket()
+        const completedSize = 123
+        const uploadedSizes: number[] = []
+        const upload = {
+            abort: vi.fn(),
+            complete: vi.fn(async () => ({size: completedSize})),
+            uploadPart: vi.fn(async (partNumber: number, value: Uint8Array) => {
+                uploadedSizes.push(value.byteLength)
+                return {partNumber, etag: `etag-${partNumber}`}
+            }),
+        }
+        vi.mocked(backupBucket.createMultipartUpload).mockResolvedValue(upload as unknown as R2MultipartUpload)
+
+        const summary = await backupD1Database(
+            {
+                CLOUDFLARE_ACCOUNT_ID: 'account-id',
+                D1_DATABASE_ID: 'database-id',
+                D1_REST_API_TOKEN: 'api-token',
+                DB_BACKUP_BUCKET: backupBucket,
+            },
+            new Date('2026-07-12T08:00:00.000Z'),
+            {
+                fetch: createExportFetch(createLargeExportBytes()),
+                pollDelayMs: 0,
+            },
+        )
+
+        expect(uploadedSizes.length).toBeGreaterThan(1)
+        expect(uploadedSizes.every((size) => size > 0)).toBe(true)
+        expect(uploadedSizes.slice(0, -1).every((size) => size >= 5 * 1024 * 1024)).toBe(true)
+        const partNumbers = upload.uploadPart.mock.calls.map(([partNumber]) => partNumber)
+        expect(new Set(partNumbers).size).toBe(partNumbers.length)
+        expect(partNumbers.every((partNumber) => Number.isInteger(partNumber) && partNumber >= 1 && partNumber <= 10_000)).toBe(true)
+        expect(summary.compressedBytes).toBe(completedSize)
+    })
+
+    it.each([new Error('abort failed'), 'abort failed'])('reports an abort failure and keeps the upload error: %s', async (abortError) => {
+        const backupBucket = createMockR2Bucket()
+        const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        const upload = {
+            abort: vi.fn(async () => {
+                throw abortError
+            }),
+            complete: vi.fn(),
+            uploadPart: vi.fn(async () => {
+                throw new Error('R2 part upload failed')
+            }),
+        }
+        vi.mocked(backupBucket.createMultipartUpload).mockResolvedValue(upload as unknown as R2MultipartUpload)
+
+        try {
+            await expect(
+                backupD1Database(
+                    {
+                        CLOUDFLARE_ACCOUNT_ID: 'account-id',
+                        D1_DATABASE_ID: 'database-id',
+                        D1_REST_API_TOKEN: 'api-token',
+                        DB_BACKUP_BUCKET: backupBucket,
+                    },
+                    new Date('2026-07-12T08:00:00.000Z'),
+                    {
+                        fetch: createExportFetch(),
+                        pollDelayMs: 0,
+                    },
+                ),
+            ).rejects.toThrow('R2 part upload failed')
+            expect(upload.abort).toHaveBeenCalled()
+            expect(upload.complete).not.toHaveBeenCalled()
+            expect(warning).toHaveBeenCalledWith(expect.stringContaining('abort failed'))
+        } finally {
+            warning.mockRestore()
+        }
     })
 
     it('reports an export API error when the API rejects the backup request', async () => {
@@ -313,7 +388,7 @@ describe('backupD1Database', () => {
     })
 })
 
-function createExportFetch(): typeof fetch {
+function createExportFetch(exportBody: BodyInit = EXPORT_SQL): typeof fetch {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input)
 
@@ -344,10 +419,25 @@ function createExportFetch(): typeof fetch {
             })
         }
 
-        return new Response(EXPORT_SQL, {status: 200})
+        return new Response(exportBody, {status: 200})
     })
 
     return fetcher as unknown as typeof fetch
+}
+
+function createLargeExportBytes(): Uint8Array {
+    const bytes = new Uint8Array(6 * 1024 * 1024)
+    let state = 0x9e3779b9
+
+    for (let index = 0; index < bytes.length - 1; index += 1) {
+        state ^= state << 13
+        state ^= state >>> 17
+        state ^= state << 5
+        bytes[index] = state & 0xff
+    }
+
+    bytes[bytes.length - 1] = 0x0a
+    return bytes
 }
 
 async function gunzipObject(object: R2ObjectBody | null): Promise<string> {

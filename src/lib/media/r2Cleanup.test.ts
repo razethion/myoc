@@ -1,16 +1,11 @@
-import {afterEach, beforeEach, describe, expect, it} from 'vitest'
-import {createWorkerEnv, resetWorkerBindings, workerEnv} from '../../test/workerBindings'
+import {describe, expect, it, vi} from 'vitest'
+import {seedCharacter, seedFolder, seedMedia, seedUser, useResetTestDatabase} from '../../test/d1'
+import {createMockKVNamespace} from '../../test/mockKV'
+import {createWorkerEnv, workerEnv} from '../../test/workerBindings'
 import {cleanupStaleR2Media, parseManagedR2MediaKey} from './r2Cleanup'
 
 const staleCleanupNow = new Date(Date.now() + 25 * 60 * 60 * 1000)
-
-beforeEach(async () => {
-    await resetWorkerBindings()
-})
-
-afterEach(async () => {
-    await resetWorkerBindings()
-})
+const db = useResetTestDatabase()
 
 describe('parseManagedR2MediaKey', () => {
     it('recognizes only managed MyOC media object keys', () => {
@@ -72,6 +67,11 @@ describe('parseManagedR2MediaKey', () => {
         expect(parseManagedR2MediaKey('characters/user-1/character-1/scratch/file.webp')).toBeNull()
         expect(parseManagedR2MediaKey('characters/user-1/character-1/media/media-1/sfw/image-1.bmp')).toBeNull()
         expect(parseManagedR2MediaKey('users/user-1/profile/photo-1.png')).toBeNull()
+        expect(parseManagedR2MediaKey('characters/user-1/character-1/profile/photo.png')).toBeNull()
+        expect(parseManagedR2MediaKey('characters/user-1/folders/folder-1/image/photo.png')).toBeNull()
+        expect(parseManagedR2MediaKey('characters/user-1/character-1/media/media-1/sfw/preview/photo.png')).toBeNull()
+        expect(parseManagedR2MediaKey('characters/user-1/character-1/media/media-1/nsfw/blur/photo.png')).toBeNull()
+        expect(parseManagedR2MediaKey('characters/user-1/character-1/height-chart/photo.bmp')).toBeNull()
     })
 })
 
@@ -128,100 +128,171 @@ describe('cleanupStaleR2Media', () => {
 
     it('does not evaluate recent objects for deletion', async () => {
         await workerEnv.MEDIA_BUCKET.put('users/alice/profile/new.webp', 'recent')
+        await db.exec('ALTER TABLE users RENAME TO test_unavailable_users')
 
-        const summary = await cleanupStaleR2Media(createWorkerEnv({DB: failOnD1Query()}), new Date())
+        const summary = await cleanupStaleR2Media(workerEnv, new Date())
 
         expect(summary.skippedRecent).toBe(1)
         expect(summary.deleted).toBe(0)
         expect(summary.errors).toBe(0)
         expect(await workerEnv.MEDIA_BUCKET.head('users/alice/profile/new.webp')).not.toBeNull()
     })
+
+    it('resumes a bounded scan on the next run', async () => {
+        const objectKeys = Array.from({length: 1200}, (_, index) => `users/user-${index}/profile/photo.webp`)
+        const bucket = createPagedMediaBucket(objectKeys, new Date())
+        const cache = createMockKVNamespace()
+        const env = createWorkerEnv({CACHE: cache, MEDIA_BUCKET: bucket})
+        const now = new Date()
+
+        const first = await cleanupStaleR2Media(env, now)
+        const second = await cleanupStaleR2Media(env, now)
+
+        expect(first.stoppedAtScanLimit).toBe(true)
+        expect(first.scanned).toBe(900)
+        expect(second.stoppedAtScanLimit).toBe(false)
+        expect(second.scanned).toBe(300)
+        expect(await cache.get('admin:r2-media-cleanup:cursor:v1')).toBeNull()
+    })
+
+    it('stops at the scan limit with referenced objects', async () => {
+        const objectKeys = Array.from({length: 901}, (_, index) => `users/user-${index}/profile/photo.webp`)
+        const bucket = createPagedMediaBucket(objectKeys, new Date(0))
+        const cache = createMockKVNamespace()
+        await seedReferencedProfileUsers(900)
+        const env = createWorkerEnv({CACHE: cache, MEDIA_BUCKET: bucket})
+
+        const summary = await cleanupStaleR2Media(env, staleCleanupNow)
+
+        expect(summary).toMatchObject({
+            scanned: 900,
+            recognized: 900,
+            keptReferenced: 900,
+            stoppedAtScanLimit: true,
+        })
+        expect(await cache.get('admin:r2-media-cleanup:cursor:v1')).not.toBeNull()
+    })
+
+    it('continues with the next managed prefix on the next run', async () => {
+        const objectKeys = [
+            ...Array.from({length: 900}, (_, index) => `users/user-${index}/profile/photo.webp`),
+            'characters/user/character/profile/photo.webp',
+        ]
+        const bucket = createPagedMediaBucket(objectKeys, new Date())
+        const cache = createMockKVNamespace()
+        const env = createWorkerEnv({CACHE: cache, MEDIA_BUCKET: bucket})
+
+        const first = await cleanupStaleR2Media(env, new Date())
+        const second = await cleanupStaleR2Media(env, new Date())
+
+        expect(first).toMatchObject({scanned: 900, stoppedAtScanLimit: true})
+        expect(second).toMatchObject({scanned: 1, stoppedAtScanLimit: false})
+        await expect(cache.get('admin:r2-media-cleanup:cursor:v1')).resolves.toBeNull()
+    })
+
+    it.each(['{', '[]', JSON.stringify({prefix: 'invalid/'}), JSON.stringify({prefix: 'users/', cursor: 1})])(
+        'discards an invalid saved cursor: %s',
+        async (savedCursor) => {
+            const cache = createMockKVNamespace({values: {'admin:r2-media-cleanup:cursor:v1': savedCursor}})
+            const bucket = createPagedMediaBucket(['users/alice/profile/photo.webp'], new Date())
+
+            const summary = await cleanupStaleR2Media(createWorkerEnv({CACHE: cache, MEDIA_BUCKET: bucket}), new Date())
+
+            expect(summary.scanned).toBe(1)
+            await expect(cache.get('admin:r2-media-cleanup:cursor:v1')).resolves.toBeNull()
+        },
+    )
+
+    it('stops after the per-run delete limit', async () => {
+        const objectKeys = Array.from({length: 501}, (_, index) => `users/user-${index}/profile/photo.webp`)
+        const bucket = createPagedMediaBucket(objectKeys, new Date(0))
+        const cache = createMockKVNamespace()
+        const env = createWorkerEnv({CACHE: cache, MEDIA_BUCKET: bucket})
+
+        const first = await cleanupStaleR2Media(env, staleCleanupNow)
+        const second = await cleanupStaleR2Media(env, staleCleanupNow)
+
+        expect(first).toMatchObject({deleted: 500, stoppedAtDeleteLimit: true})
+        expect(second).toMatchObject({deleted: 1, stoppedAtDeleteLimit: false})
+        expect(await cache.get('admin:r2-media-cleanup:cursor:v1')).toBeNull()
+    })
+
+    it.each([new Error('cleanup failed'), 'cleanup failed'])('records object cleanup errors: %s', async (error) => {
+        const bucket = createPagedMediaBucket(['users/alice/profile/photo.webp'], new Date(0))
+        vi.mocked(bucket.delete).mockRejectedValue(error)
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+        const summary = await cleanupStaleR2Media(createWorkerEnv({CACHE: createMockKVNamespace(), MEDIA_BUCKET: bucket}), staleCleanupNow)
+
+        expect(summary).toMatchObject({deleted: 0, errors: 1})
+    })
 })
 
-async function seedCleanupDatabase(heightChartJson: string): Promise<void> {
-    await runD1SetupStatements([
-        'DROP TABLE IF EXISTS users',
-        'DROP TABLE IF EXISTS characters',
-        'DROP TABLE IF EXISTS character_folders',
-        'DROP TABLE IF EXISTS character_media',
-        `CREATE TABLE users (
-            id TEXT,
-            email TEXT,
-            username TEXT,
-            password_hash TEXT,
-            profile_photo_key TEXT
-        )`,
-        `CREATE TABLE characters (
-            user_id TEXT,
-            id TEXT,
-            size_chart_id BLOB,
-            name TEXT,
-            profile_image_key TEXT,
-            height_chart_json TEXT
-        )`,
-        `CREATE TABLE character_folders (
-            user_id TEXT,
-            id TEXT,
-            name TEXT,
-            folder_image_key TEXT
-        )`,
-        `CREATE TABLE character_media (
-            user_id TEXT,
-            character_id TEXT,
-            id TEXT,
-            sfw_image_key TEXT,
-            nsfw_image_key TEXT,
-            sfw_content_type TEXT,
-            nsfw_content_type TEXT,
-            sfw_preview_image_key TEXT,
-            nsfw_preview_image_key TEXT,
-            nsfw_blur_image_key TEXT
-        )`,
-    ])
+function createPagedMediaBucket(keys: string[], uploaded: Date): R2Bucket {
+    const objectKeys = new Set(keys)
 
-    await workerEnv.DB.batch([
-        workerEnv.DB.prepare('INSERT INTO users (id, email, username, password_hash, profile_photo_key) VALUES (?, ?, ?, ?, ?)').bind(
-            'alice',
-            'alice@example.test',
-            'alice',
-            'unused-test-hash',
-            'current',
-        ),
-        workerEnv.DB.prepare(
-            'INSERT INTO characters (user_id, id, size_chart_id, name, profile_image_key, height_chart_json) VALUES (?, ?, ?, ?, ?, ?)',
-        ).bind('alice', 'blair', new Uint8Array([0xab, 0xcd, 0xef, 0x12, 0x34, 0x56]), 'Blair', 'profile', heightChartJson),
-        workerEnv.DB.prepare('INSERT INTO character_folders (user_id, id, name, folder_image_key) VALUES (?, ?, ?, ?)').bind(
-            'alice',
-            'main',
-            'Main',
-            'image',
-        ),
-        workerEnv.DB.prepare(
-            `INSERT INTO character_media (
-                user_id,
-                character_id,
-                id,
-                sfw_image_key,
-                nsfw_image_key,
-                sfw_content_type,
-                nsfw_content_type,
-                sfw_preview_image_key,
-                nsfw_blur_image_key
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).bind('alice', 'blair', 'media-1', 'img', null, 'image/png', null, 'preview', 'blur'),
-    ])
-}
-
-async function runD1SetupStatements(statements: string[]): Promise<void> {
-    for (const statement of statements) {
-        await workerEnv.DB.prepare(statement).run()
-    }
-}
-
-function failOnD1Query(): D1Database {
     return {
-        prepare: () => {
-            throw new Error('recent objects should not query D1')
-        },
-    } as unknown as D1Database
+        delete: vi.fn(async (key: string) => {
+            objectKeys.delete(key)
+        }),
+        list: vi.fn(async (options: R2ListOptions = {}) => {
+            const matchingKeys = [...objectKeys].filter((key) => key.startsWith(options.prefix ?? ''))
+            const offset = Number(options.cursor ?? 0)
+            const limit = options.limit ?? 1000
+            const pageKeys = matchingKeys.slice(offset, offset + limit)
+            const nextOffset = offset + pageKeys.length
+            const truncated = nextOffset < matchingKeys.length
+
+            return {
+                cursor: truncated ? String(nextOffset) : undefined,
+                delimitedPrefixes: [],
+                objects: pageKeys.map((key) => ({key, uploaded})),
+                truncated,
+            }
+        }),
+    } as unknown as R2Bucket
+}
+
+async function seedCleanupDatabase(heightChartJson: string): Promise<void> {
+    await seedUser({id: 'alice', username: 'alice', profilePhotoKey: 'current'})
+    await seedFolder({id: 'main', userId: 'alice', name: 'Main', folderImageKey: 'image'})
+    await seedCharacter({
+        id: 'blair',
+        userId: 'alice',
+        name: 'Blair',
+        profileImageKey: 'profile',
+        heightChartJson,
+    })
+    await seedMedia({
+        id: 'media-1',
+        userId: 'alice',
+        characterId: 'blair',
+        sfwImageKey: 'img',
+        sfwContentType: 'image/png',
+        sfwPreviewImageKey: 'preview',
+        sfwPreviewWidth: 800,
+        sfwPreviewHeight: 600,
+        sfwPreviewByteSize: 512,
+        nsfwBlurImageKey: 'blur',
+    })
+}
+
+async function seedReferencedProfileUsers(count: number): Promise<void> {
+    await db
+        .prepare(
+            `WITH RECURSIVE sequence(value) AS (
+                VALUES (0)
+                UNION ALL
+                SELECT value + 1 FROM sequence WHERE value + 1 < ?
+            )
+            INSERT INTO users (id, email, username, password_hash, profile_photo_key)
+            SELECT 'user-' || value,
+                   'user-' || value || '@example.test',
+                   'user_' || value,
+                   'test-hash',
+                   'photo'
+            FROM sequence`,
+        )
+        .bind(count)
+        .run()
 }

@@ -1,6 +1,6 @@
 import {describe, expect, it, vi} from 'vitest'
 import {createPngFile, createWebpBytes, createWebpFile} from '../../test/imageFixtures'
-import {normalizeProfileImagePayload, PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR} from './profileImage'
+import {normalizeProfileImagePayload} from './profileImage'
 
 describe('normalizeProfileImagePayload', () => {
     it('accepts valid WebP profile images without Cloudflare Images', async () => {
@@ -40,7 +40,7 @@ describe('normalizeProfileImagePayload', () => {
         })
 
         await expect(normalizeProfileImagePayload({contentType: file.type, bytes}, 'Profile photo', images)).resolves.toEqual({
-            error: PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR,
+            error: 'Unexpected media, contact support',
             status: 400,
         })
     })
@@ -53,7 +53,7 @@ describe('normalizeProfileImagePayload', () => {
         })
 
         await expect(normalizeProfileImagePayload({contentType: file.type, bytes}, 'Profile photo', images)).resolves.toEqual({
-            error: PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR,
+            error: 'Unexpected media, contact support',
             status: 400,
         })
     })
@@ -68,7 +68,7 @@ describe('normalizeProfileImagePayload', () => {
         })
 
         await expect(normalizeProfileImagePayload({contentType: file.type, bytes}, 'Profile photo', images)).resolves.toEqual({
-            error: PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR,
+            error: 'Unexpected media, contact support',
             status: 400,
         })
     })

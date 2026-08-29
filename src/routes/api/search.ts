@@ -2,6 +2,7 @@ import {Hono} from 'hono'
 import {z} from 'zod'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {ErrorResponseSchema, responseSchema, SearchResponseSchema, SizeChartSearchItemSchema} from '../../lib/http/responseSchemas'
+import {parseHeightChartJson} from '../../lib/media/heightChart'
 import {characterHeightChartImageUrl, characterProfileImageUrl} from '../../lib/media/url'
 import {normalizeSearchOffset, normalizeSearchQuery, searchCharacters, searchUsers} from '../../lib/search'
 import type {Bindings} from '../../types/bindings'
@@ -27,28 +28,10 @@ type SizeChartCharacterSearchRow = {
     height_chart_json: string
 }
 
-type SizeChartJson = {
-    version: 1
-    height: {
-        meters: number
-    }
-    image: null | {
-        key: string
-        contentType: string
-        naturalWidth: number
-        naturalHeight: number
-    }
-    calibration: {
-        headYPercent: number
-        footYPercent: number
-        footIsVirtual: boolean
-        nameTagXPercent: number
-    }
-}
-
 const SIZE_CHART_ID_SELECT_SQL = 'lower(hex(characters.size_chart_id)) AS size_chart_id'
 const SIZE_CHART_ID_LOOKUP_SQL = 'lower(hex(characters.size_chart_id))'
 const SIZE_CHART_ID_LOOKUP_LIMIT = 99
+const D1_MAX_BOUND_PARAMETERS = 100
 
 searchRoutes.get('/', async (c) => {
     const type = c.req.query('type')
@@ -142,41 +125,75 @@ searchRoutes.get('/size-chart-characters/by-id', async (c) => {
         return jsonResponse(c, SizeChartByIdResponseSchema, {items: []})
     }
 
-    const sizeChartIds = ids.filter(isSizeChartId).map((id) => id.toLowerCase())
-    const where = [
-        `characters.id IN (${ids.map(() => '?').join(', ')})`,
-        ...(sizeChartIds.length > 0 ? [`${SIZE_CHART_ID_LOOKUP_SQL} IN (${sizeChartIds.map(() => '?').join(', ')})`] : []),
-    ].join(' OR ')
-
-    const result = await c.env.DB.prepare(
-        `SELECT characters.id,
-                ${SIZE_CHART_ID_SELECT_SQL},
-                characters.name,
-                characters.user_id,
-                characters.profile_image_key,
-                characters.height_chart_json,
-                users.username
-         FROM characters
-                  INNER JOIN users ON users.id = characters.user_id
-         WHERE ${where}
-         LIMIT ${SIZE_CHART_ID_LOOKUP_LIMIT}`,
+    const results = await Promise.all(
+        createSizeChartLookupChunks(ids as [string, ...string[]]).map(
+            async (idChunk) => await querySizeChartCharactersByIds(c.env.DB, idChunk),
+        ),
     )
-        .bind(...ids, ...sizeChartIds)
-        .all<SizeChartCharacterSearchRow>()
 
     const itemsById = new Map<string, ReturnType<typeof toSizeChartCharacterSearchResult>>()
 
-    for (const row of result.results ?? []) {
-        const item = toSizeChartCharacterSearchResult(row, c.env.MEDIA_PUBLIC_BASE_URL)
-        itemsById.set(row.id, item)
+    for (const result of results) {
+        for (const row of result.results) {
+            const item = toSizeChartCharacterSearchResult(row, c.env.MEDIA_PUBLIC_BASE_URL)
+            itemsById.set(row.id, item)
 
-        itemsById.set(row.size_chart_id, item)
+            itemsById.set(row.size_chart_id, item)
+        }
     }
 
     return jsonResponse(c, SizeChartByIdResponseSchema, {
         items: ids.map((id) => itemsById.get(id)).filter((item): item is NonNullable<typeof item> => Boolean(item)),
     })
 })
+
+async function querySizeChartCharactersByIds(db: D1Database, ids: string[]): Promise<D1Result<SizeChartCharacterSearchRow>> {
+    const sizeChartIds = ids.filter(isSizeChartId).map((id) => id.toLowerCase())
+    const where = [
+        `characters.id IN (${ids.map(() => '?').join(', ')})`,
+        ...(sizeChartIds.length > 0 ? [`${SIZE_CHART_ID_LOOKUP_SQL} IN (${sizeChartIds.map(() => '?').join(', ')})`] : []),
+    ].join(' OR ')
+
+    return await db
+        .prepare(
+            `SELECT characters.id,
+                    ${SIZE_CHART_ID_SELECT_SQL},
+                    characters.name,
+                    characters.user_id,
+                    characters.profile_image_key,
+                    characters.height_chart_json,
+                    users.username
+             FROM characters
+                      INNER JOIN users ON users.id = characters.user_id
+             WHERE ${where}
+             LIMIT ${SIZE_CHART_ID_LOOKUP_LIMIT}`,
+        )
+        .bind(...ids, ...sizeChartIds)
+        .all<SizeChartCharacterSearchRow>()
+}
+
+function createSizeChartLookupChunks(ids: [string, ...string[]]): string[][] {
+    const chunks: string[][] = []
+    let chunk: string[] = []
+    let boundParameterCount = 0
+
+    for (const id of ids) {
+        const idParameterCount = isSizeChartId(id) ? 2 : 1
+
+        if (boundParameterCount + idParameterCount > D1_MAX_BOUND_PARAMETERS) {
+            chunks.push(chunk)
+            chunk = []
+            boundParameterCount = 0
+        }
+
+        chunk.push(id)
+        boundParameterCount += idParameterCount
+    }
+
+    chunks.push(chunk)
+
+    return chunks
+}
 
 function createSizeChartSearchTerms(query: string): {contains: string}[] {
     return query
@@ -224,7 +241,7 @@ function isSizeChartId(value: string): boolean {
 }
 
 function toSizeChartCharacterSearchResult(row: SizeChartCharacterSearchRow, mediaBaseUrl: string) {
-    const heightChart = parseSizeChartJson(row.height_chart_json)
+    const heightChart = parseHeightChartJson(row.height_chart_json)
     const hasSizeChart = Boolean(heightChart?.image)
 
     return {
@@ -250,70 +267,5 @@ function toSizeChartCharacterSearchResult(row: SizeChartCharacterSearchRow, medi
                   },
               }
             : null,
-    }
-}
-
-function parseSizeChartJson(value: string | null | undefined): SizeChartJson | null {
-    if (!value) {
-        return null
-    }
-
-    try {
-        const parsed = JSON.parse(value) as unknown
-
-        if (!parsed || typeof parsed !== 'object') {
-            return null
-        }
-
-        const chart = parsed as Record<string, unknown>
-        const height = chart.height && typeof chart.height === 'object' ? (chart.height as Record<string, unknown>) : null
-        const calibration =
-            chart.calibration && typeof chart.calibration === 'object' ? (chart.calibration as Record<string, unknown>) : null
-        const image = chart.image && typeof chart.image === 'object' ? (chart.image as Record<string, unknown>) : null
-
-        if (!height || !calibration || !image) {
-            return null
-        }
-
-        const meters = Number(height.meters)
-        const headYPercent = Number(calibration.headYPercent)
-        const footYPercent = Number(calibration.footYPercent)
-        const nameTagXPercent = Number(calibration.nameTagXPercent ?? 50)
-        const naturalWidth = Number(image.naturalWidth)
-        const naturalHeight = Number(image.naturalHeight)
-        const key = typeof image.key === 'string' ? image.key : ''
-
-        if (
-            !key ||
-            !Number.isFinite(meters) ||
-            !Number.isFinite(headYPercent) ||
-            !Number.isFinite(footYPercent) ||
-            !Number.isFinite(nameTagXPercent) ||
-            !Number.isFinite(naturalWidth) ||
-            !Number.isFinite(naturalHeight)
-        ) {
-            return null
-        }
-
-        return {
-            version: 1,
-            height: {
-                meters,
-            },
-            image: {
-                key,
-                contentType: typeof image.contentType === 'string' ? image.contentType : 'image/png',
-                naturalWidth,
-                naturalHeight,
-            },
-            calibration: {
-                headYPercent,
-                footYPercent,
-                footIsVirtual: Boolean(calibration.footIsVirtual),
-                nameTagXPercent,
-            },
-        }
-    } catch {
-        return null
     }
 }

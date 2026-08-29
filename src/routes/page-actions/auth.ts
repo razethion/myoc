@@ -37,6 +37,7 @@ import {
 } from '../../lib/auth/session'
 import {csrfProtection} from '../../lib/http/csrf'
 import {jsonResponse} from '../../lib/http/jsonResponse'
+import {readFormDataUpTo, readJsonUpTo} from '../../lib/http/requestBody'
 import {ErrorResponseSchema, OwnUserSchema, responseSchema} from '../../lib/http/responseSchemas'
 import type {Bindings} from '../../types/bindings'
 
@@ -77,6 +78,7 @@ type RecoveryLoginRequest = {
 }
 
 const PASSWORD_HASH_ROUNDS = 10
+const AUTH_REQUEST_MAX_BYTES = 1024 * 1024
 const AuthUserResponseSchema = responseSchema({user: OwnUserSchema})
 const PasskeyOptionsResponseSchema = responseSchema({
     challengeId: z.string(),
@@ -632,18 +634,18 @@ authPageActionRoutes.post('/recovery/login', async (c) => {
 async function parseBody<T extends object>(request: Request): Promise<T | null> {
     const contentType = request.headers.get('content-type') ?? ''
 
-    if (contentType.includes('application/json')) {
-        try {
-            return (await request.json()) as T
-        } catch {
-            return null
+    try {
+        if (contentType.includes('application/json')) {
+            return await readJsonUpTo<T>(request, AUTH_REQUEST_MAX_BYTES)
         }
-    }
 
-    if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {
-        const form = await request.formData()
+        if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {
+            const form = await readFormDataUpTo(request, AUTH_REQUEST_MAX_BYTES)
 
-        return Object.fromEntries(form.entries()) as T
+            return form ? (Object.fromEntries(form.entries()) as T) : null
+        }
+    } catch {
+        return null
     }
 
     return {} as T

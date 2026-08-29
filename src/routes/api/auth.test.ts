@@ -9,7 +9,7 @@ import {beforeEach, describe, expect, it, vi} from 'vitest'
 import {hashRecoveryPhrase, verifyRecoveryPhrase} from '../../lib/auth/passkeys'
 import {createCsrfToken, type UserRecord} from '../../lib/auth/session'
 import {expectSessionCookie} from '../../test/assertions'
-import {createMockDb, sqlFragment} from '../../test/mockD1'
+import {queryAll, queryOne, seedAuthenticatedUser, seedChallenge, seedPasskey, seedUser, sha256Hex, useTestDatabase} from '../../test/d1'
 import {apiRoutes} from '../api'
 import {authPageActionRoutes} from '../page-actions/auth'
 
@@ -33,12 +33,14 @@ type SecurityTestUser = UserRecord & {
     banned_at: string | null
 }
 
+const db = useTestDatabase()
+
 beforeEach(() => {
     vi.mocked(verifyAuthenticationResponse).mockReset()
     vi.mocked(verifyRegistrationResponse).mockReset()
 })
 
-async function postLogin(body: unknown, db: D1Database, url = '/login', cookie?: string): Promise<Response> {
+async function postLogin(body: unknown, url = '/login', cookie?: string): Promise<Response> {
     return authPageActionRoutes.request(
         url,
         {
@@ -55,7 +57,7 @@ async function postLogin(body: unknown, db: D1Database, url = '/login', cookie?:
     )
 }
 
-async function postPasskeyRegistrationOptions(body: unknown, db: D1Database): Promise<Response> {
+async function postPasskeyRegistrationOptions(body: unknown): Promise<Response> {
     return authPageActionRoutes.request(
         'https://example.com/register/passkey/options',
         {
@@ -71,7 +73,7 @@ async function postPasskeyRegistrationOptions(body: unknown, db: D1Database): Pr
     )
 }
 
-async function postPasskeyRegistrationVerify(body: unknown, db: D1Database): Promise<Response> {
+async function postPasskeyRegistrationVerify(body: unknown): Promise<Response> {
     return authPageActionRoutes.request(
         'https://example.com/register/passkey/verify',
         {
@@ -87,7 +89,7 @@ async function postPasskeyRegistrationVerify(body: unknown, db: D1Database): Pro
     )
 }
 
-async function postPasskeyLoginOptions(body: unknown, db: D1Database): Promise<Response> {
+async function postPasskeyLoginOptions(body: unknown): Promise<Response> {
     return authPageActionRoutes.request(
         'https://example.com/login/passkey/options',
         {
@@ -103,7 +105,7 @@ async function postPasskeyLoginOptions(body: unknown, db: D1Database): Promise<R
     )
 }
 
-async function postPasskeyLoginVerify(body: unknown, db: D1Database): Promise<Response> {
+async function postPasskeyLoginVerify(body: unknown): Promise<Response> {
     return authPageActionRoutes.request(
         'https://example.com/login/passkey/verify',
         {
@@ -119,7 +121,7 @@ async function postPasskeyLoginVerify(body: unknown, db: D1Database): Promise<Re
     )
 }
 
-async function postRecoveryLogin(body: unknown, db: D1Database): Promise<Response> {
+async function postRecoveryLogin(body: unknown): Promise<Response> {
     return authPageActionRoutes.request(
         'https://example.com/recovery/login',
         {
@@ -135,7 +137,7 @@ async function postRecoveryLogin(body: unknown, db: D1Database): Promise<Respons
     )
 }
 
-async function postSecurityComplete(db: D1Database, sessionToken = 'session-token'): Promise<Response> {
+async function postSecurityComplete(sessionToken = 'session-token'): Promise<Response> {
     return apiRoutes.request(
         'https://example.com/security/complete',
         {
@@ -151,7 +153,7 @@ async function postSecurityComplete(db: D1Database, sessionToken = 'session-toke
     )
 }
 
-async function postLogout(db: D1Database, cookie?: string, url = 'https://example.com/logout', csrfToken?: string): Promise<Response> {
+async function postLogout(cookie?: string, url = 'https://example.com/logout', csrfToken?: string): Promise<Response> {
     return authPageActionRoutes.request(
         url,
         {
@@ -169,7 +171,7 @@ async function postLogout(db: D1Database, cookie?: string, url = 'https://exampl
     )
 }
 
-async function postLogoutForm(db: D1Database, cookie?: string, csrfToken?: string): Promise<Response> {
+async function postLogoutForm(cookie?: string, csrfToken?: string): Promise<Response> {
     const body = new URLSearchParams()
 
     if (csrfToken) {
@@ -195,9 +197,7 @@ async function postLogoutForm(db: D1Database, cookie?: string, csrfToken?: strin
 
 describe('POST /login', () => {
     it('returns 400 for invalid JSON', async () => {
-        const {db} = createMockDb()
-
-        const response = await postLogin('{bad json', db)
+        const response = await postLogin('{bad json')
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -205,15 +205,60 @@ describe('POST /login', () => {
         })
     })
 
-    it('returns 400 when the username is missing', async () => {
-        const {db} = createMockDb()
+    it('rejects an oversized request body', async () => {
+        const response = await postLogin({
+            password: 'password123',
+            username: 'a'.repeat(1024 * 1024),
+        })
 
-        const response = await postLogin(
-            {
-                password: 'password123',
-            },
-            db,
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Invalid JSON body',
+        })
+    })
+
+    it('reads multipart login fields', async () => {
+        const user = await seedTestUser('password123')
+        const form = new FormData()
+        form.set('username', 'testuser')
+        form.set('password', 'password123')
+
+        const response = await authPageActionRoutes.request('https://example.com/login', {method: 'POST', body: form}, {DB: db})
+
+        expect(response.status).toBe(200)
+        await expect(response.json()).resolves.toMatchObject({user: {id: user.id, username: user.username}})
+        expectSessionCookie(response)
+    })
+
+    it('uses an empty login body for an unsupported content type', async () => {
+        const response = await authPageActionRoutes.request(
+            'https://example.com/login',
+            {body: 'username=testuser', headers: {'content-type': 'text/plain'}, method: 'POST'},
+            {DB: db},
         )
+
+        expect(response.status).toBe(400)
+        await expect(response.json()).resolves.toEqual({error: 'Username and password are required'})
+    })
+
+    it('rejects an oversized URL-encoded login form', async () => {
+        const response = await authPageActionRoutes.request(
+            'https://example.com/login',
+            {
+                method: 'POST',
+                body: new URLSearchParams({username: 'a'.repeat(1024 * 1024), password: 'password123'}),
+            },
+            {DB: db},
+        )
+
+        expect(response.status).toBe(400)
+        await expect(response.json()).resolves.toEqual({error: 'Invalid JSON body'})
+    })
+
+    it('returns 400 when the username is missing', async () => {
+        const response = await postLogin({
+            password: 'password123',
+        })
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -222,14 +267,9 @@ describe('POST /login', () => {
     })
 
     it('returns 400 when the password is missing', async () => {
-        const {db} = createMockDb()
-
-        const response = await postLogin(
-            {
-                username: 'testuser',
-            },
-            db,
-        )
+        const response = await postLogin({
+            username: 'testuser',
+        })
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -238,15 +278,10 @@ describe('POST /login', () => {
     })
 
     it('returns 401 when no matching user exists', async () => {
-        const {db} = createMockDb()
-
-        const response = await postLogin(
-            {
-                username: 'missinguser',
-                password: 'password123',
-            },
-            db,
-        )
+        const response = await postLogin({
+            username: 'missinguser',
+            password: 'password123',
+        })
 
         expect(response.status).toBe(401)
         expect(await response.json()).toEqual({
@@ -254,17 +289,26 @@ describe('POST /login', () => {
         })
     })
 
-    it('returns 401 when the password does not match the stored hash', async () => {
-        const user = await createTestUser('password123')
-        const {db} = createMockDb({firstResults: [user]})
+    it('does not treat an email address as a username', async () => {
+        const user = await seedTestUser('password123')
 
-        const response = await postLogin(
-            {
-                username: 'testuser',
-                password: 'wrong-password',
-            },
-            db,
-        )
+        const response = await postLogin({
+            username: user.email,
+            password: 'password123',
+        })
+
+        expect(response.status).toBe(401)
+        expect(await response.json()).toEqual({error: 'Invalid username or password'})
+        expect(await queryAll('SELECT id FROM sessions WHERE user_id = ?', [user.id])).toEqual([])
+    })
+
+    it('returns 401 when the password does not match the stored hash', async () => {
+        await seedTestUser('password123')
+
+        const response = await postLogin({
+            username: 'testuser',
+            password: 'wrong-password',
+        })
 
         expect(response.status).toBe(401)
         expect(await response.json()).toEqual({
@@ -273,19 +317,12 @@ describe('POST /login', () => {
     })
 
     it('returns 403 when the account is banned', async () => {
-        const user = {
-            ...(await createTestUser('password123')),
-            banned_at: '2026-06-10 12:00:00',
-        }
-        const {db} = createMockDb({firstResults: [user]})
+        await seedTestUser('password123', {bannedAt: '2026-06-10 12:00:00'})
 
-        const response = await postLogin(
-            {
-                username: 'testuser',
-                password: 'password123',
-            },
-            db,
-        )
+        const response = await postLogin({
+            username: 'testuser',
+            password: 'password123',
+        })
 
         expect(response.status).toBe(403)
         expect(await response.json()).toEqual({
@@ -293,32 +330,14 @@ describe('POST /login', () => {
         })
     })
 
-    it('queries by username only', async () => {
-        const {db, boundStatements} = createMockDb()
-
-        await postLogin(
-            {
-                username: 'test@example.com',
-                password: 'password123',
-            },
-            db,
-        )
-
-        expect(boundStatements[0]?.sql).toContain('WHERE username = ?')
-        expect(boundStatements[0]?.sql).not.toContain('lower(email)')
-        expect(boundStatements[0]?.binds).toEqual(['test@example.com'])
-    })
-
     it('returns the public user and creates a secure session for valid credentials', async () => {
-        const user = await createTestUser('password123')
-        const {db, boundStatements} = createMockDb({firstResults: [user]})
+        const user = await seedTestUser('password123')
 
         const response = await postLogin(
             {
                 username: ' testuser ',
                 password: ' password123 ',
             },
-            db,
             'https://example.com/login',
         )
 
@@ -339,24 +358,17 @@ describe('POST /login', () => {
 
         expectSessionCookie(response)
 
-        expect(db.batch).toHaveBeenCalledTimes(1)
-        expect(boundStatements).toHaveLength(3)
-        expect(boundStatements[0]?.binds).toEqual(['testuser'])
-        expect(boundStatements[1]?.sql).toContain(sqlFragment('DELETE', 'FROM', 'sessions'))
-        expect(boundStatements[2]?.sql).toContain(sqlFragment('INSERT', 'INTO', 'sessions'))
-        expect(boundStatements[2]?.binds[1]).toBe(user.id)
+        expect(await queryAll('SELECT id FROM sessions WHERE user_id = ?', [user.id])).toHaveLength(1)
     })
 
     it('allows login when a stale session cookie is present', async () => {
-        const user = await createTestUser('password123')
-        const {db} = createMockDb({firstResults: [user]})
+        await seedTestUser('password123')
 
         const response = await postLogin(
             {
                 username: 'testuser',
                 password: 'password123',
             },
-            db,
             'https://example.com/login',
             'myoc_session=stale-session-token',
         )
@@ -368,9 +380,7 @@ describe('POST /login', () => {
 
 describe('POST /register/passkey/options', () => {
     it('returns 400 for invalid JSON', async () => {
-        const {db} = createMockDb()
-
-        const response = await postPasskeyRegistrationOptions('{bad json', db)
+        const response = await postPasskeyRegistrationOptions('{bad json')
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -379,14 +389,9 @@ describe('POST /register/passkey/options', () => {
     })
 
     it('returns 400 when required fields are missing', async () => {
-        const {db} = createMockDb()
-
-        const response = await postPasskeyRegistrationOptions(
-            {
-                email: 'test@example.com',
-            },
-            db,
-        )
+        const response = await postPasskeyRegistrationOptions({
+            email: 'test@example.com',
+        })
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -395,15 +400,10 @@ describe('POST /register/passkey/options', () => {
     })
 
     it('returns 400 for an invalid email', async () => {
-        const {db} = createMockDb()
-
-        const response = await postPasskeyRegistrationOptions(
-            {
-                email: 'not-an-email',
-                username: 'testuser',
-            },
-            db,
-        )
+        const response = await postPasskeyRegistrationOptions({
+            email: 'not-an-email',
+            username: 'testuser',
+        })
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -412,15 +412,10 @@ describe('POST /register/passkey/options', () => {
     })
 
     it('returns 400 for an invalid username', async () => {
-        const {db} = createMockDb()
-
-        const response = await postPasskeyRegistrationOptions(
-            {
-                email: 'test@example.com',
-                username: 'bad-user',
-            },
-            db,
-        )
+        const response = await postPasskeyRegistrationOptions({
+            email: 'test@example.com',
+            username: 'bad-user',
+        })
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -429,15 +424,12 @@ describe('POST /register/passkey/options', () => {
     })
 
     it('returns 409 when the email or username is already in use', async () => {
-        const {db} = createMockDb({firstResults: [{id: 'existing-user'}]})
+        await seedUser({id: 'existing-user', email: 'test@example.com', username: 'existinguser'})
 
-        const response = await postPasskeyRegistrationOptions(
-            {
-                email: 'test@example.com',
-                username: 'testuser',
-            },
-            db,
-        )
+        const response = await postPasskeyRegistrationOptions({
+            email: 'test@example.com',
+            username: 'testuser',
+        })
 
         expect(response.status).toBe(409)
         expect(await response.json()).toEqual({
@@ -446,15 +438,10 @@ describe('POST /register/passkey/options', () => {
     })
 
     it('creates a passkey registration challenge for a new account', async () => {
-        const {db, boundStatements} = createMockDb({firstResults: [null]})
-
-        const response = await postPasskeyRegistrationOptions(
-            {
-                email: ' Test@Example.com ',
-                username: ' testuser ',
-            },
-            db,
-        )
+        const response = await postPasskeyRegistrationOptions({
+            email: ' Test@Example.com ',
+            username: ' testuser ',
+        })
 
         expect(response.status).toBe(200)
         const body = (await response.json()) as {
@@ -464,19 +451,20 @@ describe('POST /register/passkey/options', () => {
         expect(body.challengeId).toMatch(/^[0-9a-f-]{36}$/)
         expect(body.options.challenge).toBeTruthy()
         expect(body.options.user.name).toBe('testuser')
-        expect(db.batch).toHaveBeenCalledTimes(1)
-        expect(boundStatements[0]?.binds).toEqual(['test@example.com', 'testuser'])
-        expect(boundStatements[2]?.sql).toContain(sqlFragment('INSERT', 'INTO', 'webauthn_challenges'))
-        expect(boundStatements[2]?.binds[2]).toBe('test@example.com')
-        expect(boundStatements[2]?.binds[3]).toBe('testuser')
+        await expect(
+            queryOne('SELECT email, username, ceremony, challenge FROM webauthn_challenges WHERE id = ?', [body.challengeId]),
+        ).resolves.toEqual({
+            email: 'test@example.com',
+            username: 'testuser',
+            ceremony: 'registration',
+            challenge: body.options.challenge,
+        })
     })
 })
 
 describe('POST /register/passkey/verify', () => {
     it('returns 400 for invalid JSON', async () => {
-        const {db} = createMockDb()
-
-        const response = await postPasskeyRegistrationVerify('{bad json', db)
+        const response = await postPasskeyRegistrationVerify('{bad json')
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -486,14 +474,9 @@ describe('POST /register/passkey/verify', () => {
     })
 
     it('returns 400 when the challenge or credential is missing', async () => {
-        const {db} = createMockDb()
-
-        const response = await postPasskeyRegistrationVerify(
-            {
-                challengeId: 'challenge-1',
-            },
-            db,
-        )
+        const response = await postPasskeyRegistrationVerify({
+            challengeId: 'challenge-1',
+        })
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -503,17 +486,10 @@ describe('POST /register/passkey/verify', () => {
     })
 
     it('returns 400 when the registration challenge has expired', async () => {
-        const {db} = createMockDb({
-            firstResults: [null],
+        const response = await postPasskeyRegistrationVerify({
+            challengeId: 'challenge-1',
+            credential: createRegistrationCredential(),
         })
-
-        const response = await postPasskeyRegistrationVerify(
-            {
-                challengeId: 'challenge-1',
-                credential: createRegistrationCredential(),
-            },
-            db,
-        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -523,18 +499,13 @@ describe('POST /register/passkey/verify', () => {
     })
 
     it('returns 400 when the passkey response cannot be verified', async () => {
-        const {db} = createMockDb({
-            firstResults: [createRegistrationChallenge()],
-        })
+        await seedRegistrationChallenge()
         vi.mocked(verifyRegistrationResponse).mockResolvedValueOnce({verified: false})
 
-        const response = await postPasskeyRegistrationVerify(
-            {
-                challengeId: 'challenge-1',
-                credential: createRegistrationCredential(),
-            },
-            db,
-        )
+        const response = await postPasskeyRegistrationVerify({
+            challengeId: 'challenge-1',
+            credential: createRegistrationCredential(),
+        })
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -550,19 +521,14 @@ describe('POST /register/passkey/verify', () => {
     })
 
     it('returns 409 when passkey registration hits a unique constraint', async () => {
-        const {db} = createMockDb({
-            firstResults: [createRegistrationChallenge()],
-            runError: new Error('UNIQUE constraint failed: users.username'),
-        })
+        await seedRegistrationChallenge()
+        await seedUser({id: 'existing-user', email: 'new@example.com', username: 'existinguser'})
         vi.mocked(verifyRegistrationResponse).mockResolvedValueOnce(createRegistrationVerification())
 
-        const response = await postPasskeyRegistrationVerify(
-            {
-                challengeId: 'challenge-1',
-                credential: createRegistrationCredential(),
-            },
-            db,
-        )
+        const response = await postPasskeyRegistrationVerify({
+            challengeId: 'challenge-1',
+            credential: createRegistrationCredential(),
+        })
 
         expect(response.status).toBe(409)
         expect(await response.json()).toEqual({
@@ -571,19 +537,14 @@ describe('POST /register/passkey/verify', () => {
     })
 
     it('creates a passkey-only user, starts a session, and returns the recovery phrase', async () => {
-        const {db, boundStatements} = createMockDb({
-            firstResults: [createRegistrationChallenge()],
-        })
+        await seedRegistrationChallenge()
         vi.mocked(verifyRegistrationResponse).mockResolvedValueOnce(createRegistrationVerification())
 
-        const response = await postPasskeyRegistrationVerify(
-            {
-                challengeId: ' challenge-1 ',
-                credential: createRegistrationCredential(),
-                name: ' Primary laptop ',
-            },
-            db,
-        )
+        const response = await postPasskeyRegistrationVerify({
+            challengeId: ' challenge-1 ',
+            credential: createRegistrationCredential(),
+            name: ' Primary laptop ',
+        })
 
         expect(response.status).toBe(201)
         const body = (await response.json()) as {
@@ -608,39 +569,36 @@ describe('POST /register/passkey/verify', () => {
         expect(body.recoveryPhraseNeedsConfirmation).toBe(true)
         expectSessionCookie(response)
 
-        const userInsert = boundStatements.find((statement) => statement.sql.includes(sqlFragment('INSERT', 'INTO', 'users')))
-        const passkeyInsert = boundStatements.find((statement) => statement.sql.includes(sqlFragment('INSERT', 'INTO', 'user_passkeys')))
-        const challengeDelete = boundStatements.find((statement) =>
-            statement.sql.includes(sqlFragment('DELETE', 'FROM', 'webauthn_challenges')),
+        const user = await queryOne<Pick<SecurityTestUser, 'password_hash' | 'recovery_phrase_hash' | 'secure_account_required'>>(
+            'SELECT password_hash, recovery_phrase_hash, secure_account_required FROM users WHERE id = ?',
+            ['new-user-id'],
         )
-        expect(userInsert?.binds[0]).toBe('new-user-id')
-        expect(userInsert?.binds[1]).toBe('new@example.com')
-        expect(userInsert?.binds[2]).toBe('newuser')
-        expect(userInsert?.binds[3]).toMatch(/^passkey-only:/)
-        expect(await verifyRecoveryPhrase(body.recoveryPhrase, userInsert?.binds[9] as string)).toBe(true)
-        expect(userInsert?.binds[11]).toBe(1)
-        expect(userInsert?.binds[12]).toBe(passkeyInsert?.binds[0])
-        expect(passkeyInsert?.binds.slice(1, 10)).toEqual([
-            'new-user-id',
-            'credential-id',
-            'AQID',
-            'webauthn-user-1',
-            7,
-            'multiDevice',
-            1,
-            'internal,usb',
-            'Primary laptop',
-        ])
-        expect(challengeDelete?.binds).toEqual(['challenge-1'])
-        expect(db.batch).toHaveBeenCalledTimes(2)
+        expect(user?.password_hash).toMatch(/^passkey-only:/)
+        expect(await verifyRecoveryPhrase(body.recoveryPhrase, user?.recovery_phrase_hash ?? '')).toBe(true)
+        expect(user).toMatchObject({secure_account_required: 1})
+        const passkey = await queryOne(
+            'SELECT user_id, credential_id, public_key, webauthn_user_id, counter, device_type, backed_up, transports, name FROM user_passkeys WHERE user_id = ?',
+            ['new-user-id'],
+        )
+        expect(passkey).toEqual({
+            user_id: 'new-user-id',
+            credential_id: 'credential-id',
+            public_key: 'AQID',
+            webauthn_user_id: 'webauthn-user-1',
+            counter: 7,
+            device_type: 'multiDevice',
+            backed_up: 1,
+            transports: 'internal,usb',
+            name: 'Primary laptop',
+        })
+        await expect(queryOne('SELECT id FROM webauthn_challenges WHERE id = ?', ['challenge-1'])).resolves.toBeNull()
+        expect(await queryAll('SELECT id FROM sessions WHERE user_id = ?', ['new-user-id'])).toHaveLength(1)
     })
 })
 
 describe('POST /login/passkey/options', () => {
     it('returns 400 for invalid JSON', async () => {
-        const {db} = createMockDb()
-
-        const response = await postPasskeyLoginOptions('{bad json', db)
+        const response = await postPasskeyLoginOptions('{bad json')
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -649,44 +607,29 @@ describe('POST /login/passkey/options', () => {
     })
 
     it('returns 404 when a username has no registered passkey', async () => {
-        const {db, boundStatements} = createMockDb({
-            firstResults: [null],
+        const response = await postPasskeyLoginOptions({
+            username: 'missinguser',
         })
-
-        const response = await postPasskeyLoginOptions(
-            {
-                username: 'missinguser',
-            },
-            db,
-        )
 
         expect(response.status).toBe(404)
         expect(await response.json()).toEqual({
             error: 'No passkey is registered for that username',
         })
-        expect(boundStatements[0]?.sql).toContain(sqlFragment('INNER', 'JOIN', 'user_passkeys'))
-        expect(boundStatements[0]?.binds).toEqual(['missinguser'])
     })
 
     it('creates scoped authentication options for a username with a passkey', async () => {
-        const {db, boundStatements} = createMockDb({
-            firstResults: [{id: 'user-1'}],
-            allResults: [
-                [
-                    createPasskey('passkey-1', {
-                        credential_id: 'credential-id',
-                        transports: 'internal,usb',
-                    }),
-                ],
-            ],
+        await seedUser({id: 'user-1', username: 'testuser', webauthnUserId: 'webauthn-user-1'})
+        await seedPasskey({
+            id: 'passkey-1',
+            userId: 'user-1',
+            credentialId: 'credential-id',
+            transports: 'internal,usb',
+            webauthnUserId: 'webauthn-user-1',
         })
 
-        const response = await postPasskeyLoginOptions(
-            {
-                username: ' testuser ',
-            },
-            db,
-        )
+        const response = await postPasskeyLoginOptions({
+            username: ' testuser ',
+        })
 
         expect(response.status).toBe(200)
         const body = (await response.json()) as {
@@ -707,21 +650,21 @@ describe('POST /login/passkey/options', () => {
             },
         ])
 
-        const challengeInsert = boundStatements.find((statement) =>
-            statement.sql.includes(sqlFragment('INSERT', 'INTO', 'webauthn_challenges')),
-        )
-        expect(challengeInsert?.binds[1]).toBe('user-1')
-        expect(challengeInsert?.binds[5]).toBe('authentication')
-        expect(challengeInsert?.binds[6]).toBe(body.options.challenge)
+        await expect(
+            queryOne('SELECT user_id, ceremony, challenge FROM webauthn_challenges WHERE id = ?', [body.challengeId]),
+        ).resolves.toEqual({
+            user_id: 'user-1',
+            ceremony: 'authentication',
+            challenge: body.options.challenge,
+        })
     })
 
     it('creates discoverable authentication options when no username is supplied', async () => {
-        const {db, boundStatements} = createMockDb()
-
-        const response = await postPasskeyLoginOptions({}, db)
+        const response = await postPasskeyLoginOptions({})
 
         expect(response.status).toBe(200)
         const body = (await response.json()) as {
+            challengeId: string
             options: {
                 allowCredentials?: unknown[]
                 rpId: string
@@ -729,18 +672,13 @@ describe('POST /login/passkey/options', () => {
         }
         expect(body.options.rpId).toBe('example.com')
         expect(body.options.allowCredentials).toBeUndefined()
-        const challengeInsert = boundStatements.find((statement) =>
-            statement.sql.includes(sqlFragment('INSERT', 'INTO', 'webauthn_challenges')),
-        )
-        expect(challengeInsert?.binds[1]).toBeNull()
+        await expect(queryOne('SELECT user_id FROM webauthn_challenges WHERE id = ?', [body.challengeId])).resolves.toEqual({user_id: null})
     })
 })
 
 describe('POST /login/passkey/verify', () => {
     it('returns 400 for invalid JSON', async () => {
-        const {db} = createMockDb()
-
-        const response = await postPasskeyLoginVerify('{bad json', db)
+        const response = await postPasskeyLoginVerify('{bad json')
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -750,15 +688,10 @@ describe('POST /login/passkey/verify', () => {
     })
 
     it('returns 400 when the challenge or credential id is missing', async () => {
-        const {db} = createMockDb()
-
-        const response = await postPasskeyLoginVerify(
-            {
-                challengeId: 'challenge-1',
-                credential: {},
-            },
-            db,
-        )
+        const response = await postPasskeyLoginVerify({
+            challengeId: 'challenge-1',
+            credential: {},
+        })
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -768,17 +701,10 @@ describe('POST /login/passkey/verify', () => {
     })
 
     it('returns 400 when the passkey login challenge has expired', async () => {
-        const {db} = createMockDb({
-            firstResults: [null],
+        const response = await postPasskeyLoginVerify({
+            challengeId: 'challenge-1',
+            credential: createAuthenticationCredential(),
         })
-
-        const response = await postPasskeyLoginVerify(
-            {
-                challengeId: 'challenge-1',
-                credential: createAuthenticationCredential(),
-            },
-            db,
-        )
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -788,24 +714,15 @@ describe('POST /login/passkey/verify', () => {
     })
 
     it('returns 401 when the passkey is not registered for the requested user', async () => {
-        const {db} = createMockDb({
-            firstResults: [
-                createAuthenticationChallenge({
-                    user_id: 'user-1',
-                }),
-                createPasskey('passkey-1', {
-                    user_id: 'other-user',
-                }),
-            ],
-        })
+        await seedUser({id: 'user-1', webauthnUserId: 'webauthn-user-1'})
+        await seedUser({id: 'other-user', webauthnUserId: 'other-webauthn-user'})
+        await seedAuthenticationChallenge({userId: 'user-1'})
+        await seedPasskey({id: 'passkey-1', userId: 'other-user', credentialId: 'credential-id', webauthnUserId: 'other-webauthn-user'})
 
-        const response = await postPasskeyLoginVerify(
-            {
-                challengeId: 'challenge-1',
-                credential: createAuthenticationCredential(),
-            },
-            db,
-        )
+        const response = await postPasskeyLoginVerify({
+            challengeId: 'challenge-1',
+            credential: createAuthenticationCredential(),
+        })
 
         expect(response.status).toBe(401)
         expect(await response.json()).toEqual({
@@ -815,18 +732,15 @@ describe('POST /login/passkey/verify', () => {
     })
 
     it('returns 401 when the passkey response cannot be verified', async () => {
-        const {db} = createMockDb({
-            firstResults: [createAuthenticationChallenge(), createPasskey('passkey-1')],
-        })
+        await seedTestUser('password123', {webauthnUserId: 'webauthn-user-1'})
+        await seedAuthenticationChallenge()
+        await seedPasskey({id: 'passkey-1', userId: 'user-1', credentialId: 'credential-id', webauthnUserId: 'webauthn-user-1'})
         vi.mocked(verifyAuthenticationResponse).mockResolvedValueOnce(createAuthenticationVerification({verified: false}))
 
-        const response = await postPasskeyLoginVerify(
-            {
-                challengeId: 'challenge-1',
-                credential: createAuthenticationCredential(),
-            },
-            db,
-        )
+        const response = await postPasskeyLoginVerify({
+            challengeId: 'challenge-1',
+            credential: createAuthenticationCredential(),
+        })
 
         expect(response.status).toBe(401)
         expect(await response.json()).toEqual({
@@ -843,18 +757,15 @@ describe('POST /login/passkey/verify', () => {
     })
 
     it('returns 401 when the passkey owner is no longer active', async () => {
-        const {db} = createMockDb({
-            firstResults: [createAuthenticationChallenge(), createPasskey('passkey-1'), null],
-        })
+        await seedTestUser('password123', {webauthnUserId: 'webauthn-user-1', bannedAt: '2026-06-10 12:00:00'})
+        await seedAuthenticationChallenge()
+        await seedPasskey({id: 'passkey-1', userId: 'user-1', credentialId: 'credential-id', webauthnUserId: 'webauthn-user-1'})
         vi.mocked(verifyAuthenticationResponse).mockResolvedValueOnce(createAuthenticationVerification())
 
-        const response = await postPasskeyLoginVerify(
-            {
-                challengeId: 'challenge-1',
-                credential: createAuthenticationCredential(),
-            },
-            db,
-        )
+        const response = await postPasskeyLoginVerify({
+            challengeId: 'challenge-1',
+            credential: createAuthenticationCredential(),
+        })
 
         expect(response.status).toBe(401)
         expect(await response.json()).toEqual({
@@ -863,19 +774,15 @@ describe('POST /login/passkey/verify', () => {
     })
 
     it('updates passkey usage, clears the challenge, and starts a session', async () => {
-        const user = await createTestUser('password123')
-        const {db, boundStatements} = createMockDb({
-            firstResults: [createAuthenticationChallenge(), createPasskey('passkey-1'), user],
-        })
+        const user = await seedTestUser('password123', {webauthnUserId: 'webauthn-user-1'})
+        await seedAuthenticationChallenge()
+        await seedPasskey({id: 'passkey-1', userId: user.id, credentialId: 'credential-id', webauthnUserId: 'webauthn-user-1'})
         vi.mocked(verifyAuthenticationResponse).mockResolvedValueOnce(createAuthenticationVerification())
 
-        const response = await postPasskeyLoginVerify(
-            {
-                challengeId: ' challenge-1 ',
-                credential: createAuthenticationCredential(),
-            },
-            db,
-        )
+        const response = await postPasskeyLoginVerify({
+            challengeId: ' challenge-1 ',
+            credential: createAuthenticationCredential(),
+        })
 
         expect(response.status).toBe(200)
         expect(await response.json()).toMatchObject({
@@ -887,24 +794,22 @@ describe('POST /login/passkey/verify', () => {
         })
         expectSessionCookie(response)
 
-        const passkeyUpdate = boundStatements.find((statement) => statement.sql.includes(sqlFragment('UPDATE', 'user_passkeys')))
-        const challengeDelete = boundStatements.find((statement) =>
-            statement.sql.includes(sqlFragment('DELETE', 'FROM', 'webauthn_challenges')),
-        )
-        expect(passkeyUpdate?.binds[0]).toBe(12)
-        expect(passkeyUpdate?.binds[1]).toBe('multiDevice')
-        expect(passkeyUpdate?.binds[2]).toBe(1)
-        expect(passkeyUpdate?.binds[4]).toBe('passkey-1')
-        expect(challengeDelete?.binds).toEqual(['challenge-1'])
-        expect(db.batch).toHaveBeenCalledTimes(2)
+        await expect(
+            queryOne('SELECT counter, device_type, backed_up, last_used_at FROM user_passkeys WHERE id = ?', ['passkey-1']),
+        ).resolves.toMatchObject({
+            counter: 12,
+            device_type: 'multiDevice',
+            backed_up: 1,
+            last_used_at: expect.any(String),
+        })
+        await expect(queryOne('SELECT id FROM webauthn_challenges WHERE id = ?', ['challenge-1'])).resolves.toBeNull()
+        expect(await queryAll('SELECT id FROM sessions WHERE user_id = ?', [user.id])).toHaveLength(1)
     })
 })
 
 describe('POST /recovery/login', () => {
     it('returns 400 for invalid JSON', async () => {
-        const {db} = createMockDb()
-
-        const response = await postRecoveryLogin('{bad json', db)
+        const response = await postRecoveryLogin('{bad json')
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -913,14 +818,9 @@ describe('POST /recovery/login', () => {
     })
 
     it('returns 400 when required fields are missing', async () => {
-        const {db} = createMockDb()
-
-        const response = await postRecoveryLogin(
-            {
-                username: 'testuser',
-            },
-            db,
-        )
+        const response = await postRecoveryLogin({
+            username: 'testuser',
+        })
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
@@ -929,20 +829,12 @@ describe('POST /recovery/login', () => {
     })
 
     it('returns 401 when the recovery phrase does not match', async () => {
-        const user = {
-            ...(await createTestUser('password123')),
-            recovery_phrase_hash: await hashRecoveryPhrase('correct-horse-battery-staple'),
-            banned_at: null,
-        }
-        const {db} = createMockDb({firstResults: [user]})
+        await seedTestUser('password123', {recoveryPhraseHash: await hashRecoveryPhrase('correct-horse-battery-staple')})
 
-        const response = await postRecoveryLogin(
-            {
-                username: 'testuser',
-                recoveryPhrase: 'wrong phrase',
-            },
-            db,
-        )
+        const response = await postRecoveryLogin({
+            username: 'testuser',
+            recoveryPhrase: 'wrong phrase',
+        })
 
         expect(response.status).toBe(401)
         expect(await response.json()).toEqual({
@@ -952,20 +844,15 @@ describe('POST /recovery/login', () => {
 
     it('returns 403 when the account is banned', async () => {
         const recoveryPhrase = 'correct-horse-battery-staple'
-        const user = {
-            ...(await createTestUser('password123')),
-            recovery_phrase_hash: await hashRecoveryPhrase(recoveryPhrase),
-            banned_at: '2026-06-10 12:00:00',
-        }
-        const {db} = createMockDb({firstResults: [user]})
+        await seedTestUser('password123', {
+            recoveryPhraseHash: await hashRecoveryPhrase(recoveryPhrase),
+            bannedAt: '2026-06-10 12:00:00',
+        })
 
-        const response = await postRecoveryLogin(
-            {
-                username: 'testuser',
-                recoveryPhrase,
-            },
-            db,
-        )
+        const response = await postRecoveryLogin({
+            username: 'testuser',
+            recoveryPhrase,
+        })
 
         expect(response.status).toBe(403)
         expect(await response.json()).toEqual({
@@ -975,20 +862,20 @@ describe('POST /recovery/login', () => {
 
     it('creates a session without forcing new recovery credentials when recovery succeeds', async () => {
         const recoveryPhrase = 'correct-horse-battery-staple'
-        const user = {
-            ...(await createTestUser('password123')),
-            recovery_phrase_hash: await hashRecoveryPhrase(recoveryPhrase),
-            banned_at: null,
-        }
-        const {db, boundStatements} = createMockDb({firstResults: [user]})
+        const recoveryPhraseHash = await hashRecoveryPhrase(recoveryPhrase)
+        const user = await seedTestUser('password123', {
+            recoveryPhraseHash,
+            recoveryPhraseConfirmedAt: '2026-06-10 12:05:00',
+            secureAccountRequired: true,
+            secureAccountRequiredAt: '2026-06-10 12:00:00',
+            secureAccountRequiredPasskeyId: 'old-passkey',
+        })
+        await seedPasskey({id: 'old-passkey', userId: user.id, webauthnUserId: 'webauthn-user-1'})
 
-        const response = await postRecoveryLogin(
-            {
-                username: 'testuser',
-                recoveryPhrase,
-            },
-            db,
-        )
+        const response = await postRecoveryLogin({
+            username: 'testuser',
+            recoveryPhrase,
+        })
 
         expect(response.status).toBe(200)
         expect(await response.json()).toMatchObject({
@@ -999,30 +886,25 @@ describe('POST /recovery/login', () => {
             },
         })
         expectSessionCookie(response)
-        const recoveryUpdateSql = boundStatements[1]?.sql.replace(/\s+/g, ' ')
-        expect(recoveryUpdateSql).toContain('secure_account_required = 0')
-        expect(recoveryUpdateSql).toContain('secure_account_required_at = NULL')
-        expect(recoveryUpdateSql).toContain('secure_account_required_passkey_id = NULL')
-        expect(recoveryUpdateSql).not.toContain('recovery_phrase_hash = NULL')
-        expect(recoveryUpdateSql).not.toContain('recovery_phrase_confirmed_at = NULL')
-        expect(boundStatements[1]?.binds).toEqual([user.id])
-        expect(boundStatements.some((statement) => statement.sql.includes(sqlFragment('DELETE', 'FROM', 'user_passkeys')))).toBe(false)
-        expect(
-            boundStatements.some(
-                (statement) => statement.sql.includes(sqlFragment('DELETE', 'FROM', 'sessions')) && statement.sql.includes('user_id'),
+        await expect(
+            queryOne(
+                'SELECT recovery_phrase_hash, recovery_phrase_confirmed_at, secure_account_required, secure_account_required_at, secure_account_required_passkey_id FROM users WHERE id = ?',
+                [user.id],
             ),
-        ).toBe(false)
-        expect(db.batch).toHaveBeenCalledTimes(1)
+        ).resolves.toEqual({
+            recovery_phrase_hash: recoveryPhraseHash,
+            recovery_phrase_confirmed_at: '2026-06-10 12:05:00',
+            secure_account_required: 0,
+            secure_account_required_at: null,
+            secure_account_required_passkey_id: null,
+        })
+        expect(await queryAll('SELECT id FROM user_passkeys WHERE user_id = ?', [user.id])).toHaveLength(1)
+        expect(await queryAll('SELECT id FROM sessions WHERE user_id = ?', [user.id])).toHaveLength(1)
     })
 
     it('still redirects successful browser recovery login to settings', async () => {
         const recoveryPhrase = 'correct-horse-battery-staple'
-        const user = {
-            ...(await createTestUser('password123')),
-            recovery_phrase_hash: await hashRecoveryPhrase(recoveryPhrase),
-            banned_at: null,
-        }
-        const {db} = createMockDb({firstResults: [user]})
+        const user = await seedTestUser('password123', {recoveryPhraseHash: await hashRecoveryPhrase(recoveryPhrase)})
 
         const response = await authPageActionRoutes.request(
             'https://example.com/recovery/login',
@@ -1045,57 +927,57 @@ describe('POST /recovery/login', () => {
 
 describe('POST /security/complete', () => {
     it('requires a new passkey after recovery instead of accepting existing passkeys', async () => {
-        const user = await createSecurityUser({
-            recovery_phrase_confirmed_at: '2026-06-10 12:05:00',
-            secure_account_required: 1,
-            secure_account_required_at: '2026-06-10 12:00:00',
-            secure_account_required_passkey_id: null,
+        const user = await seedSecurityUser({
+            recoveryPhraseConfirmedAt: '2026-06-10 12:05:00',
+            secureAccountRequired: true,
+            secureAccountRequiredAt: '2026-06-10 12:00:00',
         })
-        const {db, boundStatements} = createMockDb({
-            firstResults: [createSessionUser(user), user],
-            allResults: [[createPasskey('old-passkey')]],
-        })
+        await seedPasskey({id: 'old-passkey', userId: user.id, webauthnUserId: 'webauthn-user-1'})
 
-        const response = await postSecurityComplete(db)
+        const response = await postSecurityComplete()
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
             error: 'Add a new passkey before completing account recovery',
         })
-        expect(boundStatements.some((statement) => statement.sql.includes('SET password_hash'))).toBe(false)
+        await expect(queryOne('SELECT password_hash FROM users WHERE id = ?', [user.id])).resolves.toEqual({
+            password_hash: user.password_hash,
+        })
     })
 
     it('completes recovery when the forced passkey is still registered', async () => {
-        const user = await createSecurityUser({
-            recovery_phrase_confirmed_at: '2026-06-10 12:05:00',
-            secure_account_required: 1,
-            secure_account_required_at: '2026-06-10 12:00:00',
-            secure_account_required_passkey_id: 'new-passkey',
+        const user = await seedSecurityUser({
+            recoveryPhraseConfirmedAt: '2026-06-10 12:05:00',
+            secureAccountRequired: true,
+            secureAccountRequiredAt: '2026-06-10 12:00:00',
+            secureAccountRequiredPasskeyId: 'new-passkey',
         })
-        const {db, boundStatements} = createMockDb({
-            firstResults: [createSessionUser(user), user],
-            allResults: [[createPasskey('old-passkey'), createPasskey('new-passkey')]],
-        })
+        await seedPasskey({id: 'old-passkey', userId: user.id, webauthnUserId: 'webauthn-user-1'})
+        await seedPasskey({id: 'new-passkey', userId: user.id, webauthnUserId: 'webauthn-user-1', credentialId: 'new-passkey-credential'})
 
-        const response = await postSecurityComplete(db)
+        const response = await postSecurityComplete()
 
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ok: true})
-        expect(boundStatements[3]?.sql).toContain('secure_account_required = 0')
-        expect(boundStatements[3]?.sql).toContain('secure_account_required_at = NULL')
-        expect(boundStatements[3]?.sql).toContain('secure_account_required_passkey_id = NULL')
-        expect(boundStatements[3]?.binds[1]).toBe(user.id)
+        await expect(
+            queryOne(
+                'SELECT password_hash, secure_account_required, secure_account_required_at, secure_account_required_passkey_id FROM users WHERE id = ?',
+                [user.id],
+            ),
+        ).resolves.toMatchObject({
+            password_hash: expect.stringMatching(/^passkey-only:/),
+            secure_account_required: 0,
+            secure_account_required_at: null,
+            secure_account_required_passkey_id: null,
+        })
     })
 })
 
 describe('POST /logout', () => {
     it('returns 204 and clears the cookie when no session cookie exists', async () => {
-        const {db} = createMockDb()
-
-        const response = await postLogout(db)
+        const response = await postLogout()
 
         expect(response.status).toBe(204)
-        expect(db.prepare).not.toHaveBeenCalled()
 
         const cookie = response.headers.get('set-cookie')
         expect(cookie).toContain('myoc_session=')
@@ -1107,30 +989,23 @@ describe('POST /logout', () => {
     })
 
     it('returns 403 when a session cookie exists without a CSRF token', async () => {
-        const {db} = createMockDb()
-
-        const response = await postLogout(db, 'myoc_session=session-token')
+        const response = await postLogout('myoc_session=session-token')
 
         expect(response.status).toBe(403)
         expect(await response.json()).toEqual({
             error: 'Invalid CSRF token',
         })
-        expect(db.prepare).not.toHaveBeenCalled()
     })
 
     it('deletes the current session and clears the cookie with a valid CSRF token', async () => {
-        const {db, boundStatements} = createMockDb()
         const sessionToken = 'session-token'
+        await seedAuthenticatedUser({id: 'user-1'}, sessionToken)
         const csrfToken = await createCsrfToken(sessionToken)
 
-        const response = await postLogout(db, `myoc_session=${sessionToken}`, 'https://example.com/logout', csrfToken)
+        const response = await postLogout(`myoc_session=${sessionToken}`, 'https://example.com/logout', csrfToken)
 
         expect(response.status).toBe(204)
-        expect(boundStatements).toHaveLength(1)
-        expect(boundStatements[0]?.sql).toContain(sqlFragment('DELETE', 'FROM', 'sessions'))
-        expect(boundStatements[0]?.binds).toHaveLength(1)
-        expect(boundStatements[0]?.binds[0]).not.toBe(sessionToken)
-        expect(boundStatements[0]?.binds[0]).toBe(await sha256Hex(sessionToken))
+        await expect(queryOne('SELECT id FROM sessions WHERE session_hash = ?', [await sha256Hex(sessionToken)])).resolves.toBeNull()
 
         const cookie = response.headers.get('set-cookie')
         expect(cookie).toContain('myoc_session=')
@@ -1139,10 +1014,9 @@ describe('POST /logout', () => {
     })
 
     it('redirects browser form submissions after logout', async () => {
-        const {db} = createMockDb()
         const sessionToken = 'session-token'
 
-        const response = await postLogoutForm(db, `myoc_session=${sessionToken}`, await createCsrfToken(sessionToken))
+        const response = await postLogoutForm(`myoc_session=${sessionToken}`, await createCsrfToken(sessionToken))
 
         expect(response.status).toBe(302)
         expect(response.headers.get('location')).toBe('/')
@@ -1150,8 +1024,18 @@ describe('POST /logout', () => {
     })
 })
 
-async function createTestUser(password: string): Promise<UserRecord> {
-    return {
+type TestUserOverrides = {
+    bannedAt?: string | null
+    recoveryPhraseHash?: string | null
+    recoveryPhraseConfirmedAt?: string | null
+    secureAccountRequired?: boolean
+    secureAccountRequiredAt?: string | null
+    secureAccountRequiredPasskeyId?: string | null
+    webauthnUserId?: string | null
+}
+
+async function seedTestUser(password: string, overrides: TestUserOverrides = {}): Promise<UserRecord> {
+    const user: UserRecord = {
         id: 'user-1',
         email: 'test@example.com',
         username: 'testuser',
@@ -1163,11 +1047,34 @@ async function createTestUser(password: string): Promise<UserRecord> {
         last_seen_version: null,
         created_at: '2026-06-10 12:00:00',
     }
+    await seedUser({
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        passwordHash: user.password_hash,
+        profilePhotoKey: user.profile_photo_key,
+        bio: user.bio,
+        displayNsfwMedia: Boolean(user.display_nsfw_media),
+        role: user.role,
+        createdAt: user.created_at,
+        ...overrides,
+    })
+    return user
 }
 
-async function createSecurityUser(overrides: Partial<SecurityTestUser> = {}): Promise<SecurityTestUser> {
-    return {
-        ...(await createTestUser('password123')),
+async function seedSecurityUser(overrides: TestUserOverrides = {}): Promise<SecurityTestUser> {
+    const passwordHash = await hash('password123', 10)
+    const user: SecurityTestUser = {
+        id: 'user-1',
+        email: 'test@example.com',
+        username: 'testuser',
+        password_hash: passwordHash,
+        role: 'user',
+        profile_photo_key: null,
+        bio: '',
+        display_nsfw_media: 0,
+        last_seen_version: null,
+        created_at: '2026-06-10 12:00:00',
         webauthn_user_id: 'webauthn-user-1',
         recovery_phrase_hash: null,
         recovery_phrase_confirmed_at: null,
@@ -1175,75 +1082,51 @@ async function createSecurityUser(overrides: Partial<SecurityTestUser> = {}): Pr
         secure_account_required_at: null,
         secure_account_required_passkey_id: null,
         banned_at: null,
-        ...overrides,
     }
+    await seedAuthenticatedUser(
+        {
+            id: user.id,
+            email: user.email,
+            username: user.username,
+            passwordHash: user.password_hash,
+            profilePhotoKey: user.profile_photo_key,
+            bio: user.bio,
+            displayNsfwMedia: Boolean(user.display_nsfw_media),
+            role: user.role,
+            createdAt: user.created_at,
+            webauthnUserId: user.webauthn_user_id,
+            recoveryPhraseHash: user.recovery_phrase_hash,
+            recoveryPhraseConfirmedAt: user.recovery_phrase_confirmed_at,
+            secureAccountRequired: Boolean(user.secure_account_required),
+            secureAccountRequiredAt: user.secure_account_required_at,
+            secureAccountRequiredPasskeyId: user.secure_account_required_passkey_id,
+            bannedAt: user.banned_at,
+            ...overrides,
+        },
+        'session-token',
+    )
+    return user
 }
 
-function createSessionUser(
-    user: UserRecord & {
-        recovery_phrase_confirmed_at?: string | null
-        secure_account_required?: number | null
-    },
-) {
-    return {
-        id: user.id,
-        session_id: 'session-1',
-        email: user.email,
-        username: user.username,
-        role: user.role,
-        profile_photo_key: user.profile_photo_key,
-        bio: user.bio,
-        display_nsfw_media: user.display_nsfw_media,
-        last_seen_version: user.last_seen_version,
-        recovery_phrase_confirmed_at: user.recovery_phrase_confirmed_at ?? null,
-        secure_account_required: user.secure_account_required ?? 0,
-    }
-}
-
-function createPasskey(id: string, overrides: Record<string, unknown> = {}) {
-    return {
-        id,
-        user_id: 'user-1',
-        credential_id: `${id}-credential`,
-        public_key: 'AQID',
-        webauthn_user_id: 'webauthn-user-1',
-        counter: 0,
-        device_type: 'singleDevice',
-        backed_up: 0,
-        transports: null,
-        name: id,
-        created_at: '2026-06-10 12:10:00',
-        last_used_at: null,
-        ...overrides,
-    }
-}
-
-function createRegistrationChallenge(overrides: Record<string, unknown> = {}) {
-    return {
+async function seedRegistrationChallenge(): Promise<void> {
+    await seedChallenge({
         id: 'challenge-1',
-        user_id: 'new-user-id',
+        userId: 'new-user-id',
         email: 'new@example.com',
         username: 'newuser',
-        webauthn_user_id: 'webauthn-user-1',
+        webauthnUserId: 'webauthn-user-1',
         ceremony: 'registration',
         challenge: 'stored-challenge',
-        expires_at: '2026-06-10 12:05:00',
-        ...overrides,
-    }
+    })
 }
 
-function createAuthenticationChallenge(overrides: Record<string, unknown> = {}) {
-    return {
+async function seedAuthenticationChallenge(overrides: {userId?: string | null} = {}): Promise<void> {
+    await seedChallenge({
         id: 'challenge-1',
-        user_id: null,
-        email: null,
-        username: null,
-        webauthn_user_id: null,
+        userId: overrides.userId ?? null,
         ceremony: 'authentication',
         challenge: 'stored-challenge',
-        expires_at: '2026-06-10 12:05:00',
-        ...overrides,
-    }
+    })
 }
 
 function createRegistrationCredential() {
@@ -1310,9 +1193,4 @@ function createAuthenticationVerification(overrides: Partial<VerifiedAuthenticat
         },
         ...overrides,
     }
-}
-
-async function sha256Hex(value: string): Promise<string> {
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
-    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }

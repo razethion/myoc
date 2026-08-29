@@ -1,50 +1,63 @@
 import {describe, expect, it} from 'vitest'
-import {createMockDb} from '../../test/mockD1'
+import {seedCharacter, seedMedia, seedUser, useTestDatabase} from '../../test/d1'
 import {getAdminReportsData} from './reports'
 
 const mediaBaseUrl = 'https://m.myoc.art'
+const db = useTestDatabase()
 
 describe('getAdminReportsData', () => {
-    it('normalizes, sorts, and limits reported image variants', async () => {
-        const {db, boundStatements} = createMockDb({
-            allResults: [
-                [
-                    createReportedMediaRow({
-                        id: 'media-b',
-                        sfw_image_key: 'sfw-key',
-                        nsfw_image_key: 'nsfw-key',
-                        sfw_preview_image_key: null,
-                        nsfw_preview_image_key: 'nsfw-preview-key',
-                        sfw_content_type: 'image/jpeg',
-                        nsfw_content_type: 'image/webp',
-                        sfw_review_status: 'reported',
-                        nsfw_review_status: 'reported',
-                        sfw_reviewed_at: '2026-06-10 12:00:00',
-                        nsfw_reviewed_at: '2026-06-10 12:00:00',
-                        sfw_reported_by_username: 'sfw_mod',
-                        nsfw_reported_by_username: 'nsfw_mod',
-                    }),
-                    createReportedMediaRow({
-                        id: 'media-a',
-                        sfw_reviewed_at: '2026-06-10 12:00:00',
-                    }),
-                    createReportedMediaRow({
-                        id: 'media-c',
-                        sfw_image_key: null,
-                        nsfw_image_key: 'nsfw-no-date-key',
-                        nsfw_content_type: null,
-                        sfw_review_status: 'pending',
-                        nsfw_review_status: 'reported',
-                        sfw_reviewed_at: null,
-                        nsfw_reviewed_at: null,
-                    }),
-                ],
-            ],
+    it('normalizes and sorts reported variants with incomplete legacy metadata', async () => {
+        await seedUser({id: 'owner-1', username: 'uploader'})
+        await seedUser({id: 'sfw-moderator', username: 'sfw_mod', role: 'moderator'})
+        await seedUser({id: 'nsfw-moderator', username: 'nsfw_mod', role: 'moderator'})
+        await seedUser({id: 'admin-moderator', username: 'admin_user', role: 'admin'})
+        await seedCharacter({id: 'character-1', userId: 'owner-1', name: 'Quartz'})
+        await seedMedia({
+            id: 'media-b',
+            userId: 'owner-1',
+            characterId: 'character-1',
+            sfwImageKey: 'sfw-key',
+            nsfwImageKey: 'nsfw-key',
+            sfwContentType: 'image/jpeg',
+            nsfwContentType: 'image/webp',
+            nsfwPreviewImageKey: 'nsfw-preview-key',
+            nsfwPreviewWidth: 800,
+            nsfwPreviewHeight: 600,
+            nsfwPreviewByteSize: 512,
+            sfwReviewStatus: 'reported',
+            nsfwReviewStatus: 'reported',
+            sfwReviewedAt: '2026-06-10 12:00:00',
+            nsfwReviewedAt: '2026-06-10 12:00:00',
         })
+        await seedMedia({
+            id: 'media-a',
+            userId: 'owner-1',
+            characterId: 'character-1',
+            sfwImageKey: 'sfw-key',
+            sfwPreviewImageKey: 'sfw-preview-key',
+            sfwPreviewWidth: 800,
+            sfwPreviewHeight: 600,
+            sfwPreviewByteSize: 512,
+            sfwReviewStatus: 'reported',
+            sfwReviewedAt: '2026-06-10 12:00:00',
+        })
+        await seedMedia({
+            id: 'media-c',
+            userId: 'owner-1',
+            characterId: 'character-1',
+            sfwImageKey: null,
+            nsfwImageKey: 'nsfw-no-date-key',
+            nsfwContentType: null,
+            nsfwReviewStatus: 'reported',
+        })
+        await db.batch([
+            reviewEvent('event-b-sfw', 'media-b', 'sfw', 'report_sfw', 'sfw-moderator'),
+            reviewEvent('event-b-nsfw', 'media-b', 'nsfw', 'report_nsfw', 'nsfw-moderator'),
+            reviewEvent('event-a-sfw', 'media-a', 'sfw', 'report_sfw', 'admin-moderator'),
+        ])
 
         const data = await getAdminReportsData(db, mediaBaseUrl)
 
-        expect(boundStatements[0]?.binds).toEqual([100])
         expect(data.reports.map((report) => report.id)).toEqual(['media-c:nsfw', 'media-a:sfw', 'media-b:nsfw', 'media-b:sfw'])
         expect(data.reports.find((report) => report.id === 'media-c:nsfw')).toEqual(
             expect.objectContaining({
@@ -69,38 +82,48 @@ describe('getAdminReportsData', () => {
         )
     })
 
-    it('returns an empty report list when D1 omits results', async () => {
-        const db = {
-            prepare: () => ({
-                bind: () => ({
-                    all: async () => ({}),
-                }),
-            }),
-        } as unknown as D1Database
+    it('returns at most 100 reported image variants in stable order', async () => {
+        await seedUser({id: 'owner-1', username: 'uploader'})
+        await seedCharacter({id: 'character-1', userId: 'owner-1', name: 'Quartz'})
+        const statement = db.prepare(
+            `INSERT INTO character_media (
+                id,
+                user_id,
+                character_id,
+                sfw_image_key,
+                sfw_width,
+                sfw_height,
+                sfw_byte_size,
+                sfw_review_status,
+                sfw_reviewed_at,
+                sfw_content_type
+            ) VALUES (?, 'owner-1', 'character-1', ?, 1, 1, 1, 'reported', '2026-06-10 12:00:00', 'image/png')`,
+        )
+        const inserts = Array.from({length: 101}, (_, index) => {
+            const id = `media-${index.toString().padStart(3, '0')}`
+            return statement.bind(id, `${id}-key`)
+        })
+        await db.batch(inserts.slice(0, 100))
+        await db.batch(inserts.slice(100))
 
+        const data = await getAdminReportsData(db, mediaBaseUrl)
+
+        expect(data.reports).toHaveLength(100)
+        expect(data.reports.at(0)?.id).toBe('media-000:sfw')
+        expect(data.reports.at(-1)?.id).toBe('media-099:sfw')
+    })
+
+    it('returns an empty report list when no media is reported', async () => {
         await expect(getAdminReportsData(db, mediaBaseUrl)).resolves.toEqual({reports: []})
     })
 })
 
-function createReportedMediaRow(overrides: Record<string, unknown> = {}) {
-    return {
-        id: 'media-1',
-        user_id: 'owner-1',
-        username: 'uploader',
-        character_id: 'character-1',
-        character_name: 'Quartz',
-        sfw_image_key: 'sfw-key',
-        nsfw_image_key: null,
-        sfw_preview_image_key: 'sfw-preview-key',
-        nsfw_preview_image_key: null,
-        sfw_content_type: 'image/png',
-        nsfw_content_type: null,
-        sfw_review_status: 'reported',
-        nsfw_review_status: 'pending',
-        sfw_reviewed_at: '2026-06-10 12:00:00',
-        nsfw_reviewed_at: null,
-        sfw_reported_by_username: 'admin_user',
-        nsfw_reported_by_username: null,
-        ...overrides,
-    }
+function reviewEvent(id: string, mediaId: string, rating: 'sfw' | 'nsfw', action: string, moderatorId: string) {
+    return db
+        .prepare(
+            `INSERT INTO character_media_review_events (
+                id, media_id, image_rating, action, homepage_allowed, moderator_id, created_at
+            ) VALUES (?, ?, ?, ?, 0, ?, ?)`,
+        )
+        .bind(id, mediaId, rating, action, moderatorId, '2026-06-10 12:00:00')
 }

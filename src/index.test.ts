@@ -1,7 +1,7 @@
 import {beforeEach, describe, expect, it, vi} from 'vitest'
 import worker from './index'
 import {runAdminJob} from './lib/admin/jobs'
-import type {Bindings} from './types/bindings'
+import {createWorkerEnv} from './test/workerBindings'
 
 vi.mock('./lib/admin/jobs', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./lib/admin/jobs')>()
@@ -16,11 +16,7 @@ vi.mock('./lib/admin/jobs', async (importOriginal) => {
     }
 })
 
-const env = {
-    DB: {},
-    DB_BACKUP_BUCKET: {},
-    MEDIA_BUCKET: {},
-} as Bindings
+const env = createWorkerEnv()
 
 describe('worker scheduled handler', () => {
     beforeEach(() => {

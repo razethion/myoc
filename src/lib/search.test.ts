@@ -1,28 +1,9 @@
-import {describe, expect, it, vi} from 'vitest'
+import {describe, expect, it} from 'vitest'
+import {seedUser, useTestDatabase} from '../test/d1'
 import {normalizeSearchOffset, normalizeSearchQuery, searchUsers} from './search'
 
 const SEARCH_QUERY_MAX_LENGTH = 80
-
-function createRecordingDb(): {db: D1Database; binds: unknown[][]} {
-    const binds: unknown[][] = []
-    const db = {
-        prepare: vi.fn(() => ({
-            bind: vi.fn((...values: unknown[]) => {
-                binds.push(values)
-
-                return {
-                    all: vi.fn(async () => ({results: []})),
-                    first: vi.fn(async () => ({count: 0})),
-                }
-            }),
-        })),
-    }
-
-    return {
-        db: db as unknown as D1Database,
-        binds,
-    }
-}
+const db = useTestDatabase()
 
 describe('normalizeSearchQuery', () => {
     it('trims, collapses whitespace, and caps query length', () => {
@@ -44,12 +25,13 @@ describe('normalizeSearchOffset', () => {
 })
 
 describe('searchUsers', () => {
-    it('escapes SQL LIKE wildcard characters in user input', async () => {
-        const {db, binds} = createRecordingDb()
+    it('treats SQL LIKE wildcard characters as literal user input', async () => {
+        await seedUser({id: 'literal-user', username: 'literal_user', bio: 'Contains the literal %_\\ sequence.'})
+        await seedUser({id: 'wildcard-decoy', username: 'wildcard_decoy', bio: 'Contains other wildcard-shaped text.'})
 
-        await searchUsers(db, 'https://m.myoc.art', '%_\\')
+        const results = await searchUsers(db, 'https://m.myoc.art', '%_\\')
 
-        expect(binds[0]).toContain('%\\%\\_\\\\%')
-        expect(binds[1]).toContain('%\\%\\_\\\\%')
+        expect(results.items.map((user) => user.id)).toEqual(['literal-user'])
+        expect(results.total).toBe(1)
     })
 })

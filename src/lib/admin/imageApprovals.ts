@@ -146,8 +146,15 @@ type LeaseRow = {
 }
 
 export async function queueImageReview(db: D1Database, mediaId: string): Promise<void> {
-    const now = toSqlTimestamp(new Date())
-    await db
+    await createImageReviewQueueStatement(db, mediaId).run()
+}
+
+export function createImageReviewQueueStatement(
+    db: D1Database,
+    mediaId: string,
+    queuedAt = toSqlTimestamp(new Date()),
+): D1PreparedStatement {
+    return db
         .prepare(
             `INSERT OR IGNORE INTO admin_image_review_queue (media_id, created_at, queued_at)
              SELECT id, created_at, ?
@@ -172,8 +179,7 @@ export async function queueImageReview(db: D1Database, mediaId: string): Promise
                    )
                )`,
         )
-        .bind(now, mediaId)
-        .run()
+        .bind(queuedAt, mediaId)
 }
 
 export async function completeImageApprovalLease(db: D1Database, mediaId: string, reviewerId: string): Promise<void> {

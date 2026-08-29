@@ -63,6 +63,7 @@ type MigratePageProps = {
     importResult?: ToyhouseImportResult | null
     mediaBaseUrl: string
     migrationError?: string
+    migrationPayload?: string
     migrationResult?: ToyhouseMigrationResult | null
     receiveToyhouseImport?: boolean
     showSetupForm?: boolean
@@ -77,6 +78,7 @@ export function MigratePage({
     importResult = null,
     mediaBaseUrl,
     migrationError = '',
+    migrationPayload = '',
     migrationResult = null,
     receiveToyhouseImport = false,
     showSetupForm = true,
@@ -91,176 +93,20 @@ export function MigratePage({
             <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl} />
 
             <main class="container mx-auto max-w-3xl px-3 py-6 sm:px-0">
-                <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div class="min-w-0">
-                        <h1 class="text-4xl font-bold sm:text-5xl">Migrate from Toyhou.se</h1>
-                        <p class="mt-1 text-sm text-base-content/70">Import your public Toyhou.se profile into MyOC.</p>
-                    </div>
-                    {currentUser ? (
-                        <a class="btn btn-ghost" href="/settings">
-                            Back to Settings
-                        </a>
-                    ) : (
-                        <a class="btn btn-primary" href="/login">
-                            Sign in
-                        </a>
-                    )}
-                </div>
+                <MigratePageHeader currentUser={currentUser} />
 
                 <section class="space-y-5">
                     <div class="alert border-warning/40 bg-warning/10 text-base-content">
                         <span>Please ensure you are logged into toyhouse before starting.</span>
                     </div>
-
-                    {showSetupForm && (
-                        <form action="/migrate" class="rounded-box border border-base-300 bg-base-200 p-4" method="get">
-                            <fieldset class="fieldset">
-                                <label class="fieldset-label" for="toyhouse-username">
-                                    Toyhou.se username
-                                </label>
-                                <label class="input input-bordered w-full">
-                                    <svg
-                                        aria-hidden="true"
-                                        class="h-5 w-5 opacity-60"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        viewBox="0 0 24 24"
-                                    >
-                                        <path
-                                            d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 4.43"
-                                            stroke-linecap="round"
-                                            stroke-linejoin="round"
-                                            stroke-width="2"
-                                        />
-                                        <path
-                                            d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07l1.33-1.33"
-                                            stroke-linecap="round"
-                                            stroke-linejoin="round"
-                                            stroke-width="2"
-                                        />
-                                    </svg>
-                                    <input
-                                        class="grow"
-                                        id="toyhouse-username"
-                                        name="toyhouseUsername"
-                                        pattern="[A-Za-z0-9_-]+"
-                                        placeholder="razeth"
-                                        required
-                                        title="Use only the Toyhou.se username from your profile URL."
-                                        type="text"
-                                        value={normalizedToyhouseUsername}
-                                    />
-                                </label>
-                                <div class="label">
-                                    <span class="label-text-alt">Use the username from https://toyhou.se/username.</span>
-                                </div>
-                            </fieldset>
-
-                            <div class="mt-4 flex justify-end">
-                                <button class="btn btn-primary" type="submit">
-                                    Submit
-                                </button>
-                            </div>
-                        </form>
-                    )}
-
-                    {currentUser && (
-                        <section class="rounded-box border border-base-300 bg-base-200 p-4">
-                            <h2 class="text-xl font-bold">Verify Toyhou.se Ownership</h2>
-                            <p class="mt-1 text-sm text-base-content/70">
-                                Add this MyOC user ID anywhere in your Toyhou.se profile text before running the import.
-                            </p>
-                            <label class="input input-bordered mt-3 w-full">
-                                <input class="grow font-mono text-sm" readonly type="text" value={currentUser.id} />
-                            </label>
-                        </section>
-                    )}
-
-                    {toyhouseFolderUrl && (
-                        <section class="rounded-box border border-base-300 bg-base-200 p-4">
-                            <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                                <div>
-                                    <h2 class="text-xl font-bold">Ready to import</h2>
-                                    <p class="mt-1 text-sm text-base-content/70">
-                                        Save the import bookmarklet first, then MyOC will send you to Toyhou.se.
-                                    </p>
-                                </div>
-                                <button class="btn btn-primary" data-toyhouse-import-start type="button">
-                                    Start Import
-                                </button>
-                            </div>
-                        </section>
-                    )}
-
-                    {migrationError && (
-                        <div class="alert alert-error">
-                            <span>{migrationError}</span>
-                        </div>
-                    )}
-
-                    {receiveToyhouseImport && (
-                        <section class="rounded-box border border-base-300 bg-base-200 p-4">
-                            <h2 class="text-xl font-bold">Waiting for Toyhou.se</h2>
-                            <p class="mt-1 text-sm font-semibold" data-toyhouse-import-receiver-status>
-                                Keep this tab open. The bookmarklet will send your Toyhou.se import here automatically.
-                            </p>
-                            <p class="mt-1 text-sm text-base-content/70" data-toyhouse-import-receiver-detail>
-                                Waiting for the bookmarklet to start.
-                            </p>
-                            <div class="mt-4 h-3 overflow-hidden rounded-full bg-base-300">
-                                <div class="h-full w-[4%] rounded-full bg-primary transition-all" data-toyhouse-import-receiver-bar></div>
-                            </div>
-                            <ToyhouseImportReceiverScript />
-                        </section>
-                    )}
-
-                    {importResult && (
-                        <section class="rounded-box border border-success/40 bg-success/10 p-4">
-                            <h2 class="text-xl font-bold">Import complete</h2>
-                            <p class="mt-1 text-sm text-base-content/70">
-                                Created {importResult.createdCharacters} character{importResult.createdCharacters === 1 ? '' : 's'}, updated{' '}
-                                {importResult.updatedCharacters} existing character{importResult.updatedCharacters === 1 ? '' : 's'}, and
-                                imported {importResult.importedImages} image{importResult.importedImages === 1 ? '' : 's'}.
-                                {importResult.skippedImages > 0
-                                    ? ` ${importResult.skippedImages} image${importResult.skippedImages === 1 ? '' : 's'} could not be imported.`
-                                    : ''}
-                            </p>
-                            <div class="mt-4 flex justify-end">
-                                <a class="btn btn-primary" href="/characters">
-                                    View Characters
-                                </a>
-                            </div>
-                        </section>
-                    )}
-
-                    {clientImportPlan && currentUser && (
-                        <ToyhouseClientImportRunner csrfToken={currentUser.csrfToken} importPlan={clientImportPlan} />
-                    )}
-
-                    {migrationResult && (
-                        <section class="space-y-4">
-                            <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-                                <div>
-                                    <h2 class="text-2xl font-bold">Review Characters for Import</h2>
-                                    <p class="text-sm text-base-content/70">
-                                        Found {migrationResult.characters.length} characters across {migrationResult.pagesFetched} page
-                                        {migrationResult.pagesFetched === 1 ? '' : 's'}.
-                                    </p>
-                                </div>
-                                <a class="link link-primary text-sm" href={migrationResult.folderUrl}>
-                                    View on Toyhou.se
-                                </a>
-                            </div>
-
-                            {migrationResult.characters.length > 0 ? (
-                                <ToyhouseImportReviewForm migrationResult={migrationResult} />
-                            ) : (
-                                <div class="rounded-box border border-base-300 bg-base-200 p-4 text-sm text-base-content/70">
-                                    No public characters were found for this profile.
-                                </div>
-                            )}
-                        </section>
-                    )}
+                    <ToyhouseSetupForm show={showSetupForm} username={normalizedToyhouseUsername} />
+                    <ToyhouseOwnershipInstructions currentUser={currentUser} />
+                    <ToyhouseReadyPanel ready={Boolean(toyhouseFolderUrl)} />
+                    <MigrationErrorAlert message={migrationError} />
+                    <ToyhouseReceiverPanel receive={receiveToyhouseImport} />
+                    <ToyhouseImportSummary result={importResult} />
+                    <ToyhouseClientImportPanel currentUser={currentUser} plan={clientImportPlan} />
+                    <ToyhouseMigrationReview csrfToken={currentUser?.csrfToken ?? ''} payload={migrationPayload} result={migrationResult} />
                 </section>
             </main>
 
@@ -271,6 +117,228 @@ export function MigratePage({
                 />
             )}
         </BaseLayout>
+    )
+}
+
+function MigratePageHeader({currentUser}: {currentUser: CurrentUser | null}) {
+    return (
+        <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div class="min-w-0">
+                <h1 class="text-4xl font-bold sm:text-5xl">Migrate from Toyhou.se</h1>
+                <p class="mt-1 text-sm text-base-content/70">Import your public Toyhou.se profile into MyOC.</p>
+            </div>
+            {currentUser ? (
+                <a class="btn btn-ghost" href="/settings">
+                    Back to Settings
+                </a>
+            ) : (
+                <a class="btn btn-primary" href="/login">
+                    Sign in
+                </a>
+            )}
+        </div>
+    )
+}
+
+function ToyhouseSetupForm({show, username}: {show: boolean; username: string}) {
+    if (!show) {
+        return null
+    }
+
+    return (
+        <form action="/migrate" class="rounded-box border border-base-300 bg-base-200 p-4" method="get">
+            <fieldset class="fieldset">
+                <label class="fieldset-label" for="toyhouse-username">
+                    Toyhou.se username
+                </label>
+                <label class="input input-bordered w-full">
+                    <svg aria-hidden="true" class="h-5 w-5 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                            d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 4.43"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                        />
+                        <path
+                            d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07l1.33-1.33"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                        />
+                    </svg>
+                    <input
+                        class="grow"
+                        id="toyhouse-username"
+                        name="toyhouseUsername"
+                        pattern="[A-Za-z0-9_-]+"
+                        placeholder="razeth"
+                        required
+                        title="Use only the Toyhou.se username from your profile URL."
+                        type="text"
+                        value={username}
+                    />
+                </label>
+                <div class="label">
+                    <span class="label-text-alt">Use the username from https://toyhou.se/username.</span>
+                </div>
+            </fieldset>
+
+            <div class="mt-4 flex justify-end">
+                <button class="btn btn-primary" type="submit">
+                    Submit
+                </button>
+            </div>
+        </form>
+    )
+}
+
+function ToyhouseOwnershipInstructions({currentUser}: {currentUser: CurrentUser | null}) {
+    if (!currentUser) {
+        return null
+    }
+
+    return (
+        <section class="rounded-box border border-base-300 bg-base-200 p-4">
+            <h2 class="text-xl font-bold">Verify Toyhou.se Ownership</h2>
+            <p class="mt-1 text-sm text-base-content/70">
+                Add this MyOC user ID anywhere in your Toyhou.se profile text before running the import.
+            </p>
+            <label class="input input-bordered mt-3 w-full">
+                <input class="grow font-mono text-sm" readonly type="text" value={currentUser.id} />
+            </label>
+        </section>
+    )
+}
+
+function ToyhouseReadyPanel({ready}: {ready: boolean}) {
+    if (!ready) {
+        return null
+    }
+
+    return (
+        <section class="rounded-box border border-base-300 bg-base-200 p-4">
+            <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                    <h2 class="text-xl font-bold">Ready to import</h2>
+                    <p class="mt-1 text-sm text-base-content/70">
+                        Save the import bookmarklet first, then MyOC will send you to Toyhou.se.
+                    </p>
+                </div>
+                <button class="btn btn-primary" data-toyhouse-import-start type="button">
+                    Start Import
+                </button>
+            </div>
+        </section>
+    )
+}
+
+function MigrationErrorAlert({message}: {message: string}) {
+    if (!message) {
+        return null
+    }
+
+    return (
+        <div class="alert alert-error">
+            <span>{message}</span>
+        </div>
+    )
+}
+
+function ToyhouseReceiverPanel({receive}: {receive: boolean}) {
+    if (!receive) {
+        return null
+    }
+
+    return (
+        <section class="rounded-box border border-base-300 bg-base-200 p-4">
+            <h2 class="text-xl font-bold">Waiting for Toyhou.se</h2>
+            <p class="mt-1 text-sm font-semibold" data-toyhouse-import-receiver-status>
+                Keep this tab open. The bookmarklet will send your Toyhou.se import here automatically.
+            </p>
+            <p class="mt-1 text-sm text-base-content/70" data-toyhouse-import-receiver-detail>
+                Waiting for the bookmarklet to start.
+            </p>
+            <div class="mt-4 h-3 overflow-hidden rounded-full bg-base-300">
+                <div class="h-full w-[4%] rounded-full bg-primary transition-all" data-toyhouse-import-receiver-bar></div>
+            </div>
+            <ToyhouseImportReceiverScript />
+        </section>
+    )
+}
+
+function ToyhouseImportSummary({result}: {result: ToyhouseImportResult | null}) {
+    if (!result) {
+        return null
+    }
+
+    return (
+        <section class="rounded-box border border-success/40 bg-success/10 p-4">
+            <h2 class="text-xl font-bold">Import complete</h2>
+            <p class="mt-1 text-sm text-base-content/70">
+                Created {result.createdCharacters} character{pluralSuffix(result.createdCharacters)}, updated {result.updatedCharacters}{' '}
+                existing character{pluralSuffix(result.updatedCharacters)}, and imported {result.importedImages} image
+                {pluralSuffix(result.importedImages)}.{skippedImageSummary(result.skippedImages)}
+            </p>
+            <div class="mt-4 flex justify-end">
+                <a class="btn btn-primary" href="/characters">
+                    View Characters
+                </a>
+            </div>
+        </section>
+    )
+}
+
+function pluralSuffix(count: number): string {
+    return count === 1 ? '' : 's'
+}
+
+function skippedImageSummary(count: number): string {
+    return count > 0 ? ` ${count} image${pluralSuffix(count)} could not be imported.` : ''
+}
+
+function ToyhouseClientImportPanel({currentUser, plan}: {currentUser: CurrentUser | null; plan: ToyhouseClientImportPlan | null}) {
+    if (!currentUser || !plan) {
+        return null
+    }
+
+    return <ToyhouseClientImportRunner csrfToken={currentUser.csrfToken} importPlan={plan} />
+}
+
+function ToyhouseMigrationReview({
+    csrfToken,
+    payload,
+    result,
+}: {
+    csrfToken: string
+    payload: string
+    result: ToyhouseMigrationResult | null
+}) {
+    if (!result) {
+        return null
+    }
+
+    return (
+        <section class="space-y-4">
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                    <h2 class="text-2xl font-bold">Review Characters for Import</h2>
+                    <p class="text-sm text-base-content/70">
+                        Found {result.characters.length} characters across {result.pagesFetched} page{pluralSuffix(result.pagesFetched)}.
+                    </p>
+                </div>
+                <a class="link link-primary text-sm" href={result.folderUrl}>
+                    View on Toyhou.se
+                </a>
+            </div>
+
+            {result.characters.length > 0 ? (
+                <ToyhouseImportReviewForm csrfToken={csrfToken} migrationPayload={payload} migrationResult={result} />
+            ) : (
+                <div class="rounded-box border border-base-300 bg-base-200 p-4 text-sm text-base-content/70">
+                    No public characters were found for this profile.
+                </div>
+            )}
+        </section>
     )
 }
 
@@ -499,7 +567,7 @@ function ToyhouseClientImportScript({csrfToken, importPlan}: {csrfToken: string;
 
     async function uploadChunkedImage(characterPlan, imagePlan) {
         if (imagePlan.status === 'imported' && imagePlan.mediaId) {
-            return imagePlan.mediaId;
+            return;
         }
 
         const image = await fetchToyhouseImage(imagePlan.fullsizeUrl);
@@ -537,13 +605,11 @@ function ToyhouseClientImportScript({csrfToken, importPlan}: {csrfToken: string;
                 parts
             };
 
-            const completed = await withRetry('Completing media upload', async () => await apiFetch('/api/characters/toyhouse-import-items/' + encodeURIComponent(imagePlan.importItemId) + '/complete', {
+            await withRetry('Completing media upload', async () => await apiFetch('/api/characters/toyhouse-import-items/' + encodeURIComponent(imagePlan.importItemId) + '/complete', {
                 method: 'POST',
                 headers: {'content-type': 'application/json'},
                 body: JSON.stringify(completeBody)
             }));
-
-            return completed.media.id;
         } catch (error) {
             if (initResult && upload) {
                 await abortChunkedUpload(characterPlan.myocCharacterId, initResult.mediaId, rating, upload, image);
@@ -577,45 +643,18 @@ function ToyhouseClientImportScript({csrfToken, importPlan}: {csrfToken: string;
         } catch {}
     }
 
-    function createRows(mediaIds) {
-        const rows = [];
-        for (let index = 0; index < mediaIds.length; index += 3) {
-            rows.push({
-                id: crypto.randomUUID(),
-                mediaIds: mediaIds.slice(index, index + 3)
-            });
-        }
-        return rows;
-    }
-
-    async function saveNewCharacterGallery(characterPlan, mediaIds) {
-        if (characterPlan.importMode !== 'create' || mediaIds.length === 0) return;
-        await withRetry('Saving gallery rows', async () => await apiFetch('/api/characters/' + encodeURIComponent(characterPlan.myocCharacterId) + '/gallery', {
-            method: 'PUT',
-            headers: {'content-type': 'application/json'},
-            body: JSON.stringify({
-                tabs: [{
-                    id: crypto.randomUUID(),
-                    name: 'default',
-                    rows: createRows(mediaIds)
-                }]
-            })
-        }));
-    }
-
     let completedImages = importPlan.characters.reduce((total, characterPlan) => total + characterPlan.images.filter((imagePlan) => imagePlan.status === 'imported').length, 0);
 
     async function runImport() {
         try {
             for (const characterPlan of importPlan.characters) {
-                const mediaIds = [];
                 for (const imagePlan of characterPlan.images) {
+                    if (imagePlan.status === 'imported' && imagePlan.mediaId) continue;
                     setProgress('Uploading ' + characterPlan.name, imagePlan.fullsizeUrl, completedImages, importPlan.totalImages);
-                    mediaIds.push(await uploadChunkedImage(characterPlan, imagePlan));
+                    await uploadChunkedImage(characterPlan, imagePlan);
                     completedImages += 1;
                     setProgress('Uploaded ' + completedImages + ' of ' + importPlan.totalImages + ' images', characterPlan.name, completedImages, importPlan.totalImages);
                 }
-                await saveNewCharacterGallery(characterPlan, mediaIds);
             }
 
             setProgress('Import complete', 'Created ' + importPlan.createdCharacters + ' character' + (importPlan.createdCharacters === 1 ? '' : 's') + ', updated ' + importPlan.updatedCharacters + ' existing character' + (importPlan.updatedCharacters === 1 ? '' : 's') + ', imported ' + importPlan.totalImages + ' image' + (importPlan.totalImages === 1 ? '' : 's') + '.', importPlan.totalImages, importPlan.totalImages);
@@ -635,16 +674,31 @@ function ToyhouseClientImportScript({csrfToken, importPlan}: {csrfToken: string;
     return <script dangerouslySetInnerHTML={{__html: script}}></script>
 }
 
-function ToyhouseImportReviewForm({migrationResult}: {migrationResult: ToyhouseMigrationResult}) {
+function ToyhouseImportReviewForm({
+    csrfToken,
+    migrationPayload,
+    migrationResult,
+}: {
+    csrfToken: string
+    migrationPayload: string
+    migrationResult: ToyhouseMigrationResult
+}) {
     const readyCount = migrationResult.characters.filter((character) => character.canImport !== false).length
     const blockedCount = migrationResult.characters.length - readyCount
 
     return (
         <>
-            <form action="/migrate/import/confirm" class="space-y-4" data-toyhouse-import-review method="post">
+            <form
+                action="/migrate/import/confirm"
+                class="space-y-4"
+                data-toyhouse-import-review
+                enctype="multipart/form-data"
+                method="post"
+            >
                 <textarea class="hidden" name="toyhousePayload">
-                    {JSON.stringify(migrationResult)}
+                    {migrationPayload}
                 </textarea>
+                <textarea class="hidden" name="toyhouseSelection"></textarea>
                 <div class="rounded-box border border-base-300 bg-base-200 p-4">
                     <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <p class="font-semibold">
@@ -669,155 +723,184 @@ function ToyhouseImportReviewForm({migrationResult}: {migrationResult: ToyhouseM
 
                 <div class="overflow-hidden rounded-box border border-base-300">
                     <ul class="divide-y divide-base-300">
-                        {migrationResult.characters.map((character) => {
-                            const canImport = character.canImport !== false
-                            const importIssues = character.importIssues ?? []
-
-                            return (
-                                <li class={`bg-base-200 p-3 ${canImport ? '' : 'opacity-75'}`} key={character.id}>
-                                    <div class="flex items-start gap-3">
-                                        <input
-                                            aria-label={`Import ${character.name}`}
-                                            checked={canImport}
-                                            class="checkbox checkbox-primary mt-4"
-                                            disabled={!canImport}
-                                            name="characterIds"
-                                            type="checkbox"
-                                            value={character.id}
-                                        />
-                                        {canImport && (
-                                            <>
-                                                <input
-                                                    name={`importMode:${character.id}`}
-                                                    type="hidden"
-                                                    value={character.importMode ?? 'create'}
-                                                />
-                                                {character.targetCharacterId && (
-                                                    <input
-                                                        name={`targetCharacterId:${character.id}`}
-                                                        type="hidden"
-                                                        value={character.targetCharacterId}
-                                                    />
-                                                )}
-                                            </>
-                                        )}
-                                        {character.thumbnailUrl ? (
-                                            <img
-                                                alt={`${character.name} thumbnail`}
-                                                class="h-14 w-14 shrink-0 rounded object-cover"
-                                                loading="lazy"
-                                                src={character.thumbnailUrl}
-                                            />
-                                        ) : (
-                                            <div class="flex h-14 w-14 shrink-0 items-center justify-center rounded bg-base-300 text-xl font-bold">
-                                                {character.name.charAt(0).toUpperCase()}
-                                            </div>
-                                        )}
-                                        <div class="min-w-0 flex-1">
-                                            <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                                                <a class="font-semibold link-hover" href={character.url}>
-                                                    {character.name}
-                                                </a>
-                                                {canImport && character.importMode === 'existing' ? (
-                                                    <span class="badge badge-info">Add images to existing</span>
-                                                ) : canImport ? (
-                                                    <span class="badge badge-success">Create new character</span>
-                                                ) : (
-                                                    !canImport && <span class="badge badge-warning">Blocked</span>
-                                                )}
-                                            </div>
-                                            <p class="text-sm text-base-content/60">
-                                                {character.images.length} image{character.images.length === 1 ? '' : 's'} found
-                                                {character.imageCount === null ? '' : ` (${character.imageCount} listed)`}
-                                            </p>
-                                            {canImport && character.importMode === 'existing' ? (
-                                                <p class="mt-1 text-sm text-info">
-                                                    A character named {character.name} already exists. Selected images will be added to that
-                                                    character.
-                                                </p>
-                                            ) : (
-                                                canImport && (
-                                                    <p class="mt-1 text-sm text-success">
-                                                        A new character named {character.name} will be created with the selected images.
-                                                    </p>
-                                                )
-                                            )}
-                                            {importIssues.length > 0 && (
-                                                <ul class="mt-2 space-y-1 text-sm text-warning">
-                                                    {importIssues.map((issue) => (
-                                                        <li key={issue}>{issue}</li>
-                                                    ))}
-                                                </ul>
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    {character.images.length > 0 && (
-                                        <div class="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-                                            {character.images.map((image, index) => {
-                                                const imageInputId = `toyhouse-image-${character.id}-${index}`
-                                                const nsfwInputId = `toyhouse-image-nsfw-${character.id}-${index}`
-
-                                                return (
-                                                    <div
-                                                        class="overflow-hidden rounded border border-base-300 bg-base-100"
-                                                        data-toyhouse-image-card
-                                                        key={image.fullsizeUrl}
-                                                    >
-                                                        <span class="block">
-                                                            <img
-                                                                alt={`${character.name} gallery entry`}
-                                                                class="aspect-square w-full object-contain"
-                                                                loading="lazy"
-                                                                src={image.fullsizeUrl}
-                                                            />
-                                                        </span>
-                                                        <span class="block space-y-2 p-2">
-                                                            <span class="flex items-center gap-2 text-sm">
-                                                                <input
-                                                                    checked={canImport}
-                                                                    class="checkbox checkbox-sm checkbox-primary"
-                                                                    data-toyhouse-image-select={character.id}
-                                                                    disabled={!canImport}
-                                                                    id={imageInputId}
-                                                                    name={`imageUrls:${character.id}`}
-                                                                    type="checkbox"
-                                                                    value={image.fullsizeUrl}
-                                                                />
-                                                                <label for={imageInputId}>Import image</label>
-                                                            </span>
-                                                            <span class="flex items-center gap-2 text-sm">
-                                                                <input
-                                                                    class="checkbox checkbox-sm checkbox-error"
-                                                                    data-toyhouse-image-nsfw={character.id}
-                                                                    disabled={!canImport}
-                                                                    id={nsfwInputId}
-                                                                    name={`nsfwImageUrls:${character.id}`}
-                                                                    type="checkbox"
-                                                                    value={image.fullsizeUrl}
-                                                                />
-                                                                <label for={nsfwInputId}>NSFW</label>
-                                                            </span>
-                                                        </span>
-                                                    </div>
-                                                )
-                                            })}
-                                        </div>
-                                    )}
-                                </li>
-                            )
-                        })}
+                        {migrationResult.characters.map((character) => (
+                            <ToyhouseCharacterReviewItem character={character} />
+                        ))}
                     </ul>
                 </div>
             </form>
-            <ToyhouseImportReviewScript />
+            <ToyhouseImportReviewScript csrfToken={csrfToken} />
         </>
     )
 }
 
-function ToyhouseImportReviewScript() {
+function ToyhouseCharacterReviewItem({character}: {character: ToyhouseCharacter}) {
+    const canImport = character.canImport !== false
+
+    return (
+        <li class={`bg-base-200 p-3 ${canImport ? '' : 'opacity-75'}`} key={character.id}>
+            <div class="flex items-start gap-3">
+                <input
+                    aria-label={`Import ${character.name}`}
+                    checked={canImport}
+                    class="checkbox checkbox-primary mt-4"
+                    data-toyhouse-character-select
+                    data-toyhouse-import-mode={character.importMode ?? 'create'}
+                    disabled={!canImport}
+                    type="checkbox"
+                    value={character.id}
+                />
+                <ToyhouseCharacterThumbnail character={character} />
+                <ToyhouseCharacterSummary canImport={canImport} character={character} />
+            </div>
+            <ToyhouseCharacterImageGrid canImport={canImport} character={character} />
+        </li>
+    )
+}
+
+function ToyhouseCharacterThumbnail({character}: {character: ToyhouseCharacter}) {
+    if (!character.thumbnailUrl) {
+        return (
+            <div class="flex h-14 w-14 shrink-0 items-center justify-center rounded bg-base-300 text-xl font-bold">
+                {character.name.charAt(0).toUpperCase()}
+            </div>
+        )
+    }
+
+    return (
+        <img
+            alt={`${character.name} thumbnail`}
+            class="h-14 w-14 shrink-0 rounded object-cover"
+            loading="lazy"
+            src={character.thumbnailUrl}
+        />
+    )
+}
+
+function ToyhouseCharacterSummary({canImport, character}: {canImport: boolean; character: ToyhouseCharacter}) {
+    const importIssues = character.importIssues ?? []
+
+    return (
+        <div class="min-w-0 flex-1">
+            <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                <a class="font-semibold link-hover" href={character.url}>
+                    {character.name}
+                </a>
+                <ToyhouseCharacterStatusBadge canImport={canImport} importMode={character.importMode} />
+            </div>
+            <p class="text-sm text-base-content/60">
+                {character.images.length} image{pluralSuffix(character.images.length)} found
+                {character.imageCount === null ? '' : ` (${character.imageCount} listed)`}
+            </p>
+            <ToyhouseCharacterImportDescription canImport={canImport} character={character} />
+            {importIssues.length > 0 ? (
+                <ul class="mt-2 space-y-1 text-sm text-warning">
+                    {importIssues.map((issue) => (
+                        <li key={issue}>{issue}</li>
+                    ))}
+                </ul>
+            ) : null}
+        </div>
+    )
+}
+
+function ToyhouseCharacterStatusBadge({canImport, importMode}: {canImport: boolean; importMode?: 'create' | 'existing'}) {
+    if (!canImport) {
+        return <span class="badge badge-warning">Blocked</span>
+    }
+
+    return importMode === 'existing' ? (
+        <span class="badge badge-info">Add images to existing</span>
+    ) : (
+        <span class="badge badge-success">Create new character</span>
+    )
+}
+
+function ToyhouseCharacterImportDescription({canImport, character}: {canImport: boolean; character: ToyhouseCharacter}) {
+    if (!canImport) {
+        return null
+    }
+
+    return character.importMode === 'existing' ? (
+        <p class="mt-1 text-sm text-info">
+            A character named {character.name} already exists. Selected images will be added to that character.
+        </p>
+    ) : (
+        <p class="mt-1 text-sm text-success">A new character named {character.name} will be created with the selected images.</p>
+    )
+}
+
+function ToyhouseCharacterImageGrid({canImport, character}: {canImport: boolean; character: ToyhouseCharacter}) {
+    if (character.images.length === 0) {
+        return null
+    }
+
+    return (
+        <div class="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+            {character.images.map((image, index) => (
+                <ToyhouseImageReviewCard canImport={canImport} character={character} image={image} index={index} />
+            ))}
+        </div>
+    )
+}
+
+function ToyhouseImageReviewCard({
+    canImport,
+    character,
+    image,
+    index,
+}: {
+    canImport: boolean
+    character: ToyhouseCharacter
+    image: ToyhouseImage
+    index: number
+}) {
+    const imageInputId = `toyhouse-image-${character.id}-${index}`
+    const nsfwInputId = `toyhouse-image-nsfw-${character.id}-${index}`
+
+    return (
+        <div class="overflow-hidden rounded border border-base-300 bg-base-100" data-toyhouse-image-card key={image.fullsizeUrl}>
+            <span class="block">
+                <img
+                    alt={`${character.name} gallery entry`}
+                    class="aspect-square w-full object-contain"
+                    loading="lazy"
+                    src={image.fullsizeUrl}
+                />
+            </span>
+            <span class="block space-y-2 p-2">
+                <span class="flex items-center gap-2 text-sm">
+                    <input
+                        checked={canImport}
+                        class="checkbox checkbox-sm checkbox-primary"
+                        data-toyhouse-image-select={character.id}
+                        data-toyhouse-image-index={index}
+                        disabled={!canImport}
+                        id={imageInputId}
+                        type="checkbox"
+                    />
+                    <label for={imageInputId}>Import image</label>
+                </span>
+                <span class="flex items-center gap-2 text-sm">
+                    <input
+                        class="checkbox checkbox-sm checkbox-error"
+                        data-toyhouse-image-nsfw={character.id}
+                        data-toyhouse-image-index={index}
+                        disabled={!canImport}
+                        id={nsfwInputId}
+                        type="checkbox"
+                    />
+                    <label for={nsfwInputId}>NSFW</label>
+                </span>
+            </span>
+        </div>
+    )
+}
+
+function ToyhouseImportReviewScript({csrfToken}: {csrfToken: string}) {
     const script = `
 (function () {
+    const csrfToken = ${safeScriptJson(csrfToken)};
     const form = document.querySelector('[data-toyhouse-import-review]');
     if (!form) return;
     const progressPanel = form.querySelector('[data-toyhouse-final-import-progress]');
@@ -826,8 +909,11 @@ function ToyhouseImportReviewScript() {
     const bar = form.querySelector('[data-toyhouse-final-import-bar]');
     const submitButton = form.querySelector('[data-toyhouse-final-import-button]');
     const payloadField = form.querySelector('textarea[name="toyhousePayload"]');
+    const selectionField = form.querySelector('textarea[name="toyhouseSelection"]');
     const payload = payloadField ? JSON.parse(payloadField.value) : {characters: []};
     const characters = new Map((payload.characters || []).map((character) => [character.id, character]));
+    const createdCharacterTargets = new Map();
+    const preparedCharacterIds = new Set();
 
     function syncImageNsfw(select) {
         const card = select.closest('[data-toyhouse-image-card]');
@@ -888,7 +974,19 @@ function ToyhouseImportReviewScript() {
         return '/migrate/toyhouse-image?url=' + encodeURIComponent(url);
     }
 
-    async function createProfileImageDataUrl(url) {
+    function canvasToWebp(canvas) {
+        return new Promise((resolve, reject) => {
+            canvas.toBlob((blob) => {
+                if (blob) {
+                    resolve(blob);
+                    return;
+                }
+                reject(new Error('Could not prepare profile image.'));
+            }, 'image/webp', 0.9);
+        });
+    }
+
+    async function createProfileImageBlob(url) {
         const response = await fetch(proxiedToyhouseImageUrl(url), {credentials: 'same-origin'});
         if (!response.ok) {
             throw new Error('Toyhou.se returned ' + response.status + ' for a profile image.');
@@ -913,22 +1011,68 @@ function ToyhouseImportReviewScript() {
             bitmap.close();
         }
 
-        return canvas.toDataURL('image/webp', 0.9);
+        return await canvasToWebp(canvas);
     }
 
-    function setHidden(name, value) {
-        let input = form.querySelector('input[name="' + CSS.escape(name) + '"]');
-        if (!input) {
-            input = document.createElement('input');
-            input.type = 'hidden';
-            input.name = name;
-            form.append(input);
+    function selectedImageIndexesByCharacter(selector, characterDatasetKey) {
+        const indexesByCharacter = new Map();
+
+        for (const input of form.querySelectorAll(selector)) {
+            const characterId = input.dataset[characterDatasetKey];
+            if (!input.checked || !characterId) continue;
+            const indexes = indexesByCharacter.get(characterId) || [];
+            indexes.push(Number(input.dataset.toyhouseImageIndex));
+            indexesByCharacter.set(characterId, indexes);
         }
-        input.value = value;
+
+        return indexesByCharacter;
+    }
+
+    function selectedCharacters() {
+        const imageIndexes = selectedImageIndexesByCharacter('[data-toyhouse-image-select]', 'toyhouseImageSelect');
+        const nsfwImageIndexes = selectedImageIndexesByCharacter('[data-toyhouse-image-nsfw]', 'toyhouseImageNsfw');
+
+        return [...form.querySelectorAll('[data-toyhouse-character-select]:checked')].map((input) => ({
+            id: input.value,
+            imageIndexes: imageIndexes.get(input.value) || [],
+            importMode: input.dataset.toyhouseImportMode,
+            nsfwImageIndexes: nsfwImageIndexes.get(input.value) || []
+        }));
+    }
+
+    async function createImportedCharacter(character) {
+        if (!character.thumbnailUrl) {
+            throw new Error('Missing Toyhou.se profile image for ' + character.name + '.');
+        }
+
+        const profileImage = await createProfileImageBlob(character.thumbnailUrl);
+        const body = new FormData();
+        body.set('name', character.name);
+        body.set('folderId', '');
+        body.set('profileImage', new File([profileImage], 'profile.webp', {type: 'image/webp'}));
+
+        const response = await fetch('/api/characters', {
+            method: 'POST',
+            headers: {'x-csrf-token': csrfToken},
+            body
+        });
+        const result = await response.json().catch(() => ({}));
+
+        if (response.status === 409) {
+            return null;
+        }
+        if (!response.ok) {
+            throw new Error(result.error || 'Could not create ' + character.name + '.');
+        }
+        if (!result.character || typeof result.character.id !== 'string' || !result.character.id) {
+            throw new Error('MyOC did not return the new character ID for ' + character.name + '.');
+        }
+
+        return result.character.id;
     }
 
     form.addEventListener('submit', async (event) => {
-        if (form.dataset.toyhouseProfilesReady === 'true') {
+        if (form.dataset.toyhouseCharactersReady === 'true') {
             return;
         }
 
@@ -939,46 +1083,56 @@ function ToyhouseImportReviewScript() {
         }
 
         try {
-            const selectedIds = [...form.querySelectorAll('input[name="characterIds"]:checked')].map((input) => input.value);
-            const selectedImageCount = [...form.querySelectorAll('[data-toyhouse-image-select]:checked')].length;
-            const createIds = selectedIds.filter((characterId) => {
-                const mode = form.querySelector('input[name="importMode:' + CSS.escape(characterId) + '"]')?.value;
-                return mode === 'create';
-            });
+            const selection = selectedCharacters();
+            const selectedImageCount = selection.reduce((total, character) => total + character.imageIndexes.length, 0);
+            const charactersToCreate = selection.filter((character) =>
+                character.importMode === 'create' && character.imageIndexes.length > 0 && !preparedCharacterIds.has(character.id)
+            );
 
             setProgress(
                 'Preparing import',
-                'Selected ' + selectedIds.length + ' character' + (selectedIds.length === 1 ? '' : 's') + ' and ' + selectedImageCount + ' image' + (selectedImageCount === 1 ? '' : 's') + '.',
+                'Selected ' + selection.length + ' character' + (selection.length === 1 ? '' : 's') + ' and ' + selectedImageCount + ' image' + (selectedImageCount === 1 ? '' : 's') + '.',
                 8,
                 false
             );
 
-            for (let index = 0; index < createIds.length; index += 1) {
-                const characterId = createIds[index];
-                const mode = form.querySelector('input[name="importMode:' + CSS.escape(characterId) + '"]')?.value;
-                if (mode !== 'create') continue;
-
-                const character = characters.get(characterId);
-                if (!character || !character.thumbnailUrl) {
-                    throw new Error('Missing Toyhou.se profile image for ' + (character ? character.name : characterId) + '.');
+            for (let index = 0; index < charactersToCreate.length; index += 1) {
+                const selected = charactersToCreate[index];
+                const character = characters.get(selected.id);
+                if (!character) {
+                    throw new Error('Missing Toyhou.se character ' + selected.id + '.');
                 }
 
                 setProgress(
-                    'Preparing profile image ' + (index + 1) + ' of ' + createIds.length,
+                    'Creating character ' + (index + 1) + ' of ' + charactersToCreate.length,
                     character.name,
-                    10 + Math.round(((index + 1) / Math.max(1, createIds.length)) * 35),
+                    10 + Math.round(((index + 1) / Math.max(1, charactersToCreate.length)) * 35),
                     false
                 );
-                setHidden('profileImageDataUrl:' + characterId, await createProfileImageDataUrl(character.thumbnailUrl));
+                const targetCharacterId = await createImportedCharacter(character);
+                preparedCharacterIds.add(selected.id);
+                if (targetCharacterId) {
+                    createdCharacterTargets.set(selected.id, targetCharacterId);
+                }
             }
+
+            if (!selectionField) {
+                throw new Error('Toyhou.se import selection field is missing.');
+            }
+            selectionField.value = JSON.stringify({
+                characters: selection.map(({id, imageIndexes, nsfwImageIndexes}) => ({id, imageIndexes, nsfwImageIndexes})),
+                createdCharacters: [...createdCharacterTargets]
+                    .filter(([characterId]) => selection.some((character) => character.id === characterId))
+                    .map(([id, targetCharacterId]) => ({id, targetCharacterId}))
+            });
 
             setProgress(
                 'MyOC is importing your images',
-                'The server is downloading Toyhou.se images, uploading them to MyOC storage, and saving the character data. This can take a while for large imports.',
+                'MyOC is preparing the selected images. Keep this page open during large imports.',
                 75,
                 true
             );
-            form.dataset.toyhouseProfilesReady = 'true';
+            form.dataset.toyhouseCharactersReady = 'true';
             await nextFrame();
             form.submit();
         } catch (error) {
@@ -1037,6 +1191,7 @@ function ToyhouseImportReceiverScript() {
         const form = document.createElement('form');
         form.method = 'post';
         form.action = '/migrate/import';
+        form.enctype = 'multipart/form-data';
 
         const input = document.createElement('textarea');
         input.name = 'toyhousePayload';

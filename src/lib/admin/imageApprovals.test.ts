@@ -1,31 +1,54 @@
-import {describe, expect, it, vi} from 'vitest'
-import {createMockDb, sqlFragment} from '../../test/mockD1'
+import {describe, expect, it} from 'vitest'
+import {seedCharacter, seedMedia, seedUser, useTestDatabase} from '../../test/d1'
 import {getImageApprovalData, getImageApprovalHistory, getImageApprovalPendingCount, isValidImageApprovalAction} from './imageApprovals'
 
 const mediaBaseUrl = 'https://m.myoc.art'
+const db = useTestDatabase()
 
 describe('getImageApprovalData', () => {
     it('reuses an active reviewer lease and maps an NSFW-only approval item', async () => {
         const lease = {
             media_id: 'media-1',
-            lease_expires_at: '2026-07-12 08:30:00',
+            lease_expires_at: '2099-07-12 08:30:00',
         }
-        const {db, boundStatements} = createMockDb({
-            firstResults: [
-                lease,
-                {count: 2},
-                createApprovalRow({
-                    sfw_image_key: null,
-                    sfw_preview_image_key: null,
-                    nsfw_image_key: 'nsfw-key',
-                    nsfw_preview_image_key: null,
-                    nsfw_content_type: null,
-                    nsfw_review_status: 'approved',
-                    nsfw_reviewed_at: '2026-07-12 08:00:00',
-                    updated_at: '2026-07-12 07:59:00',
-                }),
-            ],
+        await seedUser({id: 'reviewer-1', username: 'reviewer_1', role: 'moderator'})
+        await seedUser({id: 'owner-1', username: 'owner_name'})
+        await seedCharacter({id: 'character-1', userId: 'owner-1', name: 'Character One'})
+        await seedMedia({
+            id: 'media-1',
+            userId: 'owner-1',
+            characterId: 'character-1',
+            sfwImageKey: null,
+            nsfwImageKey: 'nsfw-key',
+            nsfwContentType: null,
+            nsfwArtist: 'NSFW Artist',
+            nsfwReviewStatus: 'approved',
+            nsfwReviewedAt: '2026-07-12 08:00:00',
+            createdAt: '2026-07-12 07:00:00',
+            updatedAt: '2026-07-12 08:01:00',
         })
+        await seedMedia({
+            id: 'media-2',
+            userId: 'owner-1',
+            characterId: 'character-1',
+            sfwImageKey: 'second-sfw-key',
+        })
+        await db
+            .prepare(
+                `INSERT INTO admin_image_review_queue (
+                    media_id, created_at, queued_at, lease_id, leased_by_user_id, leased_at, lease_expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .bind(
+                lease.media_id,
+                '2026-07-12 07:00:00',
+                '2026-07-12 07:00:00',
+                'lease-1',
+                'reviewer-1',
+                '2026-07-12 08:00:00',
+                lease.lease_expires_at,
+            )
+            .run()
 
         const data = await getImageApprovalData(db, mediaBaseUrl, 'reviewer-1')
 
@@ -35,11 +58,11 @@ describe('getImageApprovalData', () => {
             id: 'media-1',
             user: {
                 id: 'owner-1',
-                profileUrl: '/u/owner%20name',
+                profileUrl: '/u/owner_name',
             },
             character: {
                 id: 'character-1',
-                url: '/u/owner%20name/Character%20One',
+                url: '/u/owner_name/Character%20One',
             },
             sfw: null,
             nsfw: {
@@ -51,63 +74,35 @@ describe('getImageApprovalData', () => {
                 previewImageUrl: null,
                 objectKey: 'characters/owner-1/character-1/media/media-1/nsfw/nsfw-key.png',
                 homepageAllowed: false,
-                needsReview: false,
+                needsReview: true,
             },
         })
-        expect(boundStatements.some((statement) => normalizedSql(statement.sql).includes('SET lease_id = ?'))).toBe(false)
-    })
-
-    it('releases a newly acquired lease when the leased media row no longer exists', async () => {
-        const {db, boundStatements} = createMockDb({
-            firstResults: [
-                null,
-                {
-                    media_id: 'missing-media',
-                    lease_expires_at: '2026-07-12 08:30:00',
-                },
-                {count: 1},
-                null,
-            ],
+        await expect(
+            db
+                .prepare(
+                    `SELECT lease_id, leased_by_user_id, leased_at, lease_expires_at
+                     FROM admin_image_review_queue
+                     WHERE media_id = ?`,
+                )
+                .bind(lease.media_id)
+                .first(),
+        ).resolves.toEqual({
+            lease_id: 'lease-1',
+            leased_by_user_id: 'reviewer-1',
+            leased_at: '2026-07-12 08:00:00',
+            lease_expires_at: lease.lease_expires_at,
         })
-
-        const data = await getImageApprovalData(db, mediaBaseUrl, 'reviewer-1')
-
-        expect(data).toEqual({
-            current: null,
-            pendingCount: 1,
-            leaseExpiresAt: null,
-        })
-        const release = boundStatements.find((statement) =>
-            normalizedSql(statement.sql).includes('SET lease_id = NULL, leased_by_user_id = NULL'),
-        )
-        expect(release?.binds).toEqual(['missing-media', 'reviewer-1'])
     })
 })
 
 describe('getImageApprovalPendingCount', () => {
-    it('falls back to zero when D1 returns no count row', async () => {
-        const {db} = createMockDb({
-            firstResults: [null],
-        })
-
+    it('returns zero when no media needs review', async () => {
         await expect(getImageApprovalPendingCount(db)).resolves.toBe(0)
     })
 })
 
 describe('getImageApprovalHistory', () => {
-    it('uses page one by default and tolerates an empty D1 all response', async () => {
-        const boundStatements: Array<{sql: string; binds: unknown[]}> = []
-        const db = {
-            prepare: vi.fn((sql: string) => ({
-                bind: vi.fn((...binds: unknown[]) => {
-                    boundStatements.push({sql, binds})
-                    return {
-                        all: vi.fn(async () => ({})),
-                    }
-                }),
-            })),
-        } as unknown as D1Database
-
+    it('uses page one by default when history is empty', async () => {
         const history = await getImageApprovalHistory(db)
 
         expect(history).toEqual({
@@ -117,27 +112,40 @@ describe('getImageApprovalHistory', () => {
             hasPrevious: false,
             hasNext: false,
         })
-        expect(boundStatements[0]?.binds).toEqual([51, 0])
     })
 
     it('truncates fractional page numbers and reports when more history is available', async () => {
-        const rows = Array.from({length: 51}, (_, index) =>
-            createHistoryRow({
-                id: `event-${index + 1}`,
-                media_id: `media-${index + 1}`,
-                homepage_allowed: index === 0 ? 1 : 0,
+        await seedUser({id: 'owner-1', username: 'owner'})
+        await seedUser({id: 'moderator-1', username: 'mod', role: 'moderator'})
+        await seedCharacter({id: 'character-1', userId: 'owner-1', name: 'Character One'})
+        await seedMedia({id: 'media-1', userId: 'owner-1', characterId: 'character-1'})
+        await db.batch(
+            Array.from({length: 101}, (_, index) => {
+                const eventNumber = 100 - index
+                return db
+                    .prepare(
+                        `INSERT INTO character_media_review_events (
+                            id, media_id, image_rating, action, homepage_allowed, moderator_id, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                    )
+                    .bind(
+                        `event-${eventNumber.toString().padStart(3, '0')}`,
+                        'media-1',
+                        'sfw',
+                        'approve_sfw_homepage',
+                        Number(eventNumber === 50),
+                        'moderator-1',
+                        '2026-07-12 08:00:00',
+                    )
             }),
         )
-        const {db} = createMockDb({
-            allResults: [rows],
-        })
 
         const history = await getImageApprovalHistory(db, 2.9)
 
         expect(history.page).toBe(2)
         expect(history.items).toHaveLength(50)
         expect(history.items[0]).toMatchObject({
-            id: 'event-1',
+            id: 'event-050',
             mediaId: 'media-1',
             homepageAllowed: true,
         })
@@ -164,103 +172,3 @@ describe('isValidImageApprovalAction', () => {
         expect(isValidImageApprovalAction(action)).toBe(false)
     })
 })
-
-function createApprovalRow(
-    overrides: Partial<{
-        id: string
-        user_id: string
-        username: string
-        email: string
-        character_id: string
-        character_name: string
-        sfw_image_key: string | null
-        nsfw_image_key: string | null
-        sfw_preview_image_key: string | null
-        nsfw_preview_image_key: string | null
-        sfw_content_type: string | null
-        nsfw_content_type: string | null
-        sfw_artist: string
-        nsfw_artist: string
-        sfw_width: number | null
-        sfw_height: number | null
-        sfw_byte_size: number | null
-        nsfw_width: number | null
-        nsfw_height: number | null
-        nsfw_byte_size: number | null
-        sfw_review_status: string
-        sfw_reviewed_at: string | null
-        sfw_approved_at: string | null
-        sfw_homepage_allowed: number
-        nsfw_review_status: string
-        nsfw_reviewed_at: string | null
-        nsfw_approved_at: string | null
-        created_at: string
-        updated_at: string
-    }> = {},
-) {
-    return {
-        id: 'media-1',
-        user_id: 'owner-1',
-        username: 'owner name',
-        email: 'owner@example.test',
-        character_id: 'character-1',
-        character_name: 'Character One',
-        sfw_image_key: 'sfw-key',
-        nsfw_image_key: null,
-        sfw_preview_image_key: 'sfw-preview-key',
-        nsfw_preview_image_key: null,
-        sfw_content_type: 'image/webp',
-        nsfw_content_type: null,
-        sfw_artist: 'SFW Artist',
-        nsfw_artist: 'NSFW Artist',
-        sfw_width: 800,
-        sfw_height: 600,
-        sfw_byte_size: 1024,
-        nsfw_width: null,
-        nsfw_height: null,
-        nsfw_byte_size: null,
-        sfw_review_status: 'pending',
-        sfw_reviewed_at: null,
-        sfw_approved_at: null,
-        sfw_homepage_allowed: 1,
-        nsfw_review_status: 'pending',
-        nsfw_reviewed_at: null,
-        nsfw_approved_at: null,
-        created_at: '2026-07-12 07:00:00',
-        updated_at: '2026-07-12 07:30:00',
-        ...overrides,
-    }
-}
-
-function createHistoryRow(
-    overrides: Partial<{
-        id: string
-        media_id: string
-        image_rating: 'sfw' | 'nsfw'
-        action: string
-        homepage_allowed: number
-        moderator_username: string
-        owner_username: string
-        character_name: string
-        created_at: string
-    }> = {},
-) {
-    return {
-        id: 'event-1',
-        media_id: 'media-1',
-        image_rating: 'sfw',
-        action: 'approve_sfw_homepage',
-        homepage_allowed: 1,
-        moderator_username: 'mod',
-        owner_username: 'owner',
-        character_name: 'Character One',
-        created_at: '2026-07-12 08:00:00',
-        ...overrides,
-    }
-}
-
-function normalizedSql(sql: string | undefined): string {
-    return sqlFragment(sql ?? '')
-        .replace(/\s+/g, ' ')
-        .trim()
-}

@@ -8,6 +8,7 @@ import {dirname, resolve} from 'node:path'
 import {stdin as input, stdout as output} from 'node:process'
 import readline from 'node:readline/promises'
 import {fileURLToPath} from 'node:url'
+import {executeD1ImportStatements, insertTableName, readR2CloneProgress} from './clone-prod-to-dev-helpers.mjs'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const tmpDir = resolve(rootDir, '.tmp')
@@ -239,48 +240,6 @@ async function importLocalD1(importFile) {
     }
 }
 
-function executeD1ImportStatements(db, statements) {
-    const insertCounts = new Map()
-    let createdTables = 0
-    let createdIndexes = 0
-    let insertedRows = 0
-
-    for (let index = 0; index < statements.length; index += 1) {
-        const statement = statements[index]
-
-        try {
-            db.exec(statement)
-        } catch (error) {
-            const preview = statement.split('\n')[0]?.slice(0, 200) ?? ''
-            throw new Error(
-                `D1 import failed at statement ${index + 1}/${statements.length}: ${preview}\n${error instanceof Error ? error.message : String(error)}`,
-            )
-        }
-
-        const tableName = createTableName(statement)
-        const indexName = createIndexName(statement)
-        const insertTable = insertTableName(statement)
-
-        if (tableName) {
-            createdTables += 1
-            console.log(`D1 import: created table ${tableName} (${createdTables})`)
-        } else if (insertTable) {
-            insertedRows += 1
-            const tableCount = (insertCounts.get(insertTable) ?? 0) + 1
-            insertCounts.set(insertTable, tableCount)
-
-            if (tableCount === 1 || tableCount % 500 === 0) {
-                console.log(`D1 import: inserted ${tableCount} row(s) into ${insertTable} (${insertedRows} total)`)
-            }
-        } else if (indexName) {
-            createdIndexes += 1
-            console.log(`D1 import: created index ${indexName} (${createdIndexes})`)
-        }
-    }
-
-    console.log(`D1 import complete: ${createdTables} table(s), ${insertedRows} row insert(s), ${createdIndexes} index(es).`)
-}
-
 async function findLocalD1DatabaseFile() {
     const entries = await readdir(localD1StateDir, {withFileTypes: true})
     const databaseFiles = entries
@@ -370,21 +329,6 @@ function orderInsertStatements(statements) {
         ...[...insertsByTable.entries()].filter(([tableName]) => !importTableOrder.includes(tableName)).flatMap(([, inserts]) => inserts),
         ...unordered,
     ]
-}
-
-function insertTableName(statement) {
-    const match = statement.trimStart().match(/^INSERT INTO\s+(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))/i)
-    return match?.[1] ?? match?.[2] ?? null
-}
-
-function createTableName(statement) {
-    const match = statement.trimStart().match(/^CREATE TABLE(?: IF NOT EXISTS)?\s+(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))/i)
-    return match?.[1] ?? match?.[2] ?? null
-}
-
-function createIndexName(statement) {
-    const match = statement.trimStart().match(/^CREATE (?:UNIQUE )?INDEX(?: IF NOT EXISTS)?\s+(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))/i)
-    return match?.[1] ?? match?.[2] ?? null
 }
 
 function isManagedSqliteStatement(line) {
@@ -760,82 +704,6 @@ async function cloneR2WithWorker() {
         }
     } finally {
         await stopR2CloneWorker(dev)
-    }
-}
-
-async function readR2CloneProgress(response) {
-    if (!response.body) {
-        return await response.json()
-    }
-
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let summary = null
-
-    while (true) {
-        const {done, value} = await reader.read()
-
-        if (done) {
-            break
-        }
-
-        buffer += decoder.decode(value, {stream: true})
-        const events = buffer.split('\n\n')
-        buffer = events.pop() ?? ''
-
-        for (const eventText of events) {
-            const event = parseServerSentEvent(eventText)
-
-            if (!event) {
-                continue
-            }
-
-            if (event.name === 'progress') {
-                console.log(event.data.message)
-            } else if (event.name === 'summary') {
-                summary = event.data
-            } else if (event.name === 'error') {
-                throw new Error(event.data.error)
-            }
-        }
-    }
-
-    if (buffer.trim()) {
-        const event = parseServerSentEvent(buffer)
-        if (event?.name === 'summary') {
-            summary = event.data
-        } else if (event?.name === 'error') {
-            throw new Error(event.data.error)
-        }
-    }
-
-    if (!summary) {
-        throw new Error('R2 clone worker did not return a summary.')
-    }
-
-    return summary
-}
-
-function parseServerSentEvent(eventText) {
-    let name = 'message'
-    const dataLines = []
-
-    for (const line of eventText.split('\n')) {
-        if (line.startsWith('event:')) {
-            name = line.slice('event:'.length).trim()
-        } else if (line.startsWith('data:')) {
-            dataLines.push(line.slice('data:'.length).trimStart())
-        }
-    }
-
-    if (dataLines.length === 0) {
-        return null
-    }
-
-    return {
-        name,
-        data: JSON.parse(dataLines.join('\n')),
     }
 }
 

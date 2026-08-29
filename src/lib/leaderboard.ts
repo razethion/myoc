@@ -473,53 +473,43 @@ async function aggregateManagedR2Storage(bucket: R2Bucket): Promise<StorageAggre
     }
 
     for (const prefix of MANAGED_R2_PREFIXES) {
-        let cursor: string | undefined
-
-        do {
-            const listed = await bucket.list({
-                prefix,
-                limit: R2_LIST_LIMIT,
-                cursor,
-            })
-
-            for (const object of listed.objects) {
-                aggregation.scannedObjects += 1
-
-                const parsed = parseManagedR2MediaKey(object.key)
-
-                if (!parsed) {
-                    aggregation.skippedUnknownObjects += 1
-                    continue
-                }
-
-                const bytes = positiveInteger(object.size)
-
-                aggregation.recognizedObjects += 1
-                aggregation.totalManagedBytes += bytes
-
-                switch (parsed.kind) {
-                    case 'userProfile':
-                        addBytes(aggregation.userBytes, parsed.userId, bytes)
-                        break
-                    case 'characterFolderImage':
-                        addBytes(aggregation.userBytes, parsed.userId, bytes)
-                        break
-                    case 'characterProfile':
-                    case 'characterMedia':
-                    case 'characterMediaPreview':
-                    case 'characterMediaNsfwBlur':
-                    case 'characterHeightChart':
-                        addBytes(aggregation.userBytes, parsed.userId, bytes)
-                        addBytes(aggregation.characterBytes, parsed.characterId, bytes)
-                        break
-                }
-            }
-
-            cursor = listed.truncated ? listed.cursor : undefined
-        } while (cursor)
+        await aggregateR2Prefix(bucket, prefix, aggregation)
     }
 
     return aggregation
+}
+
+async function aggregateR2Prefix(bucket: R2Bucket, prefix: string, aggregation: StorageAggregation): Promise<void> {
+    let cursor: string | undefined
+
+    do {
+        const listed = await bucket.list({prefix, limit: R2_LIST_LIMIT, cursor})
+
+        for (const object of listed.objects) {
+            addR2ObjectToAggregation(object, aggregation)
+        }
+
+        cursor = listed.truncated ? listed.cursor : undefined
+    } while (cursor)
+}
+
+function addR2ObjectToAggregation(object: R2Object, aggregation: StorageAggregation): void {
+    aggregation.scannedObjects += 1
+    const parsed = parseManagedR2MediaKey(object.key)
+
+    if (!parsed) {
+        aggregation.skippedUnknownObjects += 1
+        return
+    }
+
+    const bytes = positiveInteger(object.size)
+    aggregation.recognizedObjects += 1
+    aggregation.totalManagedBytes += bytes
+    addBytes(aggregation.userBytes, parsed.userId, bytes)
+
+    if ('characterId' in parsed) {
+        addBytes(aggregation.characterBytes, parsed.characterId, bytes)
+    }
 }
 
 function topStorageCandidates(bytesById: Map<string, number>): StorageCandidate[] {

@@ -1,11 +1,12 @@
 import {describe, expect, it} from 'vitest'
-import {createMockDb} from '../../test/mockD1'
+import {seedCharacter, seedUser, useTestDatabase} from '../../test/d1'
 import {createMockR2Bucket} from '../../test/mockR2'
 import {apiRoutes} from '../api'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
+const db = useTestDatabase()
 
-function requestEnv(db: D1Database, mediaBucket = createMockR2Bucket()) {
+function requestEnv(mediaBucket = createMockR2Bucket()) {
     return {
         DB: db,
         MEDIA_BUCKET: mediaBucket,
@@ -19,15 +20,8 @@ function sizeChartJson(options: {key?: string; contentType?: string} = {}) {
 
     return JSON.stringify({
         version: 1,
-        height: {
-            meters: 1.82,
-        },
-        image: {
-            key,
-            contentType,
-            naturalWidth: 320,
-            naturalHeight: 640,
-        },
+        height: {meters: 1.82},
+        image: {key, contentType, naturalWidth: 320, naturalHeight: 640},
         calibration: {
             headYPercent: 4,
             footYPercent: 96,
@@ -39,363 +33,225 @@ function sizeChartJson(options: {key?: string; contentType?: string} = {}) {
 
 describe('GET /api/search', () => {
     it('rejects unsupported search types', async () => {
-        const {db} = createMockDb()
-
-        const response = await apiRoutes.request(
-            'https://example.com/search?type=folders&q=test',
-            {
-                headers: {
-                    accept: 'application/json',
-                },
-            },
-            requestEnv(db),
-        )
+        const response = await requestSearch('/search?type=folders&q=test')
 
         expect(response.status).toBe(400)
-        expect(await response.json()).toEqual({
-            error: 'Search type must be users or characters',
-        })
-        expect(db.prepare).not.toHaveBeenCalled()
+        expect(await response.json()).toEqual({error: 'Search type must be users or characters'})
     })
 
-    it('returns paged user search results', async () => {
-        const {db, boundStatements} = createMockDb({
-            allResults: [
-                [
-                    {
-                        id: 'user-1',
-                        username: 'Alice',
-                        bio: 'Makes tiny dragons',
-                        profile_photo_key: null,
-                        character_count: 2,
-                    },
-                ],
-            ],
-            firstResults: [{count: 1}],
-        })
+    it('returns paged user search results from saved users and characters', async () => {
+        for (const suffix of ['', '2', '3', '4', '5', '6']) {
+            await seedUser({
+                id: `user-${suffix || '1'}`,
+                username: `Alice${suffix}`,
+                bio: suffix ? `Another Alice ${suffix}` : 'Makes tiny dragons',
+            })
+        }
+        await seedCharacter({id: 'alice-character-1', userId: 'user-1', name: 'Tiny Dragon'})
+        await seedCharacter({id: 'alice-character-2', userId: 'user-1', name: 'Large Dragon'})
 
-        const response = await apiRoutes.request(
-            'https://example.com/search?type=users&q=Alice&offset=3',
-            {
-                headers: {
-                    accept: 'application/json',
-                },
-            },
-            requestEnv(db),
-        )
+        const firstResponse = await requestSearch('/search?type=users&q=Alice')
+        const firstBody = (await firstResponse.json()) as {
+            total: number
+            nextOffset: number | null
+            hasMore: boolean
+            items: Array<{id: string}>
+        }
+        expect(firstBody).toMatchObject({total: 6, nextOffset: 4, hasMore: true})
+        expect(firstBody.items.map((item) => item.id)).toEqual(['user-1', 'user-2', 'user-3', 'user-4'])
+
+        const response = await requestSearch('/search?type=users&q=Alice&offset=3')
+        const body = (await response.json()) as {
+            type: string
+            query: string
+            total: number
+            nextOffset: number | null
+            hasMore: boolean
+            items: Array<{id: string; username: string; characterCount: number; profileUrl: string}>
+        }
 
         expect(response.status).toBe(200)
-        expect(boundStatements[0]?.binds.at(-1)).toBe(3)
-        expect(await response.json()).toEqual({
-            type: 'users',
-            query: 'Alice',
-            wasTruncated: false,
-            total: 1,
-            nextOffset: null,
-            hasMore: false,
-            items: [
-                {
-                    id: 'user-1',
-                    username: 'Alice',
-                    bio: 'Makes tiny dragons',
-                    profilePhotoUrl: 'https://ui-avatars.com/api/?name=A&background=ccc&color=000',
-                    profileUrl: '/u/Alice',
-                    characterCount: 2,
-                },
-            ],
-        })
+        expect(body).toMatchObject({type: 'users', query: 'Alice', total: 6, nextOffset: null, hasMore: false})
+        expect(body.items.map((item) => item.id)).toEqual(['user-4', 'user-5', 'user-6'])
+        expect(body.items[0]).toMatchObject({username: 'Alice4', characterCount: 0, profileUrl: '/u/Alice4'})
     })
 
-    it('returns paged character search results', async () => {
+    it('pages character search results in stable order', async () => {
+        await seedUser({id: 'owner-1', username: 'maker'})
+        for (let index = 0; index < 10; index += 1) {
+            await seedCharacter({
+                id: `character-${index}`,
+                userId: 'owner-1',
+                name: `Paged Character ${index.toString().padStart(2, '0')}`,
+            })
+        }
+
+        const firstResponse = await requestSearch('/search?type=characters&q=Paged')
+        const firstBody = (await firstResponse.json()) as {
+            total: number
+            nextOffset: number | null
+            hasMore: boolean
+            items: Array<{id: string}>
+        }
+        expect(firstBody).toMatchObject({total: 10, nextOffset: 8, hasMore: true})
+        expect(firstBody.items.map((item) => item.id)).toEqual(Array.from({length: 8}, (_, index) => `character-${index}`))
+
+        const secondResponse = await requestSearch('/search?type=characters&q=Paged&offset=8')
+        const secondBody = (await secondResponse.json()) as typeof firstBody
+        expect(secondBody).toMatchObject({total: 10, nextOffset: null, hasMore: false})
+        expect(secondBody.items.map((item) => item.id)).toEqual(['character-8', 'character-9'])
+    })
+
+    it('normalizes long character searches before querying D1', async () => {
         const longQuery = 'Razeth '.repeat(20)
-        const {db, boundStatements} = createMockDb({
-            allResults: [
-                [
-                    {
-                        id: 'character-1',
-                        name: 'Razeth',
-                        profile_image_key: 'profile-key',
-                        user_id: 'owner-1',
-                        username: 'Alice',
-                    },
-                ],
-            ],
-            firstResults: [{count: 1}],
-        })
+        const normalizedQuery = longQuery.replace(/\s+/g, ' ').trim().slice(0, 80)
+        await seedUser({id: 'owner-1', username: 'Alice'})
+        await seedCharacter({id: 'character-1', userId: 'owner-1', name: normalizedQuery, profileImageKey: 'profile-key'})
 
-        const response = await apiRoutes.request(
-            `https://example.com/search?type=characters&q=${encodeURIComponent(longQuery)}`,
-            {
-                headers: {
-                    accept: 'application/json',
-                },
-            },
-            requestEnv(db),
-        )
+        const response = await requestSearch(`/search?type=characters&q=${encodeURIComponent(longQuery)}`)
+        const body = (await response.json()) as {
+            query: string
+            wasTruncated: boolean
+            total: number
+            items: Array<{id: string; name: string; ownerUsername: string; profileImageUrl: string}>
+        }
 
         expect(response.status).toBe(200)
-        expect(boundStatements[0]?.binds.at(-2)).toBe(9)
-        expect(await response.json()).toEqual({
-            type: 'characters',
-            query: 'Razeth Razeth Razeth Razeth Razeth Razeth Razeth Razeth Razeth Razeth Razeth Raz',
-            wasTruncated: true,
-            total: 1,
-            nextOffset: null,
-            hasMore: false,
-            items: [
-                {
-                    id: 'character-1',
-                    name: 'Razeth',
-                    ownerId: 'owner-1',
-                    ownerUsername: 'Alice',
-                    profileImageUrl: `${mediaPublicBaseUrl}/characters/owner-1/character-1/profile/profile-key.webp`,
-                    characterUrl: '/u/Alice/Razeth',
-                },
-            ],
-        })
+        expect(body.query).toBe(normalizedQuery)
+        expect(body.wasTruncated).toBe(true)
+        expect(body.total).toBe(1)
+        expect(body.items).toEqual([
+            expect.objectContaining({
+                id: 'character-1',
+                name: normalizedQuery,
+                ownerUsername: 'Alice',
+                profileImageUrl: `${mediaPublicBaseUrl}/characters/owner-1/character-1/profile/profile-key.webp`,
+            }),
+        ])
     })
 })
 
 describe('GET /api/search/size-chart-characters', () => {
-    it('returns an empty result without querying D1 for blank searches', async () => {
-        const {db} = createMockDb()
-
-        const response = await apiRoutes.request(
-            'https://example.com/search/size-chart-characters?q=%20%20',
-            {
-                headers: {
-                    accept: 'application/json',
-                },
-            },
-            requestEnv(db),
-        )
+    it('returns an empty result for blank searches', async () => {
+        const response = await requestSearch('/search/size-chart-characters?q=%20%20')
 
         expect(response.status).toBe(200)
-        expect(await response.json()).toEqual({
-            query: '',
-            wasTruncated: false,
-            items: [],
-        })
-        expect(db.prepare).not.toHaveBeenCalled()
+        expect(await response.json()).toEqual({query: '', wasTruncated: false, items: []})
     })
 
-    it('escapes LIKE terms and prioritizes characters with height chart images', async () => {
-        const {db, boundStatements} = createMockDb({
-            allResults: [
-                [
-                    {
-                        id: 'without-chart',
-                        size_chart_id: '111111111111',
-                        name: 'Alpha Beta',
-                        user_id: 'owner-1',
-                        username: 'maker',
-                        profile_image_key: 'profile-without',
-                        height_chart_json: '',
-                    },
-                    {
-                        id: 'with-chart',
-                        size_chart_id: '222222222222',
-                        name: 'Alpha% Beta_',
-                        user_id: 'owner-2',
-                        username: 'artist',
-                        profile_image_key: 'profile-with',
-                        height_chart_json: sizeChartJson({key: 'chart/key'}),
-                    },
-                    {
-                        id: 'invalid-chart',
-                        size_chart_id: '333333333333',
-                        name: 'Alpha Beta Broken',
-                        user_id: 'owner-3',
-                        username: 'artist',
-                        profile_image_key: 'profile-invalid',
-                        height_chart_json: '{"image":{}}',
-                    },
-                ],
-            ],
+    it('treats LIKE wildcards literally and prioritizes usable height charts', async () => {
+        await seedUser({id: 'owner-1', username: 'maker'})
+        await seedCharacter({
+            id: 'with-chart',
+            userId: 'owner-1',
+            name: 'Alpha_Beta',
+            profileImageKey: 'profile-with',
+            heightChartJson: sizeChartJson({key: 'chart-key'}),
+        })
+        await seedCharacter({
+            id: 'invalid-chart',
+            userId: 'owner-1',
+            name: 'Alpha_Broken',
+            profileImageKey: 'profile-invalid',
+            heightChartJson: '{"image":{}}',
+        })
+        await seedCharacter({
+            id: 'without-chart',
+            userId: 'owner-1',
+            name: 'Alpha_Other',
+            profileImageKey: 'profile-without',
+        })
+        await seedCharacter({
+            id: 'wildcard-decoy',
+            userId: 'owner-1',
+            name: 'AlphaXBeta',
+            profileImageKey: 'profile-decoy',
         })
 
-        const response = await apiRoutes.request(
-            'https://example.com/search/size-chart-characters?q=Alpha%25%20Beta_',
-            {
-                headers: {
-                    accept: 'application/json',
-                },
-            },
-            requestEnv(db),
-        )
-
-        expect(response.status).toBe(200)
-        expect(boundStatements[0]?.sql).toContain("LIKE ? ESCAPE '\\'")
-        expect(boundStatements[0]?.binds.slice(0, 4)).toEqual(['%alpha\\%%', '%alpha\\%%', '%beta\\_%', '%beta\\_%'])
-
+        const response = await requestSearch('/search/size-chart-characters?q=Alpha_')
         const body = (await response.json()) as {
-            items: {
+            items: Array<{
                 id: string
                 hasSizeChart: boolean
-                heightChart: null | {
-                    image: {
-                        url: string
-                    }
-                }
-            }[]
+                heightChart: null | {image: {url: string}}
+            }>
         }
-
-        expect(body.items.map((item) => item.id)).toEqual(['with-chart', 'without-chart', 'invalid-chart'])
-        expect(body.items[0]?.hasSizeChart).toBe(true)
-        expect(body.items[0]?.heightChart?.image.url).toBe(`${mediaPublicBaseUrl}/characters/owner-2/with-chart/height-chart/chart/key.png`)
-        expect(body.items[1]?.heightChart).toBeNull()
-        expect(body.items[2]?.heightChart).toBeNull()
-    })
-
-    it('uses default chart image metadata and ignores malformed chart JSON', async () => {
-        const {db} = createMockDb({
-            allResults: [
-                [
-                    {
-                        id: 'default-content-type',
-                        size_chart_id: '111111111111',
-                        name: 'Default Chart',
-                        user_id: 'owner-1',
-                        username: 'maker',
-                        profile_image_key: 'profile-default',
-                        height_chart_json: JSON.stringify({
-                            version: 1,
-                            height: {
-                                meters: 1.8,
-                            },
-                            image: {
-                                key: 'default-chart',
-                                naturalWidth: 300,
-                                naturalHeight: 600,
-                            },
-                            calibration: {
-                                headYPercent: 5,
-                                footYPercent: 95,
-                                footIsVirtual: false,
-                            },
-                        }),
-                    },
-                    {
-                        id: 'scalar-chart',
-                        size_chart_id: '222222222222',
-                        name: 'Scalar Chart',
-                        user_id: 'owner-2',
-                        username: 'maker',
-                        profile_image_key: 'profile-scalar',
-                        height_chart_json: 'null',
-                    },
-                    {
-                        id: 'malformed-chart',
-                        size_chart_id: '333333333333',
-                        name: 'Malformed Chart',
-                        user_id: 'owner-3',
-                        username: 'maker',
-                        profile_image_key: 'profile-malformed',
-                        height_chart_json: '{bad json',
-                    },
-                ],
-            ],
-        })
-
-        const response = await apiRoutes.request(
-            'https://example.com/search/size-chart-characters?q=Chart',
-            {
-                headers: {
-                    accept: 'application/json',
-                },
-            },
-            requestEnv(db),
-        )
 
         expect(response.status).toBe(200)
-
-        const body = (await response.json()) as {
-            items: {
-                id: string
-                heightChart: null | {
-                    image: {
-                        contentType: string
-                    }
-                    calibration: {
-                        nameTagXPercent: number
-                    }
-                }
-            }[]
-        }
-
-        expect(body.items[0]?.id).toBe('default-content-type')
-        expect(body.items[0]?.heightChart?.image.contentType).toBe('image/png')
-        expect(body.items[0]?.heightChart?.calibration.nameTagXPercent).toBe(50)
+        expect(body.items.map((item) => item.id)).toEqual(['with-chart', 'invalid-chart', 'without-chart'])
+        expect(body.items[0]?.hasSizeChart).toBe(true)
+        expect(body.items[0]?.heightChart?.image.url).toBe(`${mediaPublicBaseUrl}/characters/owner-1/with-chart/height-chart/chart-key.png`)
         expect(body.items[1]?.heightChart).toBeNull()
         expect(body.items[2]?.heightChart).toBeNull()
+
+        const percentResponse = await requestSearch('/search/size-chart-characters?q=%25')
+        const percentBody = (await percentResponse.json()) as {items: unknown[]}
+        expect(percentBody.items).toEqual([])
+    })
+
+    it('uses chart defaults and ignores malformed stored chart data', async () => {
+        await seedUser({id: 'owner-1', username: 'maker'})
+        await seedCharacter({
+            id: 'default-content-type',
+            userId: 'owner-1',
+            name: 'Default Chart',
+            profileImageKey: 'profile-default',
+            heightChartJson: JSON.stringify({
+                version: 1,
+                height: {meters: 1.8},
+                image: {key: 'default-chart', naturalWidth: 300, naturalHeight: 600},
+                calibration: {headYPercent: 5, footYPercent: 95, footIsVirtual: false},
+            }),
+        })
+        await seedCharacter({
+            id: 'scalar-chart',
+            userId: 'owner-1',
+            name: 'Scalar Chart',
+            profileImageKey: 'profile-scalar',
+            heightChartJson: 'null',
+        })
+        await seedCharacter({
+            id: 'malformed-chart',
+            userId: 'owner-1',
+            name: 'Malformed Chart',
+            profileImageKey: 'profile-malformed',
+            heightChartJson: '{bad json',
+        })
+
+        const response = await requestSearch('/search/size-chart-characters?q=Chart')
+        const body = (await response.json()) as {
+            items: Array<{
+                id: string
+                heightChart: null | {image: {contentType: string}; calibration: {nameTagXPercent: number}}
+            }>
+        }
+
+        expect(response.status).toBe(200)
+        const defaultChart = body.items.find((item) => item.id === 'default-content-type')
+        expect(defaultChart?.heightChart?.image.contentType).toBe('image/png')
+        expect(defaultChart?.heightChart?.calibration.nameTagXPercent).toBe(50)
+        expect(body.items.find((item) => item.id === 'scalar-chart')?.heightChart).toBeNull()
+        expect(body.items.find((item) => item.id === 'malformed-chart')?.heightChart).toBeNull()
     })
 })
 
 describe('GET /api/search/size-chart-characters/by-id', () => {
     it('returns no items when every supplied ID is blank or invalid', async () => {
-        const {db} = createMockDb()
-
-        const response = await apiRoutes.request(
-            `https://example.com/search/size-chart-characters/by-id?ids=,%20,${'x'.repeat(65)}`,
-            {
-                headers: {
-                    accept: 'application/json',
-                },
-            },
-            requestEnv(db),
-        )
+        const response = await requestSearch(`/search/size-chart-characters/by-id?ids=,%20,${'x'.repeat(65)}`)
 
         expect(response.status).toBe(200)
-        expect(await response.json()).toEqual({
-            items: [],
-        })
-        expect(db.prepare).not.toHaveBeenCalled()
+        expect(await response.json()).toEqual({items: []})
     })
 
     it('resolves legacy character IDs', async () => {
-        const {db, boundStatements} = createMockDb({
-            allResults: [
-                [
-                    {
-                        id: 'legacy-character-id',
-                        size_chart_id: 'abcdef123456',
-                        name: 'Vyn',
-                        user_id: 'owner-id',
-                        username: 'owner',
-                        profile_image_key: 'profile-key',
-                        height_chart_json: sizeChartJson(),
-                    },
-                ],
-            ],
-        })
+        await seedPackedCharacter('legacy-character-id', 'abcdef123456')
 
-        const response = await apiRoutes.request(
-            'https://example.com/search/size-chart-characters/by-id?ids=legacy-character-id',
-            {
-                headers: {
-                    accept: 'application/json',
-                },
-            },
-            requestEnv(db),
-        )
-
-        expect(response.status).toBe(200)
-        expect(boundStatements[0]?.sql).toContain('characters.id IN (?)')
-        expect(boundStatements[0]?.sql).not.toContain('lower(hex(characters.size_chart_id)) IN')
-        expect(boundStatements[0]?.binds).toEqual(['legacy-character-id'])
-
+        const response = await requestSearch('/search/size-chart-characters/by-id?ids=legacy-character-id')
         const body = (await response.json()) as {
-            items: {
-                id: string
-                sizeChartId: string
-                heightChart: {
-                    image: {
-                        url: string
-                    }
-                }
-            }[]
+            items: Array<{id: string; sizeChartId: string; heightChart: {image: {url: string}}}>
         }
 
+        expect(response.status).toBe(200)
         expect(body.items).toHaveLength(1)
         expect(body.items[0]?.id).toBe('legacy-character-id')
         expect(body.items[0]?.sizeChartId).toBe('abcdef123456')
@@ -404,101 +260,80 @@ describe('GET /api/search/size-chart-characters/by-id', () => {
         )
     })
 
-    it('resolves legacy character IDs and packed size chart IDs', async () => {
-        const {db, boundStatements} = createMockDb({
-            allResults: [
-                [
-                    {
-                        id: 'legacy-character-id',
-                        size_chart_id: 'abcdef123456',
-                        name: 'Vyn',
-                        user_id: 'owner-id',
-                        username: 'owner',
-                        profile_image_key: 'profile-key',
-                        height_chart_json: sizeChartJson(),
-                    },
-                ],
-            ],
-        })
+    it('resolves both a legacy character ID and its packed size chart ID', async () => {
+        await seedPackedCharacter('legacy-character-id', 'abcdef123456')
 
-        const response = await apiRoutes.request(
-            'https://example.com/search/size-chart-characters/by-id?ids=abcdef123456,legacy-character-id',
-            {
-                headers: {
-                    accept: 'application/json',
-                },
-            },
-            requestEnv(db),
-        )
+        const response = await requestSearch('/search/size-chart-characters/by-id?ids=abcdef123456,legacy-character-id')
+        const body = (await response.json()) as {items: Array<{id: string; sizeChartId: string}>}
 
         expect(response.status).toBe(200)
-        expect(boundStatements[0]?.sql).toContain('characters.size_chart_id')
-        expect(boundStatements[0]?.sql).toContain('lower(hex(characters.size_chart_id))')
-        expect(boundStatements[0]?.binds).toEqual(['abcdef123456', 'legacy-character-id', 'abcdef123456'])
-
-        const body = (await response.json()) as {
-            items: {
-                id: string
-                sizeChartId: string
-                heightChart: {
-                    image: {
-                        url: string
-                    }
-                }
-            }[]
-        }
-
-        expect(body.items).toHaveLength(2)
-        expect(body.items[0]?.id).toBe('legacy-character-id')
-        expect(body.items[0]?.sizeChartId).toBe('abcdef123456')
-        expect(body.items[0]?.heightChart.image.url).toBe(
-            `${mediaPublicBaseUrl}/characters/owner-id/legacy-character-id/height-chart/height-chart-image.png`,
-        )
-        expect(body.items[1]?.id).toBe('legacy-character-id')
+        expect(body.items).toEqual([
+            expect.objectContaining({id: 'legacy-character-id', sizeChartId: 'abcdef123456'}),
+            expect.objectContaining({id: 'legacy-character-id', sizeChartId: 'abcdef123456'}),
+        ])
     })
 
-    it('normalizes duplicate packed size chart IDs before querying', async () => {
-        const {db, boundStatements} = createMockDb({
-            allResults: [[]],
-        })
+    it('normalizes duplicate packed size chart IDs', async () => {
+        await seedPackedCharacter('packed-character', 'abcdef123456')
 
-        const response = await apiRoutes.request(
-            'https://example.com/search/size-chart-characters/by-id?ids=ABCDEF123456,abcdef123456,legacy-id',
-            {
-                headers: {
-                    accept: 'application/json',
-                },
-            },
-            requestEnv(db),
-        )
+        const response = await requestSearch('/search/size-chart-characters/by-id?ids=ABCDEF123456,abcdef123456')
+        const body = (await response.json()) as {items: Array<{id: string}>}
 
         expect(response.status).toBe(200)
-        expect(boundStatements[0]?.binds).toEqual(['abcdef123456', 'legacy-id', 'abcdef123456'])
-        expect(await response.json()).toEqual({
-            items: [],
-        })
+        expect(body.items.map((item) => item.id)).toEqual(['packed-character'])
     })
 
     it('limits ID lookups to the first 99 normalized IDs', async () => {
         const ids = Array.from({length: 100}, (_, index) => `character-${index}`)
-        const {db, boundStatements} = createMockDb({
-            allResults: [[]],
-        })
+        await seedUser({id: 'owner-id', username: 'owner'})
+        await seedCharacter({id: 'character-99', userId: 'owner-id', name: 'Excluded Character'})
 
-        const response = await apiRoutes.request(
-            `https://example.com/search/size-chart-characters/by-id?ids=${ids.join(',')}`,
-            {
-                headers: {
-                    accept: 'application/json',
-                },
-            },
-            requestEnv(db),
-        )
+        const response = await requestSearch(`/search/size-chart-characters/by-id?ids=${ids.join(',')}`)
 
         expect(response.status).toBe(200)
-        expect(boundStatements[0]?.binds).toEqual(ids.slice(0, 99))
-        expect(await response.json()).toEqual({
-            items: [],
-        })
+        expect(await response.json()).toEqual({items: []})
+    })
+
+    it('handles 99 packed IDs without exceeding the D1 parameter limit', async () => {
+        const ids = Array.from({length: 99}, (_, index) => (index + 1).toString(16).padStart(12, '0'))
+        const lastId = ids.at(-1)
+        if (!lastId) {
+            throw new Error('Packed ID fixture is empty')
+        }
+        await seedPackedCharacter('last-packed-character', lastId)
+
+        const response = await requestSearch(`/search/size-chart-characters/by-id?ids=${ids.join(',')}`)
+        const body = (await response.json()) as {items: Array<{id: string; sizeChartId: string}>}
+
+        expect(response.status).toBe(200)
+        expect(body.items).toEqual([expect.objectContaining({id: 'last-packed-character', sizeChartId: lastId})])
     })
 })
+
+async function requestSearch(path: string): Promise<Response> {
+    return await apiRoutes.request(`https://example.com${path}`, {headers: {accept: 'application/json'}}, requestEnv())
+}
+
+async function seedPackedCharacter(characterId: string, sizeChartId: string): Promise<void> {
+    await seedUser({id: 'owner-id', username: 'owner'})
+    await seedCharacter({
+        id: characterId,
+        userId: 'owner-id',
+        name: 'Vyn',
+        profileImageKey: 'profile-key',
+        sizeChartId: hexBytes(sizeChartId),
+        heightChartJson: sizeChartJson(),
+    })
+}
+
+function hexBytes(value: string): Uint8Array {
+    if (!/^[0-9a-f]{12}$/i.test(value)) {
+        throw new Error(`Invalid packed size chart ID fixture: ${value}`)
+    }
+
+    const bytes = new Uint8Array(6)
+    for (let index = 0; index < bytes.length; index += 1) {
+        bytes[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16)
+    }
+    return bytes
+}
