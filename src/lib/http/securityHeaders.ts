@@ -27,10 +27,11 @@ export function securityHeaders(c: Context<{Bindings: Bindings}>, next: Next): P
     return applySecurityHeaders(c, next)
 }
 
-function createHtmlContentSecurityPolicy(nonce: string, mediaPublicBaseUrl: string): string {
+function createHtmlContentSecurityPolicy(nonce: string, mediaPublicBaseUrl: string, requestUrl: string): string {
     // CropperJS and the chart editors generate inline style attributes and runtime style elements.
     const mediaSource = cspSourceOrigin(mediaPublicBaseUrl)
-    const imageSources = ["'self'", 'data:', 'blob:', mediaSource, ...TOYHOUSE_IMAGE_SOURCES].filter(Boolean)
+    const toyhouseImageSources = isToyhouseMigrationPage(requestUrl) ? TOYHOUSE_IMAGE_SOURCES : []
+    const imageSources = ["'self'", 'data:', 'blob:', mediaSource, ...toyhouseImageSources].filter(Boolean)
     const mediaSources = ["'self'", mediaSource].filter(Boolean)
 
     return [
@@ -68,7 +69,7 @@ async function applySecurityHeaders(c: Context<{Bindings: Bindings}>, next: Next
     }
 
     const nonce = createCspNonce()
-    headers.set('Content-Security-Policy', createHtmlContentSecurityPolicy(nonce, c.env.MEDIA_PUBLIC_BASE_URL))
+    headers.set('Content-Security-Policy', createHtmlContentSecurityPolicy(nonce, c.env.MEDIA_PUBLIC_BASE_URL, c.req.url))
     headers.delete('Content-Length')
 
     c.res = new HTMLRewriter().on('script', new NonceAttributeHandler(nonce)).transform(copyResponseWithHeaders(c.res, headers))
@@ -111,6 +112,16 @@ function cspSourceOrigin(value: string): string {
         return url.protocol === 'https:' ? url.origin : ''
     } catch {
         return ''
+    }
+}
+
+function isToyhouseMigrationPage(requestUrl: string): boolean {
+    try {
+        const path = new URL(requestUrl).pathname
+
+        return path === '/migrate' || path.startsWith('/migrate/')
+    } catch {
+        return false
     }
 }
 

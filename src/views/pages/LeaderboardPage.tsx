@@ -7,6 +7,7 @@ import type {
     LeaderboardUserDataEntry,
     LeaderboardUserImageEntry,
 } from '../../lib/leaderboard'
+import {fallbackAvatarDataUrl} from '../../lib/media/avatar'
 import {characterProfileImageUrl, profilePhotoUrl} from '../../lib/media/url'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
@@ -226,7 +227,7 @@ function StorageTable({children, emptyLabel}: {children: Child[]; emptyLabel: st
 function UserCell({mediaBaseUrl, user}: {mediaBaseUrl: string; user: {userId: string; username: string; profilePhotoKey: string | null}}) {
     const avatarUrl = user.profilePhotoKey
         ? profilePhotoUrl(mediaBaseUrl, user.userId, user.profilePhotoKey)
-        : fallbackAvatarUrl(user.username)
+        : fallbackAvatarDataUrl(user.username, 'M')
 
     return (
         <a class="flex min-w-48 items-center gap-3" href={`/u/${encodeURIComponent(user.username)}`}>
@@ -277,11 +278,6 @@ function EmptyLeaderboard() {
             <p class="mt-2 text-sm">Run the Leaderboard Refresh admin job or wait for the next daily refresh.</p>
         </section>
     )
-}
-
-function fallbackAvatarUrl(name: string): string {
-    const initial = name.trim().charAt(0).toUpperCase() || 'M'
-    return `https://ui-avatars.com/api/?name=${encodeURIComponent(initial)}&background=ccc&color=000`
 }
 
 function formatGeneratedAt(value: string): string {
