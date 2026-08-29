@@ -75,5 +75,5 @@ async function protectedRequest(request: Request): Promise<Response> {
     const app = new Hono<{Bindings: Bindings}>()
     app.use('*', csrfProtection)
     app.post('/protected', (c) => c.text('ok'))
-    return await app.request(request)
+    return app.request(request)
 }

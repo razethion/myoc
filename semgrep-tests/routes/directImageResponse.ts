@@ -31,7 +31,7 @@ const honoDoubleQuotedTitleCaseHeader = c.body(imageBytes, 200, {"Content-Type":
 // ok: myoc.routes.no-direct-image-response
 const nonImageResponse = new Response(imageBytes, {headers: {'content-type': 'application/octet-stream'}})
 
-export {
+void [
     honoDoubleQuotedLowercaseHeader,
     honoDoubleQuotedTitleCaseHeader,
     honoLowercaseHeader,
@@ -41,4 +41,6 @@ export {
     standardDoubleQuotedTitleCaseHeader,
     standardLowercaseHeader,
     standardTitleCaseHeader,
-}
+]
+
+export {}

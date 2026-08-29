@@ -3,6 +3,7 @@ declare const c: {
     json(...args: unknown[]): Response
 }
 declare const responseSchema: unknown
+
 declare function jsonResponse(...args: unknown[]): Response
 
 const payload = {ok: true}
@@ -28,4 +29,6 @@ const honoBody = c.body(JSON.stringify(payload))
 // ok: myoc.routes.no-direct-json-response
 const schemaCheckedJson = jsonResponse(c, responseSchema, payload)
 
-export {constructedJson, constructedJsonWithInit, honoBody, honoBodyWithStatus, honoJson, schemaCheckedJson, standardJson}
+void [constructedJson, constructedJsonWithInit, honoBody, honoBodyWithStatus, honoJson, schemaCheckedJson, standardJson]
+
+export {}

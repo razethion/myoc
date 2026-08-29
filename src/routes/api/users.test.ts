@@ -83,7 +83,7 @@ async function postRawCurrentUserSettings(
     sessionToken: string,
     contentType?: string,
 ): Promise<Response> {
-    return await settingsPageActionRoutes.request(
+    return settingsPageActionRoutes.request(
         'https://example.com/settings',
         {
             method: 'POST',
@@ -140,7 +140,7 @@ async function postPasskeyPromptResponse(body: unknown, db: D1Database, options:
 }
 
 async function postRawPasskeyPromptResponse(body: BodyInit, db: D1Database, sessionToken: string, contentType?: string): Promise<Response> {
-    return await settingsPageActionRoutes.request(
+    return settingsPageActionRoutes.request(
         'https://example.com/passkey-setup',
         {
             method: 'POST',

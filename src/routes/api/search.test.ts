@@ -329,7 +329,7 @@ describe('GET /api/search/size-chart-characters/by-id', () => {
 })
 
 async function requestSearch(path: string): Promise<Response> {
-    return await apiRoutes.request(`https://example.com${path}`, {headers: {accept: 'application/json'}}, requestEnv())
+    return apiRoutes.request(`https://example.com${path}`, {headers: {accept: 'application/json'}}, requestEnv())
 }
 
 async function seedPackedCharacter(characterId: string, sizeChartId: string): Promise<void> {

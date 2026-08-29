@@ -36,7 +36,9 @@ describe('clone production data helpers', () => {
     })
 
     it('identifies the target of an insert statement', () => {
+        // noinspection SqlResolve,SqlInsertValues
         expect(insertTableName('INSERT INTO users VALUES (1);')).toBe('users')
+        // noinspection SqlResolve
         expect(insertTableName('INSERT INTO "user records" VALUES (1);')).toBe('user records')
         expect(insertTableName('SELECT 1;')).toBeNull()
     })
@@ -61,7 +63,7 @@ describe('clone production data helpers', () => {
         const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
 
         try {
-            await expect(readR2CloneProgress(response)).resolves.toEqual({label: 'café'})
+            expect(await readR2CloneProgress(response)).toEqual({label: 'café'})
             expect(log).toHaveBeenCalledWith('Copying')
         } finally {
             log.mockRestore()
@@ -69,23 +71,34 @@ describe('clone production data helpers', () => {
     })
 
     it('rejects a response without a stream', async () => {
-        await expect(readR2CloneProgress(new Response(null, {status: 204}))).rejects.toThrow(
-            'R2 clone worker did not return a response body',
-        )
+        await expectCloneProgressError(new Response(null, {status: 204}), 'R2 clone worker did not return a response body')
     })
 
     it('reads a summary from a terminated stream event', async () => {
         const response = new Response('event: summary\ndata: {"copied":3}\n\n')
-        await expect(readR2CloneProgress(response)).resolves.toEqual({copied: 3})
+        expect(await readR2CloneProgress(response)).toEqual({copied: 3})
     })
 
     it('reports a streamed clone error', async () => {
         const response = new Response('event: error\ndata: {"error":"copy failed"}')
-        await expect(readR2CloneProgress(response)).rejects.toThrow('copy failed')
+        await expectCloneProgressError(response, 'copy failed')
     })
 
     it('requires a clone summary', async () => {
         const response = new Response('event: message\ndata: {"ok":true}')
-        await expect(readR2CloneProgress(response)).rejects.toThrow('R2 clone worker did not return a summary')
+        await expectCloneProgressError(response, 'R2 clone worker did not return a summary')
     })
 })
+
+async function expectCloneProgressError(response, expectedMessage) {
+    try {
+        await readR2CloneProgress(response)
+    } catch (error) {
+        expect(error).toBeInstanceOf(Error)
+        if (!(error instanceof Error)) throw error
+        expect(error.message).toContain(expectedMessage)
+        return
+    }
+
+    throw new Error(`Expected clone progress to fail with: ${expectedMessage}`)
+}

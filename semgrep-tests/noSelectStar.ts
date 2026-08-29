@@ -7,4 +7,6 @@ const lowercaseWildcardColumns = 'select   * from characters'
 // ok: myoc.sql.no-select-star
 const explicitColumns = 'SELECT id, email FROM users'
 
-export {explicitColumns, lowercaseWildcardColumns, wildcardColumns}
+void [explicitColumns, lowercaseWildcardColumns, wildcardColumns]
+
+export {}

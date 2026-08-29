@@ -12,4 +12,6 @@ const honoProxy = c.body(upstream.body, upstream.status)
 // ok: myoc.routes.no-image-body-proxy
 const textResponse = new Response('Use a public media URL instead.')
 
-export {honoProxy, standardProxy, textResponse}
+void [honoProxy, standardProxy, textResponse]
+
+export {}
