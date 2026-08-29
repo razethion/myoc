@@ -773,9 +773,7 @@ describe('security headers', () => {
         expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'script-src-attr')).toBe("script-src-attr 'none'")
         expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'style-src-elem')).toBe("style-src-elem 'self' 'unsafe-inline'")
         expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'style-src-attr')).toBe("style-src-attr 'unsafe-inline'")
-        expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'img-src')).toBe(
-            "img-src 'self' data: blob: https://m.myoc.art https://file.toyhou.se https://f2.toyhou.se",
-        )
+        expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'img-src')).toBe("img-src 'self' data: blob: https://m.myoc.art")
         expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'media-src')).toBe("media-src 'self' https://m.myoc.art")
         expect(contentSecurityPolicy).not.toContain(' https:;')
         expect(contentSecurityPolicy).toContain('upgrade-insecure-requests')
@@ -783,6 +781,24 @@ describe('security headers', () => {
         expect(executableScriptTags.every((tag) => tag.includes(`nonce="${nonce}"`))).toBe(true)
         expect(structuredDataScriptTags.length).toBeGreaterThan(0)
         expect(structuredDataScriptTags.every((tag) => !tag.includes('nonce='))).toBe(true)
+    })
+
+    it('allows direct Toyhou.se image previews only on migration pages', async () => {
+        const response = await getAppPath(
+            '/migrate',
+            await seedPageDatabase({
+                currentUser: createCurrentUserRecord('demo'),
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+        const contentSecurityPolicy = expectSecurityHeaders(response)
+
+        expect(response.status).toBe(200)
+        expect(getContentSecurityPolicyDirective(contentSecurityPolicy, 'img-src')).toBe(
+            "img-src 'self' data: blob: https://m.myoc.art https://file.toyhou.se https://f2.toyhou.se",
+        )
     })
 
     it('adds a locked-down content security policy to API responses', async () => {
@@ -3841,6 +3857,40 @@ describe('GET /admin', () => {
 })
 
 describe('GET /u/:username', () => {
+    it('keeps a hostile character description inside structured data', async () => {
+        const attack = '</script><script data-json-ld-xss>globalThis.jsonLdXss = true</script>'
+        const response = await getProfilePath(
+            '/u/demo/RAZETH',
+            await seedPageDatabase({
+                profileUser: {
+                    id: 'profile-user',
+                    username: 'demo',
+                    profile_photo_key: null,
+                    bio: '',
+                },
+                characterSettings: {
+                    id: 'character-1',
+                    user_id: 'profile-user',
+                    name: 'RAZETH',
+                    profile_image_key: 'character-profile-key',
+                    description: attack,
+                },
+            }),
+        )
+        const html = await response.text()
+        const scriptTags = html.match(/<script\b[^>]*>/gi) ?? []
+
+        expect(response.status).toBe(200)
+        expect(scriptTags.some((tag) => tag.includes('data-json-ld-xss'))).toBe(false)
+        expect(html).not.toContain('<script data-json-ld-xss>')
+        expect(html).toContain('\\u003c/script\\u003e\\u003cscript data-json-ld-xss\\u003e')
+        expect(html).toContain(
+            '<meta content="https://m.myoc.art/characters/profile-user/character-1/profile/character-profile-key.webp" property="og:image"/>',
+        )
+        expect(html).toContain('<meta content="image/webp" property="og:image:type"/>')
+        expect(html).not.toContain('<meta content="data:image/svg+xml')
+    })
+
     it('renders a public character page with safe gallery media by default', async () => {
         const response = await getProfilePath(
             '/u/demo/RAZETH',
@@ -4544,6 +4594,56 @@ describe('GET /u/:username', () => {
         expect(html).toContain('/u/demo/Main%20Characters')
         expect(html).toContain('/u/demo/RAZETH')
         expect(html).not.toContain('Some text goes here')
+    })
+
+    it('keeps a hostile profile bio inside structured data', async () => {
+        const attack = '</script><script data-json-ld-xss>globalThis.jsonLdXss = true</script>'
+        const response = await getProfile(
+            'demo',
+            await seedPageDatabase({
+                profileUser: {
+                    id: 'profile-user',
+                    username: 'demo',
+                    profile_photo_key: null,
+                    bio: attack,
+                },
+            }),
+        )
+        const html = await response.text()
+        const scriptTags = html.match(/<script\b[^>]*>/gi) ?? []
+
+        expect(response.status).toBe(200)
+        expect(scriptTags.some((tag) => tag.includes('data-json-ld-xss'))).toBe(false)
+        expect(html).not.toContain('<script data-json-ld-xss>')
+        expect(html).toContain('\\u003c/script\\u003e\\u003cscript data-json-ld-xss\\u003e')
+    })
+
+    it('uses a fetchable social image when the profile has no uploaded photo', async () => {
+        const response = await getProfile(
+            'demo',
+            await seedPageDatabase({
+                profileUser: {
+                    id: 'profile-user',
+                    username: 'demo',
+                    profile_photo_key: null,
+                    bio: '',
+                },
+            }),
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('<meta content="https://example.com/assets/myocbanner.webp" property="og:image"/>')
+        expect(html).toContain('<meta content="1200" property="og:image:width"/>')
+        expect(html).toContain('<meta content="630" property="og:image:height"/>')
+        expect(html).toContain('<meta content="image/webp" property="og:image:type"/>')
+        expect(html).toContain('<meta content="summary_large_image" name="twitter:card"/>')
+        expect(html).toContain('<meta content="https://example.com/assets/myocbanner.webp" name="twitter:image"/>')
+        expect(html).toContain('"image":"https://example.com/assets/myocbanner.webp"')
+        expect(html).toContain('"mainEntity":{"@type":"Person","name":"demo","url":"https://example.com/u/demo"}')
+        expect(html).not.toContain('<meta content="data:image/svg+xml')
+        expect(html).not.toContain('"image":"data:image/svg+xml')
+        expect(html).toContain('src="data:image/svg+xml;charset=utf-8,')
     })
 
     it('renders a folder page from folder name path segments', async () => {

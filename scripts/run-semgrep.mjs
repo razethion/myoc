@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const semgrepAutoArgs = ['scan', '--config', 'auto', '.']
+const semgrepTestArgs = ['test', '--config', '.semgrep.yml', 'semgrep-tests/scriptJson.semgrep-test.tsx']
 const semgrepCustomArgs = ['scan', '--config', '.semgrep.yml', '--error', '.']
 
 function hasCommand(command) {
@@ -30,7 +31,8 @@ function run(command, args) {
 
 function runSemgrep(command, commandArgs = []) {
     const autoStatus = run(command, [...commandArgs, ...semgrepAutoArgs])
-    return autoStatus === 0 ? run(command, [...commandArgs, ...semgrepCustomArgs]) : autoStatus
+    const testStatus = autoStatus === 0 ? run(command, [...commandArgs, ...semgrepTestArgs]) : autoStatus
+    return testStatus === 0 ? run(command, [...commandArgs, ...semgrepCustomArgs]) : testStatus
 }
 
 function getPythonUserScript(command) {

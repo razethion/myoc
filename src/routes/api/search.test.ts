@@ -1,4 +1,5 @@
 import {describe, expect, it} from 'vitest'
+import {fallbackAvatarDataUrl} from '../../lib/media/avatar'
 import {seedCharacter, seedUser, useTestDatabase} from '../../test/d1'
 import {createMockR2Bucket} from '../../test/mockR2'
 import {apiRoutes} from '../api'
@@ -67,13 +68,30 @@ describe('GET /api/search', () => {
             total: number
             nextOffset: number | null
             hasMore: boolean
-            items: Array<{id: string; username: string; characterCount: number; profileUrl: string}>
+            items: Array<{
+                id: string
+                username: string
+                characterCount: number
+                profilePhotoUrl: string
+                profileUrl: string
+            }>
         }
 
         expect(response.status).toBe(200)
-        expect(body).toMatchObject({type: 'users', query: 'Alice', total: 6, nextOffset: null, hasMore: false})
+        expect(body).toMatchObject({
+            type: 'users',
+            query: 'Alice',
+            total: 6,
+            nextOffset: null,
+            hasMore: false,
+        })
         expect(body.items.map((item) => item.id)).toEqual(['user-4', 'user-5', 'user-6'])
-        expect(body.items[0]).toMatchObject({username: 'Alice4', characterCount: 0, profileUrl: '/u/Alice4'})
+        expect(body.items[0]).toMatchObject({
+            username: 'Alice4',
+            characterCount: 0,
+            profilePhotoUrl: fallbackAvatarDataUrl('Alice4'),
+            profileUrl: '/u/Alice4',
+        })
     })
 
     it('pages character search results in stable order', async () => {

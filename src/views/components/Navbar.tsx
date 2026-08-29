@@ -1,4 +1,5 @@
 import {type CurrentUser, canModerateImages} from '../../lib/auth/session'
+import {fallbackAvatarDataUrl} from '../../lib/media/avatar'
 import {profilePhotoUrl} from '../../lib/media/url'
 import {APP_VERSION, RELEASE_NOTES} from '../../lib/releases'
 
@@ -13,10 +14,9 @@ const CURRENT_RELEASE = RELEASE_NOTES.find((release) => release.version === APP_
 
 export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarProps) {
     const avatarName = currentUser?.username ?? guestInitial
-    const avatarLetter = avatarName.trim().charAt(0).toUpperCase() || 'R'
     const avatarUrl = currentUser?.profilePhotoKey
         ? profilePhotoUrl(mediaBaseUrl, currentUser.id, currentUser.profilePhotoKey)
-        : `https://ui-avatars.com/api/?name=${encodeURIComponent(avatarLetter)}&background=ccc&color=000`
+        : fallbackAvatarDataUrl(avatarName, 'R')
     const search = (
         <form action="/search" class="w-full" method="get">
             <label class="input input-bordered w-full">

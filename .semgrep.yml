@@ -90,3 +90,25 @@ rules:
       - metavariable-regex:
           metavariable: $CONTENT_TYPE
           regex: (?i)^['"]image/
+
+  - id: myoc.views.require-safe-json-in-json-ld-script
+    message: JSON-LD scripts must use serializeJsonForHtmlScript to escape HTML script-breaking characters.
+    severity: ERROR
+    languages:
+      - typescript
+    paths:
+      include:
+        - /src/views/**/*.tsx
+        - /semgrep-tests/**/*.tsx
+      exclude:
+        - "**/*.test.tsx"
+    patterns:
+      - pattern-either:
+          - pattern: |
+              <$TAG ... dangerouslySetInnerHTML={{__html: $JSON}} ... type="application/ld+json" ... />
+          - pattern: |
+              <$TAG ... dangerouslySetInnerHTML={{__html: $JSON}} ... type="application/ld+json" ...>...</$TAG>
+      - pattern-not: |
+          <$TAG ... dangerouslySetInnerHTML={{__html: serializeJsonForHtmlScript(...)}} ... type="application/ld+json" ... />
+      - pattern-not: |
+          <$TAG ... dangerouslySetInnerHTML={{__html: serializeJsonForHtmlScript(...)}} ... type="application/ld+json" ...>...</$TAG>
