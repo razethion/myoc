@@ -64,22 +64,48 @@ describe('recent feed cleanup', () => {
         ).toBeNull()
     })
 
-    it('keeps the generation row when R2 deletion fails', async () => {
+    it('keeps the root object unreferenced when R2 deletion fails', async () => {
         await seedGenerations(100)
         const oldRoot = 'generations/v1/roots/r-old.json'
         await seedGeneration('r-old', oldRoot, '2026-06-01T00:00:00.000Z')
         const bucket = createMockR2Bucket()
+        await bucket.put(oldRoot, '{}')
         vi.mocked(bucket.delete).mockRejectedValueOnce(new Error('R2 is unavailable'))
 
         await expect(cleanupRecentFeed(enabledEnvironment(bucket), new Date('2026-08-25T12:00:00.000Z'))).rejects.toThrow(
             'R2 is unavailable',
         )
 
+        expect(await bucket.get(oldRoot)).not.toBeNull()
         expect(
             await queryOne<{generation: string}>('SELECT generation FROM recent_feed_generations WHERE generation = ?', ['r-old']),
-        ).toEqual({
-            generation: 'r-old',
-        })
+        ).toBeNull()
+    })
+
+    it('keeps the root object when the generation row cannot be deleted', async () => {
+        await seedGenerations(100)
+        const oldRoot = 'generations/v1/roots/r-old.json'
+        await seedGeneration('r-old', oldRoot, '2026-06-01T00:00:00.000Z')
+        const bucket = createMockR2Bucket()
+        await bucket.put(oldRoot, '{}')
+        await db
+            .prepare(`CREATE TRIGGER fail_recent_feed_generation_delete
+                      BEFORE DELETE ON recent_feed_generations
+                      BEGIN
+                          SELECT RAISE(ABORT, 'generation delete failed');
+                      END`)
+            .run()
+
+        try {
+            await expect(cleanupRecentFeed(enabledEnvironment(bucket), new Date('2026-08-25T12:00:00.000Z'))).rejects.toThrow()
+
+            expect(await bucket.get(oldRoot)).not.toBeNull()
+            expect(
+                await queryOne<{generation: string}>('SELECT generation FROM recent_feed_generations WHERE generation = ?', ['r-old']),
+            ).toEqual({generation: 'r-old'})
+        } finally {
+            await db.prepare('DROP TRIGGER fail_recent_feed_generation_delete').run()
+        }
     })
 
     it('keeps reachable objects and deletes old orphan objects', async () => {
@@ -93,14 +119,17 @@ describe('recent feed cleanup', () => {
 
         const orphanManifest = `generations/v1/manifests/n0-u0/days/2026-06-09/${'e'.repeat(64)}.json`
         const orphanBlock = `generations/v1/blocks/n0-u0/2026-06-09T12/${'f'.repeat(64)}.json`
+        const orphanRoot = 'generations/v1/roots/r-orphan.json'
         await bucket.put(orphanManifest, '{}')
         await bucket.put(orphanBlock, '{}')
+        await bucket.put(orphanRoot, '{}')
 
         const summary = await cleanupRecentFeed(enabledEnvironment(bucket), new Date('2026-06-13T12:00:00.000Z'))
 
-        expect(summary).toEqual({retainedGenerations: 1, deletedGenerations: 0, deletedObjects: 2})
+        expect(summary).toEqual({retainedGenerations: 1, deletedGenerations: 0, deletedObjects: 3})
         expect(await bucket.get(orphanManifest)).toBeNull()
         expect(await bucket.get(orphanBlock)).toBeNull()
+        expect(await bucket.get(orphanRoot)).toBeNull()
         for (const key of reachableKeys) {
             expect(await bucket.get(key)).not.toBeNull()
         }
@@ -208,6 +237,6 @@ function retainedObjectGraph(): {
             [dayKey, day],
             [blockKey, {schemaVersion: 1, variant: 'n0-u0', hour: '2026-06-10T12', items: []}],
         ]),
-        reachableKeys: [yearKey, monthKey, dayKey, blockKey],
+        reachableKeys: [rootKey, yearKey, monthKey, dayKey, blockKey],
     }
 }

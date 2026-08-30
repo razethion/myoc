@@ -84,7 +84,7 @@ const MAXIMUM_REACHABLE_KEYS = 100_000
 const MAXIMUM_LISTED_OBJECTS = 100_000
 const MAXIMUM_MANIFEST_BYTES = 1024 * 1024
 const ORPHAN_GRACE_PERIOD_MS = 48 * 60 * 60 * 1000
-const LIST_PREFIXES = ['generations/v1/manifests/', 'generations/v1/blocks/', 'generations/v1/bootstrap/'] as const
+const LIST_PREFIXES = ['generations/v1/roots/', 'generations/v1/manifests/', 'generations/v1/blocks/', 'generations/v1/bootstrap/'] as const
 
 export async function cleanupRecentFeed(env: RecentFeedCleanupEnv, now = new Date()): Promise<RecentFeedCleanupSummary> {
     const config = getRecentFeedConfig(env)
@@ -136,10 +136,10 @@ export async function cleanupRecentFeed(env: RecentFeedCleanupEnv, now = new Dat
         for (let offset = 0; offset < generations.length; offset += D1_DELETE_BATCH_SIZE) {
             const generationBatch = generations.slice(offset, offset + D1_DELETE_BATCH_SIZE)
             const placeholders = generationBatch.map(() => '?').join(', ')
-            await env.RECENT_FEED_BUCKET.delete(generationBatch.map((generation) => generation.root_key))
             await env.DB.prepare(`DELETE FROM recent_feed_generations WHERE generation IN (${placeholders})`)
                 .bind(...generationBatch.map((generation) => generation.generation))
                 .run()
+            await env.RECENT_FEED_BUCKET.delete(generationBatch.map((generation) => generation.root_key))
         }
 
         const retainedGenerations = await countGenerations(env.DB)
@@ -337,6 +337,7 @@ async function markReachableObjects(bucket: R2Bucket, rootKeys: string[]): Promi
 
 async function markRootObjects(bucket: R2Bucket, rootKeys: string[], state: ReachabilityState): Promise<boolean> {
     for (const rootKey of rootKeys) {
+        if (!markKey(state.graph, rootKey)) return false
         const root = await readJson(bucket, rootKey, RecentFeedRootSchema)
         if (!root || !markRootReferences(root, state.years, state.referenceSignatures, state.graph)) return false
     }
