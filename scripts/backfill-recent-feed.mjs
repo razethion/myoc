@@ -22,9 +22,12 @@ const stateSql = `SELECT requested_revision AS requestedRevision,
                          last_error AS lastError
                   FROM recent_feed_state
                   WHERE singleton = 1;`
-const resetStateSql = `DELETE FROM recent_feed_dirty_hours;
-                       DELETE FROM recent_feed_generations;
-                       DELETE FROM recent_feed_revocations;
+const resetStateSql = `DELETE FROM recent_feed_dirty_hours
+                       WHERE rowid IN (SELECT rowid FROM recent_feed_dirty_hours);
+                       DELETE FROM recent_feed_generations
+                       WHERE rowid IN (SELECT rowid FROM recent_feed_generations);
+                       DELETE FROM recent_feed_revocations
+                       WHERE rowid IN (SELECT rowid FROM recent_feed_revocations);
                        UPDATE recent_feed_state
                        SET requested_revision = 1,
                            published_revision = 0,
@@ -62,6 +65,7 @@ let worker = null
 let temporaryConfigDir = null
 let temporaryConfigPath = null
 let expectedMediaOrigin = null
+let selectedBucketName = null
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
     process.once(signal, () => {
@@ -72,23 +76,32 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 
 function parseOptions(args) {
     const flags = new Set(args)
-    const valueOptions = ['--database=', '--delay-ms=', '--max-runs=', '--port=']
+    const valueOptions = ['--confirm-production=', '--database=', '--delay-ms=', '--max-runs=', '--port=']
     const unknown = args.find(
-        (argument) => !['--help', '-h', '--local'].includes(argument) && !valueOptions.some((prefix) => argument.startsWith(prefix)),
+        (argument) =>
+            !['--help', '-h', '--local', '--production'].includes(argument) && !valueOptions.some((prefix) => argument.startsWith(prefix)),
     )
 
     if (unknown) {
         throw new Error(`Unknown option: ${unknown}`)
     }
 
-    return {
+    const parsed = {
+        confirmProduction: optionValue(args, '--confirm-production'),
         database: optionValue(args, '--database') || process.env.RECENT_FEED_DATABASE || 'myoc-db',
         delayMs: positiveInteger(optionValue(args, '--delay-ms') || process.env.RECENT_FEED_BACKFILL_DELAY_MS || '1000', '--delay-ms'),
         help: flags.has('--help') || flags.has('-h'),
         local: flags.has('--local'),
         maxRuns: positiveInteger(optionValue(args, '--max-runs') || process.env.RECENT_FEED_BACKFILL_MAX_RUNS || '10000', '--max-runs'),
         port: positiveInteger(optionValue(args, '--port') || process.env.RECENT_FEED_BACKFILL_PORT || '8798', '--port'),
+        production: flags.has('--production'),
     }
+
+    if (parsed.local && parsed.production) {
+        throw new Error('--local and --production cannot be used together.')
+    }
+
+    return parsed
 }
 
 function optionValue(args, name) {
@@ -113,14 +126,22 @@ function printHelp() {
 Usage:
   npm run recent-feed:backfill
   npm run recent-feed:backfill -- --local
+  npm run recent-feed:backfill -- --production --confirm-production=DATABASE:BUCKET
 
 The default mode reads local D1 and uses the development bindings in wrangler.jsonc. In the
 current config, this writes generated objects to the preview recent-feed R2 bucket. The script
 creates a restricted temporary config and cannot use the production D1 database or production
 recent-feed bucket.
 
+Production mode uses the production D1 database and recent-feed bucket. It never resets feed
+state. It requires an exact --confirm-production value based on the configured database and
+bucket names.
+
 Options:
   --local               Disable remote bindings and use local D1 and R2 data.
+  --production          Use remote production D1 and R2 bindings. Never reset production state.
+  --confirm-production=DATABASE:BUCKET
+                        Confirm the exact production resources used by --production.
   --database=NAME       D1 database name. Default: myoc-db.
   --port=NUMBER         Local Wrangler port. Default: 8798.
   --max-runs=NUMBER     Stop after this many cron runs. Default: 10000.
@@ -168,6 +189,43 @@ function httpsOrigin(value, name) {
     return url.origin
 }
 
+function productionBackfillTarget(config, database, recentFeedBucket) {
+    const confirmation = `${database.database_name}:${recentFeedBucket.bucket_name}`
+    if (options.confirmProduction !== confirmation) {
+        throw new Error(`Production backfill requires --confirm-production=${confirmation}.`)
+    }
+    if (options.database !== database.database_name) {
+        throw new Error(`Production backfill must use the configured database ${database.database_name}.`)
+    }
+    if (!config.vars?.MEDIA_PUBLIC_BASE_URL) {
+        throw new Error('wrangler.jsonc must define MEDIA_PUBLIC_BASE_URL for the production backfill.')
+    }
+
+    return {
+        bucketName: recentFeedBucket.bucket_name,
+        mediaBaseUrl: config.vars.MEDIA_PUBLIC_BASE_URL,
+        mediaBaseUrlName: 'wrangler.jsonc MEDIA_PUBLIC_BASE_URL',
+    }
+}
+
+function developmentBackfillTarget(developmentMediaBaseUrl, recentFeedBucket) {
+    if (!recentFeedBucket.preview_bucket_name) {
+        throw new Error('wrangler.jsonc must define RECENT_FEED_BUCKET.preview_bucket_name for the dev backfill.')
+    }
+    if (recentFeedBucket.preview_bucket_name === recentFeedBucket.bucket_name) {
+        throw new Error('The recent-feed preview and production R2 bucket names must be different.')
+    }
+    if (!developmentMediaBaseUrl) {
+        throw new Error('.dev.vars must define MEDIA_PUBLIC_BASE_URL for the dev backfill.')
+    }
+
+    return {
+        bucketName: recentFeedBucket.preview_bucket_name,
+        mediaBaseUrl: developmentMediaBaseUrl,
+        mediaBaseUrlName: '.dev.vars MEDIA_PUBLIC_BASE_URL',
+    }
+}
+
 async function createRestrictedConfig() {
     let config
     try {
@@ -181,33 +239,31 @@ async function createRestrictedConfig() {
     const devVars = existsSync(devVarsPath) ? await readFile(devVarsPath, 'utf8') : ''
     const developmentMediaBaseUrl = readDevVar(devVars, 'MEDIA_PUBLIC_BASE_URL')
 
-    if (!database) throw new Error('wrangler.jsonc does not define the local DB binding.')
-    if (!recentFeedBucket?.preview_bucket_name) {
-        throw new Error('wrangler.jsonc must define RECENT_FEED_BUCKET.preview_bucket_name for the dev backfill.')
-    }
-    if (recentFeedBucket.preview_bucket_name === recentFeedBucket.bucket_name) {
-        throw new Error('The recent-feed preview and production R2 bucket names must be different.')
-    }
-    if (!developmentMediaBaseUrl) {
-        throw new Error('.dev.vars must define MEDIA_PUBLIC_BASE_URL for the dev backfill.')
-    }
-    expectedMediaOrigin = httpsOrigin(developmentMediaBaseUrl, '.dev.vars MEDIA_PUBLIC_BASE_URL')
+    if (!database) throw new Error('wrangler.jsonc does not define the D1 binding.')
+    if (!recentFeedBucket?.bucket_name) throw new Error('wrangler.jsonc does not define the production recent-feed bucket.')
+
+    const target = options.production
+        ? productionBackfillTarget(config, database, recentFeedBucket)
+        : developmentBackfillTarget(developmentMediaBaseUrl, recentFeedBucket)
+    expectedMediaOrigin = httpsOrigin(target.mediaBaseUrl, target.mediaBaseUrlName)
+    selectedBucketName = target.bucketName
 
     temporaryConfigDir = await mkdtemp(join(tmpdir(), 'myoc-recent-feed-backfill-'))
     temporaryConfigPath = join(temporaryConfigDir, 'wrangler.json')
     const restrictedConfig = {
+        account_id: config.vars?.CLOUDFLARE_ACCOUNT_ID,
         name: `${config.name}-recent-feed-backfill`,
         main: resolve(rootDir, config.main),
         compatibility_date: config.compatibility_date,
         compatibility_flags: config.compatibility_flags,
         dev: {enable_containers: false},
-        vars: {...config.vars, MEDIA_PUBLIC_BASE_URL: developmentMediaBaseUrl},
-        d1_databases: [{...database, remote: false}],
+        vars: {...config.vars, MEDIA_PUBLIC_BASE_URL: target.mediaBaseUrl},
+        d1_databases: [{...database, remote: options.production}],
         r2_buckets: [
             {
                 binding: 'RECENT_FEED_BUCKET',
-                bucket_name: recentFeedBucket.preview_bucket_name,
-                remote: !options.local,
+                bucket_name: selectedBucketName,
+                remote: options.production || !options.local,
             },
         ],
     }
@@ -220,6 +276,7 @@ async function removeRestrictedConfig() {
     temporaryConfigPath = null
     temporaryConfigDir = null
     expectedMediaOrigin = null
+    selectedBucketName = null
 }
 
 function runWrangler(args) {
@@ -255,7 +312,7 @@ function startWorker() {
         'info',
         '--show-interactive-dev-session=false',
     ]
-    if (existsSync(devVarsPath)) args.push('--env-file', devVarsPath)
+    if (!options.production && existsSync(devVarsPath)) args.push('--env-file', devVarsPath)
     if (options.local) args.push('--local')
     const state = {
         child: spawn(process.execPath, wranglerArgs(args), {
@@ -329,9 +386,7 @@ async function readState() {
         'd1',
         'execute',
         options.database,
-        '--local',
-        '--persist-to',
-        persistDir,
+        ...(options.production ? ['--remote'] : ['--local', '--persist-to', persistDir]),
         '--json',
         '--command',
         stateSql,
@@ -352,7 +407,11 @@ async function readState() {
     return row
 }
 
-async function currentFeedIsAvailable() {
+async function currentFeedIsAvailable(state) {
+    if (options.production) {
+        return await productionRootIsAvailable(state)
+    }
+
     const url = new URL('/api/recent-media', `http://127.0.0.1:${options.port}`)
     url.searchParams.set('limit', '1')
     url.searchParams.set('nsfw', 'false')
@@ -379,6 +438,35 @@ async function currentFeedIsAvailable() {
     )
 }
 
+async function productionRootIsAvailable(state) {
+    if (!selectedBucketName || typeof state.rootKey !== 'string' || state.rootKey.length === 0) return false
+
+    let stdout
+    try {
+        const result = await runWrangler(['r2', 'object', 'get', `${selectedBucketName}/${state.rootKey}`, '--remote', '--pipe'])
+        stdout = result.stdout
+    } catch {
+        return false
+    }
+
+    let root
+    try {
+        root = JSON.parse(stdout)
+    } catch {
+        return false
+    }
+
+    return (
+        root?.schemaVersion === 1 &&
+        root?.generation === state.generation &&
+        Number(root?.throughRevision) === Number(state.publishedRevision) &&
+        root?.variants !== null &&
+        typeof root?.variants === 'object' &&
+        root?.initialItems !== null &&
+        typeof root?.initialItems === 'object'
+    )
+}
+
 function mediaUrlHasExpectedOrigin(value) {
     if (typeof value !== 'string' || !expectedMediaOrigin) return false
     try {
@@ -389,6 +477,7 @@ function mediaUrlHasExpectedOrigin(value) {
 }
 
 async function resetLocalFeedState() {
+    if (options.production) throw new Error('Production feed state cannot be reset by the backfill runner.')
     await runWrangler(['d1', 'execute', options.database, '--local', '--persist-to', persistDir, '--command', resetStateSql])
 }
 
@@ -424,44 +513,57 @@ function delay(milliseconds) {
     return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds))
 }
 
+async function existingFeedIsReady() {
+    const initialState = await readState()
+    if (!isComplete(initialState)) return false
+    if (await currentFeedIsAvailable(initialState)) {
+        console.log('Recent-feed backfill is already complete.')
+        return true
+    }
+
+    if (options.production) {
+        throw new Error('Production feed state is complete, but its R2 root is unavailable or invalid. Refusing to reset it.')
+    }
+
+    console.log('The current generation is unavailable or incompatible with the development config. Rebuilding it.')
+    await resetLocalFeedState()
+    return false
+}
+
+async function runBackfillLoop() {
+    for (let run = 1; run <= options.maxRuns; run += 1) {
+        console.log(`[${run}/${options.maxRuns}] Running recent-feed recovery cron...`)
+        await triggerRecoveryCron()
+        const state = await readState()
+        console.log(`[${run}/${options.maxRuns}] ${describeState(state)}`)
+
+        if (state.lastError) {
+            throw new Error(`Recent-feed publication failed: ${state.lastError}`)
+        }
+
+        if (isComplete(state)) {
+            if (!(await currentFeedIsAvailable(state))) {
+                throw new Error('Recent-feed state completed, but its R2 root is unavailable or invalid.')
+            }
+            console.log(`Recent-feed backfill complete after ${run} cron run${run === 1 ? '' : 's'}.`)
+            return
+        }
+
+        await delay(options.delayMs)
+    }
+
+    throw new Error(`Recent-feed backfill did not complete after ${options.maxRuns} cron runs.`)
+}
+
 async function main() {
     try {
         console.log(`Recent-feed backfill runner using ${scheduledEndpoint}.`)
         await createRestrictedConfig()
-        console.log(`Starting ${options.local ? 'all-local' : 'local D1 and dev R2'} recent-feed backfill.`)
+        const target = options.production ? 'production D1 and production R2' : options.local ? 'all-local' : 'local D1 and dev R2'
+        console.log(`Starting ${target} recent-feed backfill.`)
         worker = startWorker()
         await waitForWorker(worker)
-
-        const initialState = await readState()
-        if (isComplete(initialState)) {
-            if (await currentFeedIsAvailable()) {
-                console.log('Recent-feed backfill is already complete.')
-                return
-            }
-
-            console.log('The current generation is unavailable or incompatible with the development config. Rebuilding it.')
-            await resetLocalFeedState()
-        }
-
-        for (let run = 1; run <= options.maxRuns; run += 1) {
-            console.log(`[${run}/${options.maxRuns}] Running recent-feed recovery cron...`)
-            await triggerRecoveryCron()
-            const state = await readState()
-            console.log(`[${run}/${options.maxRuns}] ${describeState(state)}`)
-
-            if (state.lastError) {
-                throw new Error(`Recent-feed publication failed: ${state.lastError}`)
-            }
-
-            if (isComplete(state)) {
-                console.log(`Recent-feed backfill complete after ${run} cron run${run === 1 ? '' : 's'}.`)
-                return
-            }
-
-            await delay(options.delayMs)
-        }
-
-        throw new Error(`Recent-feed backfill did not complete after ${options.maxRuns} cron runs.`)
+        if (!(await existingFeedIsReady())) await runBackfillLoop()
     } finally {
         await stopWorker(worker)
         worker = null
