@@ -11,6 +11,7 @@ describe('csrfProtection', () => {
         {name: 'a cross-site fetch', headers: {origin: 'https://evil.example', 'sec-fetch-site': 'cross-site'}},
         {name: 'a same-site sibling origin', headers: {origin: 'https://sibling.example.test', 'sec-fetch-site': 'same-site'}},
         {name: 'a null origin', headers: {origin: 'null'}},
+        {name: 'a malformed Referer', headers: {referer: 'not a URL'}},
         {name: 'missing source headers', headers: {}},
     ] as Array<{name: string; headers: Record<string, string>}>)('rejects $name on public authentication routes', async ({headers}) => {
         const response = await publicAuthRequest(headers)

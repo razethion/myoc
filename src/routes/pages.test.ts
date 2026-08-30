@@ -1339,6 +1339,8 @@ describe('public page redirects', () => {
         ['a double-encoded authority URL', '%252F%252Fevil.example'],
         ['an encoded API path', '%2F%2561pi%2Fsearch'],
         ['an encoded passkey path', '%2F%2570asskey-setup'],
+        ['an authority URL with a tab', '%2F%09%2Fevil.example'],
+        ['a malformed encoded path', '%2F%25E0%25A4%25A'],
     ])('rejects %s as a passkey return path', async (_name, returnTo) => {
         const response = await getAppPath(
             `/passkey-setup?returnTo=${returnTo}`,
@@ -1398,6 +1400,16 @@ describe('public page redirects', () => {
         expect(html).not.toContain('data-login-mode')
         expect(response.headers.get('cache-control')).toBe('private, no-store')
         expect(response.headers.get('set-cookie')).toContain('myoc_pre_auth_csrf=')
+    })
+
+    it('reuses a valid pre-authentication CSRF cookie', async () => {
+        const csrfToken = '0123456789abcdef0123456789abcdef'
+        const response = await getAppPath('/login', db, {
+            cookie: `myoc_pre_auth_csrf=${csrfToken}`,
+        })
+
+        expect(response.status).toBe(200)
+        expect(response.headers.get('set-cookie')).toContain(`myoc_pre_auth_csrf=${csrfToken}`)
     })
 
     it('renders the what is new page with sequential version entries', async () => {
@@ -1711,6 +1723,79 @@ describe('GET /migrate', () => {
         )
     })
 
+    it.each([
+        {
+            name: 'JPEG',
+            contentType: 'image/jpeg',
+            bytes: new Uint8Array([0xff, 0xd8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+        },
+        {
+            name: 'GIF87a',
+            contentType: 'image/gif',
+            bytes: new TextEncoder().encode('GIF87a000000'),
+        },
+        {
+            name: 'GIF89a',
+            contentType: 'image/gif',
+            bytes: new TextEncoder().encode('GIF89a000000'),
+        },
+        {
+            name: 'WebP',
+            contentType: 'image/webp',
+            bytes: new TextEncoder().encode('RIFF0000WEBP'),
+        },
+        {
+            name: 'AVIF',
+            contentType: 'image/avif',
+            bytes: new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66, ...new Array(20).fill(0)]),
+        },
+        {
+            name: 'AVIS',
+            contentType: 'image/avif',
+            bytes: new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x73, ...new Array(20).fill(0)]),
+        },
+    ])('proxies a valid $name signature', async ({bytes, contentType}) => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => new Response(bytes, {headers: {'content-type': `${contentType}; charset=binary`}})),
+        )
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image')}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(200)
+        expect(response.headers.get('content-type')).toBe(contentType)
+        expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes)
+    })
+
+    it.each(['not-a-number', String(Number.MAX_SAFE_INTEGER + 1)])(
+        'ignores an invalid image content length of %s',
+        async (contentLength) => {
+            const imageBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
+            vi.stubGlobal(
+                'fetch',
+                vi.fn(
+                    async () =>
+                        new Response(imageBytes, {
+                            headers: {'content-length': contentLength, 'content-type': 'image/png'},
+                        }),
+                ),
+            )
+
+            const response = await getAppPath(
+                `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image.png')}`,
+                await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+                {cookie: 'myoc_session=session-token'},
+            )
+
+            expect(response.status).toBe(200)
+            expect(new Uint8Array(await response.arrayBuffer())).toEqual(imageBytes)
+        },
+    )
+
     it('rejects Toyhou.se image proxy requests for untrusted URLs', async () => {
         const fetchMock = vi.fn()
         vi.stubGlobal('fetch', fetchMock)
@@ -1734,9 +1819,14 @@ describe('GET /migrate', () => {
     })
 
     it.each([
+        ['a malformed URL', 'not a URL'],
+        ['a non-HTTPS URL', 'http://f2.toyhou.se/file/image.png'],
+        ['a username', 'https://user@f2.toyhou.se/file/image.png'],
+        ['a password', 'https://:secret@f2.toyhou.se/file/image.png'],
         ['a wildcard Toyhou.se host', 'https://cdn.toyhou.se/file/image.png'],
         ['a non-file path', 'https://f2.toyhou.se/profile/demo'],
         ['a custom port', 'https://f2.toyhou.se:8443/file/image.png'],
+        ['an oversized URL', `https://f2.toyhou.se/file/${'a'.repeat(2_100)}`],
     ])('rejects %s in the Toyhou.se image proxy', async (_name, url) => {
         const fetchMock = vi.fn()
         vi.stubGlobal('fetch', fetchMock)
@@ -1752,11 +1842,59 @@ describe('GET /migrate', () => {
     })
 
     it.each([
+        {name: 'a failed request', aborted: false, status: 502, error: 'Toyhou.se image request failed'},
+        {name: 'a timed-out request', aborted: true, status: 504, error: 'Toyhou.se image request timed out'},
+    ])('reports $name to the Toyhou.se image origin', async ({aborted, status, error}) => {
+        if (aborted) {
+            vi.spyOn(AbortSignal, 'timeout').mockReturnValue(AbortSignal.abort())
+        }
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => {
+                throw new Error('upstream request failed')
+            }),
+        )
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image.png')}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(status)
+        await expect(response.json()).resolves.toEqual({error})
+    })
+
+    it.each([
+        {name: 'an upstream error', upstream: new Response('not found', {status: 404}), status: 404},
+        {name: 'an empty response', upstream: new Response(null, {status: 204}), status: 204},
+    ])('rejects $name from the Toyhou.se image origin', async ({upstream, status}) => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => upstream),
+        )
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image.png')}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(502)
+        await expect(response.json()).resolves.toEqual({error: `Toyhou.se returned ${status} for image URL`})
+    })
+
+    it.each([
         {
             name: 'HTML',
             response: new Response('<script>globalThis.attackerCode = true</script>', {
                 headers: {'content-type': 'text/html'},
             }),
+            error: 'Toyhou.se returned an unsupported image type',
+        },
+        {
+            name: 'a missing content type',
+            response: new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
             error: 'Toyhou.se returned an unsupported image type',
         },
         {
@@ -1796,6 +1934,160 @@ describe('GET /migrate', () => {
         expect(response.status).toBe(502)
         expect(await response.json()).toEqual({error})
         expect(response.headers.get('content-security-policy')).toBe(NON_HTML_CONTENT_SECURITY_POLICY)
+    })
+
+    it('rejects a truncated image signature', async () => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => new Response(new Uint8Array([0xff, 0xd8]), {headers: {'content-type': 'image/jpeg'}})),
+        )
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image.jpg')}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(502)
+        await expect(response.json()).resolves.toEqual({error: 'Toyhou.se returned invalid image data'})
+    })
+
+    it('streams image chunks after validating the signature', async () => {
+        const signature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
+        const remainingBytes = new Uint8Array([1, 2, 3])
+        const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(signature)
+                controller.enqueue(remainingBytes)
+                controller.close()
+            },
+        })
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => new Response(body, {headers: {'content-type': 'image/png'}})),
+        )
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image.png')}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(200)
+        expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([...signature, ...remainingBytes]))
+    })
+
+    it('rejects an initial image chunk that exceeds the declared length', async () => {
+        const signature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(
+                async () =>
+                    new Response(signature, {
+                        headers: {'content-length': '8', 'content-type': 'image/png'},
+                    }),
+            ),
+        )
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image.png')}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(502)
+        await expect(response.json()).resolves.toEqual({error: 'Toyhou.se returned invalid image data'})
+    })
+
+    it('stops a streamed image when later data exceeds the declared length', async () => {
+        const signature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
+        const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(signature)
+                controller.enqueue(new Uint8Array([1]))
+                controller.close()
+            },
+        })
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(
+                async () =>
+                    new Response(body, {
+                        headers: {'content-length': String(signature.byteLength), 'content-type': 'image/png'},
+                    }),
+            ),
+        )
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image.png')}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(200)
+        await expect(response.arrayBuffer()).rejects.toThrow('Image is too large')
+    })
+
+    it('forwards an upstream stream failure to the response reader', async () => {
+        const signature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
+        let pullCount = 0
+        const body = new ReadableStream<Uint8Array>({
+            pull(controller) {
+                if (pullCount === 0) {
+                    pullCount += 1
+                    controller.enqueue(signature)
+                    return
+                }
+
+                controller.error(new Error('upstream stream failed'))
+            },
+        })
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => new Response(body, {headers: {'content-type': 'image/png'}})),
+        )
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image.png')}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(200)
+        await expect(response.arrayBuffer()).rejects.toThrow('upstream stream failed')
+    })
+
+    it('cancels the upstream image reader when the client cancels', async () => {
+        const signature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
+        const cancel = vi.fn()
+        let pullCount = 0
+        const body = new ReadableStream<Uint8Array>({
+            cancel,
+            async pull(controller) {
+                if (pullCount === 0) {
+                    pullCount += 1
+                    controller.enqueue(signature)
+                    return
+                }
+
+                await new Promise(() => undefined)
+            },
+        })
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => new Response(body, {headers: {'content-type': 'image/png'}})),
+        )
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image.png')}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.body).not.toBeNull()
+        await response.body?.cancel('client stopped')
+
+        expect(cancel).toHaveBeenCalledWith('client stopped')
     })
 
     it('redirects the migration start page to confirm when an import job is active', async () => {

@@ -3,7 +3,7 @@ import {beforeEach, describe, expect, it, vi} from 'vitest'
 import {hashRecoveryPhrase, verifyRecoveryPhrase} from '../../lib/auth/passkeys'
 import {createCsrfToken} from '../../lib/auth/session'
 import {countRows, queryAll, queryOne, seedChallenge, seedPasskey, seedSession, seedUser, useTestDatabase} from '../../test/d1'
-import {createAllowingAuthRateLimits} from '../../test/mockRateLimit'
+import {createAllowingAuthRateLimits, createMockRateLimit} from '../../test/mockRateLimit'
 import {apiRoutes} from '../api'
 
 vi.mock('@simplewebauthn/server', async (importOriginal) => {
@@ -56,6 +56,7 @@ async function securityRequest(
         body?: unknown
         sessionToken?: string | null
         csrfToken?: string
+        rateLimits?: Partial<ReturnType<typeof createAllowingAuthRateLimits>>
     } = {},
 ): Promise<Response> {
     const headers: Record<string, string> = {}
@@ -80,12 +81,25 @@ async function securityRequest(
         },
         {
             ...createAllowingAuthRateLimits(),
+            ...options.rateLimits,
             DB: db,
         },
     )
 }
 
 describe('POST /security/passkeys/options', () => {
+    it('returns 429 when the user identity limit is exhausted', async () => {
+        await seedCurrentUser()
+
+        const response = await securityRequest('/passkeys/options', db, {
+            rateLimits: {AUTH_IDENTITY_SUSTAINED_RATE_LIMITER: createMockRateLimit(false)},
+        })
+
+        expect(response.status).toBe(429)
+        expect(response.headers.get('retry-after')).toBe('60')
+        await expect(response.json()).resolves.toEqual({error: 'Too many requests. Try again later.'})
+    })
+
     it('returns 401 when the user is not logged in', async () => {
         const response = await securityRequest('/passkeys/options', db, {
             sessionToken: null,
@@ -156,6 +170,32 @@ describe('POST /security/passkeys/options', () => {
 })
 
 describe('POST /security/passkeys/verify', () => {
+    it('returns 429 when the challenge limit is exhausted', async () => {
+        await seedCurrentUser()
+
+        const response = await securityRequest('/passkeys/verify', db, {
+            body: {challengeId: 'challenge-1', credential: createRegistrationCredential()},
+            rateLimits: {AUTH_CHALLENGE_RATE_LIMITER: createMockRateLimit(false)},
+        })
+
+        expect(response.status).toBe(429)
+        expect(response.headers.get('retry-after')).toBe('60')
+        await expect(response.json()).resolves.toEqual({error: 'Too many requests. Try again later.'})
+    })
+
+    it('returns 429 when the user identity limit is exhausted', async () => {
+        await seedCurrentUser()
+
+        const response = await securityRequest('/passkeys/verify', db, {
+            body: {challengeId: 'challenge-1', credential: createRegistrationCredential()},
+            rateLimits: {AUTH_IDENTITY_SUSTAINED_RATE_LIMITER: createMockRateLimit(false)},
+        })
+
+        expect(response.status).toBe(429)
+        expect(response.headers.get('retry-after')).toBe('60')
+        await expect(response.json()).resolves.toEqual({error: 'Too many requests. Try again later.'})
+    })
+
     it('returns 400 for invalid JSON', async () => {
         await seedCurrentUser()
 
@@ -343,6 +383,18 @@ describe('DELETE /security/passkeys/:id', () => {
 })
 
 describe('POST /security/recovery/regenerate', () => {
+    it('returns 429 when the user identity limit is exhausted', async () => {
+        await seedCurrentUser()
+
+        const response = await securityRequest('/recovery/regenerate', db, {
+            rateLimits: {AUTH_IDENTITY_SUSTAINED_RATE_LIMITER: createMockRateLimit(false)},
+        })
+
+        expect(response.status).toBe(429)
+        expect(response.headers.get('retry-after')).toBe('60')
+        await expect(response.json()).resolves.toEqual({error: 'Too many requests. Try again later.'})
+    })
+
     it('stores a new recovery phrase hash and returns the plaintext phrase once', async () => {
         await seedCurrentUser({recoveryPhraseConfirmedAt: '2026-06-10 12:05:00'})
 
@@ -368,6 +420,19 @@ describe('POST /security/recovery/regenerate', () => {
 })
 
 describe('POST /security/recovery/confirm', () => {
+    it('returns 429 when the user identity limit is exhausted', async () => {
+        await seedCurrentUser()
+
+        const response = await securityRequest('/recovery/confirm', db, {
+            body: {recoveryPhrase: 'one-two-three-four'},
+            rateLimits: {AUTH_IDENTITY_SUSTAINED_RATE_LIMITER: createMockRateLimit(false)},
+        })
+
+        expect(response.status).toBe(429)
+        expect(response.headers.get('retry-after')).toBe('60')
+        await expect(response.json()).resolves.toEqual({error: 'Too many requests. Try again later.'})
+    })
+
     it('returns 400 when the recovery phrase is missing', async () => {
         await seedCurrentUser()
 

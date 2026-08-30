@@ -36,6 +36,7 @@ type SecurityTestUser = UserRecord & {
 
 const db = useTestDatabase()
 const PRE_AUTH_CSRF_TOKEN = '0123456789abcdef0123456789abcdef'
+type AuthRateLimitOverrides = Partial<ReturnType<typeof createAllowingAuthRateLimits>>
 
 function authTestBindings<T extends object>(bindings: T): T & ReturnType<typeof createAllowingAuthRateLimits> {
     return {...createAllowingAuthRateLimits(), ...bindings}
@@ -46,7 +47,7 @@ beforeEach(() => {
     vi.mocked(verifyRegistrationResponse).mockReset()
 })
 
-async function postLogin(body: unknown, url = '/login', cookie?: string): Promise<Response> {
+async function postLogin(body: unknown, url = '/login', cookie?: string, rateLimits: AuthRateLimitOverrides = {}): Promise<Response> {
     const origin = new URL(url, 'http://localhost').origin
     return authPageActionRoutes.request(
         url,
@@ -62,11 +63,32 @@ async function postLogin(body: unknown, url = '/login', cookie?: string): Promis
         },
         authTestBindings({
             DB: db,
+            ...rateLimits,
         }),
     )
 }
 
-async function postPasskeyRegistrationOptions(body: unknown): Promise<Response> {
+async function postRegister(body: unknown, rateLimits: AuthRateLimitOverrides = {}): Promise<Response> {
+    return authPageActionRoutes.request(
+        'https://example.com/register',
+        {
+            method: 'POST',
+            body: typeof body === 'string' ? body : JSON.stringify(body),
+            headers: {
+                'content-type': 'application/json',
+                cookie: `myoc_pre_auth_csrf=${PRE_AUTH_CSRF_TOKEN}`,
+                origin: 'https://example.com',
+                'x-csrf-token': PRE_AUTH_CSRF_TOKEN,
+            },
+        },
+        authTestBindings({
+            DB: db,
+            ...rateLimits,
+        }),
+    )
+}
+
+async function postPasskeyRegistrationOptions(body: unknown, rateLimits: AuthRateLimitOverrides = {}): Promise<Response> {
     return authPageActionRoutes.request(
         'https://example.com/register/passkey/options',
         {
@@ -81,11 +103,12 @@ async function postPasskeyRegistrationOptions(body: unknown): Promise<Response> 
         },
         authTestBindings({
             DB: db,
+            ...rateLimits,
         }),
     )
 }
 
-async function postPasskeyRegistrationVerify(body: unknown): Promise<Response> {
+async function postPasskeyRegistrationVerify(body: unknown, rateLimits: AuthRateLimitOverrides = {}): Promise<Response> {
     return authPageActionRoutes.request(
         'https://example.com/register/passkey/verify',
         {
@@ -98,11 +121,12 @@ async function postPasskeyRegistrationVerify(body: unknown): Promise<Response> {
         },
         authTestBindings({
             DB: db,
+            ...rateLimits,
         }),
     )
 }
 
-async function postPasskeyLoginOptions(body: unknown): Promise<Response> {
+async function postPasskeyLoginOptions(body: unknown, rateLimits: AuthRateLimitOverrides = {}): Promise<Response> {
     return authPageActionRoutes.request(
         'https://example.com/login/passkey/options',
         {
@@ -115,11 +139,12 @@ async function postPasskeyLoginOptions(body: unknown): Promise<Response> {
         },
         authTestBindings({
             DB: db,
+            ...rateLimits,
         }),
     )
 }
 
-async function postPasskeyLoginVerify(body: unknown): Promise<Response> {
+async function postPasskeyLoginVerify(body: unknown, rateLimits: AuthRateLimitOverrides = {}): Promise<Response> {
     return authPageActionRoutes.request(
         'https://example.com/login/passkey/verify',
         {
@@ -132,11 +157,12 @@ async function postPasskeyLoginVerify(body: unknown): Promise<Response> {
         },
         authTestBindings({
             DB: db,
+            ...rateLimits,
         }),
     )
 }
 
-async function postRecoveryLogin(body: unknown): Promise<Response> {
+async function postRecoveryLogin(body: unknown, rateLimits: AuthRateLimitOverrides = {}): Promise<Response> {
     return authPageActionRoutes.request(
         'https://example.com/recovery/login',
         {
@@ -151,6 +177,7 @@ async function postRecoveryLogin(body: unknown): Promise<Response> {
         },
         authTestBindings({
             DB: db,
+            ...rateLimits,
         }),
     )
 }
@@ -277,6 +304,20 @@ describe('POST /login', () => {
         expect(response.status).toBe(429)
         expect(response.headers.get('retry-after')).toBe('60')
         expect(response.headers.get('set-cookie')).toBeNull()
+        await expect(response.json()).resolves.toEqual({error: 'Too many requests. Try again later.'})
+    })
+
+    it.each([
+        {name: 'burst', retryAfter: '10', sustainedAllowed: true},
+        {name: 'sustained', retryAfter: '60', sustainedAllowed: false},
+    ])('returns 429 when the identity $name limit is exhausted', async ({retryAfter, sustainedAllowed}) => {
+        const response = await postLogin({username: 'testuser', password: 'password123'}, '/login', undefined, {
+            AUTH_IDENTITY_BURST_RATE_LIMITER: createMockRateLimit(!sustainedAllowed),
+            AUTH_IDENTITY_SUSTAINED_RATE_LIMITER: createMockRateLimit(sustainedAllowed),
+        })
+
+        expect(response.status).toBe(429)
+        expect(response.headers.get('retry-after')).toBe(retryAfter)
         await expect(response.json()).resolves.toEqual({error: 'Too many requests. Try again later.'})
     })
 
@@ -539,7 +580,31 @@ describe('POST /login', () => {
     })
 })
 
+describe('POST /register', () => {
+    it('returns 429 when the registration identity limit is exhausted', async () => {
+        const response = await postRegister(
+            {email: 'test@example.com', username: 'testuser', password: 'password123'},
+            {AUTH_IDENTITY_SUSTAINED_RATE_LIMITER: createMockRateLimit(false)},
+        )
+
+        expect(response.status).toBe(429)
+        expect(response.headers.get('retry-after')).toBe('60')
+        await expect(response.json()).resolves.toEqual({error: 'Too many requests. Try again later.'})
+    })
+})
+
 describe('POST /register/passkey/options', () => {
+    it('returns 429 when the registration identity limit is exhausted', async () => {
+        const response = await postPasskeyRegistrationOptions(
+            {email: 'test@example.com', username: 'testuser'},
+            {AUTH_IDENTITY_SUSTAINED_RATE_LIMITER: createMockRateLimit(false)},
+        )
+
+        expect(response.status).toBe(429)
+        expect(response.headers.get('retry-after')).toBe('60')
+        await expect(response.json()).resolves.toEqual({error: 'Too many requests. Try again later.'})
+    })
+
     it('returns 400 for invalid JSON', async () => {
         const response = await postPasskeyRegistrationOptions('{bad json')
 
@@ -624,6 +689,17 @@ describe('POST /register/passkey/options', () => {
 })
 
 describe('POST /register/passkey/verify', () => {
+    it('returns 429 when the challenge limit is exhausted', async () => {
+        const response = await postPasskeyRegistrationVerify(
+            {challengeId: 'challenge-1', credential: createRegistrationCredential()},
+            {AUTH_CHALLENGE_RATE_LIMITER: createMockRateLimit(false)},
+        )
+
+        expect(response.status).toBe(429)
+        expect(response.headers.get('retry-after')).toBe('60')
+        await expect(response.json()).resolves.toEqual({error: 'Too many requests. Try again later.'})
+    })
+
     it('returns 400 for invalid JSON', async () => {
         const response = await postPasskeyRegistrationVerify('{bad json')
 
@@ -758,6 +834,17 @@ describe('POST /register/passkey/verify', () => {
 })
 
 describe('POST /login/passkey/options', () => {
+    it('returns 429 when the username identity limit is exhausted', async () => {
+        const response = await postPasskeyLoginOptions(
+            {username: 'testuser'},
+            {AUTH_IDENTITY_SUSTAINED_RATE_LIMITER: createMockRateLimit(false)},
+        )
+
+        expect(response.status).toBe(429)
+        expect(response.headers.get('retry-after')).toBe('60')
+        await expect(response.json()).resolves.toEqual({error: 'Too many requests. Try again later.'})
+    })
+
     it('returns 400 for invalid JSON', async () => {
         const response = await postPasskeyLoginOptions('{bad json')
 
@@ -838,6 +925,21 @@ describe('POST /login/passkey/options', () => {
 })
 
 describe('POST /login/passkey/verify', () => {
+    it('returns 429 when the passkey owner identity limit is exhausted', async () => {
+        await seedTestUser('password123', {webauthnUserId: 'webauthn-user-1'})
+        await seedAuthenticationChallenge()
+        await seedPasskey({id: 'passkey-1', userId: 'user-1', credentialId: 'credential-id', webauthnUserId: 'webauthn-user-1'})
+
+        const response = await postPasskeyLoginVerify(
+            {challengeId: 'challenge-1', credential: createAuthenticationCredential()},
+            {AUTH_IDENTITY_SUSTAINED_RATE_LIMITER: createMockRateLimit(false)},
+        )
+
+        expect(response.status).toBe(429)
+        expect(response.headers.get('retry-after')).toBe('60')
+        await expect(response.json()).resolves.toEqual({error: 'Too many requests. Try again later.'})
+    })
+
     it('returns 400 for invalid JSON', async () => {
         const response = await postPasskeyLoginVerify('{bad json')
 
@@ -969,6 +1071,17 @@ describe('POST /login/passkey/verify', () => {
 })
 
 describe('POST /recovery/login', () => {
+    it('returns 429 when the username identity limit is exhausted', async () => {
+        const response = await postRecoveryLogin(
+            {username: 'testuser', recoveryPhrase: 'one-two-three-four'},
+            {AUTH_IDENTITY_SUSTAINED_RATE_LIMITER: createMockRateLimit(false)},
+        )
+
+        expect(response.status).toBe(429)
+        expect(response.headers.get('retry-after')).toBe('60')
+        await expect(response.json()).resolves.toEqual({error: 'Too many requests. Try again later.'})
+    })
+
     it('rejects a cross-site recovery login request', async () => {
         const response = await authPageActionRoutes.request(
             'https://example.com/recovery/login',

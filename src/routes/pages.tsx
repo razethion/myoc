@@ -79,7 +79,9 @@ const TOYHOUSE_IMPORT_PAYLOAD_MAX_CHARACTERS = 5_000_000
 const TOYHOUSE_IMPORT_REQUEST_MAX_BYTES = 16 * 1024 * 1024
 const TOYHOUSE_URL_MAX_CHARACTERS = 2048
 const TOYHOUSE_IMPORT_TOO_LARGE_ERROR = 'Toyhou.se returned too much data. Try importing a smaller profile or folder.'
-const TOYHOUSE_IMAGE_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'])
+const TOYHOUSE_IMAGE_CONTENT_TYPE_VALUES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'] as const
+type ToyhouseImageContentType = (typeof TOYHOUSE_IMAGE_CONTENT_TYPE_VALUES)[number]
+const TOYHOUSE_IMAGE_CONTENT_TYPES = new Set<string>(TOYHOUSE_IMAGE_CONTENT_TYPE_VALUES)
 const TOYHOUSE_IMAGE_HOSTS = new Set(['file.toyhou.se', 'f2.toyhou.se'])
 const TOYHOUSE_IMAGE_MAX_BYTES = 200 * 1024 * 1024
 const TOYHOUSE_IMAGE_TIMEOUT_MS = 30_000
@@ -305,7 +307,7 @@ async function proxyToyhouseImage(imageUrl: string): Promise<Response> {
 
     const contentType = upstream.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() ?? ''
 
-    if (!TOYHOUSE_IMAGE_CONTENT_TYPES.has(contentType)) {
+    if (!isToyhouseImageContentType(contentType)) {
         await upstream.body.cancel()
         return Response.json({error: 'Toyhou.se returned an unsupported image type'}, {status: 502})
     }
@@ -320,7 +322,7 @@ async function proxyToyhouseImage(imageUrl: string): Promise<Response> {
     let imageBody: ReadableStream<Uint8Array>
 
     try {
-        imageBody = await createValidatedImageStream(upstream.body, contentType, TOYHOUSE_IMAGE_MAX_BYTES)
+        imageBody = await createValidatedImageStream(upstream.body, contentType, contentLength ?? TOYHOUSE_IMAGE_MAX_BYTES)
     } catch {
         await upstream.body.cancel().catch(() => undefined)
         return Response.json({error: 'Toyhou.se returned invalid image data'}, {status: 502})
@@ -1735,9 +1737,13 @@ function parseContentLength(value: string | null): number | null {
     return Number.isSafeInteger(length) ? length : null
 }
 
+function isToyhouseImageContentType(value: string): value is ToyhouseImageContentType {
+    return TOYHOUSE_IMAGE_CONTENT_TYPES.has(value)
+}
+
 async function createValidatedImageStream(
     body: ReadableStream<Uint8Array>,
-    contentType: string,
+    contentType: ToyhouseImageContentType,
     maxBytes: number,
 ): Promise<ReadableStream<Uint8Array>> {
     const reader = body.getReader()
@@ -1805,7 +1811,7 @@ async function createValidatedImageStream(
     })
 }
 
-function imageSignatureLength(contentType: string): number {
+function imageSignatureLength(contentType: ToyhouseImageContentType): number {
     return contentType === 'image/avif' ? 32 : 12
 }
 
@@ -1820,11 +1826,6 @@ function concatenateBytes(chunks: Uint8Array[], limit: number): Uint8Array {
 
     for (const chunk of chunks) {
         const remaining = bytes.byteLength - offset
-
-        if (remaining <= 0) {
-            break
-        }
-
         const part = chunk.subarray(0, remaining)
         bytes.set(part, offset)
         offset += part.byteLength
@@ -1833,7 +1834,7 @@ function concatenateBytes(chunks: Uint8Array[], limit: number): Uint8Array {
     return bytes
 }
 
-function hasExpectedImageSignature(bytes: Uint8Array, contentType: string): boolean {
+function hasExpectedImageSignature(bytes: Uint8Array, contentType: ToyhouseImageContentType): boolean {
     if (contentType === 'image/png') {
         return startsWithBytes(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
     }
@@ -1851,12 +1852,8 @@ function hasExpectedImageSignature(bytes: Uint8Array, contentType: string): bool
         return new TextDecoder().decode(bytes.subarray(0, 4)) === 'RIFF' && new TextDecoder().decode(bytes.subarray(8, 12)) === 'WEBP'
     }
 
-    if (contentType === 'image/avif') {
-        const brands = new TextDecoder().decode(bytes.subarray(8))
-        return new TextDecoder().decode(bytes.subarray(4, 8)) === 'ftyp' && (brands.includes('avif') || brands.includes('avis'))
-    }
-
-    return false
+    const brands = new TextDecoder().decode(bytes.subarray(8))
+    return new TextDecoder().decode(bytes.subarray(4, 8)) === 'ftyp' && (brands.includes('avif') || brands.includes('avis'))
 }
 
 function startsWithBytes(bytes: Uint8Array, expected: number[]): boolean {
