@@ -18,6 +18,7 @@ import {
     R2UploadedPartSchema,
     responseSchema,
 } from '../../lib/http/responseSchemas'
+import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../../lib/media/cacheControl'
 import {type HeightChartJson, parseHeightChartJson as parseCharacterHeightChartJson} from '../../lib/media/heightChart'
 import {type GalleryImageMetadata, readGalleryImageDimensions, readGalleryImageMetadata} from '../../lib/media/imageMetadata'
 import {
@@ -288,7 +289,7 @@ const DISPLAY_NAME_RULES = 'letters, numbers, spaces, apostrophes, hyphens, unde
 const DUPLICATE_CHARACTER_NAME_ERROR = 'Character name already exists on this account'
 const GALLERY_IMAGE_ALLOWED_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'])
 
-const GALLERY_IMAGE_CACHE_CONTROL = 'public, max-age=31536000, immutable'
+const GALLERY_IMAGE_CACHE_CONTROL = REVOCABLE_MEDIA_CACHE_CONTROL
 const GALLERY_IMAGE_MAX_BYTES = 200 * 1024 * 1024
 const GALLERY_IMAGE_MAX_PIXELS = 200_000_000
 const GALLERY_PREVIEW_CONTENT_TYPE = 'image/webp'
@@ -563,7 +564,7 @@ characterRoutes.post('/folders', async (c) => {
     if (input.folderImage && uploadedObjectKey) {
         await c.env.MEDIA_BUCKET.put(uploadedObjectKey, input.folderImage.bytes, {
             httpMetadata: {
-                cacheControl: 'public, max-age=31536000, immutable',
+                cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
                 contentType: input.folderImage.contentType,
             },
         })
@@ -719,7 +720,7 @@ characterRoutes.post('/folders/:id/image', async (c) => {
 
     await c.env.MEDIA_BUCKET.put(folderImageObjectKey, folderImageResult.bytes, {
         httpMetadata: {
-            cacheControl: 'public, max-age=31536000, immutable',
+            cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
             contentType: folderImageResult.contentType,
         },
     })
@@ -874,7 +875,7 @@ characterRoutes.post('/', async (c) => {
 
     await c.env.MEDIA_BUCKET.put(profileImageObjectKey, profileImageResult.bytes, {
         httpMetadata: {
-            cacheControl: 'public, max-age=31536000, immutable',
+            cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
             contentType: profileImageResult.contentType,
         },
     })
@@ -1025,7 +1026,7 @@ characterRoutes.post('/:id/profile-image', async (c) => {
 
     await c.env.MEDIA_BUCKET.put(profileImageObjectKey, profileImageResult.bytes, {
         httpMetadata: {
-            cacheControl: 'public, max-age=31536000, immutable',
+            cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
             contentType: profileImageResult.contentType,
         },
     })

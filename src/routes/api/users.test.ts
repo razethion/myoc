@@ -16,6 +16,7 @@ import {
 } from '../../test/imageFixtures'
 import {createMockImagesBinding} from '../../test/mockImages'
 import {createMockR2Bucket} from '../../test/mockR2'
+import {createAllowingAuthRateLimits} from '../../test/mockRateLimit'
 import {createRequestHeaders, type TestRequestOptions} from '../../test/request'
 import {apiRoutes} from '../api'
 import {authPageActionRoutes} from '../page-actions/auth'
@@ -49,9 +50,11 @@ async function postUser(body: unknown, db: D1Database, url = 'https://example.co
             body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: {
                 'content-type': 'application/json',
+                origin: new URL(url).origin,
             },
         },
         {
+            ...createAllowingAuthRateLimits(),
             DB: db,
             MEDIA_BUCKET: mediaBucket,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
@@ -906,21 +909,24 @@ describe('POST /passkey-setup', () => {
         expect(response.headers.get('location')).toBe('/search?q=demo')
     })
 
-    it('rejects unsafe return paths for browser form submissions', async () => {
-        const sessionToken = 'session-token'
-        const form = new FormData()
-        form.set('csrfToken', await createCsrfToken(sessionToken))
-        form.set('choice', 'later')
-        form.set('returnTo', '//evil.example')
-        await seedCurrentUser({}, sessionToken)
+    it.each(['//evil.example', '/\\evil.example', '/\\\\evil.example', '/%61pi/search', '/%70asskey-setup'])(
+        'rejects unsafe return path %s for browser form submissions',
+        async (returnTo) => {
+            const sessionToken = 'session-token'
+            const form = new FormData()
+            form.set('csrfToken', await createCsrfToken(sessionToken))
+            form.set('choice', 'later')
+            form.set('returnTo', returnTo)
+            await seedCurrentUser({}, sessionToken)
 
-        const response = await postPasskeyPromptResponse(form, db, {
-            sessionToken,
-        })
+            const response = await postPasskeyPromptResponse(form, db, {
+                sessionToken,
+            })
 
-        expect(response.status).toBe(302)
-        expect(response.headers.get('location')).toBe('/u/olduser')
-    })
+            expect(response.status).toBe(302)
+            expect(response.headers.get('location')).toBe('/u/olduser')
+        },
+    )
 })
 
 describe('POST /users/me/profile-photo', () => {
@@ -977,7 +983,7 @@ describe('POST /users/me/profile-photo', () => {
         expect(mediaBucket.put).toHaveBeenCalledTimes(1)
         expect(mediaBucket.put).toHaveBeenCalledWith(`users/current-user/profile/${body.profilePhotoKey}.webp`, expect.any(Uint8Array), {
             httpMetadata: {
-                cacheControl: 'public, max-age=31536000, immutable',
+                cacheControl: 'public, max-age=300, must-revalidate',
                 contentType: 'image/webp',
             },
         })
@@ -1080,7 +1086,7 @@ describe('POST /users/me/profile-photo', () => {
         const body = (await response.json()) as {profilePhotoKey: string}
         expect(mediaBucket.put).toHaveBeenCalledWith(`users/current-user/profile/${body.profilePhotoKey}.webp`, expect.any(Uint8Array), {
             httpMetadata: {
-                cacheControl: 'public, max-age=31536000, immutable',
+                cacheControl: 'public, max-age=300, must-revalidate',
                 contentType: 'image/webp',
             },
         })

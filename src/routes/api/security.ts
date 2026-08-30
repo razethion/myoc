@@ -15,6 +15,7 @@ import {
     serializeTransports,
     verifyRecoveryPhrase,
 } from '../../lib/auth/passkeys'
+import {enforceAuthChallengeRateLimit, enforceAuthIdentityRateLimit} from '../../lib/auth/rateLimit'
 import {getCurrentUser, normalizeCredential, toSqlTimestamp} from '../../lib/auth/session'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {ErrorResponseSchema, OkResponseSchema, responseSchema} from '../../lib/http/responseSchemas'
@@ -61,6 +62,12 @@ securityRoutes.post('/passkeys/options', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
+    const rateLimitResponse = await enforceAuthIdentityRateLimit(c, currentUser.id)
+
+    if (rateLimitResponse) {
+        return rateLimitResponse
+    }
+
     const user = await getSecurityUser(c.env.DB, currentUser.id)
 
     if (!user) {
@@ -94,6 +101,19 @@ securityRoutes.post('/passkeys/verify', async (c) => {
 
     if (!challengeId || !body.credential) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Challenge and passkey response are required'}, 400)
+    }
+
+    const [challengeRateLimitResponse, identityRateLimitResponse] = await Promise.all([
+        enforceAuthChallengeRateLimit(c, challengeId),
+        enforceAuthIdentityRateLimit(c, currentUser.id),
+    ])
+
+    if (challengeRateLimitResponse) {
+        return challengeRateLimitResponse
+    }
+
+    if (identityRateLimitResponse) {
+        return identityRateLimitResponse
     }
 
     const challenge = await getWebAuthnChallenge(c.env.DB, challengeId, 'registration')
@@ -206,6 +226,12 @@ securityRoutes.post('/recovery/regenerate', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
+    const rateLimitResponse = await enforceAuthIdentityRateLimit(c, currentUser.id)
+
+    if (rateLimitResponse) {
+        return rateLimitResponse
+    }
+
     const phrase = generateRecoveryPhrase()
     const phraseHash = await hashRecoveryPhrase(phrase)
 
@@ -244,6 +270,12 @@ securityRoutes.post('/recovery/confirm', async (c) => {
 
     if (!recoveryPhrase) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Recovery phrase is required'}, 400)
+    }
+
+    const rateLimitResponse = await enforceAuthIdentityRateLimit(c, currentUser.id)
+
+    if (rateLimitResponse) {
+        return rateLimitResponse
     }
 
     const user = await getSecurityUser(c.env.DB, currentUser.id)

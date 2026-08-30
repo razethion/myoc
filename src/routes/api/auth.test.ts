@@ -10,6 +10,7 @@ import {hashRecoveryPhrase, verifyRecoveryPhrase} from '../../lib/auth/passkeys'
 import {createCsrfToken, type UserRecord} from '../../lib/auth/session'
 import {expectSessionCookie} from '../../test/assertions'
 import {queryAll, queryOne, seedAuthenticatedUser, seedChallenge, seedPasskey, seedUser, sha256Hex, useTestDatabase} from '../../test/d1'
+import {createAllowingAuthRateLimits, createMockRateLimit} from '../../test/mockRateLimit'
 import {apiRoutes} from '../api'
 import {authPageActionRoutes} from '../page-actions/auth'
 
@@ -34,6 +35,11 @@ type SecurityTestUser = UserRecord & {
 }
 
 const db = useTestDatabase()
+const PRE_AUTH_CSRF_TOKEN = '0123456789abcdef0123456789abcdef'
+
+function authTestBindings<T extends object>(bindings: T): T & ReturnType<typeof createAllowingAuthRateLimits> {
+    return {...createAllowingAuthRateLimits(), ...bindings}
+}
 
 beforeEach(() => {
     vi.mocked(verifyAuthenticationResponse).mockReset()
@@ -41,6 +47,7 @@ beforeEach(() => {
 })
 
 async function postLogin(body: unknown, url = '/login', cookie?: string): Promise<Response> {
+    const origin = new URL(url, 'http://localhost').origin
     return authPageActionRoutes.request(
         url,
         {
@@ -48,12 +55,14 @@ async function postLogin(body: unknown, url = '/login', cookie?: string): Promis
             body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: {
                 'content-type': 'application/json',
-                ...(cookie ? {cookie} : {}),
+                cookie: `myoc_pre_auth_csrf=${PRE_AUTH_CSRF_TOKEN}${cookie ? `; ${cookie}` : ''}`,
+                origin,
+                'x-csrf-token': PRE_AUTH_CSRF_TOKEN,
             },
         },
-        {
+        authTestBindings({
             DB: db,
-        },
+        }),
     )
 }
 
@@ -65,11 +74,14 @@ async function postPasskeyRegistrationOptions(body: unknown): Promise<Response> 
             body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: {
                 'content-type': 'application/json',
+                cookie: `myoc_pre_auth_csrf=${PRE_AUTH_CSRF_TOKEN}`,
+                origin: 'https://example.com',
+                'x-csrf-token': PRE_AUTH_CSRF_TOKEN,
             },
         },
-        {
+        authTestBindings({
             DB: db,
-        },
+        }),
     )
 }
 
@@ -81,11 +93,12 @@ async function postPasskeyRegistrationVerify(body: unknown): Promise<Response> {
             body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: {
                 'content-type': 'application/json',
+                origin: 'https://example.com',
             },
         },
-        {
+        authTestBindings({
             DB: db,
-        },
+        }),
     )
 }
 
@@ -97,11 +110,12 @@ async function postPasskeyLoginOptions(body: unknown): Promise<Response> {
             body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: {
                 'content-type': 'application/json',
+                origin: 'https://example.com',
             },
         },
-        {
+        authTestBindings({
             DB: db,
-        },
+        }),
     )
 }
 
@@ -113,11 +127,12 @@ async function postPasskeyLoginVerify(body: unknown): Promise<Response> {
             body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: {
                 'content-type': 'application/json',
+                origin: 'https://example.com',
             },
         },
-        {
+        authTestBindings({
             DB: db,
-        },
+        }),
     )
 }
 
@@ -129,11 +144,14 @@ async function postRecoveryLogin(body: unknown): Promise<Response> {
             body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: {
                 'content-type': 'application/json',
+                cookie: `myoc_pre_auth_csrf=${PRE_AUTH_CSRF_TOKEN}`,
+                origin: 'https://example.com',
+                'x-csrf-token': PRE_AUTH_CSRF_TOKEN,
             },
         },
-        {
+        authTestBindings({
             DB: db,
-        },
+        }),
     )
 }
 
@@ -196,6 +214,118 @@ async function postLogoutForm(cookie?: string, csrfToken?: string): Promise<Resp
 }
 
 describe('POST /login', () => {
+    it.each([
+        {name: 'cross-site', headers: {origin: 'https://evil.example', 'sec-fetch-site': 'cross-site'}},
+        {name: 'without source headers', headers: {}},
+    ] as Array<{name: string; headers: Record<string, string>}>)(
+        'rejects a $name login request before credential checks',
+        async ({headers}) => {
+            const response = await authPageActionRoutes.request(
+                'https://example.com/login',
+                {
+                    method: 'POST',
+                    body: JSON.stringify({username: 'testuser', password: 'password123'}),
+                    headers: {'content-type': 'application/json', ...headers},
+                },
+                {DB: db},
+            )
+
+            expect(response.status).toBe(403)
+            await expect(response.json()).resolves.toEqual({error: 'Invalid CSRF token'})
+        },
+    )
+
+    it('rejects a same-origin login request without the pre-auth CSRF token', async () => {
+        const response = await authPageActionRoutes.request(
+            'https://example.com/login',
+            {
+                method: 'POST',
+                body: JSON.stringify({username: 'testuser', password: 'password123'}),
+                headers: {'content-type': 'application/json', origin: 'https://example.com'},
+            },
+            authTestBindings({DB: db}),
+        )
+
+        expect(response.status).toBe(403)
+        await expect(response.json()).resolves.toEqual({error: 'Invalid CSRF token'})
+    })
+
+    it('returns 429 before reading credentials when the network limit is exhausted', async () => {
+        const deniedNetwork = createMockRateLimit(false)
+        const allowed = createMockRateLimit()
+        const response = await authPageActionRoutes.request(
+            'https://example.com/login',
+            {
+                method: 'POST',
+                body: JSON.stringify({username: 'testuser', password: 'password123'}),
+                headers: {
+                    'content-type': 'application/json',
+                    cookie: `myoc_pre_auth_csrf=${PRE_AUTH_CSRF_TOKEN}`,
+                    origin: 'https://example.com',
+                    'x-csrf-token': PRE_AUTH_CSRF_TOKEN,
+                },
+            },
+            {
+                AUTH_CHALLENGE_RATE_LIMITER: allowed,
+                AUTH_IDENTITY_BURST_RATE_LIMITER: allowed,
+                AUTH_IDENTITY_SUSTAINED_RATE_LIMITER: allowed,
+                AUTH_NETWORK_RATE_LIMITER: deniedNetwork,
+                DB: db,
+            },
+        )
+
+        expect(response.status).toBe(429)
+        expect(response.headers.get('retry-after')).toBe('60')
+        expect(response.headers.get('set-cookie')).toBeNull()
+        await expect(response.json()).resolves.toEqual({error: 'Too many requests. Try again later.'})
+    })
+
+    it('fails closed when a required rate-limit binding is missing', async () => {
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        const response = await authPageActionRoutes.request(
+            'https://example.com/login',
+            {
+                method: 'POST',
+                body: JSON.stringify({username: 'testuser', password: 'password123'}),
+                headers: {
+                    'content-type': 'application/json',
+                    cookie: `myoc_pre_auth_csrf=${PRE_AUTH_CSRF_TOKEN}`,
+                    origin: 'https://example.com',
+                    'x-csrf-token': PRE_AUTH_CSRF_TOKEN,
+                },
+            },
+            {DB: db},
+        )
+        consoleError.mockRestore()
+
+        expect(response.status).toBe(429)
+        await expect(response.json()).resolves.toEqual({error: 'Too many requests. Try again later.'})
+    })
+
+    it('returns 429 when the passkey challenge limit is exhausted', async () => {
+        const deniedChallenge = createMockRateLimit(false)
+        const allowed = createMockRateLimit()
+        const response = await authPageActionRoutes.request(
+            'https://example.com/login/passkey/verify',
+            {
+                method: 'POST',
+                body: JSON.stringify({challengeId: 'challenge-1', credential: {id: 'credential-1'}}),
+                headers: {'content-type': 'application/json', origin: 'https://example.com'},
+            },
+            {
+                AUTH_CHALLENGE_RATE_LIMITER: deniedChallenge,
+                AUTH_IDENTITY_BURST_RATE_LIMITER: allowed,
+                AUTH_IDENTITY_SUSTAINED_RATE_LIMITER: allowed,
+                AUTH_NETWORK_RATE_LIMITER: allowed,
+                DB: db,
+            },
+        )
+
+        expect(response.status).toBe(429)
+        expect(response.headers.get('retry-after')).toBe('60')
+        await expect(response.json()).resolves.toEqual({error: 'Too many requests. Try again later.'})
+    })
+
     it('returns 400 for invalid JSON', async () => {
         const response = await postLogin('{bad json')
 
@@ -220,10 +350,23 @@ describe('POST /login', () => {
     it('reads multipart login fields', async () => {
         const user = await seedTestUser('password123')
         const form = new FormData()
+        form.set('csrfToken', PRE_AUTH_CSRF_TOKEN)
         form.set('username', 'testuser')
         form.set('password', 'password123')
 
-        const response = await authPageActionRoutes.request('https://example.com/login', {method: 'POST', body: form}, {DB: db})
+        const response = await authPageActionRoutes.request(
+            'https://example.com/login',
+            {
+                method: 'POST',
+                body: form,
+                headers: {
+                    cookie: `myoc_pre_auth_csrf=${PRE_AUTH_CSRF_TOKEN}`,
+                    origin: 'https://example.com',
+                    'x-csrf-token': PRE_AUTH_CSRF_TOKEN,
+                },
+            },
+            authTestBindings({DB: db}),
+        )
 
         expect(response.status).toBe(200)
         await expect(response.json()).resolves.toMatchObject({user: {id: user.id, username: user.username}})
@@ -233,8 +376,17 @@ describe('POST /login', () => {
     it('uses an empty login body for an unsupported content type', async () => {
         const response = await authPageActionRoutes.request(
             'https://example.com/login',
-            {body: 'username=testuser', headers: {'content-type': 'text/plain'}, method: 'POST'},
-            {DB: db},
+            {
+                body: 'username=testuser',
+                headers: {
+                    'content-type': 'text/plain',
+                    cookie: `myoc_pre_auth_csrf=${PRE_AUTH_CSRF_TOKEN}`,
+                    origin: 'https://example.com',
+                    'x-csrf-token': PRE_AUTH_CSRF_TOKEN,
+                },
+                method: 'POST',
+            },
+            authTestBindings({DB: db}),
         )
 
         expect(response.status).toBe(400)
@@ -246,9 +398,18 @@ describe('POST /login', () => {
             'https://example.com/login',
             {
                 method: 'POST',
-                body: new URLSearchParams({username: 'a'.repeat(1024 * 1024), password: 'password123'}),
+                body: new URLSearchParams({
+                    csrfToken: PRE_AUTH_CSRF_TOKEN,
+                    username: 'a'.repeat(1024 * 1024),
+                    password: 'password123',
+                }),
+                headers: {
+                    cookie: `myoc_pre_auth_csrf=${PRE_AUTH_CSRF_TOKEN}`,
+                    origin: 'https://example.com',
+                    'x-csrf-token': PRE_AUTH_CSRF_TOKEN,
+                },
             },
-            {DB: db},
+            authTestBindings({DB: db}),
         )
 
         expect(response.status).toBe(400)
@@ -808,6 +969,25 @@ describe('POST /login/passkey/verify', () => {
 })
 
 describe('POST /recovery/login', () => {
+    it('rejects a cross-site recovery login request', async () => {
+        const response = await authPageActionRoutes.request(
+            'https://example.com/recovery/login',
+            {
+                method: 'POST',
+                body: JSON.stringify({username: 'testuser', recoveryPhrase: 'one-two-three-four'}),
+                headers: {
+                    'content-type': 'application/json',
+                    origin: 'https://evil.example',
+                    'sec-fetch-site': 'cross-site',
+                },
+            },
+            {DB: db},
+        )
+
+        expect(response.status).toBe(403)
+        await expect(response.json()).resolves.toEqual({error: 'Invalid CSRF token'})
+    })
+
     it('returns 400 for invalid JSON', async () => {
         const response = await postRecoveryLogin('{bad json')
 
@@ -914,9 +1094,12 @@ describe('POST /recovery/login', () => {
                 headers: {
                     accept: 'text/html',
                     'content-type': 'application/json',
+                    cookie: `myoc_pre_auth_csrf=${PRE_AUTH_CSRF_TOKEN}`,
+                    origin: 'https://example.com',
+                    'x-csrf-token': PRE_AUTH_CSRF_TOKEN,
                 },
             },
-            {DB: db},
+            authTestBindings({DB: db}),
         )
 
         expect(response.status).toBe(302)

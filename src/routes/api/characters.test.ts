@@ -319,7 +319,7 @@ function expectStoredCharacterProfileImage(mediaBucket: R2Bucket, character: Cha
         expect.any(Uint8Array),
         {
             httpMetadata: {
-                cacheControl: 'public, max-age=31536000, immutable',
+                cacheControl: 'public, max-age=300, must-revalidate',
                 contentType: 'image/webp',
             },
         },
@@ -336,7 +336,7 @@ function expectStoredFolderImage(mediaBucket: R2Bucket, folder: FolderResponse['
         expect.any(Uint8Array),
         {
             httpMetadata: {
-                cacheControl: 'public, max-age=31536000, immutable',
+                cacheControl: 'public, max-age=300, must-revalidate',
                 contentType: 'image/webp',
             },
         },
@@ -1944,7 +1944,7 @@ describe('POST /characters/folders/:id/image', () => {
             expect.any(Uint8Array),
             {
                 httpMetadata: {
-                    cacheControl: 'public, max-age=31536000, immutable',
+                    cacheControl: 'public, max-age=300, must-revalidate',
                     contentType: 'image/webp',
                 },
             },
@@ -2982,7 +2982,7 @@ describe('POST /characters/:id/profile-image', () => {
             expect.any(Uint8Array),
             {
                 httpMetadata: {
-                    cacheControl: 'public, max-age=31536000, immutable',
+                    cacheControl: 'public, max-age=300, must-revalidate',
                     contentType: 'image/webp',
                 },
             },
@@ -3086,7 +3086,7 @@ describe('POST /characters/:id/profile-image', () => {
             expect.any(Uint8Array),
             {
                 httpMetadata: {
-                    cacheControl: 'public, max-age=31536000, immutable',
+                    cacheControl: 'public, max-age=300, must-revalidate',
                     contentType: 'image/webp',
                 },
             },
@@ -3123,7 +3123,7 @@ describe('POST /characters/:id/profile-image', () => {
             expect.any(Uint8Array),
             {
                 httpMetadata: {
-                    cacheControl: 'public, max-age=31536000, immutable',
+                    cacheControl: 'public, max-age=300, must-revalidate',
                     contentType: 'image/webp',
                 },
             },
@@ -3393,7 +3393,7 @@ describe('PUT /characters/:id/height-chart', () => {
             expect.any(Uint8Array),
             {
                 httpMetadata: {
-                    cacheControl: 'public, max-age=31536000, immutable',
+                    cacheControl: 'public, max-age=300, must-revalidate',
                     contentType: 'image/png',
                 },
             },
@@ -4047,7 +4047,7 @@ describe('character media uploads', () => {
             expect.any(Uint8Array),
             {
                 httpMetadata: {
-                    cacheControl: 'public, max-age=31536000, immutable',
+                    cacheControl: 'public, max-age=300, must-revalidate',
                     contentType: 'image/webp',
                 },
             },
@@ -4933,7 +4933,7 @@ describe('character media uploads', () => {
             expect.any(Uint8Array),
             {
                 httpMetadata: {
-                    cacheControl: 'public, max-age=31536000, immutable',
+                    cacheControl: 'public, max-age=300, must-revalidate',
                     contentType: 'image/webp',
                 },
             },
@@ -5192,7 +5192,7 @@ describe('character media uploads', () => {
             `characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.gif`,
             {
                 httpMetadata: {
-                    cacheControl: 'public, max-age=31536000, immutable',
+                    cacheControl: 'public, max-age=300, must-revalidate',
                     contentType: 'image/gif',
                 },
             },
@@ -5729,7 +5729,7 @@ describe('character media uploads', () => {
             `characters/current-user/character-id/media/${media.id}/nsfw/${body.uploads.nsfw.imageKey}.webp`,
             {
                 httpMetadata: {
-                    cacheControl: 'public, max-age=31536000, immutable',
+                    cacheControl: 'public, max-age=300, must-revalidate',
                     contentType: 'image/webp',
                 },
             },

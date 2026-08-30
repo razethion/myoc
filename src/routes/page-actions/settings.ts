@@ -5,6 +5,7 @@ import {z} from 'zod'
 import {getCurrentUser, normalizeCredential, toSqlTimestamp, type UserRecord} from '../../lib/auth/session'
 import {csrfProtection} from '../../lib/http/csrf'
 import {jsonResponse} from '../../lib/http/jsonResponse'
+import {safeLocalRedirectPath} from '../../lib/http/redirect'
 import {readFormDataUpTo, readJsonUpTo} from '../../lib/http/requestBody'
 import {ErrorResponseSchema, OkResponseSchema, responseSchema} from '../../lib/http/responseSchemas'
 import {FIXED_SOCIAL_LINKS, type UserSocialLink} from '../../lib/socialLinks'
@@ -106,7 +107,11 @@ settingsPageActionRoutes.post('/passkey-setup', async (c) => {
 
     const body = requestResult.body
     const choice = body.choice === 'setup' ? 'setup' : 'later'
-    const returnTo = safeLocalRedirectPath(body.returnTo) ?? `/u/${encodeURIComponent(currentUser.username)}`
+    const returnTo =
+        safeLocalRedirectPath(body.returnTo, c.req.url, {
+            blockedPaths: new Set(['/passkey-setup']),
+            blockedPrefixes: ['/api/'],
+        }) ?? `/u/${encodeURIComponent(currentUser.username)}`
     const redirectTo = choice === 'setup' ? '/settings' : returnTo
 
     await c.env.DB.prepare(
@@ -185,18 +190,6 @@ async function parseFormPasskeyPromptResponse(
     } catch {
         return {body: {choice: 'later', returnTo: null}}
     }
-}
-
-function safeLocalRedirectPath(value: string | null): string | null {
-    if (!value?.startsWith('/') || value.startsWith('//')) {
-        return null
-    }
-
-    if (value.startsWith('/api/') || value === '/passkey-setup') {
-        return null
-    }
-
-    return value
 }
 
 function isValidEmail(email: string): boolean {

@@ -6,6 +6,8 @@ import {getAdminReportsData} from '../lib/admin/reports'
 import {listUserPasskeys, listUserSessions, toPasskeySummary} from '../lib/auth/passkeys'
 import {type CurrentUser, canModerateImages, getCurrentUser, isAdminUser, toSqlTimestamp} from '../lib/auth/session'
 import {chunkGalleryItems, shouldForceGalleryRowFullWidth} from '../lib/gallery'
+import {issuePreAuthCsrfToken} from '../lib/http/csrf'
+import {safeLocalRedirectPath} from '../lib/http/redirect'
 import {readFormDataUpTo} from '../lib/http/requestBody'
 import {getLeaderboardSnapshot} from '../lib/leaderboard'
 import {parseHeightChartJson} from '../lib/media/heightChart'
@@ -77,6 +79,10 @@ const TOYHOUSE_IMPORT_PAYLOAD_MAX_CHARACTERS = 5_000_000
 const TOYHOUSE_IMPORT_REQUEST_MAX_BYTES = 16 * 1024 * 1024
 const TOYHOUSE_URL_MAX_CHARACTERS = 2048
 const TOYHOUSE_IMPORT_TOO_LARGE_ERROR = 'Toyhou.se returned too much data. Try importing a smaller profile or folder.'
+const TOYHOUSE_IMAGE_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'])
+const TOYHOUSE_IMAGE_HOSTS = new Set(['file.toyhou.se', 'f2.toyhou.se'])
+const TOYHOUSE_IMAGE_MAX_BYTES = 200 * 1024 * 1024
+const TOYHOUSE_IMAGE_TIMEOUT_MS = 30_000
 
 const HOME_PAGE_STATS_CACHE_KEY = 'home:stats:v1'
 const HOME_PAGE_DISCOVER_CACHE_KEY = 'home:discover:v2'
@@ -168,6 +174,8 @@ pageRoutes.get('/login', async (c) => {
         return c.redirect(userProfileUrl(currentUser.username))
     }
 
+    const preAuthCsrfToken = issuePreAuthCsrfToken(c)
+
     return c.html(
         <AuthPage
             currentUser={currentUser}
@@ -175,6 +183,7 @@ pageRoutes.get('/login', async (c) => {
             loginMethod={getLoginMethod(c.req.query('method'))}
             mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
             mode="login"
+            preAuthCsrfToken={preAuthCsrfToken}
         />,
     )
 })
@@ -198,7 +207,7 @@ pageRoutes.get(PASSKEY_PROMPT_PATH, async (c) => {
         return c.redirect('/login')
     }
 
-    const returnTo = safePromptReturnTo(c.req.query('returnTo'), currentUser.username)
+    const returnTo = safePromptReturnTo(c.req.query('returnTo'), c.req.url, currentUser.username)
 
     if (!(await shouldRedirectToPasskeyPrompt(c.env.DB, currentUser))) {
         return c.redirect(returnTo)
@@ -268,23 +277,68 @@ pageRoutes.get('/migrate/toyhouse-image', async (c) => {
         return c.json({error: 'Toyhou.se image URL is invalid'}, 400)
     }
 
-    const upstream = await fetch(imageUrl, {
-        redirect: 'follow',
-    })
+    return await proxyToyhouseImage(imageUrl)
+})
+
+async function proxyToyhouseImage(imageUrl: string): Promise<Response> {
+    const timeoutSignal = AbortSignal.timeout(TOYHOUSE_IMAGE_TIMEOUT_MS)
+    let upstream: Response
+
+    try {
+        upstream = await fetch(imageUrl, {
+            redirect: 'manual',
+            signal: timeoutSignal,
+        })
+    } catch {
+        const error = timeoutSignal.aborted ? 'Toyhou.se image request timed out' : 'Toyhou.se image request failed'
+        return Response.json({error}, {status: timeoutSignal.aborted ? 504 : 502})
+    }
+
+    if (upstream.status >= 300 && upstream.status < 400) {
+        await upstream.body?.cancel()
+        return Response.json({error: 'Toyhou.se image redirects are not allowed'}, {status: 502})
+    }
 
     if (!upstream.ok || !upstream.body) {
-        return c.json({error: `Toyhou.se returned ${upstream.status} for image URL`}, 502)
+        return Response.json({error: `Toyhou.se returned ${upstream.status} for image URL`}, {status: 502})
+    }
+
+    const contentType = upstream.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() ?? ''
+
+    if (!TOYHOUSE_IMAGE_CONTENT_TYPES.has(contentType)) {
+        await upstream.body.cancel()
+        return Response.json({error: 'Toyhou.se returned an unsupported image type'}, {status: 502})
+    }
+
+    const contentLength = parseContentLength(upstream.headers.get('content-length'))
+
+    if (contentLength !== null && contentLength > TOYHOUSE_IMAGE_MAX_BYTES) {
+        await upstream.body.cancel()
+        return Response.json({error: 'Toyhou.se image is too large'}, {status: 502})
+    }
+
+    let imageBody: ReadableStream<Uint8Array>
+
+    try {
+        imageBody = await createValidatedImageStream(upstream.body, contentType, TOYHOUSE_IMAGE_MAX_BYTES)
+    } catch {
+        await upstream.body.cancel().catch(() => undefined)
+        return Response.json({error: 'Toyhou.se returned invalid image data'}, {status: 502})
     }
 
     // Toyhou.se import needs an authenticated same-origin image proxy for CORS.
     // nosemgrep: myoc.routes.no-image-body-proxy
-    return new Response(upstream.body, {
+    return new Response(imageBody, {
         headers: {
             'cache-control': 'private, no-store',
-            'content-type': upstream.headers.get('content-type') ?? 'application/octet-stream',
+            'content-disposition': 'attachment',
+            'content-security-policy': "default-src 'none'; sandbox",
+            'content-type': contentType,
+            'cross-origin-resource-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
         },
     })
-})
+}
 
 pageRoutes.get('/migrate/import', async (c) => {
     const currentUser = await getCurrentUser(c)
@@ -707,12 +761,13 @@ async function shouldRedirectToPasskeyPrompt(db: D1Database, currentUser: Awaite
     return (await listUserPasskeys(db, currentUser.id)).length === 0
 }
 
-function safePromptReturnTo(value: string | undefined, username: string): string {
-    if (!value?.startsWith('/') || value.startsWith('//') || value === PASSKEY_PROMPT_PATH || value.startsWith('/api/')) {
-        return userProfileUrl(username)
-    }
-
-    return value
+function safePromptReturnTo(value: string | undefined, requestUrl: string, username: string): string {
+    return (
+        safeLocalRedirectPath(value, requestUrl, {
+            blockedPaths: new Set([PASSKEY_PROMPT_PATH]),
+            blockedPrefixes: ['/api/'],
+        }) ?? userProfileUrl(username)
+    )
 }
 
 pageRoutes.get('/u/:username/:profilePath{.+}', async (c) => {
@@ -1657,11 +1712,11 @@ function parseToyhouseImageProxyUrl(value: unknown): string | null {
         const url = new URL(value)
         const host = url.hostname.toLowerCase()
 
-        if (url.protocol !== 'https:') {
+        if (url.protocol !== 'https:' || url.username || url.password || url.port || !url.pathname.startsWith('/file/')) {
             return null
         }
 
-        if (host !== 'toyhou.se' && !host.endsWith('.toyhou.se')) {
+        if (!TOYHOUSE_IMAGE_HOSTS.has(host)) {
             return null
         }
 
@@ -1669,6 +1724,143 @@ function parseToyhouseImageProxyUrl(value: unknown): string | null {
     } catch {
         return null
     }
+}
+
+function parseContentLength(value: string | null): number | null {
+    if (!value || !/^\d+$/.test(value)) {
+        return null
+    }
+
+    const length = Number(value)
+    return Number.isSafeInteger(length) ? length : null
+}
+
+async function createValidatedImageStream(
+    body: ReadableStream<Uint8Array>,
+    contentType: string,
+    maxBytes: number,
+): Promise<ReadableStream<Uint8Array>> {
+    const reader = body.getReader()
+    const initialChunks: Uint8Array[] = []
+    const requiredBytes = imageSignatureLength(contentType)
+    let initialByteLength = 0
+    let receivedBytes = 0
+
+    while (initialByteLength < requiredBytes) {
+        const result = await reader.read()
+
+        if (result.done) {
+            break
+        }
+
+        receivedBytes += result.value.byteLength
+
+        if (receivedBytes > maxBytes) {
+            await reader.cancel()
+            throw new Error('Image is too large')
+        }
+
+        initialChunks.push(result.value)
+        initialByteLength += result.value.byteLength
+    }
+
+    const prefix = concatenateBytes(initialChunks, requiredBytes)
+
+    if (!hasExpectedImageSignature(prefix, contentType)) {
+        await reader.cancel()
+        throw new Error('Image signature does not match its content type')
+    }
+
+    return new ReadableStream<Uint8Array>({
+        start(controller) {
+            for (const chunk of initialChunks) {
+                controller.enqueue(chunk)
+            }
+        },
+        async pull(controller) {
+            try {
+                const result = await reader.read()
+
+                if (result.done) {
+                    controller.close()
+                    return
+                }
+
+                receivedBytes += result.value.byteLength
+
+                if (receivedBytes > maxBytes) {
+                    await reader.cancel()
+                    controller.error(new Error('Image is too large'))
+                    return
+                }
+
+                controller.enqueue(result.value)
+            } catch (error) {
+                controller.error(error)
+            }
+        },
+        async cancel(reason) {
+            await reader.cancel(reason)
+        },
+    })
+}
+
+function imageSignatureLength(contentType: string): number {
+    return contentType === 'image/avif' ? 32 : 12
+}
+
+function concatenateBytes(chunks: Uint8Array[], limit: number): Uint8Array {
+    const bytes = new Uint8Array(
+        Math.min(
+            chunks.reduce((total, chunk) => total + chunk.byteLength, 0),
+            limit,
+        ),
+    )
+    let offset = 0
+
+    for (const chunk of chunks) {
+        const remaining = bytes.byteLength - offset
+
+        if (remaining <= 0) {
+            break
+        }
+
+        const part = chunk.subarray(0, remaining)
+        bytes.set(part, offset)
+        offset += part.byteLength
+    }
+
+    return bytes
+}
+
+function hasExpectedImageSignature(bytes: Uint8Array, contentType: string): boolean {
+    if (contentType === 'image/png') {
+        return startsWithBytes(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    }
+
+    if (contentType === 'image/jpeg') {
+        return startsWithBytes(bytes, [0xff, 0xd8, 0xff])
+    }
+
+    if (contentType === 'image/gif') {
+        const header = new TextDecoder().decode(bytes.subarray(0, 6))
+        return header === 'GIF87a' || header === 'GIF89a'
+    }
+
+    if (contentType === 'image/webp') {
+        return new TextDecoder().decode(bytes.subarray(0, 4)) === 'RIFF' && new TextDecoder().decode(bytes.subarray(8, 12)) === 'WEBP'
+    }
+
+    if (contentType === 'image/avif') {
+        const brands = new TextDecoder().decode(bytes.subarray(8))
+        return new TextDecoder().decode(bytes.subarray(4, 8)) === 'ftyp' && (brands.includes('avif') || brands.includes('avis'))
+    }
+
+    return false
+}
+
+function startsWithBytes(bytes: Uint8Array, expected: number[]): boolean {
+    return expected.every((value, index) => bytes[index] === value)
 }
 
 async function getHomePageStats(db: D1Database): Promise<HomePageStats> {

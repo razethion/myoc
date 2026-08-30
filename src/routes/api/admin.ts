@@ -10,13 +10,14 @@ import {requireImageModeratorApiUser} from '../../lib/auth/authorization'
 import {toSqlTimestamp} from '../../lib/auth/session'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {ErrorResponseSchema, ImageApprovalDataSchema} from '../../lib/http/responseSchemas'
+import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../../lib/media/cacheControl'
 import {deleteR2Objects} from '../../lib/media/r2Delete'
 import {characterMediaImageObjectKey, characterMediaNsfwBlurImageObjectKey, characterMediaPreviewImageObjectKey} from '../../lib/media/url'
 import type {Bindings} from '../../types/bindings'
 
 export const adminRoutes = new Hono<{Bindings: Bindings}>()
 
-const GALLERY_IMAGE_CACHE_CONTROL = 'public, max-age=31536000, immutable'
+const GALLERY_IMAGE_CACHE_CONTROL = REVOCABLE_MEDIA_CACHE_CONTROL
 const GALLERY_PREVIEW_CONTENT_TYPE = 'image/webp'
 const GALLERY_NSFW_BLUR_MAX_WIDTH = 960
 const GALLERY_NSFW_BLUR_AMOUNT = 250

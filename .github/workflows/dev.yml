@@ -1,0 +1,722 @@
+name: Dev Preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Deploy or clean up a dev preview.
+        required: true
+        type: choice
+        options:
+          - deploy
+          - cleanup
+      pull_request:
+        description: Pull request number.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: dev-preview-${{ inputs.pull_request }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      head_sha: ${{ steps.pull-request.outputs.head_sha }}
+
+    steps:
+      - name: Require the trusted workflow
+        env:
+          WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          if [ "$WORKFLOW_REF" != "refs/heads/master" ]; then
+            echo "::error::Run this workflow from the master branch."
+            exit 1
+          fi
+
+      - name: Validate pull request number
+        env:
+          PR_NUMBER: ${{ inputs.pull_request }}
+        run: |
+          if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Pull request number must be a positive integer."
+            exit 1
+          fi
+
+      - name: Resolve immutable pull request commit
+        id: pull-request
+        if: ${{ inputs.operation == 'deploy' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        env:
+          PR_NUMBER: ${{ inputs.pull_request }}
+        with:
+          script: |
+            const pullNumber = Number.parseInt(process.env.PR_NUMBER, 10)
+            const { data: pullRequest } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: pullNumber,
+            })
+
+            if (pullRequest.state !== 'open') {
+              core.setFailed('The pull request must be open.')
+              return
+            }
+
+            if (pullRequest.base.ref !== 'master') {
+              core.setFailed('The pull request must target master.')
+              return
+            }
+
+            if (pullRequest.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
+              core.setFailed('Fork pull requests cannot use the dev deployment workflow.')
+              return
+            }
+
+            core.setOutput('head_sha', pullRequest.head.sha)
+
+  verify:
+    name: Verify PR #${{ inputs.pull_request }} at ${{ needs.validate.outputs.head_sha }}
+    if: ${{ inputs.operation == 'deploy' }}
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout immutable commit
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: ${{ needs.validate.outputs.head_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run quality checks
+        run: npm run ci
+
+      - name: Build assets
+        run: npm run build
+
+      - name: Build processor container
+        run: docker build --tag myoc-docker-sharp-dev-check containers/myoc-docker-sharp
+
+      - name: Build immutable deployment artifact
+        env:
+          HEAD_SHA: ${{ needs.validate.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+
+          build_root="$RUNNER_TEMP/myoc-dev-build"
+          artifact_root="$RUNNER_TEMP/myoc-dev-artifact"
+          mkdir -p "$build_root/worker" "$artifact_root/worker" "$artifact_root/container" "$artifact_root/seeds"
+
+          node <<'NODE'
+          const fs = require('node:fs')
+          const path = require('node:path')
+
+          const config = {
+            name: 'myoc-dev-artifact',
+            main: path.join(process.env.GITHUB_WORKSPACE, 'src/index.ts'),
+            compatibility_date: '2026-06-10',
+          }
+
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'myoc-dev-build', 'wrangler.build.jsonc'), `${JSON.stringify(config, null, 2)}\n`)
+          NODE
+
+          ./node_modules/.bin/wrangler deploy \
+            --config "$build_root/wrangler.build.jsonc" \
+            --dry-run \
+            --minify \
+            --outdir "$build_root/worker"
+
+          if find public containers/myoc-docker-sharp migrations seeds/development.sql -type l -print -quit | grep -q .; then
+            echo "::error::The deployment artifact cannot contain symbolic links."
+            exit 1
+          fi
+
+          cp "$build_root/worker/index.js" "$artifact_root/worker/index.js"
+          cp -R public "$artifact_root/public"
+          cp -R migrations "$artifact_root/migrations"
+          cp seeds/development.sql "$artifact_root/seeds/development.sql"
+          cp containers/myoc-docker-sharp/Dockerfile "$artifact_root/container/Dockerfile"
+          cp containers/myoc-docker-sharp/package.json "$artifact_root/container/package.json"
+          cp containers/myoc-docker-sharp/package-lock.json "$artifact_root/container/package-lock.json"
+          cp containers/myoc-docker-sharp/server.mjs "$artifact_root/container/server.mjs"
+          printf '%s\n' "$HEAD_SHA" > "$artifact_root/commit.txt"
+
+          (
+            cd "$artifact_root"
+            find . -type f ! -name manifest.sha256 -print0 | sort -z | xargs -0 sha256sum > manifest.sha256
+          )
+          tar -czf "$RUNNER_TEMP/myoc-dev-preview.tgz" -C "$artifact_root" .
+
+      - name: Upload immutable deployment artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dev-preview-${{ needs.validate.outputs.head_sha }}
+          path: ${{ runner.temp }}/myoc-dev-preview.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    name: Approve PR #${{ inputs.pull_request }} at ${{ needs.validate.outputs.head_sha }}
+    if: ${{ inputs.operation == 'deploy' }}
+    needs:
+      - validate
+      - verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: development
+      url: ${{ steps.deploy-preview.outputs.preview_url }}
+
+    steps:
+      - name: Validate development credentials
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::Configure the development environment Cloudflare credentials."
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install trusted Wrangler
+        id: wrangler
+        working-directory: ${{ runner.temp }}
+        run: |
+          npm install --prefix "$RUNNER_TEMP/myoc-dev-wrangler" --no-save wrangler@4.125.0
+          echo "path=$RUNNER_TEMP/myoc-dev-wrangler/node_modules/.bin/wrangler" >> "$GITHUB_OUTPUT"
+
+      - name: Download immutable deployment artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: dev-preview-${{ needs.validate.outputs.head_sha }}
+          path: ${{ runner.temp }}/myoc-dev-control/download
+
+      - name: Verify immutable deployment artifact
+        env:
+          HEAD_SHA: ${{ needs.validate.outputs.head_sha }}
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+
+          control_root="$RUNNER_TEMP/myoc-dev-control"
+          artifact_root="$control_root/artifact"
+          mkdir -p "$artifact_root"
+          tar -xzf "$control_root/download/myoc-dev-preview.tgz" --no-same-owner -C "$artifact_root"
+
+          if [ "$(cat "$artifact_root/commit.txt")" != "$HEAD_SHA" ]; then
+            echo "::error::The deployment artifact commit does not match the approved commit."
+            exit 1
+          fi
+
+          (
+            cd "$artifact_root"
+            sha256sum --check manifest.sha256
+          )
+
+          docker build --tag myoc-docker-sharp-dev-check "$artifact_root/container"
+
+      - name: Prepare resource names
+        id: names
+        env:
+          PR_NUMBER: ${{ inputs.pull_request }}
+        working-directory: ${{ runner.temp }}/myoc-dev-control
+        run: |
+          echo "worker=myoc-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "container=myoc-docker-sharp-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "database=myoc-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "cache=myoc-pr-${PR_NUMBER}-cache" >> "$GITHUB_OUTPUT"
+          echo "media_bucket=myoc-pr-${PR_NUMBER}-media" >> "$GITHUB_OUTPUT"
+          echo "backup_bucket=myoc-pr-${PR_NUMBER}-backups" >> "$GITHUB_OUTPUT"
+
+      - name: Provision isolated dev storage
+        id: resources
+        env:
+          BACKUP_BUCKET: ${{ steps.names.outputs.backup_bucket }}
+          CACHE_NAME: ${{ steps.names.outputs.cache }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DB_NAME: ${{ steps.names.outputs.database }}
+          MEDIA_BUCKET: ${{ steps.names.outputs.media_bucket }}
+          WRANGLER: ${{ steps.wrangler.outputs.path }}
+        working-directory: ${{ runner.temp }}/myoc-dev-control
+        run: |
+          set -euo pipefail
+
+          list_d1_databases() {
+            "$WRANGLER" d1 list --json > d1-list.json
+          }
+
+          get_db_id() {
+            node -e "
+              const fs = require('node:fs');
+              const databases = JSON.parse(fs.readFileSync('d1-list.json', 'utf8'));
+              const database = databases.find((entry) => entry.name === process.env.DB_NAME);
+              process.stdout.write(database?.uuid || database?.id || '');
+            "
+          }
+
+          list_d1_databases
+          db_id="$(get_db_id)"
+
+          if [ -z "$db_id" ]; then
+            "$WRANGLER" d1 create "$DB_NAME" --location enam
+            list_d1_databases
+            db_id="$(get_db_id)"
+          fi
+
+          if [ -z "$db_id" ]; then
+            echo "::error::Dev D1 database was not found after provisioning."
+            exit 1
+          fi
+
+          "$WRANGLER" kv namespace list > kv-list.json
+          cache_id="$(node -e "
+            const fs = require('node:fs');
+            const namespaces = JSON.parse(fs.readFileSync('kv-list.json', 'utf8'));
+            const namespace = namespaces.find((entry) => entry.title === process.env.CACHE_NAME);
+            process.stdout.write(namespace?.id || '');
+          ")"
+
+          if [ -z "$cache_id" ]; then
+            "$WRANGLER" kv namespace create "$CACHE_NAME"
+            "$WRANGLER" kv namespace list > kv-list.json
+            cache_id="$(node -e "
+              const fs = require('node:fs');
+              const namespaces = JSON.parse(fs.readFileSync('kv-list.json', 'utf8'));
+              const namespace = namespaces.find((entry) => entry.title === process.env.CACHE_NAME);
+              process.stdout.write(namespace?.id || '');
+            ")"
+          fi
+
+          if [ -z "$cache_id" ]; then
+            echo "::error::Dev KV namespace was not found after provisioning."
+            exit 1
+          fi
+
+          for bucket in "$MEDIA_BUCKET" "$BACKUP_BUCKET"; do
+            if ! "$WRANGLER" r2 bucket info "$bucket" > /dev/null 2>&1; then
+              "$WRANGLER" r2 bucket create "$bucket" --location enam
+            fi
+
+            "$WRANGLER" r2 bucket lifecycle remove "$bucket" --name preview-expiry || true
+            "$WRANGLER" r2 bucket lifecycle add "$bucket" preview-expiry --expire-days 30 --abort-multipart-days 1 --force
+          done
+
+          "$WRANGLER" r2 bucket dev-url enable "$MEDIA_BUCKET" --force
+          "$WRANGLER" r2 bucket dev-url get "$MEDIA_BUCKET" > r2-dev-url.txt
+          media_base_url="$(node -e "
+            const fs = require('node:fs');
+            const output = fs.readFileSync('r2-dev-url.txt', 'utf8');
+            const url = output.match(/https:\/\/[a-z0-9.-]+\.r2\.dev/i)?.[0];
+            const domain = output.match(/[a-z0-9.-]+\.r2\.dev/i)?.[0];
+            process.stdout.write(url || (domain ? 'https://' + domain : ''));
+          ")"
+
+          if [ -z "$media_base_url" ]; then
+            echo "::error::The isolated media bucket did not return an r2.dev URL."
+            exit 1
+          fi
+
+          echo "db_id=$db_id" >> "$GITHUB_OUTPUT"
+          echo "cache_id=$cache_id" >> "$GITHUB_OUTPUT"
+          echo "media_base_url=$media_base_url" >> "$GITHUB_OUTPUT"
+
+      - name: Write trusted Wrangler config
+        env:
+          ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BACKUP_BUCKET: ${{ steps.names.outputs.backup_bucket }}
+          CACHE_ID: ${{ steps.resources.outputs.cache_id }}
+          CONTAINER_NAME: ${{ steps.names.outputs.container }}
+          DB_ID: ${{ steps.resources.outputs.db_id }}
+          DB_NAME: ${{ steps.names.outputs.database }}
+          MEDIA_BASE_URL: ${{ steps.resources.outputs.media_base_url }}
+          MEDIA_BUCKET: ${{ steps.names.outputs.media_bucket }}
+          PR_NUMBER: ${{ inputs.pull_request }}
+          WORKER_NAME: ${{ steps.names.outputs.worker }}
+        working-directory: ${{ runner.temp }}/myoc-dev-control
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs')
+
+          const config = {
+            name: process.env.WORKER_NAME,
+            main: './artifact/worker/index.js',
+            compatibility_date: '2026-06-10',
+            workers_dev: true,
+            observability: {
+              logs: {
+                enabled: true,
+                invocation_logs: true,
+              },
+            },
+            containers: [
+              {
+                name: process.env.CONTAINER_NAME,
+                class_name: 'MyocDockerSharpContainer',
+                image: './artifact/container/Dockerfile',
+                image_build_context: './artifact/container',
+                instance_type: 'standard-1',
+                max_instances: 1,
+              },
+            ],
+            durable_objects: {
+              bindings: [
+                {
+                  name: 'MYOC_DOCKER_SHARP_CONTAINER',
+                  class_name: 'MyocDockerSharpContainer',
+                },
+              ],
+            },
+            migrations: [
+              {
+                tag: 'v1',
+                new_sqlite_classes: ['MyocDockerSharpContainer'],
+              },
+            ],
+            assets: {
+              directory: './artifact/public',
+            },
+            images: {
+              binding: 'IMAGES',
+              remote: true,
+            },
+            vars: {
+              CLOUDFLARE_ACCOUNT_ID: process.env.ACCOUNT_ID,
+              D1_DATABASE_ID: process.env.DB_ID,
+              MEDIA_PUBLIC_BASE_URL: process.env.MEDIA_BASE_URL,
+            },
+            secrets: {
+              required: ['PREVIEW_PROCESSOR_TOKEN'],
+            },
+            d1_databases: [
+              {
+                binding: 'DB',
+                database_name: process.env.DB_NAME,
+                database_id: process.env.DB_ID,
+                migrations_dir: './artifact/migrations',
+              },
+            ],
+            kv_namespaces: [
+              {
+                binding: 'CACHE',
+                id: process.env.CACHE_ID,
+              },
+            ],
+            ratelimits: [
+              {
+                name: 'AUTH_NETWORK_RATE_LIMITER',
+                namespace_id: `6${process.env.PR_NUMBER}01`,
+                simple: { limit: 60, period: 60 },
+              },
+              {
+                name: 'AUTH_IDENTITY_BURST_RATE_LIMITER',
+                namespace_id: `6${process.env.PR_NUMBER}02`,
+                simple: { limit: 5, period: 10 },
+              },
+              {
+                name: 'AUTH_IDENTITY_SUSTAINED_RATE_LIMITER',
+                namespace_id: `6${process.env.PR_NUMBER}03`,
+                simple: { limit: 15, period: 60 },
+              },
+              {
+                name: 'AUTH_CHALLENGE_RATE_LIMITER',
+                namespace_id: `6${process.env.PR_NUMBER}04`,
+                simple: { limit: 10, period: 60 },
+              },
+            ],
+            r2_buckets: [
+              {
+                binding: 'MEDIA_BUCKET',
+                bucket_name: process.env.MEDIA_BUCKET,
+              },
+              {
+                binding: 'DB_BACKUP_BUCKET',
+                bucket_name: process.env.BACKUP_BUCKET,
+              },
+            ],
+          }
+
+          fs.writeFileSync('wrangler.preview.jsonc', `${JSON.stringify(config, null, 2)}\n`)
+          NODE
+
+      - name: Migrate isolated dev D1
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DB_NAME: ${{ steps.names.outputs.database }}
+          WRANGLER: ${{ steps.wrangler.outputs.path }}
+        working-directory: ${{ runner.temp }}/myoc-dev-control
+        run: '"$WRANGLER" d1 migrations apply "$DB_NAME" --config wrangler.preview.jsonc --remote'
+
+      - name: Seed isolated dev D1
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DB_NAME: ${{ steps.names.outputs.database }}
+          WRANGLER: ${{ steps.wrangler.outputs.path }}
+        working-directory: ${{ runner.temp }}/myoc-dev-control
+        run: '"$WRANGLER" d1 execute "$DB_NAME" --config wrangler.preview.jsonc --remote --file artifact/seeds/development.sql'
+
+      - name: Deploy approved preview
+        id: deploy-preview
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          WRANGLER: ${{ steps.wrangler.outputs.path }}
+        working-directory: ${{ runner.temp }}/myoc-dev-control
+        run: |
+          set -euo pipefail
+          trap 'rm -f processor-token.txt preview-secrets.json' EXIT
+
+          openssl rand -hex 32 > processor-token.txt
+          processor_token="$(tr -d '\n' < processor-token.txt)"
+          echo "::add-mask::$processor_token"
+
+          node -e "
+            const fs = require('node:fs');
+            const token = fs.readFileSync('processor-token.txt', 'utf8').trim();
+            fs.writeFileSync('preview-secrets.json', JSON.stringify({ PREVIEW_PROCESSOR_TOKEN: token }));
+          "
+
+          "$WRANGLER" deploy --config wrangler.preview.jsonc --secrets-file preview-secrets.json --no-bundle --message "Approved dev preview ${{ needs.validate.outputs.head_sha }}" 2>&1 | tee wrangler-preview.log
+
+          preview_url="$(node -e "
+            const fs = require('node:fs');
+            const log = fs.readFileSync('wrangler-preview.log', 'utf8');
+            const urls = [...log.matchAll(/https:\/\/[a-z0-9-]+\.[a-z0-9-]+\.workers\.dev\b/gi)].map((match) => match[0]);
+            process.stdout.write(urls.at(-1) || '');
+          ")"
+
+          if [ -z "$preview_url" ]; then
+            echo "::error::Wrangler did not return a workers.dev URL."
+            exit 1
+          fi
+
+          echo "preview_url=$preview_url" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Dev preview"
+            echo
+            echo "- Pull request: #${{ inputs.pull_request }}"
+            echo "- Commit: ${{ needs.validate.outputs.head_sha }}"
+            echo "- URL: $preview_url"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  cleanup:
+    name: Approve cleanup for PR #${{ inputs.pull_request }}
+    if: ${{ inputs.operation == 'cleanup' }}
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: development
+
+    steps:
+      - name: Validate development credentials
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::Configure the development environment Cloudflare credentials."
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install trusted Wrangler
+        id: wrangler
+        working-directory: ${{ runner.temp }}
+        run: |
+          npm install --prefix "$RUNNER_TEMP/myoc-dev-wrangler" --no-save wrangler@4.125.0
+          mkdir -p "$RUNNER_TEMP/myoc-dev-cleanup"
+          echo "path=$RUNNER_TEMP/myoc-dev-wrangler/node_modules/.bin/wrangler" >> "$GITHUB_OUTPUT"
+
+      - name: Clean isolated dev resources
+        env:
+          BACKUP_BUCKET: myoc-pr-${{ inputs.pull_request }}-backups
+          CACHE_NAME: myoc-pr-${{ inputs.pull_request }}-cache
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CONTAINER_NAME: myoc-docker-sharp-pr-${{ inputs.pull_request }}
+          DB_NAME: myoc-pr-${{ inputs.pull_request }}
+          MEDIA_BUCKET: myoc-pr-${{ inputs.pull_request }}-media
+          WORKER_NAME: myoc-pr-${{ inputs.pull_request }}
+          WRANGLER: ${{ steps.wrangler.outputs.path }}
+        working-directory: ${{ runner.temp }}/myoc-dev-cleanup
+        run: |
+          set -euo pipefail
+
+          failures=()
+
+          record_failure() {
+            failures+=("$1")
+            echo "::warning::$1"
+          }
+
+          if ! worker_output=$("$WRANGLER" delete "$WORKER_NAME" --force 2>&1); then
+            if ! grep -Eqi 'not found|does not exist' <<< "$worker_output"; then
+              record_failure "Worker deletion failed: $worker_output"
+            fi
+          fi
+
+          if "$WRANGLER" d1 list --json > d1-list.json; then
+            if node -e "
+              const fs = require('node:fs');
+              const databases = JSON.parse(fs.readFileSync('d1-list.json', 'utf8'));
+              process.exit(databases.some((entry) => entry.name === process.env.DB_NAME) ? 0 : 1);
+            "; then
+              if ! "$WRANGLER" d1 delete "$DB_NAME" --skip-confirmation; then
+                record_failure "D1 database deletion failed for $DB_NAME."
+              fi
+            fi
+          else
+            record_failure "D1 database listing failed."
+          fi
+
+          if "$WRANGLER" kv namespace list > kv-list.json; then
+            cache_id="$(node -e "
+              const fs = require('node:fs');
+              const namespaces = JSON.parse(fs.readFileSync('kv-list.json', 'utf8'));
+              const namespace = namespaces.find((entry) => entry.title === process.env.CACHE_NAME);
+              process.stdout.write(namespace?.id || '');
+            ")"
+            if [ -n "$cache_id" ]; then
+              if ! "$WRANGLER" kv namespace delete --namespace-id "$cache_id" --skip-confirmation; then
+                record_failure "KV namespace deletion failed for $CACHE_NAME."
+              fi
+            fi
+          else
+            record_failure "KV namespace listing failed."
+          fi
+
+          for bucket in "$MEDIA_BUCKET" "$BACKUP_BUCKET"; do
+            if ! bucket_output=$("$WRANGLER" r2 bucket info "$bucket" 2>&1); then
+              if ! grep -Eqi 'not found|does not exist' <<< "$bucket_output"; then
+                record_failure "R2 bucket lookup failed for $bucket: $bucket_output"
+              fi
+              continue
+            fi
+
+            if [ "$bucket" = "$MEDIA_BUCKET" ] && ! "$WRANGLER" r2 bucket dev-url disable "$bucket" --force; then
+              record_failure "The public development URL could not be disabled for $bucket."
+            fi
+
+            "$WRANGLER" r2 bucket lifecycle remove "$bucket" --name preview-expiry || true
+            if ! "$WRANGLER" r2 bucket lifecycle add "$bucket" preview-expiry --expire-days 1 --abort-multipart-days 1 --force; then
+              record_failure "The one-day cleanup lifecycle could not be set for $bucket."
+            fi
+
+            if ! "$WRANGLER" r2 bucket delete "$bucket"; then
+              record_failure "$bucket is private but not empty. Its one-day lifecycle will remove remaining objects. Run cleanup again later."
+            fi
+          done
+
+          container_id=""
+          page_token=""
+
+          while [ -z "$container_id" ]; do
+            container_url="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/containers/dash/applications"
+            curl_args=(
+              --fail-with-body
+              --silent
+              --show-error
+              --get
+              --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+              --data-urlencode "per_page=100"
+              "$container_url"
+            )
+
+            if [ -n "$page_token" ]; then
+              curl_args+=(--data-urlencode "page_token=$page_token")
+            fi
+
+            if ! curl "${curl_args[@]}" > containers-list.json; then
+              record_failure "Container listing failed."
+              break
+            fi
+
+            if ! container_id="$(node -e "
+              const fs = require('node:fs');
+              const payload = JSON.parse(fs.readFileSync('containers-list.json', 'utf8'));
+              if (payload.success === false) process.exit(1);
+              const containers = Array.isArray(payload) ? payload : payload.result || payload.data || [];
+              const container = containers.find((entry) => entry.name === process.env.CONTAINER_NAME);
+              process.stdout.write(container?.id || '');
+            ")"; then
+              record_failure "The container list response was invalid."
+              break
+            fi
+
+            if [ -n "$container_id" ]; then
+              break
+            fi
+
+            if ! page_token="$(node -e "
+              const fs = require('node:fs');
+              const payload = JSON.parse(fs.readFileSync('containers-list.json', 'utf8'));
+              process.stdout.write(payload.result_info?.next_page_token || payload.resultInfo?.next_page_token || '');
+            ")"; then
+              record_failure "The container page token was invalid."
+              break
+            fi
+
+            if [ -z "$page_token" ]; then
+              break
+            fi
+          done
+
+          if [ -n "$container_id" ]; then
+            if ! printf 'y\n' | "$WRANGLER" containers delete "$container_id"; then
+              record_failure "Container deletion failed for $CONTAINER_NAME."
+            fi
+          fi
+
+          if ! image_output=$("$WRANGLER" containers images delete "$CONTAINER_NAME:worker" --skip-confirmation 2>&1); then
+            if ! grep -Eqi 'not found|does not exist' <<< "$image_output"; then
+              record_failure "Container image deletion failed: $image_output"
+            fi
+          fi
+
+          {
+            echo "### Dev preview cleanup"
+            echo
+            if [ "${#failures[@]}" -eq 0 ]; then
+              echo "Cleanup finished for pull request #${{ inputs.pull_request }}."
+            else
+              echo "Cleanup is partial for pull request #${{ inputs.pull_request }}."
+              echo
+              for failure in "${failures[@]}"; do
+                echo "- $failure"
+              done
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${#failures[@]}" -ne 0 ]; then
+            exit 1
+          fi

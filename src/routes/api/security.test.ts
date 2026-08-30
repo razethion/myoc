@@ -3,6 +3,7 @@ import {beforeEach, describe, expect, it, vi} from 'vitest'
 import {hashRecoveryPhrase, verifyRecoveryPhrase} from '../../lib/auth/passkeys'
 import {createCsrfToken} from '../../lib/auth/session'
 import {countRows, queryAll, queryOne, seedChallenge, seedPasskey, seedSession, seedUser, useTestDatabase} from '../../test/d1'
+import {createAllowingAuthRateLimits} from '../../test/mockRateLimit'
 import {apiRoutes} from '../api'
 
 vi.mock('@simplewebauthn/server', async (importOriginal) => {
@@ -78,6 +79,7 @@ async function securityRequest(
             headers,
         },
         {
+            ...createAllowingAuthRateLimits(),
             DB: db,
         },
     )
