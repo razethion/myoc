@@ -1646,6 +1646,42 @@ function RecentMediaScript() {
     return <script dangerouslySetInnerHTML={{__html: script}}></script>
 }
 
+function RecentMediaFilterControls({showNsfw, showUnapproved}: {showNsfw: boolean; showUnapproved: boolean}) {
+    return (
+        <fieldset class="flex flex-wrap gap-2">
+            <legend class="sr-only">Media filters</legend>
+            <button
+                aria-controls="recent-media-feed"
+                aria-pressed={showNsfw ? 'true' : 'false'}
+                class={showNsfw ? 'btn btn-sm btn-active' : 'btn btn-sm'}
+                data-recent-filter-nsfw
+                type="button"
+            >
+                {showNsfw ? 'Hide NSFW media' : 'Show NSFW media'}
+            </button>
+            <button
+                aria-controls="recent-media-feed"
+                aria-pressed={showUnapproved ? 'true' : 'false'}
+                class={showUnapproved ? 'btn btn-sm btn-active' : 'btn btn-sm'}
+                data-recent-filter-unapproved
+                type="button"
+            >
+                {showUnapproved ? 'Hide unapproved' : 'Show unapproved'}
+            </button>
+            <button
+                aria-controls="recent-media-feed"
+                aria-label="Expand multiple uploads by default"
+                aria-pressed="false"
+                class="btn btn-sm"
+                data-recent-stack-default
+                type="button"
+            >
+                Expand uploads
+            </button>
+        </fieldset>
+    )
+}
+
 export function RecentMediaPage({currentUser, guestInitial, mediaBaseUrl, page, showNsfw, showUnapproved}: RecentMediaPageProps) {
     const rows = chunkRecentMediaGroups(groupSequentialRecentMediaItems(page.items))
     const hasMore = Boolean(page.generation && page.publicRootUrl && page.nextPosition !== null)
@@ -1661,28 +1697,7 @@ export function RecentMediaPage({currentUser, guestInitial, mediaBaseUrl, page, 
                             <p class="text-sm font-semibold uppercase tracking-widest text-primary">Explore</p>
                             <h1 class="mt-1 text-4xl font-bold sm:text-5xl">Recently uploaded</h1>
                         </div>
-                        <fieldset class="flex flex-wrap gap-2">
-                            <legend class="sr-only">Media filters</legend>
-                            <button
-                                aria-controls="recent-media-feed"
-                                aria-pressed={showNsfw ? 'true' : 'false'}
-                                class={showNsfw ? 'btn btn-sm btn-active' : 'btn btn-sm'}
-                                data-recent-filter-nsfw
-                                type="button"
-                            >
-                                {showNsfw ? 'Hide NSFW media' : 'Show NSFW media'}
-                            </button>
-                            <button
-                                aria-controls="recent-media-feed"
-                                aria-label="Expand multiple uploads by default"
-                                aria-pressed="false"
-                                class="btn btn-sm"
-                                data-recent-stack-default
-                                type="button"
-                            >
-                                Expand uploads
-                            </button>
-                        </fieldset>
+                        <RecentMediaFilterControls showNsfw={showNsfw} showUnapproved={showUnapproved} />
                     </div>
                 </header>
 
@@ -1702,6 +1717,8 @@ export function RecentMediaPage({currentUser, guestInitial, mediaBaseUrl, page, 
                     data-media-origin={mediaBaseUrl}
                     data-next-position={page.nextPosition ?? ''}
                     data-public-root-url={page.publicRootUrl ?? ''}
+                    data-csrf-token={currentUser?.csrfToken ?? ''}
+                    data-persist-unapproved={currentUser ? 'true' : 'false'}
                     data-recent-feed
                     data-show-nsfw={showNsfw ? 'true' : 'false'}
                     data-show-unapproved={showUnapproved ? 'true' : 'false'}

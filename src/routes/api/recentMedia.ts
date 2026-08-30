@@ -13,7 +13,7 @@ const RecentMediaQuerySchema = z.object({
     generation: z.string().max(128).optional(),
     limit: z.coerce.number().int().min(1).max(RECENT_MEDIA_MAX_PAGE_SIZE).default(RECENT_MEDIA_PAGE_SIZE),
     nsfw: z.enum(['true', 'false']).optional(),
-    unapproved: z.literal('false').optional(),
+    unapproved: z.enum(['true', 'false']).optional(),
 })
 const RecentMediaExpiredResponseSchema = responseSchema({
     error: z.string(),
@@ -36,14 +36,15 @@ recentMediaRoutes.get('/', async (c) => {
     }
 
     try {
-        const needsAccountDefaults = query.data.nsfw === undefined
+        const needsAccountDefaults = query.data.nsfw === undefined || query.data.unapproved === undefined
         const currentUser = needsAccountDefaults ? await getCurrentUser(c) : null
         const page = await getGeneratedRecentMediaPage(c.env, {
             cursor: query.data.cursor,
             generation: query.data.generation,
             limit: query.data.limit,
             showNsfw: query.data.nsfw === undefined ? Boolean(currentUser?.displayNsfwMedia) : query.data.nsfw === 'true',
-            showUnapproved: false,
+            showUnapproved:
+                query.data.unapproved === undefined ? currentUser?.showUnapprovedMedia !== false : query.data.unapproved === 'true',
         })
 
         return jsonResponse(c, RecentMediaPageSchema, page)

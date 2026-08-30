@@ -1,11 +1,11 @@
 import {describe, expect, it} from 'vitest'
 import {seedCharacter, seedMedia, seedUser, useTestDatabase} from '../test/d1'
-import {queryRecentMediaSourceRows} from './recentMedia'
+import {queryRecentMediaSourceRows, recentMediaItemsFromRows} from './recentMedia'
 
 const db = useTestDatabase()
 
 describe('recent media publication source', () => {
-    it('returns only media with a current approval', async () => {
+    it('publishes media with previews for approved and unapproved variants', async () => {
         await seedUser({id: 'user-1'})
         await seedCharacter({id: 'character-1', userId: 'user-1'})
         await seedMedia({
@@ -40,6 +40,12 @@ describe('recent media publication source', () => {
 
         const rows = await queryRecentMediaSourceRows(db)
 
-        expect(rows.map((row) => row.id)).toEqual(['approved-media'])
+        expect(rows.map((row) => row.id)).toEqual(['approved-media', 'pending-media', 'changed-after-approval'])
+        expect(recentMediaItemsFromRows(rows, 'https://m.example.com', false, false).map((item) => item.id)).toEqual(['approved-media'])
+        expect(recentMediaItemsFromRows(rows, 'https://m.example.com', false, true).map((item) => item.id)).toEqual([
+            'approved-media',
+            'pending-media',
+            'changed-after-approval',
+        ])
     })
 })

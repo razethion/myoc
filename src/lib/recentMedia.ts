@@ -181,15 +181,9 @@ export function recentMediaItemsFromRows(
 }
 
 const recentMediaSourceEligibilitySql = `((character_media.sfw_image_key IS NOT NULL
-                                          AND character_media.sfw_preview_image_key IS NOT NULL
-                                          AND character_media.sfw_review_status = 'approved'
-                                          AND character_media.sfw_approved_at IS NOT NULL
-                                          AND character_media.sfw_approved_at >= character_media.updated_at)
+                                          AND character_media.sfw_preview_image_key IS NOT NULL)
                                       OR (character_media.nsfw_image_key IS NOT NULL
-                                          AND character_media.nsfw_preview_image_key IS NOT NULL
-                                          AND character_media.nsfw_review_status = 'approved'
-                                          AND character_media.nsfw_approved_at IS NOT NULL
-                                          AND character_media.nsfw_approved_at >= character_media.updated_at))`
+                                          AND character_media.nsfw_preview_image_key IS NOT NULL))`
 
 export async function queryRecentMediaSourceRows(db: D1Database, hour?: string): Promise<RecentMediaRow[]> {
     const range = hour ? recentMediaHourRange(hour) : null
