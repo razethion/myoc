@@ -257,6 +257,222 @@ describe('recent feed publisher', () => {
         })
     })
 
+    it('includes pending media only in feed variants that allow unapproved media', async () => {
+        await seedUser({id: 'user-1', username: 'demo'})
+        await seedCharacter({id: 'character-1', userId: 'user-1', name: 'Quartz Dragon'})
+        await seedMedia({
+            id: 'media-1',
+            userId: 'user-1',
+            characterId: 'character-1',
+            sfwPreviewImageKey: 'media-1-preview',
+            sfwPreviewWidth: 600,
+            sfwPreviewHeight: 800,
+            sfwReviewStatus: 'pending',
+            createdAt: '2026-08-25 12:30:00',
+            updatedAt: '2026-08-25 12:30:00',
+        })
+        const bucket = createMockR2Bucket()
+
+        const published = await publishRecentFeed(publisherEnv(bucket), {
+            force: true,
+            now: new Date('2026-08-25T13:00:00.000Z'),
+        })
+        const pointer = await getRecentFeedPointer(db)
+        const root = await readJson(bucket, pointer?.rootKey, RecentFeedRootSchema)
+
+        expect(published).toMatchObject({
+            status: 'published',
+            itemCounts: {'n0-u0': 0, 'n0-u1': 1, 'n1-u0': 0, 'n1-u1': 1},
+        })
+        expect(root.initialItems).toMatchObject({
+            'n0-u0': [],
+            'n0-u1': [{id: 'media-1'}],
+            'n1-u0': [],
+            'n1-u1': [{id: 'media-1'}],
+        })
+    })
+
+    it('continues a bootstrap after reaching its hourly work limit', async () => {
+        await seedSourceHours(25)
+        const bucket = createMockR2Bucket()
+        const env = {...publisherEnv(bucket), RECENT_FEED_PUBLISH_ENABLED: 'true'}
+
+        const first = await publishRecentFeed(env, {now: new Date('2026-08-25T13:00:00.000Z')})
+        const second = await publishRecentFeed(env, {now: new Date('2026-08-25T13:01:00.000Z')})
+
+        expect(first).toMatchObject({status: 'building'})
+        expect(second).toMatchObject({
+            status: 'published',
+            revision: first.revision,
+            itemCounts: {'n0-u0': 25, 'n0-u1': 25, 'n1-u0': 25, 'n1-u1': 25},
+        })
+    })
+
+    it('keeps the previous feed current when a publication lease expires and retries safely', async () => {
+        const bucket = createMockR2Bucket()
+        const env = {...publisherEnv(bucket), RECENT_FEED_PUBLISH_ENABLED: 'true'}
+        const initial = await publishRecentFeed(env, {now: new Date('2026-08-25T10:00:00.000Z')})
+        await db.prepare('UPDATE recent_feed_state SET requested_revision = 2 WHERE singleton = 1').run()
+        await db.prepare("UPDATE recent_feed_dirty_hours SET revision = 2 WHERE dirty_hour = '*'").run()
+        const putObject = vi.mocked(bucket.put).getMockImplementation()
+        if (!putObject) throw new Error('The R2 test bucket does not implement object writes')
+        let expireNextRootWrite = true
+        vi.mocked(bucket.put).mockImplementation(async (key, value, options) => {
+            const result = await putObject(key, value, options)
+            if (expireNextRootWrite && key.startsWith('generations/v1/roots/')) {
+                expireNextRootWrite = false
+                await db.prepare("UPDATE recent_feed_state SET lease_expires_at = datetime('now', '-1 second') WHERE singleton = 1").run()
+            }
+            return result
+        })
+
+        await expect(publishRecentFeed(env, {now: new Date('2026-08-25T13:00:00.000Z')})).rejects.toThrow(
+            'Recent feed changed during publication',
+        )
+        expect(await getRecentFeedPointer(db)).toMatchObject({generation: initial.generation, throughRevision: 1})
+
+        const retried = await publishRecentFeed(env, {now: new Date('2026-08-25T13:00:00.000Z')})
+        expect(retried).toMatchObject({status: 'published', revision: 2})
+    })
+
+    it('stops publication if another publisher takes its expired lease during an R2 write', async () => {
+        const bucket = createMockR2Bucket()
+        const env = {...publisherEnv(bucket), RECENT_FEED_PUBLISH_ENABLED: 'true'}
+        const initial = await publishRecentFeed(env, {now: new Date('2026-08-25T10:00:00.000Z')})
+        await seedUser({id: 'user-1', username: 'demo'})
+        await seedCharacter({id: 'character-1', userId: 'user-1', name: 'Quartz Dragon'})
+        await seedMedia({
+            id: 'media-1',
+            userId: 'user-1',
+            characterId: 'character-1',
+            sfwReviewStatus: 'approved',
+            sfwApprovedAt: '2026-08-25 12:30:00',
+            sfwPreviewImageKey: 'media-1-preview',
+            sfwPreviewWidth: 600,
+            sfwPreviewHeight: 800,
+            createdAt: '2026-08-25 12:30:00',
+            updatedAt: '2026-08-25 12:30:00',
+        })
+        const putObject = vi.mocked(bucket.put).getMockImplementation()
+        if (!putObject) throw new Error('The R2 test bucket does not implement object writes')
+        let expireNextBlockWrite = true
+        vi.mocked(bucket.put).mockImplementation(async (key, value, options) => {
+            const result = await putObject(key, value, options)
+            if (expireNextBlockWrite && key.startsWith('generations/v1/blocks/')) {
+                expireNextBlockWrite = false
+                await db
+                    .prepare(
+                        `UPDATE recent_feed_state
+                         SET lease_owner = 'replacement-publisher', lease_expires_at = datetime('now', '+5 minutes')
+                         WHERE singleton = 1`,
+                    )
+                    .run()
+            }
+            return result
+        })
+
+        await expect(publishRecentFeed(env, {now: new Date('2026-08-25T13:00:00.000Z')})).rejects.toThrow(
+            'Recent feed publication lease was lost',
+        )
+        expect(await getRecentFeedPointer(db)).toMatchObject({generation: initial.generation, throughRevision: 1})
+    })
+
+    it('retries an initial publication if its lease expires after the root write', async () => {
+        const bucket = createMockR2Bucket()
+        const env = {...publisherEnv(bucket), RECENT_FEED_PUBLISH_ENABLED: 'true'}
+        const putObject = vi.mocked(bucket.put).getMockImplementation()
+        if (!putObject) throw new Error('The R2 test bucket does not implement object writes')
+        let expireNextRootWrite = true
+        vi.mocked(bucket.put).mockImplementation(async (key, value, options) => {
+            const result = await putObject(key, value, options)
+            if (expireNextRootWrite && key.startsWith('generations/v1/roots/')) {
+                expireNextRootWrite = false
+                await db.prepare("UPDATE recent_feed_state SET lease_expires_at = datetime('now', '-1 second') WHERE singleton = 1").run()
+            }
+            return result
+        })
+
+        await expect(publishRecentFeed(env, {now: new Date('2026-08-25T13:00:00.000Z')})).rejects.toThrow(
+            'Recent feed changed during publication',
+        )
+        await expect(getRecentFeedPointer(db)).resolves.toBeNull()
+
+        await expect(publishRecentFeed(env, {now: new Date('2026-08-25T13:00:00.000Z')})).resolves.toMatchObject({
+            status: 'published',
+            revision: 1,
+        })
+    })
+
+    it('rejects corrupt active-hour checkpoints when a bootstrap resumes', async () => {
+        await seedSourceRows(1001)
+        const bucket = createMockR2Bucket()
+        const env = {...publisherEnv(bucket), RECENT_FEED_BLOCK_ITEMS: '96', RECENT_FEED_PUBLISH_ENABLED: 'true'}
+
+        await expect(publishRecentFeed(env)).resolves.toMatchObject({status: 'building'})
+        const checkpoints = await bucket.list({prefix: 'generations/v1/bootstrap/'})
+        const checkpoint = checkpoints.objects[0]
+        if (!checkpoint) throw new Error('The bootstrap checkpoint is missing')
+        const checkpointObject = await bucket.get(checkpoint.key)
+        const checkpointJson = await checkpointObject?.text()
+        if (!checkpointJson) throw new Error('The bootstrap checkpoint is empty')
+        const checkpointValue = JSON.parse(checkpointJson) as Record<string, unknown>
+        const variants = checkpointValue.variants as Record<string, {pendingItems: unknown[]}>
+        const approvedOnlyVariant = variants['n0-u0']
+        const unapprovedVariant = variants['n0-u1']
+        if (!approvedOnlyVariant || !unapprovedVariant?.pendingItems[0]) throw new Error('The bootstrap variants are missing')
+        approvedOnlyVariant.pendingItems = Array.from({length: 96}, () => unapprovedVariant.pendingItems[0])
+        await bucket.put(checkpoint.key, JSON.stringify(checkpointValue))
+
+        await expect(publishRecentFeed(env)).rejects.toThrow('Recent feed bootstrap active-hour checkpoint is invalid')
+
+        const badCounts = JSON.parse(checkpointJson) as {
+            variants: Record<string, {blockCount: number}>
+        }
+        const variantWithBadCount = badCounts.variants['n0-u0']
+        if (!variantWithBadCount) throw new Error('The bootstrap variant is missing')
+        variantWithBadCount.blockCount += 1
+        await bucket.put(checkpoint.key, JSON.stringify(badCounts))
+        await expect(publishRecentFeed(env)).rejects.toThrow('Recent feed bootstrap active-hour block counts are invalid')
+
+        const mismatchedSegmentKey = `${checkpoint.key}-other-hour`
+        const mismatchedSegment = JSON.parse(checkpointJson) as {hour: string; previousKey: string | null}
+        mismatchedSegment.hour = '2026-08-25T11'
+        mismatchedSegment.previousKey = null
+        await bucket.put(mismatchedSegmentKey, JSON.stringify(mismatchedSegment))
+        const mismatchedChain = JSON.parse(checkpointJson) as {previousKey: string | null}
+        mismatchedChain.previousKey = mismatchedSegmentKey
+        await bucket.put(checkpoint.key, JSON.stringify(mismatchedChain))
+        await expect(publishRecentFeed(env)).rejects.toThrow('Recent feed bootstrap active-hour checkpoint does not match its hour')
+
+        const cyclicChain = JSON.parse(checkpointJson) as {previousKey: string | null}
+        cyclicChain.previousKey = checkpoint.key
+        await bucket.put(checkpoint.key, JSON.stringify(cyclicChain))
+        await expect(publishRecentFeed(env)).rejects.toThrow('Recent feed bootstrap active-hour checkpoint chain is invalid')
+    })
+
+    it('finishes a resumed bootstrap when old checkpoint cleanup fails', async () => {
+        await seedSourceRows(1001)
+        const bucket = createMockR2Bucket()
+        const env = {...publisherEnv(bucket), RECENT_FEED_BLOCK_ITEMS: '96', RECENT_FEED_PUBLISH_ENABLED: 'true'}
+
+        await expect(publishRecentFeed(env)).resolves.toMatchObject({status: 'building'})
+        const deleteObjects = vi.mocked(bucket.delete).getMockImplementation()
+        if (!deleteObjects) throw new Error('The R2 test bucket does not implement object deletion')
+        vi.mocked(bucket.delete).mockImplementation(async (keys) => {
+            const keyList = Array.isArray(keys) ? keys : [keys]
+            if (keyList.some((key) => key.startsWith('generations/v1/bootstrap/'))) {
+                throw new Error('R2 cleanup is unavailable')
+            }
+            await deleteObjects(keys)
+        })
+
+        await expect(publishRecentFeed(env)).resolves.toMatchObject({
+            status: 'published',
+            revision: 1,
+            itemCounts: {'n0-u0': 1001, 'n0-u1': 1001, 'n1-u0': 1001, 'n1-u1': 1001},
+        })
+    })
+
     it('records an R2 publication failure, releases the lease, and permits a retry', async () => {
         const bucket = createMockR2Bucket()
         const env = {...publisherEnv(bucket), RECENT_FEED_PUBLISH_ENABLED: 'true'}
@@ -301,6 +517,25 @@ describe('recent feed publisher', () => {
                 {objectsWritten: 0, bytesWritten: 0},
             ),
         ).rejects.toThrow('Recent feed variant root count is invalid')
+    })
+
+    it('rejects an hour that exceeds the feed block format limit', async () => {
+        const bucket = createMockR2Bucket()
+        const rows = Array.from({length: 4097}, (_, index) => recentRow(`media-${index}`))
+
+        await expect(
+            buildRecentFeedVariantTree(
+                bucket,
+                'n0-u1',
+                {itemCount: 0, years: []},
+                new Map([['2026-08-25T12', rows]]),
+                true,
+                'https://m.myoc.art',
+                1,
+                'immutable',
+                {objectsWritten: 0, bytesWritten: 0},
+            ),
+        ).rejects.toThrow('Recent feed hour 2026-08-25T12 exceeds the 4096-block format limit')
     })
 
     it.each(['year', 'month', 'day'] as const)('rejects a corrupt %s manifest during an incremental update', async (level) => {
@@ -461,6 +696,27 @@ async function seedSourceRows(count: number): Promise<void> {
              VALUES ('*', 1, 'initial-build', 1)`,
         )
         .run()
+}
+
+async function seedSourceHours(count: number): Promise<void> {
+    await seedUser({id: 'user-1', username: 'demo'})
+    await seedCharacter({id: 'character-1', userId: 'user-1', name: 'Quartz Dragon', profileImageKey: 'profile'})
+
+    for (let index = 0; index < count; index += 1) {
+        const timestamp = new Date(Date.UTC(2026, 7, 25, 12 - index)).toISOString().slice(0, 19).replace('T', ' ')
+        await seedMedia({
+            id: `media-${index}`,
+            userId: 'user-1',
+            characterId: 'character-1',
+            sfwReviewStatus: 'approved',
+            sfwApprovedAt: timestamp,
+            sfwPreviewImageKey: `media-${index}-preview`,
+            sfwPreviewWidth: 600,
+            sfwPreviewHeight: 800,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+        })
+    }
 }
 
 async function readJson<T>(bucket: R2Bucket, key: string | undefined, schema: {parse(value: unknown): T}): Promise<T> {

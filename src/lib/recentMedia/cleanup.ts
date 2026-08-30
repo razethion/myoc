@@ -280,10 +280,6 @@ async function loadRetainedRootKeys(db: D1Database): Promise<string[] | null> {
             .all<RootKeyRow>()
         const rows = result.results
 
-        if (rootKeys.length + rows.length > MAXIMUM_RETAINED_ROOTS) {
-            return null
-        }
-
         for (const row of rows) {
             if (!isRootKey(row.root_key)) {
                 return null

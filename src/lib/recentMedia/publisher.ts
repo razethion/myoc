@@ -473,7 +473,7 @@ async function getDirtyHours(db: D1Database, targetRevision: number): Promise<Re
         .bind(targetRevision)
         .all<RecentFeedDirtyHourRow>()
 
-    return result.results ?? []
+    return result.results
 }
 
 async function initializeRecentFeedBootstrap(db: D1Database, leaseOwner: string, targetRevision: number): Promise<void> {

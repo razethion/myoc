@@ -242,10 +242,6 @@ function sumItemCounts(values: Array<{itemCount: number}>): number {
 }
 
 async function getRevokedMediaIds(db: D1Database, ids: string[], generationRevision: number): Promise<Set<string>> {
-    if (ids.length === 0) {
-        return new Set()
-    }
-
     const placeholders = ids.map(() => '?').join(', ')
     const result = await db
         .prepare(
@@ -257,7 +253,7 @@ async function getRevokedMediaIds(db: D1Database, ids: string[], generationRevis
         .bind(...ids, generationRevision)
         .all<{media_id: string}>()
 
-    return new Set((result.results ?? []).map((row) => row.media_id))
+    return new Set(result.results.map((row) => row.media_id))
 }
 
 async function encodeRecentFeedCursor(payload: RecentFeedCursorPayload, secret: string): Promise<string> {
@@ -278,20 +274,22 @@ async function decodeRecentFeedCursor(value: string, secret: string): Promise<Re
         throw new InvalidRecentFeedCursorError()
     }
 
+    let valid: boolean
+
     try {
         const key = await importCursorKey(secret, ['verify'])
-        const valid = await crypto.subtle.verify('HMAC', key, fromBase64Url(parts[2]), new TextEncoder().encode(parts[1]))
+        valid = await crypto.subtle.verify('HMAC', key, fromBase64Url(parts[2]), new TextEncoder().encode(parts[1]))
+    } catch {
+        throw new InvalidRecentFeedCursorError()
+    }
 
-        if (!valid) {
-            throw new InvalidRecentFeedCursorError()
-        }
+    if (!valid) {
+        throw new InvalidRecentFeedCursorError()
+    }
 
+    try {
         return RecentFeedCursorPayloadSchema.parse(JSON.parse(new TextDecoder().decode(fromBase64Url(parts[1]))))
-    } catch (error) {
-        if (error instanceof InvalidRecentFeedCursorError) {
-            throw error
-        }
-
+    } catch {
         throw new InvalidRecentFeedCursorError()
     }
 }

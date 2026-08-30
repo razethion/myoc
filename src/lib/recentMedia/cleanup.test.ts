@@ -108,6 +108,37 @@ describe('recent feed cleanup', () => {
         }
     })
 
+    it('finishes cleanup when the lease cannot be released', async () => {
+        const bucket = createMockR2Bucket()
+        const orphanRoot = 'generations/v1/roots/r-orphan.json'
+        await bucket.put(orphanRoot, '{}')
+        await db
+            .prepare(`CREATE TRIGGER fail_recent_feed_lease_release
+                      BEFORE UPDATE OF lease_owner ON recent_feed_state
+                      WHEN OLD.lease_owner LIKE 'cleanup:%' AND NEW.lease_owner IS NULL
+                      BEGIN
+                          SELECT RAISE(ABORT, 'lease release failed');
+                      END`)
+            .run()
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+        try {
+            const summary = await cleanupRecentFeed(enabledEnvironment(bucket), new Date('2026-06-13T12:00:00.000Z'))
+
+            expect(summary).toEqual({retainedGenerations: 0, deletedGenerations: 0, deletedObjects: 1})
+            expect(await bucket.get(orphanRoot)).toBeNull()
+        } finally {
+            await db.prepare('DROP TRIGGER fail_recent_feed_lease_release').run()
+            await db
+                .prepare(
+                    `UPDATE recent_feed_state
+                     SET lease_owner = NULL, lease_expires_at = NULL
+                     WHERE singleton = 1`,
+                )
+                .run()
+        }
+    })
+
     it('keeps reachable objects and deletes old orphan objects', async () => {
         const {rootKey, objects, reachableKeys} = retainedObjectGraph()
         await seedGeneration('r1-valid', rootKey, '2026-06-10T12:00:00.000Z')
@@ -133,6 +164,18 @@ describe('recent feed cleanup', () => {
         for (const key of reachableKeys) {
             expect(await bucket.get(key)).not.toBeNull()
         }
+    })
+
+    it('deletes old orphan objects from all listing pages', async () => {
+        const bucket = createMockR2Bucket()
+        const orphanRoots = Array.from({length: 1_001}, (_, index) => `generations/v1/roots/r-orphan-${index}.json`)
+        await Promise.all(orphanRoots.map(async (key) => await bucket.put(key, '{}')))
+
+        const summary = await cleanupRecentFeed(enabledEnvironment(bucket), new Date('2026-06-13T12:00:00.000Z'))
+
+        expect(summary).toEqual({retainedGenerations: 0, deletedGenerations: 0, deletedObjects: orphanRoots.length})
+        expect(await bucket.get(orphanRoots[0] as string)).toBeNull()
+        expect(await bucket.get(orphanRoots.at(-1) as string)).toBeNull()
     })
 
     it('does not sweep child objects when a retained root is invalid', async () => {

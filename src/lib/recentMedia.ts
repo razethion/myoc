@@ -225,7 +225,7 @@ export async function queryRecentMediaSourceRows(db: D1Database, hour?: string):
     )
     const result = range ? await statement.bind(range.start, range.end).all<RecentMediaRow>() : await statement.bind().all<RecentMediaRow>()
 
-    return result.results ?? []
+    return result.results
 }
 
 export async function queryRecentMediaSourceRowsPage(
@@ -281,7 +281,7 @@ export async function queryRecentMediaSourceRowsPage(
         ? await statement.bind(cursor.createdAt, cursor.createdAt, cursor.id, limit).all<RecentMediaRow>()
         : await statement.bind(limit).all<RecentMediaRow>()
 
-    return result.results ?? []
+    return result.results
 }
 
 export function recentMediaHour(row: Pick<RecentMediaRow, 'created_at'>): string {

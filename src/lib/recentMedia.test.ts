@@ -173,6 +173,66 @@ describe('recent media publication source', () => {
         })
     })
 
+    it('uses safe dimensions when stored media dimensions are unavailable', async () => {
+        await seedUser({id: 'user-1'})
+        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        await seedMedia({
+            id: 'media-without-dimensions',
+            userId: 'user-1',
+            characterId: 'character-1',
+            sfwWidth: null,
+            sfwHeight: null,
+            sfwPreviewImageKey: 'sfw-preview',
+            nsfwImageKey: 'nsfw-original',
+            nsfwWidth: null,
+            nsfwHeight: null,
+            nsfwPreviewImageKey: 'nsfw-preview',
+        })
+
+        const rows = await queryRecentMediaSourceRows(db)
+        const sfwItem = requireFirst(recentMediaItemsFromRows(rows, 'https://media.example.com', false, true), 'the SFW item')
+        const nsfwItem = requireFirst(recentMediaItemsFromRows(rows, 'https://media.example.com', true, true), 'the NSFW item')
+
+        expect(sfwItem).toMatchObject({width: 1, height: 1})
+        expect(nsfwItem).toMatchObject({width: 1, height: 1})
+    })
+
+    it('shows an eligible variant when the other variant has no preview', async () => {
+        await seedUser({id: 'user-1'})
+        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        await seedMedia({
+            id: 'nsfw-preview-only',
+            userId: 'user-1',
+            characterId: 'character-1',
+            sfwPreviewImageKey: null,
+            nsfwImageKey: 'nsfw-original',
+            nsfwPreviewImageKey: 'nsfw-preview',
+        })
+        await seedMedia({
+            id: 'sfw-preview-only',
+            userId: 'user-1',
+            characterId: 'character-1',
+            sfwPreviewImageKey: 'sfw-preview',
+            nsfwImageKey: 'nsfw-original',
+            nsfwPreviewImageKey: null,
+        })
+
+        const rows = await queryRecentMediaSourceRows(db)
+        const sfwItems = recentMediaItemsFromRows(rows, 'https://media.example.com', false, true)
+        const allItems = recentMediaItemsFromRows(rows, 'https://media.example.com', true, true)
+
+        expect(sfwItems.map((item) => item.id)).toEqual(['sfw-preview-only'])
+        expect(allItems.map((item) => [item.id, item.originalSrc.includes('/nsfw/')])).toEqual([
+            ['sfw-preview-only', false],
+            ['nsfw-preview-only', true],
+        ])
+    })
+
+    it('returns no rows when the source is empty', async () => {
+        await expect(queryRecentMediaSourceRows(db)).resolves.toEqual([])
+        await expect(queryRecentMediaSourceRowsPage(db, null, 10)).resolves.toEqual([])
+    })
+
     it('filters source rows to one UTC hour', async () => {
         await seedUser({id: 'user-1'})
         await seedCharacter({id: 'character-1', userId: 'user-1'})
