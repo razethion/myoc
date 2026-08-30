@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "@cloudflare/containers": "^0.3.7",
-    "@scure/bip39": "^2.2.0",
+    "@scure/bip39": "^2.3.0",
     "@simplewebauthn/browser": "^13.3.0",
     "@simplewebauthn/server": "^13.3.2",
     "bcryptjs": "^3.0.3",
