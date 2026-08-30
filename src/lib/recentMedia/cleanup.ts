@@ -1,9 +1,12 @@
 import {getRecentFeedConfig, RECENT_FEED_VARIANTS, type RecentFeedVariant} from './config'
 import {
+    type RecentFeedDayManifest,
     RecentFeedDayManifestSchema,
+    type RecentFeedMonthManifest,
     RecentFeedMonthManifestSchema,
     type RecentFeedRoot,
     RecentFeedRootSchema,
+    type RecentFeedYearManifest,
     RecentFeedYearManifestSchema,
 } from './model'
 
@@ -49,6 +52,19 @@ type ManifestReference = {
 type ReachableGraph = {
     keys: Set<string>
     manifestReads: number
+}
+
+type ReachabilityState = {
+    days: ManifestReference[]
+    graph: ReachableGraph
+    months: ManifestReference[]
+    referenceSignatures: Map<string, string>
+    years: ManifestReference[]
+}
+
+type OrphanScan = {
+    keys: string[]
+    listedObjects: number
 }
 
 export type RecentFeedCleanupSummary = {
@@ -305,112 +321,121 @@ async function loadRetainedRootKeys(db: D1Database): Promise<string[] | null> {
 }
 
 async function markReachableObjects(bucket: R2Bucket, rootKeys: string[]): Promise<ReachableGraph | null> {
-    const graph: ReachableGraph = {keys: new Set<string>(), manifestReads: 0}
-    const referenceSignatures = new Map<string, string>()
-    const years: ManifestReference[] = []
-    const months: ManifestReference[] = []
-    const days: ManifestReference[] = []
+    const state: ReachabilityState = {
+        days: [],
+        graph: {keys: new Set<string>(), manifestReads: 0},
+        months: [],
+        referenceSignatures: new Map<string, string>(),
+        years: [],
+    }
+    if (!(await markRootObjects(bucket, rootKeys, state))) return null
+    if (!(await markYearManifests(bucket, state))) return null
+    if (!(await markMonthManifests(bucket, state))) return null
+    if (!(await markDayManifests(bucket, state))) return null
+    return state.graph
+}
 
+async function markRootObjects(bucket: R2Bucket, rootKeys: string[], state: ReachabilityState): Promise<boolean> {
     for (const rootKey of rootKeys) {
         const root = await readJson(bucket, rootKey, RecentFeedRootSchema)
+        if (!root || !markRootReferences(root, state.years, state.referenceSignatures, state.graph)) return false
+    }
+    return true
+}
 
-        if (!root || !markRootReferences(root, years, referenceSignatures, graph)) {
-            return null
+async function markYearManifests(bucket: R2Bucket, state: ReachabilityState): Promise<boolean> {
+    for (const reference of state.years) {
+        const manifest = await readReachableManifest(bucket, state.graph, reference.key, RecentFeedYearManifestSchema)
+        if (!isExpectedYearManifest(manifest, reference) || !markMonthReferences(manifest, state)) return false
+    }
+    return true
+}
+
+async function markMonthManifests(bucket: R2Bucket, state: ReachabilityState): Promise<boolean> {
+    for (const reference of state.months) {
+        const manifest = await readReachableManifest(bucket, state.graph, reference.key, RecentFeedMonthManifestSchema)
+        if (!isExpectedMonthManifest(manifest, reference) || !markDayReferences(manifest, state)) return false
+    }
+    return true
+}
+
+async function markDayManifests(bucket: R2Bucket, state: ReachabilityState): Promise<boolean> {
+    for (const reference of state.days) {
+        const manifest = await readReachableManifest(bucket, state.graph, reference.key, RecentFeedDayManifestSchema)
+        if (!isExpectedDayManifest(manifest, reference) || !markHourBlockReferences(manifest, state.graph)) return false
+    }
+    return true
+}
+
+async function readReachableManifest<T>(
+    bucket: R2Bucket,
+    graph: ReachableGraph,
+    key: string,
+    schema: {safeParse(value: unknown): {success: boolean; data?: T}},
+): Promise<T | null> {
+    graph.manifestReads += 1
+    return graph.manifestReads > MAXIMUM_MANIFEST_READS ? null : await readJson(bucket, key, schema)
+}
+
+function isExpectedYearManifest(manifest: RecentFeedYearManifest | null, reference: ManifestReference): manifest is RecentFeedYearManifest {
+    return Boolean(
+        manifest &&
+            manifest.variant === reference.variant &&
+            manifest.year === reference.value &&
+            manifest.itemCount === reference.itemCount &&
+            manifest.itemCount === sumItemCounts(manifest.months),
+    )
+}
+
+function isExpectedMonthManifest(
+    manifest: RecentFeedMonthManifest | null,
+    reference: ManifestReference,
+): manifest is RecentFeedMonthManifest {
+    return Boolean(
+        manifest &&
+            manifest.variant === reference.variant &&
+            manifest.month === reference.value &&
+            manifest.itemCount === reference.itemCount &&
+            manifest.itemCount === sumItemCounts(manifest.days),
+    )
+}
+
+function isExpectedDayManifest(manifest: RecentFeedDayManifest | null, reference: ManifestReference): manifest is RecentFeedDayManifest {
+    return Boolean(
+        manifest &&
+            manifest.variant === reference.variant &&
+            manifest.day === reference.value &&
+            manifest.itemCount === reference.itemCount &&
+            manifest.itemCount === sumItemCounts(manifest.hours),
+    )
+}
+
+function markMonthReferences(manifest: RecentFeedYearManifest, state: ReachabilityState): boolean {
+    for (const month of manifest.months) {
+        if (!month.month.startsWith(`${manifest.year}-`)) return false
+        const reference = {key: month.key, itemCount: month.itemCount, variant: manifest.variant, value: month.month}
+        if (!addReference(state.months, state.referenceSignatures, state.graph, reference, 'months')) return false
+    }
+    return true
+}
+
+function markDayReferences(manifest: RecentFeedMonthManifest, state: ReachabilityState): boolean {
+    for (const day of manifest.days) {
+        if (!day.day.startsWith(`${manifest.month}-`)) return false
+        const reference = {key: day.key, itemCount: day.itemCount, variant: manifest.variant, value: day.day}
+        if (!addReference(state.days, state.referenceSignatures, state.graph, reference, 'days')) return false
+    }
+    return true
+}
+
+function markHourBlockReferences(manifest: RecentFeedDayManifest, graph: ReachableGraph): boolean {
+    for (const hour of manifest.hours) {
+        if (!hour.hour.startsWith(`${manifest.day}T`) || hour.itemCount !== sumItemCounts(hour.blocks)) return false
+        for (const block of hour.blocks) {
+            if (!isBlockKey(block.key, manifest.variant, hour.hour) || !markKey(graph, block.key)) return false
         }
     }
-
-    for (const reference of years) {
-        if (++graph.manifestReads > MAXIMUM_MANIFEST_READS) {
-            return null
-        }
-        const manifest = await readJson(bucket, reference.key, RecentFeedYearManifestSchema)
-
-        if (
-            !manifest ||
-            manifest.variant !== reference.variant ||
-            manifest.year !== reference.value ||
-            manifest.itemCount !== reference.itemCount ||
-            manifest.itemCount !== sumItemCounts(manifest.months)
-        ) {
-            return null
-        }
-
-        for (const month of manifest.months) {
-            if (
-                !month.month.startsWith(`${manifest.year}-`) ||
-                !addReference(
-                    months,
-                    referenceSignatures,
-                    graph,
-                    {key: month.key, itemCount: month.itemCount, variant: manifest.variant, value: month.month},
-                    'months',
-                )
-            ) {
-                return null
-            }
-        }
-    }
-
-    for (const reference of months) {
-        if (++graph.manifestReads > MAXIMUM_MANIFEST_READS) {
-            return null
-        }
-        const manifest = await readJson(bucket, reference.key, RecentFeedMonthManifestSchema)
-
-        if (
-            !manifest ||
-            manifest.variant !== reference.variant ||
-            manifest.month !== reference.value ||
-            manifest.itemCount !== reference.itemCount ||
-            manifest.itemCount !== sumItemCounts(manifest.days)
-        ) {
-            return null
-        }
-
-        for (const day of manifest.days) {
-            if (
-                !day.day.startsWith(`${manifest.month}-`) ||
-                !addReference(
-                    days,
-                    referenceSignatures,
-                    graph,
-                    {key: day.key, itemCount: day.itemCount, variant: manifest.variant, value: day.day},
-                    'days',
-                )
-            ) {
-                return null
-            }
-        }
-    }
-
-    for (const reference of days) {
-        if (++graph.manifestReads > MAXIMUM_MANIFEST_READS) {
-            return null
-        }
-        const manifest = await readJson(bucket, reference.key, RecentFeedDayManifestSchema)
-
-        if (
-            !manifest ||
-            manifest.variant !== reference.variant ||
-            manifest.day !== reference.value ||
-            manifest.itemCount !== reference.itemCount ||
-            manifest.itemCount !== sumItemCounts(manifest.hours)
-        ) {
-            return null
-        }
-
-        for (const hour of manifest.hours) {
-            if (
-                !hour.hour.startsWith(`${manifest.day}T`) ||
-                hour.itemCount !== sumItemCounts(hour.blocks) ||
-                hour.blocks.some((block) => !isBlockKey(block.key, manifest.variant, hour.hour) || !markKey(graph, block.key))
-            ) {
-                return null
-            }
-        }
-    }
-
-    return graph
+    return true
 }
 
 function markRootReferences(
@@ -469,34 +494,40 @@ function markKey(graph: ReachableGraph, key: string): boolean {
 }
 
 async function findOrphanKeys(bucket: R2Bucket, reachable: Set<string>, cutoff: Date): Promise<string[] | null> {
-    const orphanKeys: string[] = []
-    let listedObjects = 0
+    const scan: OrphanScan = {keys: [], listedObjects: 0}
 
     for (const prefix of LIST_PREFIXES) {
-        let cursor: string | undefined
-
-        do {
-            const page = await bucket.list({prefix, cursor, limit: 1000})
-            listedObjects += page.objects.length
-
-            if (listedObjects > MAXIMUM_LISTED_OBJECTS) {
-                return null
-            }
-
-            for (const object of page.objects) {
-                if (!reachable.has(object.key) && object.uploaded.getTime() < cutoff.getTime()) {
-                    orphanKeys.push(object.key)
-                }
-            }
-
-            if (page.truncated && !page.cursor) {
-                return null
-            }
-            cursor = page.truncated ? page.cursor : undefined
-        } while (cursor)
+        if (!(await scanOrphanPrefix(bucket, prefix, reachable, cutoff.getTime(), scan))) return null
     }
 
-    return orphanKeys
+    return scan.keys
+}
+
+async function scanOrphanPrefix(
+    bucket: R2Bucket,
+    prefix: (typeof LIST_PREFIXES)[number],
+    reachable: Set<string>,
+    cutoffTime: number,
+    scan: OrphanScan,
+): Promise<boolean> {
+    let cursor: string | undefined
+
+    do {
+        const page = await bucket.list({prefix, cursor, limit: 1000})
+        scan.listedObjects += page.objects.length
+        if (scan.listedObjects > MAXIMUM_LISTED_OBJECTS) return false
+        appendOldUnreachableKeys(page.objects, reachable, cutoffTime, scan.keys)
+        if (page.truncated && !page.cursor) return false
+        cursor = page.truncated ? page.cursor : undefined
+    } while (cursor)
+
+    return true
+}
+
+function appendOldUnreachableKeys(objects: R2Object[], reachable: Set<string>, cutoffTime: number, keys: string[]): void {
+    for (const object of objects) {
+        if (!reachable.has(object.key) && object.uploaded.getTime() < cutoffTime) keys.push(object.key)
+    }
 }
 
 async function readJson<T>(

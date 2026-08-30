@@ -1,7 +1,7 @@
 import {z} from 'zod'
 import {normalizeRecentMediaLimit, type RecentMediaItem, type RecentMediaOptions, type RecentMediaPage} from '../recentMedia'
 import {getRecentFeedConfig, RECENT_FEED_VARIANTS, recentFeedPublicObjectUrl, recentFeedVariant} from './config'
-import {type RecentFeedPointer, RecentFeedRootSchema} from './model'
+import {type RecentFeedPointer, type RecentFeedRoot, RecentFeedRootSchema, type RecentFeedVariantRoot} from './model'
 import {getRecentFeedPointer} from './publisher'
 import {readRecentFeedTreeItems} from './tree'
 
@@ -43,6 +43,25 @@ class RecentFeedUnavailableError extends Error {
     }
 }
 
+type RecentFeedReaderRequest = {
+    cursor: RecentFeedCursorPayload | null
+    generation: string | null
+    position: number
+    variant: RecentFeedCursorPayload['variant']
+}
+
+type LoadedRecentFeed = {
+    initialItems: RecentMediaItem[] | undefined
+    pointer: RecentFeedPointer
+    root: RecentFeedRoot
+    variantRoot: RecentFeedVariantRoot
+}
+
+type CollectedRecentMedia = {
+    consumed: number
+    items: RecentMediaItem[]
+}
+
 export async function getGeneratedRecentMediaPage(
     env: RecentFeedReaderEnv,
     options: RecentMediaOptions & {generation?: string | null} = {},
@@ -53,118 +72,151 @@ export async function getGeneratedRecentMediaPage(
         throw new RecentFeedUnavailableError('Recent feed cursor secret is not configured')
     }
 
-    const showNsfw = options.showNsfw === true
-    const showUnapproved = options.showUnapproved !== false
-    const requestedVariant = recentFeedVariant(showNsfw, showUnapproved)
-    const cursor = options.cursor ? await decodeRecentFeedCursor(options.cursor, config.cursorSecret) : null
+    const request = await resolveRecentFeedRequest(options, config.cursorSecret)
+    const loaded = await loadRecentFeed(env, request)
+    const limit = normalizeRecentMediaLimit(options.limit)
+    const collected = await collectRecentMedia(env, request, loaded, limit)
+    const nextPosition = request.position + collected.consumed
+    const hasMore = nextPosition < loaded.variantRoot.itemCount
+    const nextCursor = hasMore
+        ? await encodeRecentFeedCursor(
+              {version: 1, generation: loaded.root.generation, variant: request.variant, position: nextPosition},
+              config.cursorSecret,
+          )
+        : null
 
-    if (cursor && cursor.variant !== requestedVariant) {
+    return {
+        items: collected.items,
+        nextCursor,
+        generation: loaded.root.generation,
+        publishedAt: loaded.root.publishedAt,
+        publicRootUrl: recentFeedPublicObjectUrl(config.publicBaseUrl, loaded.pointer.rootKey),
+        nextPosition: hasMore ? nextPosition : null,
+    }
+}
+
+async function resolveRecentFeedRequest(
+    options: RecentMediaOptions & {generation?: string | null},
+    cursorSecret: string,
+): Promise<RecentFeedReaderRequest> {
+    const variant = recentFeedVariant(options.showNsfw === true, options.showUnapproved !== false)
+    const cursor = options.cursor ? await decodeRecentFeedCursor(options.cursor, cursorSecret) : null
+
+    if (cursor && cursor.variant !== variant) {
         throw new InvalidRecentFeedCursorError()
     }
-
     if (cursor && options.generation && cursor.generation !== options.generation) {
         throw new InvalidRecentFeedCursorError()
     }
 
-    const generation = cursor?.generation ?? options.generation?.trim() ?? null
-    const pointer = generation ? await getGenerationPointer(env.DB, generation) : await getRecentFeedPointer(env.DB)
-
-    if (!pointer) {
-        throw generation ? new RecentFeedGenerationExpiredError() : new RecentFeedUnavailableError()
+    return {
+        cursor,
+        generation: cursor?.generation ?? options.generation?.trim() ?? null,
+        position: cursor?.position ?? 0,
+        variant,
     }
+}
+
+async function loadRecentFeed(env: RecentFeedReaderEnv, request: RecentFeedReaderRequest): Promise<LoadedRecentFeed> {
+    const pointer = request.generation ? await getGenerationPointer(env.DB, request.generation) : await getRecentFeedPointer(env.DB)
+    if (!pointer) throw unavailableGenerationError(request.generation)
 
     const rootObject = await env.RECENT_FEED_BUCKET.get(pointer.rootKey)
-
-    if (!rootObject) {
-        throw generation ? new RecentFeedGenerationExpiredError() : new RecentFeedUnavailableError()
-    }
+    if (!rootObject) throw unavailableGenerationError(request.generation)
 
     const root = RecentFeedRootSchema.parse(await rootObject.json<unknown>())
+    validateRecentFeedRoot(root, pointer, request.generation)
+    const variantRoot = root.variants[request.variant]
+    const initialItems = root.initialItems?.[request.variant]
+    validateRecentFeedVariant(variantRoot, initialItems, request.position)
 
+    return {initialItems, pointer, root, variantRoot}
+}
+
+function unavailableGenerationError(generation: string | null): Error {
+    return generation ? new RecentFeedGenerationExpiredError() : new RecentFeedUnavailableError()
+}
+
+function validateRecentFeedRoot(root: RecentFeedRoot, pointer: RecentFeedPointer, generation: string | null): void {
     if (
         root.generation !== pointer.generation ||
         root.throughRevision !== pointer.throughRevision ||
-        (generation && root.generation !== generation)
+        (generation !== null && root.generation !== generation)
     ) {
         throw new RecentFeedGenerationExpiredError()
     }
+}
 
-    const variantRoot = root.variants[requestedVariant]
+function validateRecentFeedVariant(
+    variantRoot: RecentFeedVariantRoot,
+    initialItems: RecentMediaItem[] | undefined,
+    position: number,
+): void {
     if (variantRoot.itemCount !== sumItemCounts(variantRoot.years)) {
         throw new RecentFeedUnavailableError('Recent feed variant does not match its root')
     }
-    const initialItems = root.initialItems?.[requestedVariant]
     if (initialItems && initialItems.length > variantRoot.itemCount) {
         throw new RecentFeedUnavailableError('Recent feed initial items do not match its root')
     }
-    const position = cursor?.position ?? 0
-
     if (position > variantRoot.itemCount) {
         throw new InvalidRecentFeedCursorError()
     }
+}
 
-    const limit = normalizeRecentMediaLimit(options.limit)
+async function collectRecentMedia(
+    env: RecentFeedReaderEnv,
+    request: RecentFeedReaderRequest,
+    loaded: LoadedRecentFeed,
+    limit: number,
+): Promise<CollectedRecentMedia> {
     const items: RecentMediaItem[] = []
     const objectCache = new Map<string, unknown>()
-    const useInitialItems = initialItems !== undefined && position < initialItems.length
+    const batchSize = Math.max(limit * 2, 30)
+    const scanItemCount =
+        loaded.initialItems && request.position < loaded.initialItems.length ? loaded.initialItems.length : loaded.variantRoot.itemCount
     let consumed = 0
 
-    while (
-        items.length < limit &&
-        position + consumed < variantRoot.itemCount &&
-        (!useInitialItems || position + consumed < initialItems.length)
-    ) {
-        const scannedItems = useInitialItems
-            ? initialItems.slice(position + consumed, position + consumed + Math.max(limit * 2, 30))
-            : await readRecentFeedTreeItems(
-                  env.RECENT_FEED_BUCKET,
-                  variantRoot,
-                  requestedVariant,
-                  position + consumed,
-                  Math.max(limit * 2, 30),
-                  objectCache,
-              )
-
-        if (scannedItems.length === 0) {
-            break
-        }
+    while (items.length < limit && request.position + consumed < scanItemCount) {
+        const scannedItems = await scanRecentMediaBatch(env, request, loaded, request.position + consumed, batchSize, objectCache)
+        if (scannedItems.length === 0) break
 
         const revokedIds = await getRevokedMediaIds(
             env.DB,
             scannedItems.map((item) => item.id),
-            root.throughRevision,
+            loaded.root.throughRevision,
         )
-
-        for (const item of scannedItems) {
-            consumed += 1
-
-            if (!revokedIds.has(item.id)) {
-                items.push(item)
-            }
-
-            if (items.length === limit) {
-                break
-            }
-        }
+        const appended = appendVisibleItems(items, scannedItems, revokedIds, limit)
+        consumed += appended
     }
 
-    const nextPosition = position + consumed
-    const nextCursor =
-        nextPosition < variantRoot.itemCount
-            ? await encodeRecentFeedCursor(
-                  {version: 1, generation: root.generation, variant: requestedVariant, position: nextPosition},
-                  config.cursorSecret,
-              )
-            : null
+    return {consumed, items}
+}
 
-    return {
-        items,
-        nextCursor,
-        generation: root.generation,
-        publishedAt: root.publishedAt,
-        publicRootUrl: recentFeedPublicObjectUrl(config.publicBaseUrl, pointer.rootKey),
-        nextPosition: nextPosition < variantRoot.itemCount ? nextPosition : null,
+async function scanRecentMediaBatch(
+    env: RecentFeedReaderEnv,
+    request: RecentFeedReaderRequest,
+    loaded: LoadedRecentFeed,
+    position: number,
+    limit: number,
+    objectCache: Map<string, unknown>,
+): Promise<RecentMediaItem[]> {
+    if (loaded.initialItems && position < loaded.initialItems.length) {
+        return loaded.initialItems.slice(position, position + limit)
     }
+
+    return await readRecentFeedTreeItems(env.RECENT_FEED_BUCKET, loaded.variantRoot, request.variant, position, limit, objectCache)
+}
+
+function appendVisibleItems(target: RecentMediaItem[], scannedItems: RecentMediaItem[], revokedIds: Set<string>, limit: number): number {
+    let consumed = 0
+
+    for (const item of scannedItems) {
+        consumed += 1
+        if (!revokedIds.has(item.id)) target.push(item)
+        if (target.length === limit) break
+    }
+
+    return consumed
 }
 
 async function getGenerationPointer(db: D1Database, generation: string): Promise<RecentFeedPointer | null> {

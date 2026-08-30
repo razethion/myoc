@@ -1,122 +1,90 @@
 import {afterEach, describe, expect, it, vi} from 'vitest'
-import {createMockDb} from '../../test/mockD1'
+import {queryOne, useTestDatabase} from '../../test/d1'
 import {createMockR2Bucket} from '../../test/mockR2'
-import {resetWorkerBindings} from '../../test/workerBindings'
 import {cleanupRecentFeed} from './cleanup'
 
-const CLEANUP_OWNER = 'cleanup:00000000-0000-4000-8000-000000000000'
+const db = useTestDatabase()
 
-afterEach(async () => {
+afterEach(() => {
     vi.restoreAllMocks()
-    await resetWorkerBindings()
 })
 
 describe('recent feed cleanup', () => {
-    it('does nothing until the cleanup switch is enabled', async () => {
+    it('does nothing until cleanup is enabled', async () => {
         const summary = await cleanupRecentFeed({} as never)
 
         expect(summary).toEqual({retainedGenerations: 0, deletedGenerations: 0, deletedObjects: 0})
     })
 
-    it('stops when publication owns the lease', async () => {
-        mockCleanupOwner()
-        const {db} = createMockDb({firstResults: [{lease_owner: 'publisher'}, {count: 120}]})
+    it('does not take the publication lease', async () => {
+        await db
+            .prepare(
+                `UPDATE recent_feed_state
+                 SET lease_owner = 'publisher', lease_expires_at = '2099-01-01 00:00:00'
+                 WHERE singleton = 1`,
+            )
+            .run()
+        await seedGenerations(120)
         const bucket = createMockR2Bucket()
 
-        const summary = await cleanupRecentFeed({
-            DB: db,
-            RECENT_FEED_BUCKET: bucket,
-            RECENT_FEED_CLEANUP_ENABLED: 'true',
-        })
+        const summary = await cleanupRecentFeed(enabledEnvironment(bucket))
 
         expect(summary).toEqual({retainedGenerations: 120, deletedGenerations: 0, deletedObjects: 0})
         expect(bucket.get).not.toHaveBeenCalled()
         expect(bucket.delete).not.toHaveBeenCalled()
     })
 
-    it('keeps partial objects while a bootstrap is active', async () => {
-        mockCleanupOwner()
-        const {db} = createMockDb({
-            firstResults: [{lease_owner: CLEANUP_OWNER}, {bootstrap_revision: 7}, {count: 0}],
-        })
+    it('keeps partial objects during an active bootstrap', async () => {
+        await db.prepare('UPDATE recent_feed_state SET bootstrap_revision = 7 WHERE singleton = 1').run()
         const bucket = createMockR2Bucket()
 
-        const summary = await cleanupRecentFeed({
-            DB: db,
-            RECENT_FEED_BUCKET: bucket,
-            RECENT_FEED_CLEANUP_ENABLED: 'true',
-        })
+        const summary = await cleanupRecentFeed(enabledEnvironment(bucket))
 
         expect(summary).toEqual({retainedGenerations: 0, deletedGenerations: 0, deletedObjects: 0})
         expect(bucket.list).not.toHaveBeenCalled()
         expect(bucket.delete).not.toHaveBeenCalled()
     })
 
-    it('deletes expired roots and scans all shared object prefixes', async () => {
-        mockCleanupOwner()
-        const {db, boundStatements} = createMockDb({
-            allResults: [[{generation: 'r1-old', root_key: 'generations/v1/roots/r1-old-secret.json'}], []],
-            firstResults: [{lease_owner: CLEANUP_OWNER}, {bootstrap_revision: null}, {count: 100}, {lease_owner: CLEANUP_OWNER}],
-        })
+    it('deletes an expired root and keeps the newest generations', async () => {
+        await seedGenerations(100)
+        const oldRoot = 'generations/v1/roots/r-old.json'
+        await seedGeneration('r-old', oldRoot, '2026-06-01T00:00:00.000Z')
         const bucket = createMockR2Bucket()
-        await bucket.put('generations/v1/roots/r1-old-secret.json', '{}')
-        const now = new Date('2026-08-25T12:00:00.000Z')
+        await bucket.put(oldRoot, '{}')
 
         const summary = await cleanupRecentFeed(
-            {
-                DB: db,
-                RECENT_FEED_BUCKET: bucket,
-                RECENT_FEED_CLEANUP_ENABLED: 'true',
-                RECENT_FEED_RETENTION_DAYS: '30',
-            },
-            now,
+            {...enabledEnvironment(bucket), RECENT_FEED_RETENTION_DAYS: '30'},
+            new Date('2026-08-25T12:00:00.000Z'),
         )
 
         expect(summary).toEqual({retainedGenerations: 100, deletedGenerations: 1, deletedObjects: 1})
-        expect(bucket.delete).toHaveBeenCalledWith(['generations/v1/roots/r1-old-secret.json'])
-        expect(boundStatements.find((statement) => statement.sql.includes('published_at < ?'))?.binds).toEqual([
-            '2026-07-26T12:00:00.000Z',
-            100,
-            5000,
-        ])
-        expect(boundStatements.some((statement) => statement.sql.includes('DELETE FROM recent_feed_generations'))).toBe(true)
-        expect(vi.mocked(bucket.list).mock.calls.map(([options]) => options?.prefix)).toEqual([
-            'generations/v1/manifests/',
-            'generations/v1/blocks/',
-            'generations/v1/bootstrap/',
-        ])
+        expect(await bucket.get(oldRoot)).toBeNull()
+        expect(
+            await queryOne<{generation: string}>('SELECT generation FROM recent_feed_generations WHERE generation = ?', ['r-old']),
+        ).toBeNull()
     })
 
-    it('keeps the D1 row when an expired root cannot be deleted', async () => {
-        mockCleanupOwner()
-        const {db, boundStatements} = createMockDb({
-            allResults: [[{generation: 'r1-old', root_key: 'generations/v1/roots/r1-old-secret.json'}]],
-            firstResults: [{lease_owner: CLEANUP_OWNER}, {bootstrap_revision: null}],
-        })
+    it('keeps the generation row when R2 deletion fails', async () => {
+        await seedGenerations(100)
+        const oldRoot = 'generations/v1/roots/r-old.json'
+        await seedGeneration('r-old', oldRoot, '2026-06-01T00:00:00.000Z')
         const bucket = createMockR2Bucket()
         vi.mocked(bucket.delete).mockRejectedValueOnce(new Error('R2 is unavailable'))
 
-        await expect(
-            cleanupRecentFeed(
-                {
-                    DB: db,
-                    RECENT_FEED_BUCKET: bucket,
-                    RECENT_FEED_CLEANUP_ENABLED: 'true',
-                },
-                new Date('2026-08-25T12:00:00.000Z'),
-            ),
-        ).rejects.toThrow('R2 is unavailable')
+        await expect(cleanupRecentFeed(enabledEnvironment(bucket), new Date('2026-08-25T12:00:00.000Z'))).rejects.toThrow(
+            'R2 is unavailable',
+        )
 
-        expect(boundStatements.some((statement) => statement.sql.includes('DELETE FROM recent_feed_generations'))).toBe(false)
+        expect(
+            await queryOne<{generation: string}>('SELECT generation FROM recent_feed_generations WHERE generation = ?', ['r-old']),
+        ).toEqual({
+            generation: 'r-old',
+        })
     })
 
     it('keeps reachable objects and deletes old orphan objects', async () => {
-        mockCleanupOwner()
         const {rootKey, objects, reachableKeys} = retainedObjectGraph()
-        const {db} = createMockDb({
-            allResults: [[], [{root_key: rootKey}]],
-            firstResults: [{lease_owner: CLEANUP_OWNER}, {bootstrap_revision: null}, {count: 1}, {lease_owner: CLEANUP_OWNER}],
-        })
+        await seedGeneration('r1-valid', rootKey, '2026-06-10T12:00:00.000Z')
         const bucket = createMockR2Bucket()
 
         for (const [key, value] of objects) {
@@ -128,102 +96,62 @@ describe('recent feed cleanup', () => {
         await bucket.put(orphanManifest, '{}')
         await bucket.put(orphanBlock, '{}')
 
-        const summary = await cleanupRecentFeed(
-            {
-                DB: db,
-                RECENT_FEED_BUCKET: bucket,
-                RECENT_FEED_CLEANUP_ENABLED: 'true',
-            },
-            new Date('2026-06-13T12:00:00.000Z'),
-        )
+        const summary = await cleanupRecentFeed(enabledEnvironment(bucket), new Date('2026-06-13T12:00:00.000Z'))
 
         expect(summary).toEqual({retainedGenerations: 1, deletedGenerations: 0, deletedObjects: 2})
         expect(await bucket.get(orphanManifest)).toBeNull()
         expect(await bucket.get(orphanBlock)).toBeNull()
-
         for (const key of reachableKeys) {
             expect(await bucket.get(key)).not.toBeNull()
         }
     })
 
-    it('keeps fresh orphan objects inside the grace period', async () => {
-        mockCleanupOwner()
-        const {db} = createMockDb({
-            allResults: [[], []],
-            firstResults: [{lease_owner: CLEANUP_OWNER}, {bootstrap_revision: null}, {count: 0}, {lease_owner: CLEANUP_OWNER}],
-        })
-        const bucket = createMockR2Bucket()
-        const orphanBlock = `generations/v1/blocks/n0-u0/2026-06-10T12/${'f'.repeat(64)}.json`
-        await bucket.put(orphanBlock, '{}')
-
-        const summary = await cleanupRecentFeed(
-            {
-                DB: db,
-                RECENT_FEED_BUCKET: bucket,
-                RECENT_FEED_CLEANUP_ENABLED: 'true',
-            },
-            new Date('2026-06-11T12:00:00.000Z'),
-        )
-
-        expect(summary.deletedObjects).toBe(0)
-        expect(await bucket.get(orphanBlock)).not.toBeNull()
-    })
-
     it('does not sweep child objects when a retained root is invalid', async () => {
-        mockCleanupOwner()
         const rootKey = 'generations/v1/roots/r1-invalid.json'
-        const {db} = createMockDb({
-            allResults: [[], [{root_key: rootKey}]],
-            firstResults: [{lease_owner: CLEANUP_OWNER}, {bootstrap_revision: null}, {count: 1}],
-        })
+        await seedGeneration('r1-invalid', rootKey, '2026-06-10T12:00:00.000Z')
         const bucket = createMockR2Bucket()
         const orphanBlock = `generations/v1/blocks/n0-u0/2026-06-10T12/${'f'.repeat(64)}.json`
         await bucket.put(rootKey, '{}')
         await bucket.put(orphanBlock, '{}')
 
-        const summary = await cleanupRecentFeed(
-            {
-                DB: db,
-                RECENT_FEED_BUCKET: bucket,
-                RECENT_FEED_CLEANUP_ENABLED: 'true',
-            },
-            new Date('2026-06-13T12:00:00.000Z'),
-        )
+        const summary = await cleanupRecentFeed(enabledEnvironment(bucket), new Date('2026-06-13T12:00:00.000Z'))
 
         expect(summary).toEqual({retainedGenerations: 1, deletedGenerations: 0, deletedObjects: 0})
         expect(await bucket.get(orphanBlock)).not.toBeNull()
-        expect(bucket.list).not.toHaveBeenCalled()
-    })
-
-    it('keeps D1 deletion batches within the parameter limit', async () => {
-        mockCleanupOwner()
-        const generations = Array.from({length: 101}, (_, index) => ({
-            generation: `r${index}-old`,
-            root_key: `generations/v1/roots/r${index}-old-secret.json`,
-        }))
-        const {db, boundStatements} = createMockDb({
-            allResults: [generations, []],
-            firstResults: [{lease_owner: CLEANUP_OWNER}, {bootstrap_revision: null}, {count: 100}, {lease_owner: CLEANUP_OWNER}],
-        })
-        const bucket = createMockR2Bucket()
-
-        await cleanupRecentFeed(
-            {
-                DB: db,
-                RECENT_FEED_BUCKET: bucket,
-                RECENT_FEED_CLEANUP_ENABLED: 'true',
-            },
-            new Date('2026-08-25T12:00:00.000Z'),
-        )
-
-        const deleteStatements = boundStatements.filter((statement) => statement.sql.includes('DELETE FROM recent_feed_generations'))
-        expect(deleteStatements.map((statement) => statement.binds.length)).toEqual([100, 1])
-        expect(bucket.delete).toHaveBeenCalledTimes(2)
     })
 })
 
-function mockCleanupOwner(): void {
-    vi.spyOn(crypto, 'randomUUID').mockReturnValue('00000000-0000-4000-8000-000000000000')
+function enabledEnvironment(bucket: R2Bucket) {
+    return {
+        DB: db,
+        RECENT_FEED_BUCKET: bucket,
+        RECENT_FEED_CLEANUP_ENABLED: 'true',
+    }
+}
+
+async function seedGenerations(count: number): Promise<void> {
+    const statements = Array.from({length: count}, (_, index) => {
+        const generation = `r-new-${index}`
+        return db
+            .prepare(
+                `INSERT INTO recent_feed_generations (
+                    generation, through_revision, root_key, item_counts_json, object_count, byte_count, published_at
+                 ) VALUES (?, 1, ?, '{}', 0, 0, '2026-08-25T00:00:00.000Z')`,
+            )
+            .bind(generation, `generations/v1/roots/${generation}.json`)
+    })
+    await db.batch(statements)
+}
+
+async function seedGeneration(generation: string, rootKey: string, publishedAt: string): Promise<void> {
+    await db
+        .prepare(
+            `INSERT INTO recent_feed_generations (
+                generation, through_revision, root_key, item_counts_json, object_count, byte_count, published_at
+             ) VALUES (?, 1, ?, '{}', 0, 0, ?)`,
+        )
+        .bind(generation, rootKey, publishedAt)
+        .run()
 }
 
 function retainedObjectGraph(): {

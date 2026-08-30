@@ -1674,15 +1674,6 @@ export function RecentMediaPage({currentUser, guestInitial, mediaBaseUrl, page, 
                             </button>
                             <button
                                 aria-controls="recent-media-feed"
-                                aria-pressed={showUnapproved ? 'true' : 'false'}
-                                class={showUnapproved ? 'btn btn-sm btn-active' : 'btn btn-sm'}
-                                data-recent-filter-unapproved
-                                type="button"
-                            >
-                                {showUnapproved ? 'Hide unapproved' : 'Show unapproved'}
-                            </button>
-                            <button
-                                aria-controls="recent-media-feed"
                                 aria-label="Expand multiple uploads by default"
                                 aria-pressed="false"
                                 class="btn btn-sm"
@@ -1711,8 +1702,6 @@ export function RecentMediaPage({currentUser, guestInitial, mediaBaseUrl, page, 
                     data-media-origin={mediaBaseUrl}
                     data-next-position={page.nextPosition ?? ''}
                     data-public-root-url={page.publicRootUrl ?? ''}
-                    data-csrf-token={currentUser?.csrfToken ?? ''}
-                    data-persist-unapproved={currentUser ? 'true' : 'false'}
                     data-recent-feed
                     data-show-nsfw={showNsfw ? 'true' : 'false'}
                     data-show-unapproved={showUnapproved ? 'true' : 'false'}

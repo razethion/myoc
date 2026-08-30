@@ -14,6 +14,7 @@ type UserSeed = {
     profilePhotoKey?: string | null
     bio?: string
     displayNsfwMedia?: boolean
+    showUnapprovedMedia?: boolean
     role?: 'user' | 'moderator' | 'admin'
     createdAt?: string
     lastSeenVersion?: string | null
@@ -139,6 +140,9 @@ const TEST_DATA_TABLES = [
     'user_passkeys',
     'webauthn_challenges',
     'character_media',
+    'recent_feed_dirty_hours',
+    'recent_feed_generations',
+    'recent_feed_revocations',
     'characters',
     'character_folders',
     'admin_job_runs',
@@ -179,6 +183,35 @@ async function clearTestDatabase(db: D1Database = testDb): Promise<void> {
             db.prepare(`DELETE FROM ${table}`),
         ),
     )
+    await db
+        .prepare(
+            `UPDATE recent_feed_state
+             SET requested_revision = 1,
+                 published_revision = 0,
+                 generation = NULL,
+                 root_key = NULL,
+                 published_at = NULL,
+                 lease_owner = NULL,
+                 lease_expires_at = NULL,
+                 bootstrap_revision = NULL,
+                 bootstrap_cursor_created_at = NULL,
+                 bootstrap_cursor_id = NULL,
+                 bootstrap_variant_roots_json = NULL,
+                 bootstrap_active_key = NULL,
+                 bootstrap_objects_written = 0,
+                 bootstrap_bytes_written = 0,
+                 bootstrap_started_at = NULL,
+                 last_error = NULL,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE singleton = 1`,
+        )
+        .run()
+    await db
+        .prepare(
+            `INSERT INTO recent_feed_dirty_hours (dirty_hour, revision, reason, urgent)
+             VALUES ('*', 1, 'initial-build', 1)`,
+        )
+        .run()
 }
 
 export async function seedUser(seed: UserSeed, db: D1Database = testDb): Promise<void> {
@@ -190,6 +223,7 @@ export async function seedUser(seed: UserSeed, db: D1Database = testDb): Promise
         profilePhotoKey = null,
         bio = '',
         displayNsfwMedia = false,
+        showUnapprovedMedia = true,
         role = 'user',
         createdAt = DEFAULT_TIMESTAMP,
         lastSeenVersion = null,
@@ -214,6 +248,7 @@ export async function seedUser(seed: UserSeed, db: D1Database = testDb): Promise
                 profile_photo_key,
                 bio,
                 display_nsfw_media,
+                show_unapproved_media,
                 role,
                 created_at,
                 last_seen_version,
@@ -227,7 +262,7 @@ export async function seedUser(seed: UserSeed, db: D1Database = testDb): Promise
                 secure_account_required_at,
                 secure_account_required_passkey_id,
                 passkey_prompt_seen_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
             id,
@@ -237,6 +272,7 @@ export async function seedUser(seed: UserSeed, db: D1Database = testDb): Promise
             profilePhotoKey,
             bio,
             Number(displayNsfwMedia),
+            Number(showUnapprovedMedia),
             role,
             createdAt,
             lastSeenVersion,

@@ -105,13 +105,39 @@ function isEligibleRecentMediaVariant(row: RecentMediaRow, rating: 'sfw' | 'nsfw
     return reviewStatus === 'approved' && Boolean(approvedAt && approvedAt >= row.updated_at)
 }
 
+type RecentMediaRating = 'sfw' | 'nsfw'
+
+type RecentMediaVariantData = {
+    contentType: string | null
+    height: number
+    imageKey: string | null
+    previewImageKey: string | null
+    width: number
+}
+
+function recentMediaVariantData(row: RecentMediaRow, rating: RecentMediaRating): RecentMediaVariantData {
+    if (rating === 'nsfw') {
+        return {
+            contentType: row.nsfw_content_type,
+            height: row.nsfw_preview_height ?? row.nsfw_height ?? 1,
+            imageKey: row.nsfw_image_key,
+            previewImageKey: row.nsfw_preview_image_key,
+            width: row.nsfw_preview_width ?? row.nsfw_width ?? 1,
+        }
+    }
+
+    return {
+        contentType: row.sfw_content_type,
+        height: row.sfw_preview_height ?? row.sfw_height ?? 1,
+        imageKey: row.sfw_image_key,
+        previewImageKey: row.sfw_preview_image_key,
+        width: row.sfw_preview_width ?? row.sfw_width ?? 1,
+    }
+}
+
 function recentMediaItemFromRow(row: RecentMediaRow, mediaBaseUrl: string, showNsfw: boolean, showUnapproved: boolean): RecentMediaItem {
-    const rating = showNsfw && isEligibleRecentMediaVariant(row, 'nsfw', showUnapproved) ? 'nsfw' : 'sfw'
-    const imageKey = rating === 'nsfw' ? row.nsfw_image_key : row.sfw_image_key
-    const previewImageKey = rating === 'nsfw' ? row.nsfw_preview_image_key : row.sfw_preview_image_key
-    const contentType = rating === 'nsfw' ? row.nsfw_content_type : row.sfw_content_type
-    const width = rating === 'nsfw' ? (row.nsfw_preview_width ?? row.nsfw_width ?? 1) : (row.sfw_preview_width ?? row.sfw_width ?? 1)
-    const height = rating === 'nsfw' ? (row.nsfw_preview_height ?? row.nsfw_height ?? 1) : (row.sfw_preview_height ?? row.sfw_height ?? 1)
+    const rating: RecentMediaRating = showNsfw && isEligibleRecentMediaVariant(row, 'nsfw', showUnapproved) ? 'nsfw' : 'sfw'
+    const {contentType, height, imageKey, previewImageKey, width} = recentMediaVariantData(row, rating)
     const characterHref = `/u/${encodeURIComponent(row.owner_username)}/${encodeURIComponent(row.character_name)}`
 
     if (!imageKey || !previewImageKey) {
@@ -155,9 +181,15 @@ export function recentMediaItemsFromRows(
 }
 
 const recentMediaSourceEligibilitySql = `((character_media.sfw_image_key IS NOT NULL
-                                          AND character_media.sfw_preview_image_key IS NOT NULL)
+                                          AND character_media.sfw_preview_image_key IS NOT NULL
+                                          AND character_media.sfw_review_status = 'approved'
+                                          AND character_media.sfw_approved_at IS NOT NULL
+                                          AND character_media.sfw_approved_at >= character_media.updated_at)
                                       OR (character_media.nsfw_image_key IS NOT NULL
-                                          AND character_media.nsfw_preview_image_key IS NOT NULL))`
+                                          AND character_media.nsfw_preview_image_key IS NOT NULL
+                                          AND character_media.nsfw_review_status = 'approved'
+                                          AND character_media.nsfw_approved_at IS NOT NULL
+                                          AND character_media.nsfw_approved_at >= character_media.updated_at))`
 
 export async function queryRecentMediaSourceRows(db: D1Database, hour?: string): Promise<RecentMediaRow[]> {
     const range = hour ? recentMediaHourRange(hour) : null

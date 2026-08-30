@@ -77,12 +77,7 @@ async function applySecurityHeaders(c: Context<{Bindings: Bindings}>, next: Next
     const nonce = createCspNonce()
     headers.set(
         'Content-Security-Policy',
-        createHtmlContentSecurityPolicy(
-            nonce,
-            c.env.MEDIA_PUBLIC_BASE_URL,
-            c.req.url,
-            c.env.RECENT_FEED_PUBLIC_BASE_URL,
-        ),
+        createHtmlContentSecurityPolicy(nonce, c.env.MEDIA_PUBLIC_BASE_URL, c.req.url, c.env.RECENT_FEED_PUBLIC_BASE_URL),
     )
     headers.delete('Content-Length')
 

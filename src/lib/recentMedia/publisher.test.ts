@@ -1,13 +1,11 @@
-import {afterEach, describe, expect, it, vi} from 'vitest'
+import {describe, expect, it, vi} from 'vitest'
+import {queryAll, queryOne, seedCharacter, seedUser, useTestDatabase} from '../../test/d1'
 import {createMockR2Bucket} from '../../test/mockR2'
-import {resetWorkerBindings} from '../../test/workerBindings'
 import type {RecentMediaRow} from '../recentMedia'
 import {RecentFeedDayManifestSchema, RecentFeedMonthManifestSchema, RecentFeedYearManifestSchema} from './model'
 import {buildRecentFeedVariantTree, publishRecentFeed} from './publisher'
 
-afterEach(async () => {
-    await resetWorkerBindings()
-})
+const db = useTestDatabase()
 
 describe('recent feed publisher', () => {
     it('writes a bounded content-addressed manifest tree and immutable blocks', async () => {
@@ -86,11 +84,10 @@ describe('recent feed publisher', () => {
     })
 
     it('resumes an initial build inside one large hour and keeps later dirty revisions', async () => {
-        const rows = Array.from({length: 1001}, (_, index) => recentRow(`media-${String(1001 - index).padStart(4, '0')}`))
-        const harness = createBootstrapDb(rows)
+        await seedSourceRows(1001)
         const bucket = createMockR2Bucket()
         const env = {
-            DB: harness.db,
+            DB: db,
             MEDIA_PUBLIC_BASE_URL: 'https://m.myoc.art',
             RECENT_FEED_BLOCK_ITEMS: '96',
             RECENT_FEED_BUCKET: bucket,
@@ -98,23 +95,32 @@ describe('recent feed publisher', () => {
         }
 
         const first = await publishRecentFeed(env, {now: new Date('2026-08-25T13:00:00.000Z')})
+        const buildingState = await readFeedState()
 
         expect(first).toMatchObject({status: 'building', revision: 1, bootstrapRows: 1000})
-        expect(harness.state.bootstrap_cursor_id).toBe('media-0002')
-        expect(harness.state.bootstrap_active_key).toMatch(/^generations\/v1\/bootstrap\/r1\/2026-08-25T12\//)
-        expect(harness.state.root_key).toBeNull()
+        expect(buildingState.bootstrap_cursor_id).toBe('media-0002')
+        expect(buildingState.bootstrap_active_key).toMatch(/^generations\/v1\/bootstrap\/r1\/2026-08-25T12\//)
+        expect(buildingState.root_key).toBeNull()
 
-        harness.state.requested_revision = 2
-        harness.dirtyRevisions.push(2)
+        await db.prepare('UPDATE recent_feed_state SET requested_revision = 2 WHERE singleton = 1').run()
+        await db
+            .prepare(
+                `UPDATE recent_feed_dirty_hours
+                 SET revision = 2, reason = 'test-later-revision', urgent = 1
+                 WHERE dirty_hour = '*'`,
+            )
+            .run()
 
         const second = await publishRecentFeed(env, {now: new Date('2026-08-25T13:01:00.000Z')})
+        const publishedState = await readFeedState()
+        const dirtyRevisions = await queryAll<{revision: number}>('SELECT revision FROM recent_feed_dirty_hours ORDER BY revision')
 
         expect(second).toMatchObject({status: 'published', revision: 1, bootstrapRows: 1})
-        expect(harness.state.published_revision).toBe(1)
-        expect(harness.state.requested_revision).toBe(2)
-        expect(harness.state.bootstrap_revision).toBeNull()
-        expect(harness.state.root_key).toMatch(/^generations\/v1\/roots\//)
-        expect(harness.dirtyRevisions).toEqual([2])
+        expect(publishedState.published_revision).toBe(1)
+        expect(publishedState.requested_revision).toBe(2)
+        expect(publishedState.bootstrap_revision).toBeNull()
+        expect(publishedState.root_key).toMatch(/^generations\/v1\/roots\//)
+        expect(dirtyRevisions).toEqual([{revision: 2}])
         expect(bucket.delete).toHaveBeenCalled()
     })
 })
@@ -136,123 +142,66 @@ type BootstrapState = {
     bootstrap_bytes_written: number
 }
 
-function createBootstrapDb(rows: RecentMediaRow[]): {db: D1Database; state: BootstrapState; dirtyRevisions: number[]} {
-    const state: BootstrapState = {
-        requested_revision: 1,
-        published_revision: 0,
-        generation: null,
-        root_key: null,
-        published_at: null,
-        lease_owner: null,
-        lease_expires_at: null,
-        bootstrap_revision: null,
-        bootstrap_cursor_created_at: null,
-        bootstrap_cursor_id: null,
-        bootstrap_variant_roots_json: null,
-        bootstrap_active_key: null,
-        bootstrap_objects_written: 0,
-        bootstrap_bytes_written: 0,
-    }
-    const dirtyRevisions = [1]
+async function readFeedState(): Promise<BootstrapState> {
+    const state = await queryOne<BootstrapState>(
+        `SELECT requested_revision,
+                published_revision,
+                generation,
+                root_key,
+                published_at,
+                lease_owner,
+                lease_expires_at,
+                bootstrap_revision,
+                bootstrap_cursor_created_at,
+                bootstrap_cursor_id,
+                bootstrap_variant_roots_json,
+                bootstrap_active_key,
+                bootstrap_objects_written,
+                bootstrap_bytes_written
+         FROM recent_feed_state
+         WHERE singleton = 1`,
+    )
+    if (!state) throw new Error('Recent feed state is missing')
+    return state
+}
 
-    type BoundStatement = {
-        all: () => Promise<{results: RecentMediaRow[]}>
-        first: () => Promise<BootstrapState>
-        run: () => Promise<{success: boolean}>
-    }
+async function seedSourceRows(count: number): Promise<void> {
+    await seedUser({id: 'user-1', username: 'demo'})
+    await seedCharacter({id: 'character-1', userId: 'user-1', name: 'Quartz Dragon', profileImageKey: 'profile'})
 
-    const execute = (sql: string, binds: unknown[]): void => {
-        if (sql.includes('SET published_revision = ?')) {
-            state.published_revision = Number(binds[0])
-            state.generation = String(binds[1])
-            state.root_key = String(binds[2])
-            state.published_at = String(binds[3])
-            state.bootstrap_revision = null
-            state.bootstrap_cursor_created_at = null
-            state.bootstrap_cursor_id = null
-            state.bootstrap_variant_roots_json = null
-            state.bootstrap_active_key = null
-            state.bootstrap_objects_written = 0
-            state.bootstrap_bytes_written = 0
-            return
-        }
-
-        if (sql.includes('SET bootstrap_cursor_created_at = ?')) {
-            state.bootstrap_cursor_created_at = binds[0] as string | null
-            state.bootstrap_cursor_id = binds[1] as string | null
-            state.bootstrap_variant_roots_json = String(binds[2])
-            state.bootstrap_active_key = binds[3] as string | null
-            state.bootstrap_objects_written = Number(binds[4])
-            state.bootstrap_bytes_written = Number(binds[5])
-            return
-        }
-
-        if (sql.includes('SET bootstrap_revision = ?')) {
-            state.bootstrap_revision = Number(binds[0])
-            state.bootstrap_variant_roots_json = String(binds[1])
-            return
-        }
-
-        if (sql.includes('SET lease_owner = ?')) {
-            state.lease_owner = String(binds[0])
-            state.lease_expires_at = '2099-01-01 00:00:00'
-            return
-        }
-
-        if (sql.includes('SET lease_owner = NULL')) {
-            state.lease_owner = null
-            state.lease_expires_at = null
-            return
-        }
-
-        if (sql.includes('SET lease_expires_at = ')) {
-            state.lease_expires_at = '2099-01-01 00:00:00'
-            return
-        }
-
-        if (sql.includes('DELETE FROM recent_feed_dirty_hours')) {
-            const throughRevision = Number(binds[0])
-            dirtyRevisions.splice(0, dirtyRevisions.length, ...dirtyRevisions.filter((revision) => revision > throughRevision))
-        }
-    }
-
-    const prepare = (sql: string) => ({
-        bind: (...binds: unknown[]): BoundStatement => ({
-            all: async () => {
-                if (!sql.includes('FROM character_media')) {
-                    return {results: []}
-                }
-
-                const hasCursor = binds.length === 4
-                const limit = Number(binds.at(-1))
-                const filtered = hasCursor
-                    ? rows.filter((row) => {
-                          const createdAt = String(binds[0])
-                          const id = String(binds[2])
-                          return row.created_at < createdAt || (row.created_at === createdAt && row.id < id)
-                      })
-                    : rows
-
-                return {results: filtered.slice(0, limit)}
-            },
-            first: async () => ({...state}),
-            run: async () => {
-                execute(sql, binds)
-                return {success: true}
-            },
-        }),
+    const statements = Array.from({length: count}, (_, index) => {
+        const id = `media-${String(count - index).padStart(4, '0')}`
+        return db
+            .prepare(
+                `INSERT INTO character_media (
+                    id, user_id, character_id,
+                    sfw_image_key, sfw_width, sfw_height, sfw_byte_size,
+                    sfw_review_status, sfw_approved_at, sfw_content_type,
+                    sfw_preview_image_key, sfw_preview_width, sfw_preview_height, sfw_preview_byte_size,
+                    created_at, updated_at
+                 ) VALUES (?, 'user-1', 'character-1', ?, 600, 800, 1024, 'approved', ?, 'image/webp', ?, 600, 800, 512, ?, ?)`,
+            )
+            .bind(id, `${id}-original`, '2026-08-25 12:30:00', `${id}-preview`, '2026-08-25 12:30:00', '2026-08-25 12:30:00')
     })
-    const db = {
-        prepare,
-        batch: async (statements: BoundStatement[]) => {
-            for (const statement of statements) {
-                await statement.run()
-            }
-            return []
-        },
+
+    for (let offset = 0; offset < statements.length; offset += 100) {
+        await db.batch(statements.slice(offset, offset + 100))
     }
 
-    return {db: db as unknown as D1Database, state, dirtyRevisions}
+    await db
+        .prepare(
+            `UPDATE recent_feed_state
+             SET requested_revision = 1, published_revision = 0, generation = NULL, root_key = NULL, published_at = NULL
+             WHERE singleton = 1`,
+        )
+        .run()
+    await db.prepare('DELETE FROM recent_feed_dirty_hours WHERE revision >= 0').run()
+    await db
+        .prepare(
+            `INSERT INTO recent_feed_dirty_hours (dirty_hour, revision, reason, urgent)
+             VALUES ('*', 1, 'initial-build', 1)`,
+        )
+        .run()
 }
 
 async function readJson<T>(bucket: R2Bucket, key: string | undefined, schema: {parse(value: unknown): T}): Promise<T> {

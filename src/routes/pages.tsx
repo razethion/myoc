@@ -670,7 +670,7 @@ pageRoutes.get('/search', async (c) => {
 pageRoutes.get('/recent', async (c) => {
     const currentUser = await getCurrentUser(c)
     const showNsfw = Boolean(currentUser?.displayNsfwMedia)
-    const showUnapproved = currentUser?.showUnapprovedMedia !== false
+    const showUnapproved = false
     const page = await getGeneratedRecentMediaPage(c.env, {
         showNsfw,
         showUnapproved,

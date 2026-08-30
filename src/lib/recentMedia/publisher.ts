@@ -109,6 +109,23 @@ type BootstrapActiveHour = {
     variants: Record<RecentFeedVariant, BootstrapVariantHour>
 }
 
+type BootstrapCheckpointBlocks = {
+    blockSegments: Record<RecentFeedVariant, RecentFeedBlockReference[][]>
+    checkpointKeys: string[]
+}
+
+type BootstrapCompletedReferences = Record<RecentFeedVariant, Map<string, RecentFeedHourReference | null>>
+
+type BootstrapPageResult = {
+    activeHour: BootstrapActiveHour | null
+    checkpointKeysToDelete: string[]
+    completedHours: number
+    completedReferences: BootstrapCompletedReferences
+    nextCursor: {createdAt: string; id: string} | null
+    nextUnprocessedRow: RecentMediaRow | undefined
+    processedRows: number
+}
+
 const BootstrapVariantHourSchema = z.object({
     itemCount: z.number().int().nonnegative(),
     blockCount: z.number().int().nonnegative(),
@@ -161,117 +178,155 @@ export async function publishRecentFeed(
 
     const startedAt = Date.now()
 
+    return publishWithLease(env, config, leaseOwner, startedAt, options.now ?? new Date())
+}
+
+async function publishWithLease(
+    env: RecentFeedPublisherEnv,
+    config: RecentFeedConfig,
+    leaseOwner: string,
+    startedAt: number,
+    now: Date,
+): Promise<RecentFeedPublishSummary> {
     try {
-        const state = await getRecentFeedState(env.DB)
-        let previousRoot: RecentFeedRoot | null = null
-
-        if (!state.root_key || state.bootstrap_revision !== null) {
-            return await continueRecentFeedBootstrap(env, config, state, leaseOwner, startedAt, options.now ?? new Date())
-        }
-
-        if (state.requested_revision <= state.published_revision) {
-            previousRoot = await readJson(env.RECENT_FEED_BUCKET, state.root_key, RecentFeedRootSchema)
-
-            if (previousRoot.initialItems) {
-                return {status: 'current', generation: state.generation ?? undefined, revision: state.published_revision}
-            }
-        }
-
-        const targetRevision = state.requested_revision
-        const dirtyRows = await getDirtyHours(env.DB, targetRevision)
-        const fullBuild = !state.root_key || dirtyRows.some((row) => row.dirty_hour === '*')
-        const dirtyHours = fullBuild ? [] : dirtyRows.map((row) => row.dirty_hour)
-        await renewPublicationLease(env.DB, leaseOwner)
-        const sourceRowsByHour = await loadSourceRowsByHour(env.DB, dirtyHours, fullBuild)
-        await renewPublicationLease(env.DB, leaseOwner)
-        previousRoot ??= fullBuild || !state.root_key ? null : await readJson(env.RECENT_FEED_BUCKET, state.root_key, RecentFeedRootSchema)
-        const metrics: WriteMetrics = {objectsWritten: 0, bytesWritten: 0}
-        const variantRoots = {} as RecentFeedRoot['variants']
-
-        for (const variant of RECENT_FEED_VARIANTS) {
-            await renewPublicationLease(env.DB, leaseOwner)
-            const nextVariantRoot = await buildRecentFeedVariantTree(
-                env.RECENT_FEED_BUCKET,
-                variant,
-                previousRoot?.variants[variant] ?? emptyVariantRoot(),
-                sourceRowsByHour,
-                fullBuild,
-                env.MEDIA_PUBLIC_BASE_URL,
-                config.blockItems,
-                config.immutableCacheControl,
-                metrics,
-                () => renewPublicationLease(env.DB, leaseOwner),
-            )
-            variantRoots[variant] = nextVariantRoot
-            await renewPublicationLease(env.DB, leaseOwner)
-        }
-
-        const initialItems = await buildRecentFeedInitialItems(env.RECENT_FEED_BUCKET, variantRoots)
-        await renewPublicationLease(env.DB, leaseOwner)
-        const publishedAt = (options.now ?? new Date()).toISOString()
-        const generationDigest = await sha256Hex(
-            JSON.stringify({throughRevision: targetRevision, publishedAt, variants: variantRoots, initialItems}),
-        )
-        const generation = `r${targetRevision}-${generationDigest.slice(0, 16)}`
-        const rootKey = `generations/v1/roots/${generation}-${generationDigest.slice(16, 48)}.json`
-        const existingRoot = await env.RECENT_FEED_BUCKET.get(rootKey)
-        const root = existingRoot
-            ? RecentFeedRootSchema.parse(await existingRoot.json<unknown>())
-            : {
-                  schemaVersion: RECENT_FEED_SCHEMA_VERSION,
-                  generation,
-                  throughRevision: targetRevision,
-                  publishedAt,
-                  variants: variantRoots,
-                  initialItems,
-              }
-
-        if (!existingRoot) {
-            await putJsonIfMissing(env.RECENT_FEED_BUCKET, rootKey, JSON.stringify(root), config.immutableCacheControl, metrics)
-        }
-
-        const pointer: RecentFeedPointer = {
-            generation,
-            rootKey,
-            publishedAt: root.publishedAt,
-            throughRevision: targetRevision,
-        }
-
-        await checkpointPublication(env.DB, leaseOwner, targetRevision, pointer, variantRoots, metrics)
-
-        const itemCounts = Object.fromEntries(RECENT_FEED_VARIANTS.map((variant) => [variant, variantRoots[variant].itemCount])) as Record<
-            RecentFeedVariant,
-            number
-        >
-
-        console.log(
-            JSON.stringify({
-                event: 'recent-feed-published',
-                generation,
-                revision: targetRevision,
-                dirtyHours: sourceRowsByHour.size,
-                itemCounts,
-                objectsWritten: metrics.objectsWritten,
-                bytesWritten: metrics.bytesWritten,
-                durationMs: Date.now() - startedAt,
-            }),
-        )
-
-        return {
-            status: 'published',
-            generation,
-            revision: targetRevision,
-            dirtyHours: sourceRowsByHour.size,
-            itemCounts,
-            objectsWritten: metrics.objectsWritten,
-            bytesWritten: metrics.bytesWritten,
-        }
+        return await publishAcquiredRecentFeed(env, config, leaseOwner, startedAt, now)
     } catch (error) {
         await recordPublicationError(env.DB, leaseOwner, error)
         throw error
     } finally {
         await releasePublicationLease(env.DB, leaseOwner)
     }
+}
+
+async function publishAcquiredRecentFeed(
+    env: RecentFeedPublisherEnv,
+    config: RecentFeedConfig,
+    leaseOwner: string,
+    startedAt: number,
+    now: Date,
+): Promise<RecentFeedPublishSummary> {
+    const state = await getRecentFeedState(env.DB)
+
+    if (!state.root_key || state.bootstrap_revision !== null) {
+        return continueRecentFeedBootstrap(env, config, state, leaseOwner, startedAt, now)
+    }
+
+    const previousRoot = await readJson(env.RECENT_FEED_BUCKET, state.root_key, RecentFeedRootSchema)
+
+    if (state.requested_revision <= state.published_revision && previousRoot.initialItems) {
+        return {status: 'current', generation: state.generation ?? undefined, revision: state.published_revision}
+    }
+
+    return publishIncrementalRecentFeed(env, config, state, previousRoot, leaseOwner, startedAt, now)
+}
+
+async function publishIncrementalRecentFeed(
+    env: RecentFeedPublisherEnv,
+    config: RecentFeedConfig,
+    state: RecentFeedStateRow,
+    previousRoot: RecentFeedRoot,
+    leaseOwner: string,
+    startedAt: number,
+    now: Date,
+): Promise<RecentFeedPublishSummary> {
+    const targetRevision = state.requested_revision
+    const dirtyRows = await getDirtyHours(env.DB, targetRevision)
+    const fullBuild = dirtyRows.some((row) => row.dirty_hour === '*')
+    const dirtyHours = fullBuild ? [] : dirtyRows.map((row) => row.dirty_hour)
+    await renewPublicationLease(env.DB, leaseOwner)
+    const sourceRowsByHour = await loadSourceRowsByHour(env.DB, dirtyHours, fullBuild)
+    await renewPublicationLease(env.DB, leaseOwner)
+    const metrics: WriteMetrics = {objectsWritten: 0, bytesWritten: 0}
+    const variantRoots = {} as RecentFeedRoot['variants']
+
+    for (const variant of RECENT_FEED_VARIANTS) {
+        await renewPublicationLease(env.DB, leaseOwner)
+        variantRoots[variant] = await buildRecentFeedVariantTree(
+            env.RECENT_FEED_BUCKET,
+            variant,
+            fullBuild ? emptyVariantRoot() : previousRoot.variants[variant],
+            sourceRowsByHour,
+            fullBuild,
+            env.MEDIA_PUBLIC_BASE_URL,
+            config.blockItems,
+            config.immutableCacheControl,
+            metrics,
+            () => renewPublicationLease(env.DB, leaseOwner),
+        )
+        await renewPublicationLease(env.DB, leaseOwner)
+    }
+
+    const pointer = await writeRecentFeedRoot(env.RECENT_FEED_BUCKET, variantRoots, targetRevision, now, config, metrics, () =>
+        renewPublicationLease(env.DB, leaseOwner),
+    )
+    await checkpointPublication(env.DB, leaseOwner, targetRevision, pointer, variantRoots, metrics)
+    const itemCounts = recentFeedItemCounts(variantRoots)
+
+    console.log(
+        JSON.stringify({
+            event: 'recent-feed-published',
+            generation: pointer.generation,
+            revision: targetRevision,
+            dirtyHours: sourceRowsByHour.size,
+            itemCounts,
+            objectsWritten: metrics.objectsWritten,
+            bytesWritten: metrics.bytesWritten,
+            durationMs: Date.now() - startedAt,
+        }),
+    )
+
+    return {
+        status: 'published',
+        generation: pointer.generation,
+        revision: targetRevision,
+        dirtyHours: sourceRowsByHour.size,
+        itemCounts,
+        objectsWritten: metrics.objectsWritten,
+        bytesWritten: metrics.bytesWritten,
+    }
+}
+
+async function writeRecentFeedRoot(
+    bucket: R2Bucket,
+    variantRoots: RecentFeedRoot['variants'],
+    targetRevision: number,
+    now: Date,
+    config: RecentFeedConfig,
+    metrics: WriteMetrics,
+    onInitialItemsBuilt: () => Promise<void>,
+): Promise<RecentFeedPointer> {
+    const initialItems = await buildRecentFeedInitialItems(bucket, variantRoots)
+    await onInitialItemsBuilt()
+    const publishedAt = now.toISOString()
+    const generationDigest = await sha256Hex(
+        JSON.stringify({throughRevision: targetRevision, publishedAt, variants: variantRoots, initialItems}),
+    )
+    const generation = `r${targetRevision}-${generationDigest.slice(0, 16)}`
+    const rootKey = `generations/v1/roots/${generation}-${generationDigest.slice(16, 48)}.json`
+    const existingRoot = await bucket.get(rootKey)
+    const root = existingRoot
+        ? RecentFeedRootSchema.parse(await existingRoot.json<unknown>())
+        : {
+              schemaVersion: RECENT_FEED_SCHEMA_VERSION,
+              generation,
+              throughRevision: targetRevision,
+              publishedAt,
+              variants: variantRoots,
+              initialItems,
+          }
+
+    if (!existingRoot) {
+        await putJsonIfMissing(bucket, rootKey, JSON.stringify(root), config.immutableCacheControl, metrics)
+    }
+
+    return {generation, rootKey, publishedAt: root.publishedAt, throughRevision: targetRevision}
+}
+
+function recentFeedItemCounts(variantRoots: RecentFeedRoot['variants']): Record<RecentFeedVariant, number> {
+    return Object.fromEntries(RECENT_FEED_VARIANTS.map((variant) => [variant, variantRoots[variant].itemCount])) as Record<
+        RecentFeedVariant,
+        number
+    >
 }
 
 export async function getRecentFeedPointer(db: D1Database): Promise<RecentFeedPointer | null> {
@@ -663,6 +718,17 @@ async function finalizeBootstrapHour(
         await appendBootstrapBlock(bucket, active, variant, cacheControl, metrics)
     }
 
+    const checkpoint = await readBootstrapCheckpointBlocks(bucket, active)
+    const references = buildBootstrapHourReferences(active, checkpoint.blockSegments)
+
+    return {
+        hour: active.hour,
+        references,
+        checkpointKeys: checkpoint.checkpointKeys.slice(0, RECENT_FEED_BOOTSTRAP_IMMEDIATE_DELETE_LIMIT),
+    }
+}
+
+async function readBootstrapCheckpointBlocks(bucket: R2Bucket, active: BootstrapActiveHour): Promise<BootstrapCheckpointBlocks> {
     const blockSegments: Record<RecentFeedVariant, RecentFeedBlockReference[][]> = {
         'n0-u0': [],
         'n0-u1': [],
@@ -695,6 +761,13 @@ async function finalizeBootstrapHour(
         key = segment.previousKey
     }
 
+    return {blockSegments, checkpointKeys}
+}
+
+function buildBootstrapHourReferences(
+    active: BootstrapActiveHour,
+    blockSegments: Record<RecentFeedVariant, RecentFeedBlockReference[][]>,
+): Record<RecentFeedVariant, RecentFeedHourReference | null> {
     const references = {} as Record<RecentFeedVariant, RecentFeedHourReference | null>
 
     for (const variant of RECENT_FEED_VARIANTS) {
@@ -708,11 +781,7 @@ async function finalizeBootstrapHour(
         references[variant] = variantState.itemCount === 0 ? null : {hour: active.hour, itemCount: variantState.itemCount, blocks}
     }
 
-    return {
-        hour: active.hour,
-        references,
-        checkpointKeys: checkpointKeys.slice(0, RECENT_FEED_BOOTSTRAP_IMMEDIATE_DELETE_LIMIT),
-    }
+    return references
 }
 
 function addCompletedHourReferences(
@@ -820,113 +889,24 @@ async function applyRecentFeedVariantHours(
     const dirtyHierarchy = groupHoursByDate(hourReferences.keys())
 
     for (const [year, dirtyMonths] of dirtyHierarchy) {
-        const previousYearReference = yearMap.get(year)
-        const previousYear =
-            !fullBuild && previousYearReference
-                ? await readJson(bucket, previousYearReference.key, RecentFeedYearManifestSchema)
-                : emptyYearManifest(variant, year)
-        assertYearManifest(previousYear, previousYearReference, variant, year)
-        const monthMap = new Map(previousYear.months.map((reference) => [reference.month, reference]))
+        const reference = await applyDirtyYear(
+            bucket,
+            variant,
+            year,
+            dirtyMonths,
+            yearMap.get(year),
+            hourReferences,
+            fullBuild,
+            cacheControl,
+            metrics,
+            onProgress,
+        )
 
-        for (const [month, dirtyDays] of dirtyMonths) {
-            const previousMonthReference = monthMap.get(month)
-            const previousMonth =
-                !fullBuild && previousMonthReference
-                    ? await readJson(bucket, previousMonthReference.key, RecentFeedMonthManifestSchema)
-                    : emptyMonthManifest(variant, month)
-            assertMonthManifest(previousMonth, previousMonthReference, variant, month)
-            const dayMap = new Map(previousMonth.days.map((reference) => [reference.day, reference]))
-
-            for (const [day, dirtyHours] of dirtyDays) {
-                const previousDayReference = dayMap.get(day)
-                const previousDay =
-                    !fullBuild && previousDayReference
-                        ? await readJson(bucket, previousDayReference.key, RecentFeedDayManifestSchema)
-                        : emptyDayManifest(variant, day)
-                assertDayManifest(previousDay, previousDayReference, variant, day)
-                const hourMap = new Map(previousDay.hours.map((reference) => [reference.hour, reference]))
-
-                for (const hour of dirtyHours) {
-                    const reference = hourReferences.get(hour)
-
-                    if (!reference) {
-                        hourMap.delete(hour)
-                    } else {
-                        hourMap.set(hour, reference)
-                    }
-                }
-
-                const hours = [...hourMap.values()].sort((left, right) => right.hour.localeCompare(left.hour))
-
-                if (hours.length === 0) {
-                    dayMap.delete(day)
-                } else {
-                    const manifest: RecentFeedDayManifest = {
-                        schemaVersion: RECENT_FEED_SCHEMA_VERSION,
-                        variant,
-                        day,
-                        itemCount: sumItemCounts(hours),
-                        hours,
-                    }
-                    const key = await putContentAddressedManifest(
-                        bucket,
-                        `generations/v1/manifests/${variant}/days/${day}`,
-                        manifest,
-                        cacheControl,
-                        metrics,
-                    )
-                    dayMap.set(day, {day, key, itemCount: manifest.itemCount})
-                }
-            }
-
-            const days = [...dayMap.values()].sort((left, right) => right.day.localeCompare(left.day))
-
-            if (days.length === 0) {
-                monthMap.delete(month)
-            } else {
-                const manifest: RecentFeedMonthManifest = {
-                    schemaVersion: RECENT_FEED_SCHEMA_VERSION,
-                    variant,
-                    month,
-                    itemCount: sumItemCounts(days),
-                    days,
-                }
-                const key = await putContentAddressedManifest(
-                    bucket,
-                    `generations/v1/manifests/${variant}/months/${month}`,
-                    manifest,
-                    cacheControl,
-                    metrics,
-                )
-                monthMap.set(month, {month, key, itemCount: manifest.itemCount})
-            }
-
-            await onProgress?.()
-        }
-
-        const months = [...monthMap.values()].sort((left, right) => right.month.localeCompare(left.month))
-
-        if (months.length === 0) {
-            yearMap.delete(year)
+        if (reference) {
+            yearMap.set(year, reference)
         } else {
-            const manifest: RecentFeedYearManifest = {
-                schemaVersion: RECENT_FEED_SCHEMA_VERSION,
-                variant,
-                year,
-                itemCount: sumItemCounts(months),
-                months,
-            }
-            const key = await putContentAddressedManifest(
-                bucket,
-                `generations/v1/manifests/${variant}/years/${year}`,
-                manifest,
-                cacheControl,
-                metrics,
-            )
-            yearMap.set(year, {year, key, itemCount: manifest.itemCount})
+            yearMap.delete(year)
         }
-
-        await onProgress?.()
     }
 
     const years = [...yearMap.values()].sort((left, right) => right.year.localeCompare(left.year))
@@ -937,6 +917,192 @@ async function applyRecentFeedVariantHours(
     }
 }
 
+async function applyDirtyYear(
+    bucket: R2Bucket,
+    variant: RecentFeedVariant,
+    year: string,
+    dirtyMonths: Map<string, Map<string, string[]>>,
+    previousReference: RecentFeedYearReference | undefined,
+    hourReferences: Map<string, RecentFeedHourReference | null>,
+    fullBuild: boolean,
+    cacheControl: string,
+    metrics: WriteMetrics,
+    onProgress?: () => Promise<void>,
+): Promise<RecentFeedYearReference | null> {
+    const previous =
+        !fullBuild && previousReference
+            ? await readJson(bucket, previousReference.key, RecentFeedYearManifestSchema)
+            : emptyYearManifest(variant, year)
+    assertYearManifest(previous, previousReference, variant, year)
+    const monthMap = new Map(previous.months.map((reference) => [reference.month, reference]))
+
+    for (const [month, dirtyDays] of dirtyMonths) {
+        const reference = await applyDirtyMonth(
+            bucket,
+            variant,
+            month,
+            dirtyDays,
+            monthMap.get(month),
+            hourReferences,
+            fullBuild,
+            cacheControl,
+            metrics,
+        )
+        if (reference) monthMap.set(month, reference)
+        else monthMap.delete(month)
+        await onProgress?.()
+    }
+
+    const months = [...monthMap.values()].sort((left, right) => right.month.localeCompare(left.month))
+    const reference = await writeYearManifest(bucket, variant, year, months, cacheControl, metrics)
+    await onProgress?.()
+    return reference
+}
+
+async function applyDirtyMonth(
+    bucket: R2Bucket,
+    variant: RecentFeedVariant,
+    month: string,
+    dirtyDays: Map<string, string[]>,
+    previousReference: RecentFeedMonthReference | undefined,
+    hourReferences: Map<string, RecentFeedHourReference | null>,
+    fullBuild: boolean,
+    cacheControl: string,
+    metrics: WriteMetrics,
+): Promise<RecentFeedMonthReference | null> {
+    const previous =
+        !fullBuild && previousReference
+            ? await readJson(bucket, previousReference.key, RecentFeedMonthManifestSchema)
+            : emptyMonthManifest(variant, month)
+    assertMonthManifest(previous, previousReference, variant, month)
+    const dayMap = new Map(previous.days.map((reference) => [reference.day, reference]))
+
+    for (const [day, dirtyHours] of dirtyDays) {
+        const reference = await applyDirtyDay(
+            bucket,
+            variant,
+            day,
+            dirtyHours,
+            dayMap.get(day),
+            hourReferences,
+            fullBuild,
+            cacheControl,
+            metrics,
+        )
+        if (reference) dayMap.set(day, reference)
+        else dayMap.delete(day)
+    }
+
+    const days = [...dayMap.values()].sort((left, right) => right.day.localeCompare(left.day))
+    return writeMonthManifest(bucket, variant, month, days, cacheControl, metrics)
+}
+
+async function applyDirtyDay(
+    bucket: R2Bucket,
+    variant: RecentFeedVariant,
+    day: string,
+    dirtyHours: string[],
+    previousReference: RecentFeedDayReference | undefined,
+    hourReferences: Map<string, RecentFeedHourReference | null>,
+    fullBuild: boolean,
+    cacheControl: string,
+    metrics: WriteMetrics,
+): Promise<RecentFeedDayReference | null> {
+    const previous =
+        !fullBuild && previousReference
+            ? await readJson(bucket, previousReference.key, RecentFeedDayManifestSchema)
+            : emptyDayManifest(variant, day)
+    assertDayManifest(previous, previousReference, variant, day)
+    const hourMap = new Map(previous.hours.map((reference) => [reference.hour, reference]))
+
+    for (const hour of dirtyHours) {
+        const reference = hourReferences.get(hour)
+        if (reference) hourMap.set(hour, reference)
+        else hourMap.delete(hour)
+    }
+
+    const hours = [...hourMap.values()].sort((left, right) => right.hour.localeCompare(left.hour))
+    return writeDayManifest(bucket, variant, day, hours, cacheControl, metrics)
+}
+
+async function writeYearManifest(
+    bucket: R2Bucket,
+    variant: RecentFeedVariant,
+    year: string,
+    months: RecentFeedMonthReference[],
+    cacheControl: string,
+    metrics: WriteMetrics,
+): Promise<RecentFeedYearReference | null> {
+    if (months.length === 0) return null
+    const manifest: RecentFeedYearManifest = {
+        schemaVersion: RECENT_FEED_SCHEMA_VERSION,
+        variant,
+        year,
+        itemCount: sumItemCounts(months),
+        months,
+    }
+    const key = await putContentAddressedManifest(
+        bucket,
+        `generations/v1/manifests/${variant}/years/${year}`,
+        manifest,
+        cacheControl,
+        metrics,
+    )
+    return {year, key, itemCount: manifest.itemCount}
+}
+
+async function writeMonthManifest(
+    bucket: R2Bucket,
+    variant: RecentFeedVariant,
+    month: string,
+    days: RecentFeedDayReference[],
+    cacheControl: string,
+    metrics: WriteMetrics,
+): Promise<RecentFeedMonthReference | null> {
+    if (days.length === 0) return null
+    const manifest: RecentFeedMonthManifest = {
+        schemaVersion: RECENT_FEED_SCHEMA_VERSION,
+        variant,
+        month,
+        itemCount: sumItemCounts(days),
+        days,
+    }
+    const key = await putContentAddressedManifest(
+        bucket,
+        `generations/v1/manifests/${variant}/months/${month}`,
+        manifest,
+        cacheControl,
+        metrics,
+    )
+    return {month, key, itemCount: manifest.itemCount}
+}
+
+async function writeDayManifest(
+    bucket: R2Bucket,
+    variant: RecentFeedVariant,
+    day: string,
+    hours: RecentFeedHourReference[],
+    cacheControl: string,
+    metrics: WriteMetrics,
+): Promise<RecentFeedDayReference | null> {
+    if (hours.length === 0) return null
+    const manifest: RecentFeedDayManifest = {
+        schemaVersion: RECENT_FEED_SCHEMA_VERSION,
+        variant,
+        day,
+        itemCount: sumItemCounts(hours),
+        hours,
+    }
+    const key = await putContentAddressedManifest(
+        bucket,
+        `generations/v1/manifests/${variant}/days/${day}`,
+        manifest,
+        cacheControl,
+        metrics,
+    )
+    return {day, key, itemCount: manifest.itemCount}
+}
+
 async function continueRecentFeedBootstrap(
     env: RecentFeedPublisherEnv,
     config: RecentFeedConfig,
@@ -945,86 +1111,133 @@ async function continueRecentFeedBootstrap(
     startedAt: number,
     now: Date,
 ): Promise<RecentFeedPublishSummary> {
-    let state = initialState
-
-    if (state.bootstrap_revision === null) {
-        await initializeRecentFeedBootstrap(env.DB, leaseOwner, state.requested_revision)
-        state = await getRecentFeedState(env.DB)
-    }
-
-    const targetRevision = state.bootstrap_revision
-
-    if (targetRevision === null || state.root_key) {
-        throw new Error('Recent feed bootstrap state is invalid')
-    }
-
+    const {state, targetRevision} = await ensureBootstrapState(env.DB, leaseOwner, initialState)
     const variantRoots = parseBootstrapVariantRoots(state.bootstrap_variant_roots_json)
-    let activeHour = state.bootstrap_active_key
+    const activeHour = state.bootstrap_active_key
         ? await loadBootstrapActiveHour(env.RECENT_FEED_BUCKET, state.bootstrap_active_key, config.blockItems)
         : null
     const cursor = bootstrapCursor(state)
     const sourceRows = await queryRecentMediaSourceRowsPage(env.DB, cursor, RECENT_FEED_BOOTSTRAP_ROW_BUDGET + 1)
     const metrics: WriteMetrics = {objectsWritten: 0, bytesWritten: 0}
-    const completedReferences = Object.fromEntries(
-        RECENT_FEED_VARIANTS.map((variant) => [variant, new Map<string, RecentFeedHourReference | null>()]),
-    ) as Record<RecentFeedVariant, Map<string, RecentFeedHourReference | null>>
-    const checkpointKeysToDelete: string[] = []
-    let completedHours = 0
-    let processedRows = 0
-    let nextCursor = cursor
-
     await renewPublicationLease(env.DB, leaseOwner)
+    const page = await processBootstrapPageRows(env, config, sourceRows, activeHour, cursor, metrics)
+    await applyCompletedBootstrapHours(env, config, variantRoots, page.completedReferences, metrics, leaseOwner)
+    const totalMetrics = combinedBootstrapMetrics(state, metrics)
+    const sourceComplete = !page.nextUnprocessedRow && page.activeHour === null
 
-    while (processedRows < RECENT_FEED_BOOTSTRAP_ROW_BUDGET && processedRows < sourceRows.length) {
-        const row = sourceRows[processedRows]
+    if (!sourceComplete) {
+        return checkpointBootstrapProgress(env, targetRevision, variantRoots, page, totalMetrics, leaseOwner, startedAt)
+    }
 
-        if (!row) {
-            break
-        }
+    return publishCompletedBootstrap(
+        env,
+        config,
+        state,
+        targetRevision,
+        variantRoots,
+        page,
+        metrics,
+        totalMetrics,
+        leaseOwner,
+        startedAt,
+        now,
+    )
+}
 
+async function ensureBootstrapState(
+    db: D1Database,
+    leaseOwner: string,
+    initialState: RecentFeedStateRow,
+): Promise<{state: RecentFeedStateRow; targetRevision: number}> {
+    let state = initialState
+    if (state.bootstrap_revision === null) {
+        await initializeRecentFeedBootstrap(db, leaseOwner, state.requested_revision)
+        state = await getRecentFeedState(db)
+    }
+
+    if (state.bootstrap_revision === null || state.root_key) throw new Error('Recent feed bootstrap state is invalid')
+    return {state, targetRevision: state.bootstrap_revision}
+}
+
+async function processBootstrapPageRows(
+    env: RecentFeedPublisherEnv,
+    config: RecentFeedConfig,
+    sourceRows: RecentMediaRow[],
+    initialActiveHour: BootstrapActiveHour | null,
+    cursor: {createdAt: string; id: string} | null,
+    metrics: WriteMetrics,
+): Promise<BootstrapPageResult> {
+    const result: BootstrapPageResult = {
+        activeHour: initialActiveHour,
+        checkpointKeysToDelete: [],
+        completedHours: 0,
+        completedReferences: emptyBootstrapCompletedReferences(),
+        nextCursor: cursor,
+        nextUnprocessedRow: sourceRows[0],
+        processedRows: 0,
+    }
+
+    while (result.processedRows < RECENT_FEED_BOOTSTRAP_ROW_BUDGET && result.processedRows < sourceRows.length) {
+        const row = sourceRows[result.processedRows]
+        if (!row) break
         const hour = recentMediaHour(row)
 
-        if (activeHour && activeHour.hour !== hour) {
-            const finalized = await finalizeBootstrapHour(env.RECENT_FEED_BUCKET, activeHour, config.immutableCacheControl, metrics)
-            addCompletedHourReferences(completedReferences, finalized.hour, finalized.references)
-            checkpointKeysToDelete.push(...finalized.checkpointKeys)
-            activeHour = null
-            completedHours += 1
-
-            if (completedHours >= RECENT_FEED_BOOTSTRAP_HOUR_BUDGET) {
-                break
-            }
+        if (result.activeHour && result.activeHour.hour !== hour) {
+            await completeBootstrapHour(env.RECENT_FEED_BUCKET, config, result, metrics)
+            if (result.completedHours >= RECENT_FEED_BOOTSTRAP_HOUR_BUDGET) break
         }
 
-        activeHour ??= emptyBootstrapActiveHour(hour)
+        result.activeHour ??= emptyBootstrapActiveHour(hour)
         await addBootstrapRow(
             env.RECENT_FEED_BUCKET,
-            activeHour,
+            result.activeHour,
             row,
             env.MEDIA_PUBLIC_BASE_URL,
             config.blockItems,
             config.immutableCacheControl,
             metrics,
         )
-        nextCursor = {createdAt: row.created_at, id: row.id}
-        processedRows += 1
+        result.nextCursor = {createdAt: row.created_at, id: row.id}
+        result.processedRows += 1
     }
 
-    const nextUnprocessedRow = sourceRows[processedRows]
-
-    if (activeHour && (!nextUnprocessedRow || recentMediaHour(nextUnprocessedRow) !== activeHour.hour)) {
-        const finalized = await finalizeBootstrapHour(env.RECENT_FEED_BUCKET, activeHour, config.immutableCacheControl, metrics)
-        addCompletedHourReferences(completedReferences, finalized.hour, finalized.references)
-        checkpointKeysToDelete.push(...finalized.checkpointKeys)
-        activeHour = null
-        completedHours += 1
+    result.nextUnprocessedRow = sourceRows[result.processedRows]
+    if (result.activeHour && (!result.nextUnprocessedRow || recentMediaHour(result.nextUnprocessedRow) !== result.activeHour.hour)) {
+        await completeBootstrapHour(env.RECENT_FEED_BUCKET, config, result, metrics)
     }
+    return result
+}
 
+function emptyBootstrapCompletedReferences(): BootstrapCompletedReferences {
+    return Object.fromEntries(
+        RECENT_FEED_VARIANTS.map((variant) => [variant, new Map<string, RecentFeedHourReference | null>()]),
+    ) as BootstrapCompletedReferences
+}
+
+async function completeBootstrapHour(
+    bucket: R2Bucket,
+    config: RecentFeedConfig,
+    result: BootstrapPageResult,
+    metrics: WriteMetrics,
+): Promise<void> {
+    if (!result.activeHour) return
+    const finalized = await finalizeBootstrapHour(bucket, result.activeHour, config.immutableCacheControl, metrics)
+    addCompletedHourReferences(result.completedReferences, finalized.hour, finalized.references)
+    result.checkpointKeysToDelete.push(...finalized.checkpointKeys)
+    result.activeHour = null
+    result.completedHours += 1
+}
+
+async function applyCompletedBootstrapHours(
+    env: RecentFeedPublisherEnv,
+    config: RecentFeedConfig,
+    variantRoots: RecentFeedRoot['variants'],
+    completedReferences: BootstrapCompletedReferences,
+    metrics: WriteMetrics,
+    leaseOwner: string,
+): Promise<void> {
     for (const variant of RECENT_FEED_VARIANTS) {
-        if (completedReferences[variant].size === 0) {
-            continue
-        }
-
+        if (completedReferences[variant].size === 0) continue
         variantRoots[variant] = await applyRecentFeedVariantHours(
             env.RECENT_FEED_BUCKET,
             variant,
@@ -1036,48 +1249,62 @@ async function continueRecentFeedBootstrap(
             () => renewPublicationLease(env.DB, leaseOwner),
         )
     }
+}
 
-    const sourceComplete = !nextUnprocessedRow && activeHour === null
-    const totalMetrics = {
+function combinedBootstrapMetrics(state: RecentFeedStateRow, metrics: WriteMetrics): WriteMetrics {
+    return {
         objectsWritten: state.bootstrap_objects_written + metrics.objectsWritten,
         bytesWritten: state.bootstrap_bytes_written + metrics.bytesWritten,
     }
+}
 
-    if (!sourceComplete) {
-        const activeKey = activeHour ? await writeBootstrapActiveSegment(env.RECENT_FEED_BUCKET, targetRevision, activeHour) : null
-        await checkpointRecentFeedBootstrap(
-            env.DB,
-            leaseOwner,
-            targetRevision,
-            nextCursor as {createdAt: string; id: string},
-            variantRoots,
-            activeKey,
-            totalMetrics,
-        )
-        await deleteBootstrapCheckpointKeys(env.RECENT_FEED_BUCKET, checkpointKeysToDelete)
-
-        console.log(
-            JSON.stringify({
-                event: 'recent-feed-bootstrap-progress',
-                revision: targetRevision,
-                rows: processedRows,
-                completedHours,
-                objectsWritten: totalMetrics.objectsWritten,
-                bytesWritten: totalMetrics.bytesWritten,
-                durationMs: Date.now() - startedAt,
-            }),
-        )
-
-        return {
-            status: 'building',
+async function checkpointBootstrapProgress(
+    env: RecentFeedPublisherEnv,
+    targetRevision: number,
+    variantRoots: RecentFeedRoot['variants'],
+    page: BootstrapPageResult,
+    totalMetrics: WriteMetrics,
+    leaseOwner: string,
+    startedAt: number,
+): Promise<RecentFeedPublishSummary> {
+    const activeKey = page.activeHour ? await writeBootstrapActiveSegment(env.RECENT_FEED_BUCKET, targetRevision, page.activeHour) : null
+    if (!page.nextCursor) throw new Error('Recent feed bootstrap cursor is invalid')
+    await checkpointRecentFeedBootstrap(env.DB, leaseOwner, targetRevision, page.nextCursor, variantRoots, activeKey, totalMetrics)
+    await deleteBootstrapCheckpointKeys(env.RECENT_FEED_BUCKET, page.checkpointKeysToDelete)
+    console.log(
+        JSON.stringify({
+            event: 'recent-feed-bootstrap-progress',
             revision: targetRevision,
-            dirtyHours: completedHours,
+            rows: page.processedRows,
+            completedHours: page.completedHours,
             objectsWritten: totalMetrics.objectsWritten,
             bytesWritten: totalMetrics.bytesWritten,
-            bootstrapRows: processedRows,
-        }
+            durationMs: Date.now() - startedAt,
+        }),
+    )
+    return {
+        status: 'building',
+        revision: targetRevision,
+        dirtyHours: page.completedHours,
+        objectsWritten: totalMetrics.objectsWritten,
+        bytesWritten: totalMetrics.bytesWritten,
+        bootstrapRows: page.processedRows,
     }
+}
 
+async function publishCompletedBootstrap(
+    env: RecentFeedPublisherEnv,
+    config: RecentFeedConfig,
+    state: RecentFeedStateRow,
+    targetRevision: number,
+    variantRoots: RecentFeedRoot['variants'],
+    page: BootstrapPageResult,
+    metrics: WriteMetrics,
+    totalMetrics: WriteMetrics,
+    leaseOwner: string,
+    startedAt: number,
+    now: Date,
+): Promise<RecentFeedPublishSummary> {
     const initialItems = await buildRecentFeedInitialItems(env.RECENT_FEED_BUCKET, variantRoots)
     await renewPublicationLease(env.DB, leaseOwner)
     const publishedAt = now.toISOString()
@@ -1094,19 +1321,12 @@ async function continueRecentFeedBootstrap(
         variants: variantRoots,
         initialItems,
     }
-
     await putJsonIfMissing(env.RECENT_FEED_BUCKET, rootKey, JSON.stringify(root), config.immutableCacheControl, metrics)
-    totalMetrics.objectsWritten = state.bootstrap_objects_written + metrics.objectsWritten
-    totalMetrics.bytesWritten = state.bootstrap_bytes_written + metrics.bytesWritten
-
+    Object.assign(totalMetrics, combinedBootstrapMetrics(state, metrics))
     const pointer: RecentFeedPointer = {generation, rootKey, publishedAt, throughRevision: targetRevision}
     await checkpointInitialPublication(env.DB, leaseOwner, pointer, variantRoots, totalMetrics)
-    await deleteBootstrapCheckpointKeys(env.RECENT_FEED_BUCKET, checkpointKeysToDelete)
-
-    const itemCounts = Object.fromEntries(RECENT_FEED_VARIANTS.map((variant) => [variant, variantRoots[variant].itemCount])) as Record<
-        RecentFeedVariant,
-        number
-    >
+    await deleteBootstrapCheckpointKeys(env.RECENT_FEED_BUCKET, page.checkpointKeysToDelete)
+    const itemCounts = recentFeedItemCounts(variantRoots)
 
     console.log(
         JSON.stringify({
@@ -1114,7 +1334,7 @@ async function continueRecentFeedBootstrap(
             bootstrap: true,
             generation,
             revision: targetRevision,
-            dirtyHours: completedHours,
+            dirtyHours: page.completedHours,
             itemCounts,
             objectsWritten: totalMetrics.objectsWritten,
             bytesWritten: totalMetrics.bytesWritten,
@@ -1126,11 +1346,11 @@ async function continueRecentFeedBootstrap(
         status: 'published',
         generation,
         revision: targetRevision,
-        dirtyHours: completedHours,
+        dirtyHours: page.completedHours,
         itemCounts,
         objectsWritten: totalMetrics.objectsWritten,
         bytesWritten: totalMetrics.bytesWritten,
-        bootstrapRows: processedRows,
+        bootstrapRows: page.processedRows,
     }
 }
 
