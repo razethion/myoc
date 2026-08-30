@@ -149,8 +149,13 @@ function getLoginMethod(value: string | undefined): AuthLoginMethod {
 }
 
 pageRoutes.get('/', async (c) => {
-    const [currentUser, stats, discoverCharacters, galleryImages, heightChartCharacters] = await Promise.all([
-        getCurrentUser(c),
+    const currentUser = await getCurrentUser(c)
+
+    if (currentUser) {
+        return c.redirect('/recent')
+    }
+
+    const [stats, discoverCharacters, galleryImages, heightChartCharacters] = await Promise.all([
         getCachedHomePageStats(c.env.CACHE, c.env.DB),
         getCachedHomePageDiscoverCharacters(c.env.CACHE, c.env.DB),
         getCachedHomePageGalleryImages(c.env.CACHE, c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL),
