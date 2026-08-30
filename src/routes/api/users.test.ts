@@ -119,6 +119,18 @@ async function postCurrentUserReleaseView(db: D1Database, options: UserRequestOp
     )
 }
 
+async function postCurrentUserRecentMediaPreference(body: unknown, db: D1Database, options: UserRequestOptions = {}): Promise<Response> {
+    return apiRoutes.request(
+        'https://example.com/users/me/recent-media-preference',
+        {
+            method: 'POST',
+            body: typeof body === 'string' ? body : JSON.stringify(body),
+            headers: createRequestHeaders(body, options),
+        },
+        {DB: db},
+    )
+}
+
 async function postPasskeyPromptResponse(body: unknown, db: D1Database, options: UserRequestOptions = {}): Promise<Response> {
     const mediaBucket = createMockR2Bucket()
     const headers = createRequestHeaders(body, options)
@@ -795,6 +807,58 @@ describe('POST /users/me/release-view', () => {
         ).toEqual({
             last_seen_version: APP_VERSION,
         })
+    })
+})
+
+describe('POST /users/me/recent-media-preference', () => {
+    it('returns 401 when the user is not logged in', async () => {
+        const response = await postCurrentUserRecentMediaPreference({showUnapproved: false}, db)
+
+        expect(response.status).toBe(401)
+        await expect(response.json()).resolves.toEqual({error: 'Authentication required'})
+    })
+
+    it('returns 403 when a logged-in request is missing CSRF protection', async () => {
+        const response = await postCurrentUserRecentMediaPreference({showUnapproved: false}, db, {
+            sessionToken: 'session-token',
+        })
+
+        expect(response.status).toBe(403)
+        await expect(response.json()).resolves.toEqual({error: 'Invalid CSRF token'})
+    })
+
+    it.each([
+        {name: 'malformed JSON', body: '{bad json'},
+        {name: 'a missing preference', body: {}},
+        {name: 'a non-boolean preference', body: {showUnapproved: 'false'}},
+        {name: 'an extra field', body: {showUnapproved: false, unexpected: true}},
+    ])('returns 400 for $name', async ({body}) => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser({}, sessionToken)
+
+        const response = await postCurrentUserRecentMediaPreference(body, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        await expect(response.json()).resolves.toEqual({error: 'Recent media preference is invalid'})
+    })
+
+    it.each([false, true])('stores showUnapproved=%s for the current user', async (showUnapproved) => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser({}, sessionToken)
+
+        const response = await postCurrentUserRecentMediaPreference({showUnapproved}, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        await expect(response.json()).resolves.toEqual({ok: true, showUnapproved})
+        await expect(
+            queryOne<{show_unapproved_media: number}>('SELECT show_unapproved_media FROM users WHERE id = ?', [currentUser.id], db),
+        ).resolves.toEqual({show_unapproved_media: showUnapproved ? 1 : 0})
     })
 })
 
