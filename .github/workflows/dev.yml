@@ -16,6 +16,7 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: read
   pull-requests: read
 
@@ -29,6 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      artifact_run_id: ${{ steps.pull-request.outputs.artifact_run_id }}
       head_sha: ${{ steps.pull-request.outputs.head_sha }}
 
     steps:
@@ -79,104 +81,57 @@ jobs:
               return
             }
 
-            core.setOutput('head_sha', pullRequest.head.sha)
+            const headSha = pullRequest.head.sha
+            const artifactName = `dev-preview-${headSha}`
+            const { data: workflowRuns } = await github.rest.actions.listWorkflowRuns({
+              ...context.repo,
+              workflow_id: 'checks.yml',
+              event: 'pull_request',
+              head_sha: headSha,
+              status: 'success',
+              per_page: 100,
+            })
 
-  verify:
-    name: Verify PR #${{ inputs.pull_request }} at ${{ needs.validate.outputs.head_sha }}
-    if: ${{ inputs.operation == 'deploy' }}
-    needs: validate
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+            const matchingRuns = workflowRuns.workflow_runs
+              .filter((run) => run.conclusion === 'success')
+              .sort((left, right) => right.id - left.id)
 
-    steps:
-      - name: Checkout immutable commit
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
-        with:
-          ref: ${{ needs.validate.outputs.head_sha }}
-          persist-credentials: false
+            let selectedRun = null
+            let selectedArtifact = null
 
-      - name: Setup Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
-        with:
-          node-version: 24
-          package-manager-cache: false
+            for (const run of matchingRuns) {
+              const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+                ...context.repo,
+                run_id: run.id,
+                per_page: 100,
+              })
+              const artifact = artifacts.find((candidate) => candidate.name === artifactName && !candidate.expired)
 
-      - name: Install dependencies
-        run: npm ci
+              if (artifact) {
+                selectedRun = run
+                selectedArtifact = artifact
+                break
+              }
+            }
 
-      - name: Run quality checks
-        run: npm run ci
+            if (!selectedRun || !selectedArtifact) {
+              core.setFailed(`No successful dev preview artifact exists for ${headSha}. Wait for the pull request checks to finish.`)
+              return
+            }
 
-      - name: Build assets
-        run: npm run build
+            if (!/^sha256:[0-9a-f]{64}$/i.test(selectedArtifact.digest || '')) {
+              core.setFailed('The dev preview artifact does not have a valid SHA-256 digest.')
+              return
+            }
 
-      - name: Build processor container
-        run: docker build --tag myoc-docker-sharp-dev-check containers/myoc-docker-sharp
-
-      - name: Build immutable deployment artifact
-        env:
-          HEAD_SHA: ${{ needs.validate.outputs.head_sha }}
-        run: |
-          set -euo pipefail
-
-          build_root="$RUNNER_TEMP/myoc-dev-build"
-          artifact_root="$RUNNER_TEMP/myoc-dev-artifact"
-          mkdir -p "$build_root/worker" "$artifact_root/worker" "$artifact_root/container" "$artifact_root/seeds"
-
-          node <<'NODE'
-          const fs = require('node:fs')
-          const path = require('node:path')
-
-          const config = {
-            name: 'myoc-dev-artifact',
-            main: path.join(process.env.GITHUB_WORKSPACE, 'src/index.ts'),
-            compatibility_date: '2026-06-10',
-          }
-
-          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'myoc-dev-build', 'wrangler.build.jsonc'), `${JSON.stringify(config, null, 2)}\n`)
-          NODE
-
-          ./node_modules/.bin/wrangler deploy \
-            --config "$build_root/wrangler.build.jsonc" \
-            --dry-run \
-            --minify \
-            --outdir "$build_root/worker"
-
-          if find public containers/myoc-docker-sharp migrations seeds/development.sql -type l -print -quit | grep -q .; then
-            echo "::error::The deployment artifact cannot contain symbolic links."
-            exit 1
-          fi
-
-          cp "$build_root/worker/index.js" "$artifact_root/worker/index.js"
-          cp -R public "$artifact_root/public"
-          cp -R migrations "$artifact_root/migrations"
-          cp seeds/development.sql "$artifact_root/seeds/development.sql"
-          cp containers/myoc-docker-sharp/Dockerfile "$artifact_root/container/Dockerfile"
-          cp containers/myoc-docker-sharp/package.json "$artifact_root/container/package.json"
-          cp containers/myoc-docker-sharp/package-lock.json "$artifact_root/container/package-lock.json"
-          cp containers/myoc-docker-sharp/server.mjs "$artifact_root/container/server.mjs"
-          printf '%s\n' "$HEAD_SHA" > "$artifact_root/commit.txt"
-
-          (
-            cd "$artifact_root"
-            find . -type f ! -name manifest.sha256 -print0 | sort -z | xargs -0 sha256sum > manifest.sha256
-          )
-          tar -czf "$RUNNER_TEMP/myoc-dev-preview.tgz" -C "$artifact_root" .
-
-      - name: Upload immutable deployment artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: dev-preview-${{ needs.validate.outputs.head_sha }}
-          path: ${{ runner.temp }}/myoc-dev-preview.tgz
-          if-no-files-found: error
-          retention-days: 7
+            core.setOutput('head_sha', headSha)
+            core.setOutput('artifact_run_id', String(selectedRun.id))
 
   deploy:
-    name: Approve PR #${{ inputs.pull_request }} at ${{ needs.validate.outputs.head_sha }}
+    name: Approve PR #${{ inputs.pull_request }} at ${{ needs.validate.outputs.head_sha }} from checks run ${{ needs.validate.outputs.artifact_run_id }}
     if: ${{ inputs.operation == 'deploy' }}
     needs:
       - validate
-      - verify
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment:
@@ -210,8 +165,11 @@ jobs:
       - name: Download immutable deployment artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
+          github-token: ${{ github.token }}
           name: dev-preview-${{ needs.validate.outputs.head_sha }}
           path: ${{ runner.temp }}/myoc-dev-control/download
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.validate.outputs.artifact_run_id }}
 
       - name: Verify immutable deployment artifact
         env:
@@ -223,17 +181,121 @@ jobs:
           control_root="$RUNNER_TEMP/myoc-dev-control"
           artifact_root="$control_root/artifact"
           mkdir -p "$artifact_root"
-          tar -xzf "$control_root/download/myoc-dev-preview.tgz" --no-same-owner -C "$artifact_root"
 
-          if [ "$(cat "$artifact_root/commit.txt")" != "$HEAD_SHA" ]; then
-            echo "::error::The deployment artifact commit does not match the approved commit."
-            exit 1
-          fi
+          python3 <<'PYTHON'
+          import hashlib
+          import os
+          import re
+          import shutil
+          import tarfile
+          from pathlib import Path
 
-          (
-            cd "$artifact_root"
-            sha256sum --check manifest.sha256
-          )
+          control_root = Path(os.environ['RUNNER_TEMP']) / 'myoc-dev-control'
+          artifact_root = control_root / 'artifact'
+          archive_path = control_root / 'download' / 'myoc-dev-preview.tgz'
+          expected_sha = os.environ['HEAD_SHA']
+          max_files = 20_000
+          max_size = 512 * 1024 * 1024
+          required_files = {
+              'commit.txt',
+              'container/Dockerfile',
+              'container/package-lock.json',
+              'container/package.json',
+              'container/server.mjs',
+              'manifest.sha256',
+              'seeds/development.sql',
+              'worker/index.js',
+          }
+
+          def normalize_name(name):
+              if name.startswith('/') or any(ord(character) < 32 or ord(character) == 127 for character in name):
+                  raise ValueError(f'Unsafe archive path: {name!r}')
+
+              parts = name.split('/')
+              while parts and parts[0] == '.':
+                  parts.pop(0)
+              if parts and parts[-1] == '':
+                  parts.pop()
+              if any(part in {'', '.', '..'} for part in parts):
+                  raise ValueError(f'Unsafe archive path: {name!r}')
+              return '/'.join(parts)
+
+          def is_allowed(name, is_directory):
+              if not name:
+                  return is_directory
+              if is_directory:
+                  return name in {'container', 'migrations', 'public', 'seeds', 'worker'} or name.startswith(('migrations/', 'public/'))
+              return name in required_files or name.startswith(('migrations/', 'public/'))
+
+          seen = set()
+          total_size = 0
+          with tarfile.open(archive_path, mode='r:gz') as archive:
+              members = archive.getmembers()
+              if len(members) > max_files:
+                  raise ValueError('The deployment artifact contains too many entries.')
+
+              for member in members:
+                  name = normalize_name(member.name)
+                  if name in seen:
+                      raise ValueError(f'Duplicate archive path: {name!r}')
+                  seen.add(name)
+
+                  if not member.isfile() and not member.isdir():
+                      raise ValueError(f'Unsupported archive entry: {name!r}')
+                  if not is_allowed(name, member.isdir()):
+                      raise ValueError(f'Unexpected archive entry: {name!r}')
+
+                  total_size += member.size
+                  if total_size > max_size:
+                      raise ValueError('The deployment artifact is too large.')
+
+                  if not name:
+                      continue
+                  destination = artifact_root / name
+                  if member.isdir():
+                      destination.mkdir(parents=True, exist_ok=False)
+                      continue
+
+                  destination.parent.mkdir(parents=True, exist_ok=True)
+                  source = archive.extractfile(member)
+                  if source is None:
+                      raise ValueError(f'Cannot read archive entry: {name!r}')
+                  with source, destination.open('xb') as output:
+                      shutil.copyfileobj(source, output)
+
+          actual_files = {
+              path.relative_to(artifact_root).as_posix()
+              for path in artifact_root.rglob('*')
+              if path.is_file()
+          }
+          if not required_files.issubset(actual_files):
+              missing = sorted(required_files - actual_files)
+              raise ValueError(f'The deployment artifact is missing files: {missing!r}')
+
+          manifest_entries = {}
+          manifest_pattern = re.compile(r'^([0-9a-f]{64})  \./(.+)$')
+          for line in (artifact_root / 'manifest.sha256').read_text(encoding='utf-8').splitlines():
+              match = manifest_pattern.fullmatch(line)
+              if not match:
+                  raise ValueError('The deployment artifact manifest is invalid.')
+              digest, name = match.groups()
+              normalized_name = normalize_name(name)
+              if normalized_name in manifest_entries:
+                  raise ValueError(f'Duplicate manifest path: {normalized_name!r}')
+              manifest_entries[normalized_name] = digest
+
+          payload_files = actual_files - {'manifest.sha256'}
+          if set(manifest_entries) != payload_files:
+              raise ValueError('The deployment artifact manifest does not list the exact payload.')
+
+          for name, expected_digest in manifest_entries.items():
+              digest = hashlib.sha256((artifact_root / name).read_bytes()).hexdigest()
+              if digest != expected_digest:
+                  raise ValueError(f'The deployment artifact checksum failed for {name!r}.')
+
+          if (artifact_root / 'commit.txt').read_text(encoding='utf-8') != f'{expected_sha}\n':
+              raise ValueError('The deployment artifact commit does not match the approved commit.')
+          PYTHON
 
           docker build --tag myoc-docker-sharp-dev-check "$artifact_root/container"
 

@@ -45,6 +45,93 @@ jobs:
       - name: Build preview processor container
         run: docker build --tag myoc-docker-sharp-ci containers/myoc-docker-sharp
 
+  preview-artifact:
+    name: Build dev preview artifact
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout immutable pull request commit
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build assets
+        run: npm run build
+
+      - name: Build processor container
+        run: docker build --tag myoc-docker-sharp-dev-check containers/myoc-docker-sharp
+
+      - name: Build immutable deployment artifact
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          build_root="$RUNNER_TEMP/myoc-dev-build"
+          artifact_root="$RUNNER_TEMP/myoc-dev-artifact"
+          mkdir -p "$build_root/worker" "$artifact_root/worker" "$artifact_root/container" "$artifact_root/seeds"
+
+          node <<'NODE'
+          const fs = require('node:fs')
+          const path = require('node:path')
+
+          const config = {
+            name: 'myoc-dev-artifact',
+            main: path.join(process.env.GITHUB_WORKSPACE, 'src/index.ts'),
+            compatibility_date: '2026-06-10',
+          }
+
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'myoc-dev-build', 'wrangler.build.jsonc'), `${JSON.stringify(config, null, 2)}\n`)
+          NODE
+
+          ./node_modules/.bin/wrangler deploy \
+            --config "$build_root/wrangler.build.jsonc" \
+            --dry-run \
+            --minify \
+            --outdir "$build_root/worker"
+
+          if find public containers/myoc-docker-sharp migrations seeds/development.sql -type l -print -quit | grep -q .; then
+            echo "::error::The deployment artifact cannot contain symbolic links."
+            exit 1
+          fi
+
+          cp "$build_root/worker/index.js" "$artifact_root/worker/index.js"
+          cp -R public "$artifact_root/public"
+          cp -R migrations "$artifact_root/migrations"
+          cp seeds/development.sql "$artifact_root/seeds/development.sql"
+          cp containers/myoc-docker-sharp/Dockerfile "$artifact_root/container/Dockerfile"
+          cp containers/myoc-docker-sharp/package.json "$artifact_root/container/package.json"
+          cp containers/myoc-docker-sharp/package-lock.json "$artifact_root/container/package-lock.json"
+          cp containers/myoc-docker-sharp/server.mjs "$artifact_root/container/server.mjs"
+          printf '%s\n' "$HEAD_SHA" > "$artifact_root/commit.txt"
+
+          (
+            cd "$artifact_root"
+            find . -type f ! -name manifest.sha256 -print0 | sort -z | xargs -0 sha256sum > manifest.sha256
+          )
+          tar -czf "$RUNNER_TEMP/myoc-dev-preview.tgz" -C "$artifact_root" .
+
+      - name: Upload immutable deployment artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dev-preview-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/myoc-dev-preview.tgz
+          if-no-files-found: error
+          retention-days: 7
+
   deploy-production:
     name: Deploy production
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
