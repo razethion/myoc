@@ -6,7 +6,14 @@ import {fileURLToPath} from 'node:url'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const semgrepAutoArgs = ['scan', '--config', 'auto', '.']
-const semgrepTestArgs = ['test', '--config', '.semgrep.yml', 'semgrep-tests/scriptJson.semgrep-test.tsx']
+const semgrepTestTargets = [
+    'semgrep-tests/noDeleteWithoutWhere.ts',
+    'semgrep-tests/noSelectStar.ts',
+    'semgrep-tests/routes/directImageResponse.ts',
+    'semgrep-tests/routes/directJsonResponse.ts',
+    'semgrep-tests/routes/imageBodyProxy.ts',
+    'semgrep-tests/scriptJson.semgrep-test.tsx',
+]
 const semgrepCustomArgs = ['scan', '--config', '.semgrep.yml', '--error', '.']
 
 function hasCommand(command) {
@@ -19,7 +26,7 @@ function hasCommand(command) {
 function run(command, args) {
     const extraPath = path.dirname(command) !== '.' ? `${path.dirname(command)}${path.delimiter}` : ''
     return (
-        // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process -- Local developer tooling wrapper runs only fixed Semgrep/Docker commands.
+        // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process -- Local developer tooling runs only fixed Semgrep and uv commands.
         spawnSync(command, args, {
             cwd: repoRoot,
             env: {...process.env, PATH: `${extraPath}${process.env.PATH ?? ''}`},
@@ -27,6 +34,18 @@ function run(command, args) {
             shell: false,
         }).status ?? 1
     )
+}
+
+function runSemgrep(command, commandArgs = []) {
+    const autoStatus = run(command, [...commandArgs, ...semgrepAutoArgs])
+    const testStatus =
+        autoStatus === 0
+            ? semgrepTestTargets.reduce(
+                  (status, target) => (status === 0 ? run(command, [...commandArgs, 'test', '--config', '.semgrep.yml', target]) : status),
+                  0,
+              )
+            : autoStatus
+    return testStatus === 0 ? run(command, [...commandArgs, ...semgrepCustomArgs]) : testStatus
 }
 
 function getPythonUserScript(command) {
@@ -48,30 +67,27 @@ function getPythonUserScript(command) {
 }
 
 if (hasCommand('semgrep')) {
-    const autoStatus = run('semgrep', semgrepAutoArgs)
-    const testStatus = autoStatus === 0 ? run('semgrep', semgrepTestArgs) : autoStatus
-    process.exit(testStatus === 0 ? run('semgrep', semgrepCustomArgs) : testStatus)
+    process.exit(runSemgrep('semgrep'))
 }
 
 const pythonSemgrep = getPythonUserScript('semgrep')
 if (pythonSemgrep) {
-    const autoStatus = run(pythonSemgrep, semgrepAutoArgs)
-    const testStatus = autoStatus === 0 ? run(pythonSemgrep, semgrepTestArgs) : autoStatus
-    process.exit(testStatus === 0 ? run(pythonSemgrep, semgrepCustomArgs) : testStatus)
+    process.exit(runSemgrep(pythonSemgrep))
 }
 
-if (hasCommand('docker')) {
-    const dockerArgs = ['run', '--rm', '-v', `${repoRoot}:/src`, '-w', '/src', 'semgrep/semgrep', 'semgrep']
-    const autoStatus = run('docker', [...dockerArgs, ...semgrepAutoArgs])
-    const testStatus = autoStatus === 0 ? run('docker', [...dockerArgs, ...semgrepTestArgs]) : autoStatus
-    process.exit(testStatus === 0 ? run('docker', [...dockerArgs, ...semgrepCustomArgs]) : testStatus)
+if (hasCommand('uvx')) {
+    process.exit(runSemgrep('uvx', ['--from', 'semgrep', 'semgrep']))
+}
+
+if (hasCommand('uv')) {
+    process.exit(runSemgrep('uv', ['tool', 'run', '--from', 'semgrep', 'semgrep']))
 }
 
 console.error(
     [
-        'Semgrep is not installed and Docker is not available.',
-        'Install Semgrep with pipx or run this project inside an environment with Docker/WSL, then retry `npm run semgrep`.',
-        'CI uses the official semgrep/semgrep container and does not require a local install.',
+        'Semgrep and uv are not installed.',
+        'Install uv, then retry `npm run semgrep`.',
+        'The separate Semgrep service handles remote scans. This command is for local checks.',
     ].join('\n'),
 )
 process.exit(1)

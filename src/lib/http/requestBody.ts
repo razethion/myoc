@@ -1,5 +1,9 @@
-async function readRequestBodyUpTo(request: Request, maxBytes: number): Promise<Uint8Array | null> {
+type RequestBodyParser<T> = (response: Response) => Promise<T>
+
+async function parseRequestBodyUpTo<T>(request: Request, maxBytes: number, parse: RequestBodyParser<T>): Promise<T | null> {
     const contentLength = request.headers.get('content-length')
+    const contentType = request.headers.get('content-type')
+    const headers = contentType ? {'content-type': contentType} : undefined
 
     if (contentLength !== null) {
         const parsedContentLength = Number(contentLength)
@@ -10,69 +14,43 @@ async function readRequestBodyUpTo(request: Request, maxBytes: number): Promise<
     }
 
     if (!request.body) {
-        return new Uint8Array()
+        return await parse(new Response(null, {headers}))
     }
 
-    const reader = request.body.getReader()
-    const chunks: Uint8Array[] = []
     let totalBytes = 0
+    let exceededLimit = false
+    const limitedBody = request.body.pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+            transform(chunk, controller) {
+                totalBytes += chunk.byteLength
+
+                if (totalBytes > maxBytes) {
+                    exceededLimit = true
+                    controller.error(new Error('Request body is too large'))
+                    return
+                }
+
+                controller.enqueue(chunk)
+            },
+        }),
+    )
+    const limitedResponse = new Response(limitedBody, {headers})
 
     try {
-        while (true) {
-            const {done, value} = await reader.read()
-
-            if (done) {
-                break
-            }
-
-            if (!value) {
-                continue
-            }
-
-            totalBytes += value.byteLength
-
-            if (totalBytes > maxBytes) {
-                await reader.cancel()
-                return null
-            }
-
-            chunks.push(value)
+        return await parse(limitedResponse)
+    } catch (error) {
+        if (exceededLimit) {
+            return null
         }
-    } finally {
-        reader.releaseLock()
+
+        throw error
     }
-
-    const bytes = new Uint8Array(totalBytes)
-    let offset = 0
-
-    for (const chunk of chunks) {
-        bytes.set(chunk, offset)
-        offset += chunk.byteLength
-    }
-
-    return bytes
 }
 
 export async function readFormDataUpTo(request: Request, maxBytes: number): Promise<FormData | null> {
-    const bytes = await readRequestBodyUpTo(request, maxBytes)
-
-    if (!bytes) {
-        return null
-    }
-
-    return await new Request(request.url, {
-        method: request.method,
-        headers: request.headers,
-        body: new Blob([bytes]),
-    }).formData()
+    return await parseRequestBodyUpTo(request, maxBytes, async (limitedResponse) => await limitedResponse.formData())
 }
 
 export async function readJsonUpTo<T>(request: Request, maxBytes: number): Promise<T | null> {
-    const bytes = await readRequestBodyUpTo(request, maxBytes)
-
-    if (!bytes) {
-        return null
-    }
-
-    return JSON.parse(new TextDecoder().decode(bytes)) as T
+    return await parseRequestBodyUpTo(request, maxBytes, async (limitedResponse) => await limitedResponse.json<T>())
 }

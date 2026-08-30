@@ -1,6 +1,8 @@
 import {describe, expect, it} from 'vitest'
-import {createMockDb} from '../../test/mockD1'
+import {queryOne, seedUser, useTestDatabase} from '../../test/d1'
 import {type AdminJobSummary, getAdminOptionsData, recordAdminJobRun} from './jobs'
+
+const db = useTestDatabase()
 
 const backupSummary = {
     compressedBytes: 2048,
@@ -14,8 +16,6 @@ const backupSummary = {
 
 describe('recordAdminJobRun', () => {
     it('records successful job runs', async () => {
-        const {db, boundStatements} = createMockDb()
-
         const result = await recordAdminJobRun(
             db,
             'd1-backup',
@@ -34,22 +34,38 @@ describe('recordAdminJobRun', () => {
                 summary: backupSummary,
             }),
         )
-        expect(boundStatements).toEqual(
-            expect.arrayContaining([
-                expect.objectContaining({
-                    binds: expect.arrayContaining(['d1-backup', 'cron', '0 8 * * *', 'running', '2026-07-11 08:00:00']),
-                    sql: expect.stringMatching(/INSERT\s+INTO\s+admin_job_runs/),
-                }),
-                expect.objectContaining({
-                    binds: expect.arrayContaining(['success', JSON.stringify(backupSummary)]),
-                    sql: expect.stringContaining('UPDATE admin_job_runs'),
-                }),
-            ]),
+        const storedRun = await queryOne<{
+            cron: string
+            duration_ms: number
+            error_message: string | null
+            finished_at: string | null
+            job_name: string
+            started_at: string
+            status: string
+            summary_json: string | null
+            trigger_source: string
+        }>(
+            `SELECT job_name, trigger_source, cron, status, started_at, finished_at,
+                    duration_ms, summary_json, error_message
+             FROM admin_job_runs
+             WHERE id = ?`,
+            [result.runId],
         )
+        expect(storedRun).toMatchObject({
+            cron: '0 8 * * *',
+            error_message: null,
+            job_name: 'd1-backup',
+            started_at: '2026-07-11 08:00:00',
+            status: 'success',
+            trigger_source: 'cron',
+        })
+        expect(storedRun?.finished_at).not.toBeNull()
+        expect(storedRun?.duration_ms).toBeGreaterThanOrEqual(0)
+        expect(JSON.parse(storedRun?.summary_json ?? 'null')).toEqual(backupSummary)
     })
 
     it('records failed job runs before rethrowing', async () => {
-        const {db, boundStatements} = createMockDb()
+        await seedUser({id: 'admin-1', role: 'admin'})
 
         await expect(
             recordAdminJobRun(
@@ -65,57 +81,65 @@ describe('recordAdminJobRun', () => {
             ),
         ).rejects.toThrow('cleanup failed')
 
-        expect(boundStatements).toEqual(
-            expect.arrayContaining([
-                expect.objectContaining({
-                    binds: expect.arrayContaining(['r2-media-cleanup', 'manual', 'admin-1', 'running']),
-                    sql: expect.stringMatching(/INSERT\s+INTO\s+admin_job_runs/),
-                }),
-                expect.objectContaining({
-                    binds: expect.arrayContaining(['error', 'cleanup failed']),
-                    sql: expect.stringContaining('UPDATE admin_job_runs'),
-                }),
-            ]),
+        const storedRun = await queryOne<{
+            duration_ms: number
+            error_message: string | null
+            finished_at: string | null
+            job_name: string
+            status: string
+            summary_json: string | null
+            trigger_source: string
+            triggered_by_user_id: string | null
+        }>(
+            `SELECT job_name, trigger_source, status, finished_at, duration_ms,
+                    summary_json, error_message, triggered_by_user_id
+             FROM admin_job_runs
+             WHERE job_name = ?`,
+            ['r2-media-cleanup'],
         )
+        expect(storedRun).toEqual(
+            expect.objectContaining({
+                error_message: 'cleanup failed',
+                job_name: 'r2-media-cleanup',
+                status: 'error',
+                summary_json: null,
+                trigger_source: 'manual',
+                triggered_by_user_id: 'admin-1',
+            }),
+        )
+        expect(storedRun?.finished_at).not.toBeNull()
+        expect(storedRun?.duration_ms).toBeGreaterThanOrEqual(0)
     })
 })
 
 describe('getAdminOptionsData', () => {
     it('returns known job runs with parsed summaries', async () => {
-        const {db} = createMockDb({
-            allResults: [
-                [
-                    {
-                        id: 'run-1',
-                        job_name: 'd1-backup',
-                        trigger_source: 'cron',
-                        triggered_by_user_id: null,
-                        triggered_by_username: null,
-                        cron: '0 8 * * *',
-                        status: 'success',
-                        started_at: '2026-07-11 08:00:00',
-                        finished_at: '2026-07-11 08:00:02',
-                        duration_ms: 2000,
-                        summary_json: JSON.stringify(backupSummary),
-                        error_message: null,
-                    },
-                    {
-                        id: 'run-2',
-                        job_name: 'old-job',
-                        trigger_source: 'cron',
-                        triggered_by_user_id: null,
-                        triggered_by_username: null,
-                        cron: '* * * * *',
-                        status: 'success',
-                        started_at: '2026-07-11 07:00:00',
-                        finished_at: '2026-07-11 07:00:01',
-                        duration_ms: 1000,
-                        summary_json: '{}',
-                        error_message: null,
-                    },
-                ],
-            ],
-        })
+        await db.batch([
+            db
+                .prepare(
+                    `INSERT INTO admin_job_runs (
+                        id, job_name, trigger_source, cron, status, started_at, finished_at, duration_ms, summary_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                )
+                .bind(
+                    'run-1',
+                    'd1-backup',
+                    'cron',
+                    '0 8 * * *',
+                    'success',
+                    '2026-07-11 08:00:00',
+                    '2026-07-11 08:00:02',
+                    2000,
+                    JSON.stringify(backupSummary),
+                ),
+            db
+                .prepare(
+                    `INSERT INTO admin_job_runs (
+                        id, job_name, trigger_source, cron, status, started_at, finished_at, duration_ms, summary_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                )
+                .bind('run-2', 'old-job', 'cron', '* * * * *', 'success', '2026-07-11 07:00:00', '2026-07-11 07:00:01', 1000, '{}'),
+        ])
 
         const data = await getAdminOptionsData(db)
 

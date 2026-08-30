@@ -8,6 +8,7 @@ export type AuthLoginMethod = 'passkey' | 'password' | 'recovery'
 type AuthPageProps = {
     mode: AuthMode
     loginMethod?: AuthLoginMethod
+    preAuthCsrfToken?: string
     currentUser?: CurrentUser | null
     guestInitial: string
     mediaBaseUrl: string
@@ -85,6 +86,7 @@ function AuthPageScript() {
         const recoveryConfirmPanel = document.querySelector('[data-recovery-confirm-panel]');
         const recoveryConfirmInput = document.querySelector('[data-recovery-confirm-input]');
         const recoveryConfirmButton = document.querySelector('[data-recovery-confirm-button]');
+        const preAuthCsrfToken = document.querySelector('[data-pre-auth-csrf-token]')?.value || '';
         let recoveryCsrfToken = '';
         let passkeyLoginInFlight = false;
 
@@ -108,8 +110,10 @@ function AuthPageScript() {
                 'content-type': 'application/json',
             };
 
-            if (csrfToken) {
-                headers['x-csrf-token'] = csrfToken;
+            const requestCsrfToken = csrfToken || preAuthCsrfToken;
+
+            if (requestCsrfToken) {
+                headers['x-csrf-token'] = requestCsrfToken;
             }
 
             const response = await fetch(url, {
@@ -362,7 +366,7 @@ function AuthPageScript() {
     return <script dangerouslySetInnerHTML={{__html: script}}></script>
 }
 
-export function AuthPage({mode, loginMethod = 'passkey', currentUser, guestInitial, mediaBaseUrl}: AuthPageProps) {
+export function AuthPage({mode, loginMethod = 'passkey', preAuthCsrfToken, currentUser, guestInitial, mediaBaseUrl}: AuthPageProps) {
     const isLogin = mode === 'login'
 
     return (
@@ -420,6 +424,7 @@ export function AuthPage({mode, loginMethod = 'passkey', currentUser, guestIniti
 
                             <div class="mt-8" data-login-panel="password" hidden={loginMethod !== 'password'} id="login-panel-password">
                                 <form action="/login" autocomplete="on" class="flex flex-col gap-5" data-password-login-form method="post">
+                                    <input data-pre-auth-csrf-token name="csrfToken" type="hidden" value={preAuthCsrfToken} />
                                     <div>
                                         <h2 class="text-2xl font-black">Sign in with your password</h2>
                                         <p class="mt-2 text-sm opacity-70">Enter your MyOC username and password.</p>
@@ -485,6 +490,7 @@ export function AuthPage({mode, loginMethod = 'passkey', currentUser, guestIniti
 
                             <div class="mt-8" data-login-panel="recovery" hidden={loginMethod !== 'recovery'} id="login-panel-recovery">
                                 <form action="/recovery/login" class="flex flex-col gap-5" data-recovery-login-form method="post">
+                                    <input data-pre-auth-csrf-token name="csrfToken" type="hidden" value={preAuthCsrfToken} />
                                     <div>
                                         <h2 class="text-2xl font-black">Sign in with a recovery phrase</h2>
                                         <p class="mt-2 text-sm opacity-70">Use the phrase you saved when you created your account.</p>

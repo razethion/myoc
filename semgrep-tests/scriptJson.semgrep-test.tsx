@@ -21,4 +21,4 @@ const safePaired = (
     <script dangerouslySetInnerHTML={{__html: serializeJsonForHtmlScript(structuredData)}} type="application/ld+json"></script>
 )
 
-export {safe, safePaired, unsafeDirect, unsafeIndirect, unsafePaired}
+void [safe, safePaired, unsafeDirect, unsafeIndirect, unsafePaired]

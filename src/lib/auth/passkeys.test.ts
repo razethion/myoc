@@ -1,6 +1,6 @@
 import {type Context, Hono} from 'hono'
 import {describe, expect, it} from 'vitest'
-import {createMockDb, sqlFragment} from '../../test/mockD1'
+import {queryOne, seedChallenge, seedPasskey, seedSession, seedUser, useTestDatabase} from '../../test/d1'
 import type {Bindings} from '../../types/bindings'
 import {
     createCredentialPublicKeyValue,
@@ -19,6 +19,8 @@ import {
     verifyRecoveryPhrase,
 } from './passkeys'
 
+const db = useTestDatabase()
+
 describe('passkey database helpers', () => {
     it('fetches unexpired challenges by id and ceremony', async () => {
         const challenge = {
@@ -31,43 +33,78 @@ describe('passkey database helpers', () => {
             challenge: 'challenge-value',
             expires_at: '2026-06-10 12:05:00',
         }
-        const {db, boundStatements} = createMockDb({
-            firstResults: [challenge],
+        await seedChallenge({
+            id: challenge.id,
+            userId: challenge.user_id,
+            ceremony: 'authentication',
+            challenge: challenge.challenge,
+            expiresAt: challenge.expires_at,
         })
 
         await expect(getWebAuthnChallenge(db, 'challenge-1', 'authentication', new Date('2026-06-10T12:01:00Z'))).resolves.toEqual(
             challenge,
         )
-        expect(boundStatements[0]?.binds).toEqual(['challenge-1', 'authentication', '2026-06-10 12:01:00'])
+        await expect(getWebAuthnChallenge(db, 'challenge-1', 'registration', new Date('2026-06-10T12:01:00Z'))).resolves.toBeNull()
+        await expect(getWebAuthnChallenge(db, 'challenge-1', 'authentication', new Date('2026-06-10T12:06:00Z'))).resolves.toBeNull()
     })
 
     it('fetches passkeys by credential id', async () => {
         const passkey = createPasskey()
-        const {db, boundStatements} = createMockDb({
-            firstResults: [passkey],
+        await seedUser({id: passkey.user_id})
+        await seedPasskey({
+            id: 'other-passkey',
+            userId: passkey.user_id,
+            credentialId: 'other-credential',
+            webauthnUserId: passkey.webauthn_user_id,
+        })
+        await seedPasskey({
+            id: passkey.id,
+            userId: passkey.user_id,
+            credentialId: passkey.credential_id,
+            publicKey: passkey.public_key,
+            webauthnUserId: passkey.webauthn_user_id,
+            counter: passkey.counter,
+            deviceType: passkey.device_type,
+            backedUp: Boolean(passkey.backed_up),
+            transports: passkey.transports,
+            name: passkey.name,
+            createdAt: passkey.created_at,
+            lastUsedAt: passkey.last_used_at,
         })
 
         await expect(getPasskeyByCredentialId(db, 'credential-id')).resolves.toEqual(passkey)
-        expect(boundStatements[0]?.sql).toContain('WHERE credential_id = ?')
-        expect(boundStatements[0]?.binds).toEqual(['credential-id'])
     })
 
     it('summarizes active sessions and marks the current one', async () => {
-        const {db, boundStatements} = createMockDb({
-            allResults: [
-                [
-                    {
-                        id: 'current-session',
-                        created_at: '2026-06-10 12:00:00',
-                        expires_at: '2026-07-10 12:00:00',
-                    },
-                    {
-                        id: 'other-session',
-                        created_at: '2026-06-09 12:00:00',
-                        expires_at: '2026-07-09 12:00:00',
-                    },
-                ],
-            ],
+        await seedUser({id: 'user-1'})
+        await seedSession({
+            id: 'current-session',
+            userId: 'user-1',
+            token: 'current-token',
+            createdAt: '2026-06-10 12:00:00',
+            expiresAt: '2099-07-10 12:00:00',
+        })
+        await seedSession({
+            id: 'other-session',
+            userId: 'user-1',
+            token: 'other-token',
+            createdAt: '2026-06-09 12:00:00',
+            expiresAt: '2099-07-09 12:00:00',
+        })
+        await seedSession({
+            id: 'expired-session',
+            userId: 'user-1',
+            token: 'expired-token',
+            createdAt: '2020-06-09 12:00:00',
+            expiresAt: '2020-07-09 12:00:00',
+        })
+        await seedUser({id: 'user-2'})
+        await seedSession({
+            id: 'different-user-session',
+            userId: 'user-2',
+            token: 'different-user-token',
+            createdAt: '2026-06-09 12:00:00',
+            expiresAt: '2099-07-09 12:00:00',
         })
 
         await expect(
@@ -87,18 +124,16 @@ describe('passkey database helpers', () => {
             {
                 id: 'current-session',
                 createdAt: '2026-06-10 12:00:00',
-                expiresAt: '2026-07-10 12:00:00',
+                expiresAt: '2099-07-10 12:00:00',
                 isCurrent: true,
             },
             {
                 id: 'other-session',
                 createdAt: '2026-06-09 12:00:00',
-                expiresAt: '2026-07-09 12:00:00',
+                expiresAt: '2099-07-09 12:00:00',
                 isCurrent: false,
             },
         ])
-        expect(boundStatements[0]?.sql).toContain('FROM sessions')
-        expect(boundStatements[0]?.binds[0]).toBe('user-1')
     })
 })
 
@@ -108,11 +143,19 @@ describe('passkey option helpers', () => {
             credential_id: 'existing-credential',
             transports: 'internal, usb',
         })
-        const {db, boundStatements} = createMockDb({
-            allResults: [[passkey]],
+        await seedUser({id: passkey.user_id})
+        await seedPasskey({
+            id: passkey.id,
+            userId: passkey.user_id,
+            credentialId: passkey.credential_id,
+            publicKey: passkey.public_key,
+            webauthnUserId: passkey.webauthn_user_id,
+            transports: passkey.transports,
+            name: passkey.name,
+            createdAt: passkey.created_at,
         })
 
-        const response = await requestWithContext('https://127.0.0.1:8787/passkeys/options', db, async (c) =>
+        const response = await requestWithContext('https://127.0.0.1:8787/passkeys/options', async (c) =>
             createPasskeyAuthenticationOptions(c, {id: 'user-1'}),
         )
         const body = await response.json<{
@@ -133,16 +176,18 @@ describe('passkey option helpers', () => {
                 type: 'public-key',
             },
         ])
-        expect(boundStatements.some((statement) => statement.sql.includes(sqlFragment('INSERT', 'INTO', 'webauthn_challenges')))).toBe(true)
+        expect(await queryOne('SELECT user_id, ceremony FROM webauthn_challenges WHERE id = ?', [body.challengeId])).toEqual({
+            user_id: 'user-1',
+            ceremony: 'authentication',
+        })
     })
 
     it('creates discoverable authentication options when no user is supplied', async () => {
-        const {db} = createMockDb()
-
-        const response = await requestWithContext('https://example.com/passkeys/options', db, async (c) =>
+        const response = await requestWithContext('https://example.com/passkeys/options', async (c) =>
             createPasskeyAuthenticationOptions(c, null),
         )
         const body = await response.json<{
+            challengeId: string
             options: {
                 rpId: string
                 allowCredentials?: unknown[]
@@ -152,6 +197,10 @@ describe('passkey option helpers', () => {
         expect(response.status).toBe(200)
         expect(body.options.rpId).toBe('example.com')
         expect(body.options.allowCredentials).toBeUndefined()
+        expect(await queryOne('SELECT user_id, ceremony FROM webauthn_challenges WHERE id = ?', [body.challengeId])).toEqual({
+            user_id: null,
+            ceremony: 'authentication',
+        })
     })
 })
 
@@ -213,11 +262,7 @@ describe('passkey recovery helpers', () => {
     })
 })
 
-async function requestWithContext<T>(
-    url: string,
-    db: D1Database,
-    callback: (c: Context<{Bindings: Bindings}>) => Promise<T>,
-): Promise<Response> {
+async function requestWithContext<T>(url: string, callback: (c: Context<{Bindings: Bindings}>) => Promise<T>): Promise<Response> {
     const app = new Hono<{Bindings: Bindings}>()
     app.get('/passkeys/options', async (c) => c.json(await callback(c)))
 

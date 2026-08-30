@@ -4,6 +4,7 @@ import {getCurrentUser} from '../../lib/auth/session'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {readFormDataUpTo} from '../../lib/http/requestBody'
 import {ErrorResponseSchema, responseSchema} from '../../lib/http/responseSchemas'
+import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../../lib/media/cacheControl'
 import {normalizeProfileImagePayload, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/profileImage'
 import {profilePhotoObjectKey, profilePhotoUrl} from '../../lib/media/url'
 import {APP_VERSION} from '../../lib/releases'
@@ -77,7 +78,7 @@ userRoutes.post('/me/profile-photo', async (c) => {
 
     await c.env.MEDIA_BUCKET.put(objectKey, image.bytes, {
         httpMetadata: {
-            cacheControl: 'public, max-age=31536000, immutable',
+            cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
             contentType: image.contentType,
         },
     })

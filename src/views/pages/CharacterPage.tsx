@@ -87,10 +87,30 @@ type DisplayMedia = CharacterPageMedia & {
     safeDisplayHeight: number | null
     safeDisplayIsNsfwHidden: boolean
     safeDisplayPreviewUrl: string | null
-    safeDisplayTitle: string | null
-    safeDisplayUrl: string | null
+    safeDisplayTitle: string
+    safeDisplayUrl: string
     safeDisplayWidth: number | null
-    safeImageAlt: string | null
+    safeImageAlt: string
+}
+
+type DisplayMediaVariant = {
+    rating: 'sfw' | 'nsfw'
+    artist: string
+    imageAlt: string
+    displayHeight: number | null
+    displayPreviewUrl: string | null
+    displayUrl: string
+    displayWidth: number | null
+}
+
+type SafeMediaDisplay = {
+    displayHeight: number | null
+    displayPreviewUrl: string | null
+    displayTitle: string
+    displayUrl: string
+    displayWidth: number | null
+    imageAlt: string
+    isNsfwHidden: boolean
 }
 
 function profileImageFor(user: ProfilePageUser, mediaBaseUrl: string): string {
@@ -206,123 +226,203 @@ function displayMediaFor(
     mediaBaseUrl: string,
     displayNsfwMedia: boolean,
 ): DisplayMedia | null {
-    const hasSfw = Boolean(media.sfwImageKey)
-    const hasNsfw = Boolean(media.nsfwImageKey)
-    const useNsfw = Boolean(hasNsfw && (displayNsfwMedia || !hasSfw))
-    const isNsfwHidden = useNsfw && !displayNsfwMedia
-    const imageKey = useNsfw ? media.nsfwImageKey : media.sfwImageKey
+    const sfw = createSfwDisplayVariant(media, character, mediaBaseUrl)
+    const nsfw = createNsfwDisplayVariant(media, character, mediaBaseUrl)
+    const selected = selectDisplayVariant(sfw, nsfw, displayNsfwMedia)
 
-    if (!imageKey) {
+    if (!selected) {
         return null
     }
 
-    const width = useNsfw ? media.nsfwWidth : media.sfwWidth
-    const height = useNsfw ? media.nsfwHeight : media.sfwHeight
-    const previewImageKey = useNsfw ? media.nsfwPreviewImageKey : media.sfwPreviewImageKey
-    const artist = (useNsfw ? media.nsfwArtist : media.sfwArtist) || media.sfwArtist || media.nsfwArtist || 'Unknown artist'
-    const sfwArtist = media.sfwArtist || media.nsfwArtist || 'Unknown artist'
-    const nsfwArtist = media.nsfwArtist || media.sfwArtist || 'Unknown artist'
-    const rating = useNsfw ? 'nsfw' : 'sfw'
-    const sfwDisplayPreviewUrl = media.sfwPreviewImageKey
-        ? characterMediaPreviewImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.sfwPreviewImageKey, 'sfw')
-        : null
-    const sfwDisplayUrl = media.sfwImageKey
-        ? characterMediaImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.sfwImageKey, 'sfw', media.sfwContentType)
-        : null
-    const sfwImageAlt = media.sfwImageKey
-        ? sfwArtist === 'Unknown artist'
-            ? 'Character media by an unknown artist'
-            : `Character media by ${sfwArtist}`
-        : null
-    const nsfwDisplayPreviewUrl = media.nsfwPreviewImageKey
-        ? characterMediaPreviewImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwPreviewImageKey, 'nsfw')
-        : null
-    const nsfwDisplayUrl = media.nsfwImageKey
-        ? characterMediaImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwImageKey, 'nsfw', media.nsfwContentType)
-        : null
-    const nsfwImageAlt = media.nsfwImageKey
-        ? nsfwArtist === 'Unknown artist'
-            ? 'Character media by an unknown artist'
-            : `Character media by ${nsfwArtist}`
-        : null
-    const hiddenWidth = media.nsfwPreviewWidth ?? media.nsfwWidth
-    const hiddenHeight = media.nsfwPreviewHeight ?? media.nsfwHeight
-    const hiddenDisplayUrl = media.nsfwBlurImageKey
-        ? characterMediaNsfwBlurImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwBlurImageKey)
-        : hiddenNsfwPlaceholderUrl()
-    const safeDisplayUrl = sfwDisplayUrl ?? hiddenDisplayUrl
-    const safeDisplayPreviewUrl = sfwDisplayUrl ? sfwDisplayPreviewUrl : null
-    const safeDisplayWidth = sfwDisplayUrl ? media.sfwWidth : hiddenWidth
-    const safeDisplayHeight = sfwDisplayUrl ? media.sfwHeight : hiddenHeight
-    const safeDisplayTitle = sfwDisplayUrl ? sfwArtist : nsfwArtist
-    const safeImageAlt = sfwImageAlt ?? nsfwImageAlt ?? 'Hidden NSFW media'
-    const safeDisplayIsNsfwHidden = !sfwDisplayUrl && Boolean(hiddenDisplayUrl)
+    const safe = createSafeMediaDisplay(media, character, mediaBaseUrl, sfw, nsfw)
+    return selected.rating === 'nsfw' && !displayNsfwMedia
+        ? createHiddenDisplayMedia(media, selected, safe, nsfw)
+        : createVisibleDisplayMedia(media, selected, safe, nsfw)
+}
 
-    if (isNsfwHidden) {
-        if (!safeDisplayUrl) {
-            return null
-        }
-
-        return {
-            ...media,
-            artist,
-            imageAlt: safeImageAlt,
-            displayHeight: safeDisplayHeight && safeDisplayHeight > 0 ? safeDisplayHeight : 1,
-            displayPreviewUrl: safeDisplayPreviewUrl,
-            displayUrl: safeDisplayUrl,
-            displayWidth: safeDisplayWidth && safeDisplayWidth > 0 ? safeDisplayWidth : 1,
-            isNsfw: true,
-            isNsfwHidden: true,
-            nsfwArtist,
-            nsfwDisplayHeight: media.nsfwHeight && media.nsfwHeight > 0 ? media.nsfwHeight : null,
-            nsfwDisplayPreviewUrl,
-            nsfwDisplayUrl,
-            nsfwDisplayWidth: media.nsfwWidth && media.nsfwWidth > 0 ? media.nsfwWidth : null,
-            nsfwImageAlt,
-            safeDisplayHeight: safeDisplayHeight && safeDisplayHeight > 0 ? safeDisplayHeight : null,
-            safeDisplayIsNsfwHidden,
-            safeDisplayPreviewUrl,
-            safeDisplayTitle,
-            safeDisplayUrl,
-            safeDisplayWidth: safeDisplayWidth && safeDisplayWidth > 0 ? safeDisplayWidth : null,
-            safeImageAlt,
-        }
+function createSfwDisplayVariant(
+    media: CharacterPageMedia,
+    character: CharacterPageCharacter,
+    mediaBaseUrl: string,
+): DisplayMediaVariant | null {
+    if (!media.sfwImageKey) {
+        return null
     }
 
+    const artist = preferredArtist(media.sfwArtist, media.nsfwArtist)
     return {
-        ...media,
+        rating: 'sfw',
         artist,
-        imageAlt: artist === 'Unknown artist' ? 'Character media by an unknown artist' : `Character media by ${artist}`,
-        displayHeight: height && height > 0 ? height : 1,
-        displayPreviewUrl: previewImageKey
-            ? characterMediaPreviewImageUrl(mediaBaseUrl, character.userId, character.id, media.id, previewImageKey, rating)
+        imageAlt: imageAltForArtist(artist),
+        displayHeight: positiveDimension(media.sfwHeight),
+        displayPreviewUrl: media.sfwPreviewImageKey
+            ? characterMediaPreviewImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.sfwPreviewImageKey, 'sfw')
             : null,
         displayUrl: characterMediaImageUrl(
             mediaBaseUrl,
             character.userId,
             character.id,
             media.id,
-            imageKey,
-            rating,
-            useNsfw ? media.nsfwContentType : media.sfwContentType,
+            media.sfwImageKey,
+            'sfw',
+            media.sfwContentType,
         ),
-        displayWidth: width && width > 0 ? width : 1,
-        isNsfw: useNsfw,
-        isNsfwHidden: false,
-        nsfwArtist,
-        nsfwDisplayHeight: media.nsfwHeight && media.nsfwHeight > 0 ? media.nsfwHeight : null,
-        nsfwDisplayPreviewUrl,
-        nsfwDisplayUrl,
-        nsfwDisplayWidth: media.nsfwWidth && media.nsfwWidth > 0 ? media.nsfwWidth : null,
-        nsfwImageAlt,
-        safeDisplayHeight: safeDisplayHeight && safeDisplayHeight > 0 ? safeDisplayHeight : null,
-        safeDisplayIsNsfwHidden,
-        safeDisplayPreviewUrl,
-        safeDisplayTitle,
-        safeDisplayUrl,
-        safeDisplayWidth: safeDisplayWidth && safeDisplayWidth > 0 ? safeDisplayWidth : null,
-        safeImageAlt,
+        displayWidth: positiveDimension(media.sfwWidth),
     }
+}
+
+function createNsfwDisplayVariant(
+    media: CharacterPageMedia,
+    character: CharacterPageCharacter,
+    mediaBaseUrl: string,
+): DisplayMediaVariant | null {
+    if (!media.nsfwImageKey) {
+        return null
+    }
+
+    const artist = preferredArtist(media.nsfwArtist, media.sfwArtist)
+    return {
+        rating: 'nsfw',
+        artist,
+        imageAlt: imageAltForArtist(artist),
+        displayHeight: positiveDimension(media.nsfwHeight),
+        displayPreviewUrl: media.nsfwPreviewImageKey
+            ? characterMediaPreviewImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwPreviewImageKey, 'nsfw')
+            : null,
+        displayUrl: characterMediaImageUrl(
+            mediaBaseUrl,
+            character.userId,
+            character.id,
+            media.id,
+            media.nsfwImageKey,
+            'nsfw',
+            media.nsfwContentType,
+        ),
+        displayWidth: positiveDimension(media.nsfwWidth),
+    }
+}
+
+function selectDisplayVariant(
+    sfw: DisplayMediaVariant | null,
+    nsfw: DisplayMediaVariant | null,
+    displayNsfwMedia: boolean,
+): DisplayMediaVariant | null {
+    if (nsfw && (displayNsfwMedia || !sfw)) {
+        return nsfw
+    }
+
+    return sfw ?? nsfw
+}
+
+function createSafeMediaDisplay(
+    media: CharacterPageMedia,
+    character: CharacterPageCharacter,
+    mediaBaseUrl: string,
+    sfw: DisplayMediaVariant | null,
+    nsfw: DisplayMediaVariant | null,
+): SafeMediaDisplay {
+    if (sfw) {
+        return {
+            displayHeight: sfw.displayHeight,
+            displayPreviewUrl: sfw.displayPreviewUrl,
+            displayTitle: sfw.artist,
+            displayUrl: sfw.displayUrl,
+            displayWidth: sfw.displayWidth,
+            imageAlt: sfw.imageAlt,
+            isNsfwHidden: false,
+        }
+    }
+
+    const hiddenNsfw = nsfw as DisplayMediaVariant
+    const displayUrl = media.nsfwBlurImageKey
+        ? characterMediaNsfwBlurImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwBlurImageKey)
+        : hiddenNsfwPlaceholderUrl()
+
+    return {
+        displayHeight: positiveDimension(media.nsfwPreviewHeight ?? media.nsfwHeight),
+        displayPreviewUrl: null,
+        displayTitle: hiddenNsfw.artist,
+        displayUrl,
+        displayWidth: positiveDimension(media.nsfwPreviewWidth ?? media.nsfwWidth),
+        imageAlt: hiddenNsfw.imageAlt,
+        isNsfwHidden: true,
+    }
+}
+
+function createHiddenDisplayMedia(
+    media: CharacterPageMedia,
+    selected: DisplayMediaVariant,
+    safe: SafeMediaDisplay,
+    nsfw: DisplayMediaVariant | null,
+): DisplayMedia {
+    return createDisplayMedia(media, selected, safe, nsfw, {
+        displayHeight: safe.displayHeight ?? 1,
+        displayPreviewUrl: safe.displayPreviewUrl,
+        displayUrl: safe.displayUrl,
+        displayWidth: safe.displayWidth ?? 1,
+        imageAlt: safe.imageAlt,
+        isNsfw: true,
+        isNsfwHidden: true,
+    })
+}
+
+function createVisibleDisplayMedia(
+    media: CharacterPageMedia,
+    selected: DisplayMediaVariant,
+    safe: SafeMediaDisplay,
+    nsfw: DisplayMediaVariant | null,
+): DisplayMedia {
+    return createDisplayMedia(media, selected, safe, nsfw, {
+        displayHeight: selected.displayHeight ?? 1,
+        displayPreviewUrl: selected.displayPreviewUrl,
+        displayUrl: selected.displayUrl,
+        displayWidth: selected.displayWidth ?? 1,
+        imageAlt: selected.imageAlt,
+        isNsfw: selected.rating === 'nsfw',
+        isNsfwHidden: false,
+    })
+}
+
+function createDisplayMedia(
+    media: CharacterPageMedia,
+    selected: DisplayMediaVariant,
+    safe: SafeMediaDisplay,
+    nsfw: DisplayMediaVariant | null,
+    display: Pick<
+        DisplayMedia,
+        'displayHeight' | 'displayPreviewUrl' | 'displayUrl' | 'displayWidth' | 'imageAlt' | 'isNsfw' | 'isNsfwHidden'
+    >,
+): DisplayMedia {
+    return {
+        ...media,
+        ...display,
+        artist: selected.artist,
+        nsfwArtist: nsfw?.artist ?? preferredArtist(media.nsfwArtist, media.sfwArtist),
+        nsfwDisplayHeight: nsfw?.displayHeight ?? null,
+        nsfwDisplayPreviewUrl: nsfw?.displayPreviewUrl ?? null,
+        nsfwDisplayUrl: nsfw?.displayUrl ?? null,
+        nsfwDisplayWidth: nsfw?.displayWidth ?? null,
+        nsfwImageAlt: nsfw?.imageAlt ?? null,
+        safeDisplayHeight: safe.displayHeight,
+        safeDisplayIsNsfwHidden: safe.isNsfwHidden,
+        safeDisplayPreviewUrl: safe.displayPreviewUrl,
+        safeDisplayTitle: safe.displayTitle,
+        safeDisplayUrl: safe.displayUrl,
+        safeDisplayWidth: safe.displayWidth,
+        safeImageAlt: safe.imageAlt,
+    }
+}
+
+function preferredArtist(primary: string, fallback: string): string {
+    return primary || fallback || 'Unknown artist'
+}
+
+function imageAltForArtist(artist: string): string {
+    return artist === 'Unknown artist' ? 'Character media by an unknown artist' : `Character media by ${artist}`
+}
+
+function positiveDimension(value: number | null): number | null {
+    return value !== null && value > 0 ? value : null
 }
 
 function CharacterPageStyles() {
@@ -659,66 +759,96 @@ function GalleryImage({allowNsfwToggle, deferMediaLoad, media}: {allowNsfwToggle
     const style = `--media-width:${media.displayWidth};--media-height:${media.displayHeight};--media-aspect:${aspect};`
     const revealWidth = media.nsfwDisplayWidth ?? media.displayWidth
     const revealHeight = media.nsfwDisplayHeight ?? media.displayHeight
-    const displayPreviewUrl = media.displayPreviewUrl
-    const displayUrl = media.displayUrl
-    const nsfwDisplayPreviewUrl = media.nsfwDisplayPreviewUrl
-    const nsfwDisplayUrl = media.nsfwDisplayUrl
-    const safeDisplayPreviewUrl = media.safeDisplayPreviewUrl
-    const safeDisplayUrl = media.safeDisplayUrl
-    const initialSrc = displayPreviewUrl ?? displayUrl
-    const hasOriginalUrl = Boolean(displayUrl)
-    const canToggleNsfw = Boolean(allowNsfwToggle && nsfwDisplayUrl && safeDisplayUrl)
+    const initialSrc = media.displayPreviewUrl ?? media.displayUrl
+    const canToggleNsfw = Boolean(allowNsfwToggle && media.nsfwDisplayUrl && media.safeDisplayUrl)
     const bookmarkId = `${media.id}:${media.isNsfw && !media.isNsfwHidden ? 'nsfw' : 'sfw'}`
+    const toggleAttributes = canToggleNsfw
+        ? createNsfwToggleAttributes(media as DisplayMedia & {nsfwDisplayUrl: string; nsfwImageAlt: string}, revealWidth, revealHeight)
+        : {}
+    const sourceAttributes = createGalleryImageSourceAttributes(media, deferMediaLoad, initialSrc)
 
     return (
-        <div
-            class={`gallery-media image-loading rounded ${media.isNsfwHidden ? 'nsfw-media' : ''}`}
-            data-nsfw-alt={canToggleNsfw ? media.nsfwImageAlt : undefined}
-            data-nsfw-height={canToggleNsfw ? String(revealHeight) : undefined}
-            data-nsfw-preview-url={canToggleNsfw && nsfwDisplayPreviewUrl ? nsfwDisplayPreviewUrl : undefined}
-            data-nsfw-title={canToggleNsfw ? media.nsfwArtist : undefined}
-            data-nsfw-toggle-target={canToggleNsfw ? 'true' : undefined}
-            data-nsfw-url={canToggleNsfw ? nsfwDisplayUrl : undefined}
-            data-nsfw-bookmark-id={canToggleNsfw ? `${media.id}:nsfw` : undefined}
-            data-nsfw-width={canToggleNsfw ? String(revealWidth) : undefined}
-            data-safe-alt={canToggleNsfw ? media.safeImageAlt : undefined}
-            data-safe-height={canToggleNsfw && media.safeDisplayHeight ? String(media.safeDisplayHeight) : undefined}
-            data-safe-hidden={canToggleNsfw ? String(media.safeDisplayIsNsfwHidden) : undefined}
-            data-safe-preview-url={canToggleNsfw && safeDisplayPreviewUrl ? safeDisplayPreviewUrl : undefined}
-            data-safe-title={canToggleNsfw ? media.safeDisplayTitle : undefined}
-            data-safe-url={canToggleNsfw ? safeDisplayUrl : undefined}
-            data-safe-bookmark-id={canToggleNsfw ? `${media.id}:sfw` : undefined}
-            data-safe-width={canToggleNsfw && media.safeDisplayWidth ? String(media.safeDisplayWidth) : undefined}
-            style={style}
-        >
+        <div class={`gallery-media image-loading rounded ${media.isNsfwHidden ? 'nsfw-media' : ''}`} {...toggleAttributes} style={style}>
             <div aria-hidden="true" class="gallery-image-placeholder skeleton absolute inset-0"></div>
             <img
                 alt={media.imageAlt}
                 class="gallery-image"
                 crossOrigin="anonymous"
                 data-bookmark-id={bookmarkId}
-                data-deferred-original-url={deferMediaLoad && hasOriginalUrl ? displayUrl : undefined}
-                data-deferred-preview-src={deferMediaLoad && displayPreviewUrl ? displayPreviewUrl : undefined}
-                data-deferred-src={deferMediaLoad ? initialSrc : undefined}
                 data-nsfw-displayed={media.isNsfw && !media.isNsfwHidden ? 'true' : 'false'}
                 data-nsfw-hidden={media.isNsfwHidden ? 'true' : 'false'}
-                data-original-url={!deferMediaLoad && hasOriginalUrl ? displayUrl : undefined}
                 data-title={media.artist}
                 decoding="async"
                 draggable={false}
                 height={media.displayHeight}
                 loading="lazy"
-                src={!deferMediaLoad ? initialSrc : undefined}
+                {...sourceAttributes}
                 width={media.displayWidth}
             />
-            {media.isNsfwHidden || media.safeDisplayIsNsfwHidden ? (
-                <div aria-hidden="true" class="nsfw-media-warning" hidden={!media.isNsfwHidden}>
-                    <div class="nsfw-media-badge">
-                        <LockIcon />
-                        <span>18+</span>
-                    </div>
-                </div>
-            ) : null}
+            <NsfwMediaWarning media={media} />
+        </div>
+    )
+}
+
+function createNsfwToggleAttributes(
+    media: DisplayMedia & {nsfwDisplayUrl: string; nsfwImageAlt: string},
+    revealWidth: number,
+    revealHeight: number,
+): Record<string, string | undefined> {
+    return {
+        'data-nsfw-alt': media.nsfwImageAlt,
+        'data-nsfw-height': String(revealHeight),
+        'data-nsfw-preview-url': media.nsfwDisplayPreviewUrl ?? undefined,
+        'data-nsfw-title': media.nsfwArtist,
+        'data-nsfw-toggle-target': 'true',
+        'data-nsfw-url': media.nsfwDisplayUrl,
+        'data-nsfw-bookmark-id': `${media.id}:nsfw`,
+        'data-nsfw-width': String(revealWidth),
+        'data-safe-alt': media.safeImageAlt,
+        'data-safe-height': optionalDimensionAttribute(media.safeDisplayHeight),
+        'data-safe-hidden': String(media.safeDisplayIsNsfwHidden),
+        'data-safe-preview-url': media.safeDisplayPreviewUrl ?? undefined,
+        'data-safe-title': media.safeDisplayTitle,
+        'data-safe-url': media.safeDisplayUrl,
+        'data-safe-bookmark-id': `${media.id}:sfw`,
+        'data-safe-width': optionalDimensionAttribute(media.safeDisplayWidth),
+    }
+}
+
+function optionalDimensionAttribute(value: number | null): string | undefined {
+    return value ? String(value) : undefined
+}
+
+function createGalleryImageSourceAttributes(
+    media: DisplayMedia,
+    deferMediaLoad: boolean,
+    initialSrc: string,
+): Record<string, string | undefined> {
+    if (deferMediaLoad) {
+        return {
+            'data-deferred-original-url': media.displayUrl,
+            'data-deferred-preview-src': media.displayPreviewUrl ?? undefined,
+            'data-deferred-src': initialSrc,
+        }
+    }
+
+    return {
+        'data-original-url': media.displayUrl,
+        src: initialSrc,
+    }
+}
+
+function NsfwMediaWarning({media}: {media: DisplayMedia}) {
+    if (!media.isNsfwHidden && !media.safeDisplayIsNsfwHidden) {
+        return null
+    }
+
+    return (
+        <div aria-hidden="true" class="nsfw-media-warning" hidden={!media.isNsfwHidden}>
+            <div class="nsfw-media-badge">
+                <LockIcon />
+                <span>18+</span>
+            </div>
         </div>
     )
 }
@@ -2197,6 +2327,252 @@ initGalleryBookmarkOpening();
     return <script dangerouslySetInnerHTML={{__html: script}}></script>
 }
 
+function CharacterProfileHeader({
+    allowNsfwToggle,
+    canEdit,
+    character,
+    characterThumbnailUrl,
+    displayNsfwMedia,
+    ownerProfileImageUrl,
+    profileUser,
+}: {
+    allowNsfwToggle: boolean
+    canEdit: boolean
+    character: CharacterPageCharacter
+    characterThumbnailUrl: string
+    displayNsfwMedia: boolean
+    ownerProfileImageUrl: string
+    profileUser: ProfilePageUser
+}) {
+    return (
+        <header class="relative mb-8">
+            {canEdit ? <SettingsLink characterId={character.id} /> : null}
+
+            <div class="flex flex-col gap-5 border-b border-base-300 pb-6 lg:flex-row lg:items-end lg:justify-between">
+                <div class="flex min-w-0 items-center gap-4 sm:gap-5">
+                    <div class="avatar shrink-0">
+                        <div class="w-24 rounded-box bg-base-300 ring-1 ring-base-content/15 sm:w-32">
+                            <img
+                                alt={`${character.name} portrait`}
+                                class="h-full w-full object-contain"
+                                decoding="async"
+                                height="128"
+                                loading="lazy"
+                                src={characterThumbnailUrl}
+                                width="128"
+                            />
+                        </div>
+                    </div>
+
+                    <div class="min-w-0">
+                        <h1 class="mt-2 wrap-break-word text-2xl font-bold tracking-tight sm:text-5xl">{character.name}</h1>
+                        <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-base-content/70">
+                            <span aria-hidden="true">by</span>
+                            <a
+                                class="inline-flex min-w-0 items-center gap-2 font-semibold text-base-content transition-colors hover:text-base-content/70"
+                                href={`/u/${encodeURIComponent(profileUser.username)}`}
+                            >
+                                <span class="avatar shrink-0">
+                                    <div class="h-8 w-8 rounded-full ring-1 ring-base-content/10">
+                                        <img
+                                            alt={`${profileUser.username} avatar`}
+                                            class="h-full w-full object-cover"
+                                            decoding="async"
+                                            height="28"
+                                            loading="lazy"
+                                            src={ownerProfileImageUrl}
+                                            width="28"
+                                        />
+                                    </div>
+                                </span>
+                                <span class="truncate">{profileUser.username}</span>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <CharacterProfileActions allowNsfwToggle={allowNsfwToggle} character={character} displayNsfwMedia={displayNsfwMedia} />
+            </div>
+
+            {character.description ? (
+                <div class="pt-5">
+                    <p class="whitespace-pre-wrap text-base leading-7 text-base-content/70">{character.description}</p>
+                </div>
+            ) : null}
+        </header>
+    )
+}
+
+function CharacterProfileActions({
+    allowNsfwToggle,
+    character,
+    displayNsfwMedia,
+}: {
+    allowNsfwToggle: boolean
+    character: CharacterPageCharacter
+    displayNsfwMedia: boolean
+}) {
+    if (!character.hasHeightChart && !allowNsfwToggle) {
+        return null
+    }
+
+    return (
+        <div class="flex flex-wrap gap-2 lg:justify-end">
+            {character.hasHeightChart ? (
+                <a class="btn btn-primary btn-sm" href={sizeChartUrlForCharacter(character.id)}>
+                    View in Size Chart
+                </a>
+            ) : null}
+            {allowNsfwToggle ? (
+                <button
+                    aria-pressed={displayNsfwMedia ? 'true' : 'false'}
+                    class="btn btn-outline btn-sm"
+                    data-display-nsfw-media={displayNsfwMedia ? 'true' : 'false'}
+                    type="button"
+                >
+                    {displayNsfwMedia ? 'Hide 18+ media' : 'Load 18+ media'}
+                </button>
+            ) : null}
+        </div>
+    )
+}
+
+type VisualGalleryRow = {
+    forceFullWidth: boolean
+    mediaItems: DisplayMedia[]
+}
+
+function CharacterGallery({
+    allowNsfwToggle,
+    mediaById,
+    mediaCount,
+    tabs,
+}: {
+    allowNsfwToggle: boolean
+    mediaById: Map<string, DisplayMedia | null>
+    mediaCount: number
+    tabs: CharacterPageGalleryTab[]
+}) {
+    return (
+        <>
+            <GalleryTabsHeader tabs={tabs} />
+            {tabs.map((tab, tabIndex) => (
+                <GalleryTabPanel
+                    allowNsfwToggle={allowNsfwToggle}
+                    deferMediaLoad={tabs.length > 1 && tabIndex > 0}
+                    hidden={tabIndex > 0}
+                    mediaById={mediaById}
+                    tab={tab}
+                />
+            ))}
+            {mediaCount === 0 ? (
+                <section class="rounded-box border border-base-300 bg-base-200 p-8 text-center text-base-content/70">
+                    <p>No gallery media has been added for this character yet.</p>
+                </section>
+            ) : null}
+        </>
+    )
+}
+
+function GalleryTabsHeader({tabs}: {tabs: CharacterPageGalleryTab[]}) {
+    return (
+        <section aria-labelledby="gallery-heading" class="mb-5">
+            <div class="flex flex-col gap-3 border-b border-base-300 pb-4 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                    <h2 class="mt-1 text-2xl font-semibold" id="gallery-heading">
+                        Gallery
+                    </h2>
+                </div>
+
+                {tabs.length > 1 ? (
+                    <div aria-label="Gallery sort options" class="tabs tabs-border max-w-full gap-1 overflow-x-auto" role="tablist">
+                        {tabs.map((tab, index) => (
+                            <label class="shrink-0 cursor-pointer">
+                                <input checked={index === 0} class="peer sr-only" name="gallery-sort" type="radio" value={tab.name} />
+                                <span class="tab inline-flex border-b-2 px-3 peer-checked:border-base-content peer-checked:font-semibold">
+                                    {displayGalleryTabName(tab.name)}
+                                </span>
+                            </label>
+                        ))}
+                    </div>
+                ) : null}
+            </div>
+        </section>
+    )
+}
+
+function GalleryTabPanel({
+    allowNsfwToggle,
+    deferMediaLoad,
+    hidden,
+    mediaById,
+    tab,
+}: {
+    allowNsfwToggle: boolean
+    deferMediaLoad: boolean
+    hidden: boolean
+    mediaById: Map<string, DisplayMedia | null>
+    tab: CharacterPageGalleryTab
+}) {
+    const rows = visualRowsForTab(tab, mediaById)
+
+    return (
+        <section class="gallery-tab-panel justified-gallery" data-gallery-tab-panel={tab.name} hidden={hidden}>
+            {rows.map((row) => (
+                <div class={`justified-row ${row.forceFullWidth ? 'row-force-full-width' : ''}`}>
+                    {row.mediaItems.map((item) => (
+                        <GalleryImage allowNsfwToggle={allowNsfwToggle} deferMediaLoad={deferMediaLoad} media={item} />
+                    ))}
+                </div>
+            ))}
+        </section>
+    )
+}
+
+function visualRowsForTab(tab: CharacterPageGalleryTab, mediaById: Map<string, DisplayMedia | null>): VisualGalleryRow[] {
+    if (tab.rows.length === 0) {
+        const mediaItems = [...mediaById.values()].filter((item): item is DisplayMedia => Boolean(item))
+        return chunkGalleryItems(mediaItems).map((items) => ({forceFullWidth: false, mediaItems: items}))
+    }
+
+    return tab.rows.flatMap((row, rowIndex) => visualRowsForGalleryRow(row, rowIndex, tab.rows.length, mediaById))
+}
+
+function visualRowsForGalleryRow(
+    row: CharacterPageGalleryTab['rows'][number],
+    rowIndex: number,
+    rowCount: number,
+    mediaById: Map<string, DisplayMedia | null>,
+): VisualGalleryRow[] {
+    const rowMedia = row.mediaIds.map((mediaId) => mediaById.get(mediaId)).filter((item): item is DisplayMedia => Boolean(item))
+
+    return chunkGalleryItems(rowMedia).map((mediaItems, index) => ({
+        forceFullWidth:
+            shouldForceGalleryRowFullWidth(row, rowIndex, rowCount) && rowMedia.length === 1 && mediaItems.length === 1 && index === 0,
+        mediaItems,
+    }))
+}
+
+function galleryTabsForPage(galleryTabs: CharacterPageGalleryTab[], media: CharacterPageMedia[]): CharacterPageGalleryTab[] {
+    if (galleryTabs.length > 0) {
+        return galleryTabs
+    }
+
+    return [
+        {
+            id: 'default',
+            name: 'default',
+            rows: [
+                {
+                    id: 'default-row',
+                    mediaIds: media.map((item) => item.id),
+                    forceFullWidth: false,
+                },
+            ],
+        },
+    ]
+}
+
 export function CharacterPage({
     currentUser,
     profileUser,
@@ -2210,22 +2586,7 @@ export function CharacterPage({
     const displayNsfwMedia = Boolean(currentUser?.displayNsfwMedia)
     const allowNsfwToggle = media.some((item) => Boolean(item.nsfwImageKey))
     const mediaById = new Map(media.map((item) => [item.id, displayMediaFor(item, character, mediaBaseUrl, displayNsfwMedia)]))
-    const tabs =
-        galleryTabs.length > 0
-            ? galleryTabs
-            : [
-                  {
-                      id: 'default',
-                      name: 'default',
-                      rows: [
-                          {
-                              id: 'default-row',
-                              mediaIds: media.map((item) => item.id),
-                              forceFullWidth: false,
-                          },
-                      ],
-                  },
-              ]
+    const tabs = galleryTabsForPage(galleryTabs, media)
     const defaultTabName = tabs[0]?.name ?? 'default'
     const ownerProfileImageUrl = profileImageFor(profileUser, mediaBaseUrl)
     const characterThumbnailUrl = characterProfileImageUrl(mediaBaseUrl, profileUser.id, character.id, character.profileImageKey)
@@ -2255,155 +2616,16 @@ export function CharacterPage({
                 mediaBaseUrl={mediaBaseUrl}
             />
             <main class="container mx-auto px-3 py-4 sm:px-4 lg:px-6">
-                <header class="relative mb-8">
-                    {canEdit ? <SettingsLink characterId={character.id} /> : null}
-
-                    <div class="flex flex-col gap-5 border-b border-base-300 pb-6 lg:flex-row lg:items-end lg:justify-between">
-                        <div class="flex min-w-0 items-center gap-4 sm:gap-5">
-                            <div class="avatar shrink-0">
-                                <div class="w-24 rounded-box bg-base-300 ring-1 ring-base-content/15 sm:w-32">
-                                    <img
-                                        alt={`${character.name} portrait`}
-                                        class="h-full w-full object-contain"
-                                        decoding="async"
-                                        height="128"
-                                        loading="lazy"
-                                        src={characterThumbnailUrl}
-                                        width="128"
-                                    />
-                                </div>
-                            </div>
-
-                            <div class="min-w-0">
-                                <h1 class="mt-2 wrap-break-word text-2xl font-bold tracking-tight sm:text-5xl">{character.name}</h1>
-                                <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-base-content/70">
-                                    <span aria-hidden="true">by</span>
-                                    <a
-                                        class="inline-flex min-w-0 items-center gap-2 font-semibold text-base-content transition-colors hover:text-base-content/70"
-                                        href={`/u/${encodeURIComponent(profileUser.username)}`}
-                                    >
-                                        <span class="avatar shrink-0">
-                                            <div class="h-8 w-8 rounded-full ring-1 ring-base-content/10">
-                                                <img
-                                                    alt={`${profileUser.username} avatar`}
-                                                    class="h-full w-full object-cover"
-                                                    decoding="async"
-                                                    height="28"
-                                                    loading="lazy"
-                                                    src={ownerProfileImageUrl}
-                                                    width="28"
-                                                />
-                                            </div>
-                                        </span>
-                                        <span class="truncate">{profileUser.username}</span>
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
-
-                        {character.hasHeightChart || allowNsfwToggle ? (
-                            <div class="flex flex-wrap gap-2 lg:justify-end">
-                                {character.hasHeightChart ? (
-                                    <a class="btn btn-primary btn-sm" href={sizeChartUrlForCharacter(character.id)}>
-                                        View in Size Chart
-                                    </a>
-                                ) : null}
-                                {allowNsfwToggle ? (
-                                    <button
-                                        aria-pressed={displayNsfwMedia ? 'true' : 'false'}
-                                        class="btn btn-outline btn-sm"
-                                        data-display-nsfw-media={displayNsfwMedia ? 'true' : 'false'}
-                                        type="button"
-                                    >
-                                        {displayNsfwMedia ? 'Hide 18+ media' : 'Load 18+ media'}
-                                    </button>
-                                ) : null}
-                            </div>
-                        ) : null}
-                    </div>
-
-                    {character.description ? (
-                        <div class="pt-5">
-                            <p class="whitespace-pre-wrap text-base leading-7 text-base-content/70">{character.description}</p>
-                        </div>
-                    ) : null}
-                </header>
-
-                <section aria-labelledby="gallery-heading" class="mb-5">
-                    <div class="flex flex-col gap-3 border-b border-base-300 pb-4 sm:flex-row sm:items-end sm:justify-between">
-                        <div>
-                            <h2 class="mt-1 text-2xl font-semibold" id="gallery-heading">
-                                Gallery
-                            </h2>
-                        </div>
-
-                        {tabs.length > 1 ? (
-                            <div aria-label="Gallery sort options" class="tabs tabs-border max-w-full gap-1 overflow-x-auto" role="tablist">
-                                {tabs.map((tab, index) => (
-                                    <label class="shrink-0 cursor-pointer">
-                                        <input
-                                            checked={index === 0}
-                                            class="peer sr-only"
-                                            name="gallery-sort"
-                                            type="radio"
-                                            value={tab.name}
-                                        />
-                                        <span class="tab inline-flex border-b-2 px-3 peer-checked:border-base-content peer-checked:font-semibold">
-                                            {displayGalleryTabName(tab.name)}
-                                        </span>
-                                    </label>
-                                ))}
-                            </div>
-                        ) : null}
-                    </div>
-                </section>
-
-                {tabs.map((tab, tabIndex) => {
-                    const visualRows =
-                        tab.rows.length > 0
-                            ? tab.rows.flatMap((row, rowIndex) => {
-                                  const rowMedia = row.mediaIds
-                                      .map((mediaId) => mediaById.get(mediaId))
-                                      .filter((item): item is DisplayMedia => Boolean(item))
-
-                                  return chunkGalleryItems(rowMedia).map((mediaItems, index) => ({
-                                      forceFullWidth:
-                                          shouldForceGalleryRowFullWidth(row, rowIndex, tab.rows.length) &&
-                                          rowMedia.length === 1 &&
-                                          mediaItems.length === 1 &&
-                                          index === 0,
-                                      mediaItems,
-                                  }))
-                              })
-                            : chunkGalleryItems([...mediaById.values()].filter((item): item is DisplayMedia => Boolean(item))).map(
-                                  (mediaItems) => ({
-                                      forceFullWidth: false,
-                                      mediaItems,
-                                  }),
-                              )
-
-                    return (
-                        <section class="gallery-tab-panel justified-gallery" data-gallery-tab-panel={tab.name} hidden={tabIndex > 0}>
-                            {visualRows.map((row) => (
-                                <div class={`justified-row ${row.forceFullWidth ? 'row-force-full-width' : ''}`}>
-                                    {row.mediaItems.map((item) => (
-                                        <GalleryImage
-                                            allowNsfwToggle={allowNsfwToggle}
-                                            deferMediaLoad={tabs.length > 1 && tabIndex > 0}
-                                            media={item}
-                                        />
-                                    ))}
-                                </div>
-                            ))}
-                        </section>
-                    )
-                })}
-
-                {media.length === 0 ? (
-                    <section class="rounded-box border border-base-300 bg-base-200 p-8 text-center text-base-content/70">
-                        <p>No gallery media has been added for this character yet.</p>
-                    </section>
-                ) : null}
+                <CharacterProfileHeader
+                    allowNsfwToggle={allowNsfwToggle}
+                    canEdit={canEdit}
+                    character={character}
+                    characterThumbnailUrl={characterThumbnailUrl}
+                    displayNsfwMedia={displayNsfwMedia}
+                    ownerProfileImageUrl={ownerProfileImageUrl}
+                    profileUser={profileUser}
+                />
+                <CharacterGallery allowNsfwToggle={allowNsfwToggle} mediaById={mediaById} mediaCount={media.length} tabs={tabs} />
             </main>
 
             <dialog class="modal backdrop:bg-black/75" id="gallery-lightbox">

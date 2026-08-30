@@ -1,7 +1,7 @@
 import type {Context} from 'hono'
 import {Hono} from 'hono'
 import {z} from 'zod'
-import {queueImageReview} from '../../lib/admin/imageApprovals'
+import {createImageReviewQueueStatement} from '../../lib/admin/imageApprovals'
 import {type CurrentUser, getCurrentUser, toSqlTimestamp} from '../../lib/auth/session'
 import {GALLERY_CHUNK_SIZE, GALLERY_MAX_IMAGES_PER_ROW, shouldForceGalleryRowFullWidth} from '../../lib/gallery'
 import {jsonResponse} from '../../lib/http/jsonResponse'
@@ -18,13 +18,16 @@ import {
     R2UploadedPartSchema,
     responseSchema,
 } from '../../lib/http/responseSchemas'
-import {getPngDimensions} from '../../lib/media/png'
+import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../../lib/media/cacheControl'
+import {type HeightChartJson, parseHeightChartJson as parseCharacterHeightChartJson} from '../../lib/media/heightChart'
+import {type GalleryImageMetadata, readGalleryImageDimensions, readGalleryImageMetadata} from '../../lib/media/imageMetadata'
 import {
     isProfileImageDataUrlTooLarge,
     normalizeProfileImagePayload,
     PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES,
     PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES,
 } from '../../lib/media/profileImage'
+import {deleteR2Objects} from '../../lib/media/r2Delete'
 import {
     characterFolderImageObjectKey,
     characterFolderImageUrl,
@@ -122,6 +125,11 @@ type HeightChartSaveRequest = {
     calibration?: unknown
 }
 
+type ParsedHeightChartSaveRequest = HeightChartSaveRequest & {
+    height: Record<string, unknown>
+    calibration: Record<string, unknown>
+}
+
 type GalleryLayoutRequest = {
     tabs?: unknown
 }
@@ -179,8 +187,21 @@ class ChunkedUploadInitError extends Error {
 
 class PreviewValidationError extends Error {}
 
+class GalleryUploadValidationError extends Error {}
+
 type JsonProfileImage = {
     data: string
+}
+
+type ValidatedProfileImage = {
+    contentType: string
+    bytes: Uint8Array
+}
+
+type NewFolderInput = {
+    name: string
+    parentFolderId: string | null
+    folderImage: ValidatedProfileImage | null
 }
 
 type CharacterRecord = {
@@ -196,24 +217,7 @@ type CharacterRecord = {
     updated_at: string
 }
 
-type CharacterHeightChartJson = {
-    version: 1
-    height: {
-        meters: number
-    }
-    image: null | {
-        key: string
-        contentType: string
-        naturalWidth: number
-        naturalHeight: number
-    }
-    calibration: {
-        headYPercent: number
-        footYPercent: number
-        footIsVirtual: boolean
-        nameTagXPercent: number
-    }
-}
+type CharacterHeightChartJson = HeightChartJson
 
 type CharacterMediaRecord = {
     id: string
@@ -285,7 +289,7 @@ const DISPLAY_NAME_RULES = 'letters, numbers, spaces, apostrophes, hyphens, unde
 const DUPLICATE_CHARACTER_NAME_ERROR = 'Character name already exists on this account'
 const GALLERY_IMAGE_ALLOWED_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'])
 
-const GALLERY_IMAGE_CACHE_CONTROL = 'public, max-age=31536000, immutable'
+const GALLERY_IMAGE_CACHE_CONTROL = REVOCABLE_MEDIA_CACHE_CONTROL
 const GALLERY_IMAGE_MAX_BYTES = 200 * 1024 * 1024
 const GALLERY_IMAGE_MAX_PIXELS = 200_000_000
 const GALLERY_PREVIEW_CONTENT_TYPE = 'image/webp'
@@ -326,19 +330,26 @@ type CompletedGalleryUpload = {
     exifOrientation: number | null
 }
 
-type GalleryImageMetadata = {
-    width: number
-    height: number
-    displayWidth: number
-    displayHeight: number
-    exifOrientation: number | null
-}
-
 type CompletedGalleryPreview = {
     imageKey: string
     width: number
     height: number
     byteSize: number
+}
+
+type CompletedMediaVariant = {
+    rating: MediaRating
+    image: CompletedGalleryUpload
+    preview: CompletedGalleryPreview & {preview: ParsedPreviewImage}
+    nsfwBlurImageKey: string | null
+}
+
+type MediaCompletionContext = {
+    env: Bindings
+    userId: string
+    characterId: string
+    mediaId: string
+    completedKeys: string[]
 }
 
 export const characterRoutes = new Hono<{Bindings: Bindings}>()
@@ -527,42 +538,20 @@ characterRoutes.post('/folders', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
-    const parsed = await parseCreateFolderRequest(c.req)
+    const input = await validateNewFolderInput(c, currentUser)
 
-    if ('error' in parsed) {
-        return jsonResponse(c, ErrorResponseSchema, {error: parsed.error}, parsed.status ?? 400)
-    }
-
-    const nameResult = normalizeFolderName(parsed.name)
-
-    if ('error' in nameResult) {
-        return jsonResponse(c, ErrorResponseSchema, {error: nameResult.error}, 400)
-    }
-
-    const parentResult = normalizeFolderId(parsed.parentFolderId)
-
-    if ('error' in parentResult) {
-        return jsonResponse(c, ErrorResponseSchema, {error: parentResult.error}, 400)
-    }
-
-    if (parentResult.folderId && !(await folderExists(c.env.DB, currentUser.id, parentResult.folderId))) {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Parent folder not found'}, 404)
-    }
-
-    const folderImageResult = parsed.folderImage ? await validateProfileImage(c.env.IMAGES, parsed.folderImage, 'Folder image') : null
-
-    if (folderImageResult && 'error' in folderImageResult) {
-        return jsonResponse(c, ErrorResponseSchema, {error: folderImageResult.error}, folderImageResult.status)
+    if (input instanceof Response) {
+        return input
     }
 
     const now = toSqlTimestamp(new Date())
     const folderId = crypto.randomUUID()
-    const folderImageKey = folderImageResult ? crypto.randomUUID() : null
+    const folderImageKey = input.folderImage ? crypto.randomUUID() : null
     const folder: CharacterFolderRecord = {
         id: folderId,
         user_id: currentUser.id,
-        name: nameResult.name,
-        parent_folder_id: parentResult.folderId,
+        name: input.name,
+        parent_folder_id: input.parentFolderId,
         folder_image_key: folderImageKey,
         sort_order: 0,
         created_at: now,
@@ -570,13 +559,13 @@ characterRoutes.post('/folders', async (c) => {
     }
 
     const uploadedObjectKey =
-        folderImageResult && folderImageKey ? characterFolderImageObjectKey(currentUser.id, folder.id, folderImageKey) : null
+        input.folderImage && folderImageKey ? characterFolderImageObjectKey(currentUser.id, folder.id, folderImageKey) : null
 
-    if (folderImageResult && uploadedObjectKey) {
-        await c.env.MEDIA_BUCKET.put(uploadedObjectKey, folderImageResult.bytes, {
+    if (input.folderImage && uploadedObjectKey) {
+        await c.env.MEDIA_BUCKET.put(uploadedObjectKey, input.folderImage.bytes, {
             httpMetadata: {
-                cacheControl: 'public, max-age=31536000, immutable',
-                contentType: folderImageResult.contentType,
+                cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
+                contentType: input.folderImage.contentType,
             },
         })
     }
@@ -607,6 +596,38 @@ characterRoutes.post('/folders', async (c) => {
 
     return jsonResponse(c, FolderResponseSchema, {folder: toPublicFolder(c.env.MEDIA_PUBLIC_BASE_URL, folder)}, 201)
 })
+
+async function validateNewFolderInput(c: CharacterRouteContext, currentUser: CurrentUser): Promise<NewFolderInput | Response> {
+    const parsed = await parseCreateFolderRequest(c.req)
+
+    if ('error' in parsed) {
+        return jsonResponse(c, ErrorResponseSchema, {error: parsed.error}, parsed.status ?? 400)
+    }
+
+    const nameResult = normalizeFolderName(parsed.name)
+
+    if ('error' in nameResult) {
+        return jsonResponse(c, ErrorResponseSchema, {error: nameResult.error}, 400)
+    }
+
+    const parentResult = normalizeFolderId(parsed.parentFolderId)
+
+    if ('error' in parentResult) {
+        return jsonResponse(c, ErrorResponseSchema, {error: parentResult.error}, 400)
+    }
+
+    if (parentResult.folderId && !(await folderExists(c.env.DB, currentUser.id, parentResult.folderId))) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Parent folder not found'}, 404)
+    }
+
+    const folderImage = parsed.folderImage ? await validateProfileImage(c.env.IMAGES, parsed.folderImage, 'Folder image') : null
+
+    if (folderImage && 'error' in folderImage) {
+        return jsonResponse(c, ErrorResponseSchema, {error: folderImage.error}, folderImage.status)
+    }
+
+    return {name: nameResult.name, parentFolderId: parentResult.folderId, folderImage}
+}
 
 /* istanbul ignore next -- route behavior is covered by integration tests; remaining branches are defensive parameter fallbacks. */
 characterRoutes.patch('/folders/:id', async (c) => {
@@ -699,7 +720,7 @@ characterRoutes.post('/folders/:id/image', async (c) => {
 
     await c.env.MEDIA_BUCKET.put(folderImageObjectKey, folderImageResult.bytes, {
         httpMetadata: {
-            cacheControl: 'public, max-age=31536000, immutable',
+            cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
             contentType: folderImageResult.contentType,
         },
     })
@@ -854,7 +875,7 @@ characterRoutes.post('/', async (c) => {
 
     await c.env.MEDIA_BUCKET.put(profileImageObjectKey, profileImageResult.bytes, {
         httpMetadata: {
-            cacheControl: 'public, max-age=31536000, immutable',
+            cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
             contentType: profileImageResult.contentType,
         },
     })
@@ -1005,7 +1026,7 @@ characterRoutes.post('/:id/profile-image', async (c) => {
 
     await c.env.MEDIA_BUCKET.put(profileImageObjectKey, profileImageResult.bytes, {
         httpMetadata: {
-            cacheControl: 'public, max-age=31536000, immutable',
+            cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
             contentType: profileImageResult.contentType,
         },
     })
@@ -1091,9 +1112,7 @@ characterRoutes.put('/:id/height-chart', async (c) => {
     const normalized = normalizeHeightChartJson(rawJson, existingHeightChart, uploadedImage)
 
     if ('error' in normalized) {
-        if (uploadedObjectKey) {
-            await c.env.MEDIA_BUCKET.delete(uploadedObjectKey)
-        }
+        await deleteR2ObjectIfPresent(c.env.MEDIA_BUCKET, uploadedObjectKey)
 
         return jsonResponse(c, ErrorResponseSchema, {error: normalized.error}, 400)
     }
@@ -1113,9 +1132,7 @@ characterRoutes.put('/:id/height-chart', async (c) => {
             .bind(JSON.stringify(normalized.heightChart), now, character.id, currentUser.id)
             .run()
     } catch (error) {
-        if (uploadedObjectKey) {
-            await c.env.MEDIA_BUCKET.delete(uploadedObjectKey)
-        }
+        await deleteR2ObjectIfPresent(c.env.MEDIA_BUCKET, uploadedObjectKey)
 
         throw error
     }
@@ -1373,163 +1390,24 @@ characterRoutes.post('/toyhouse-import-items/:itemId/complete', async (c) => {
     }
 
     const completedKeys: string[] = []
+    const referenceId = crypto.randomUUID()
+    let media: CharacterMediaRecord
 
     try {
-        const now = toSqlTimestamp(new Date())
-
-        await c.env.DB.prepare(
-            `UPDATE toyhouse_import_items
-             SET status = ?,
-                 error  = '',
-                 updated_at = ?
-             WHERE id = ?
-               AND user_id = ?`,
-        )
-            .bind('uploading', now, item.id, currentUser.id)
-            .run()
-
-        const completedImage = await completeChunkedGalleryUpload(
-            c.env.MEDIA_BUCKET,
-            currentUser.id,
-            item.character_id,
-            mediaId.value,
-            upload,
-            item.rating,
-            'Toyhou.se image',
-        )
-        completedKeys.push(
-            characterMediaImageObjectKey(
-                currentUser.id,
-                item.character_id,
-                mediaId.value,
-                completedImage.imageKey,
-                item.rating,
-                completedImage.contentType,
-            ),
-        )
-        const completedPreview = await generateAndPutMediaPreviewImage(
-            c.env,
-            c.env.MEDIA_BUCKET,
-            c.env.MEDIA_PUBLIC_BASE_URL,
-            currentUser.id,
-            item.character_id,
-            mediaId.value,
-            completedImage,
-            item.rating,
-            completedKeys,
-        )
-        const nsfwBlurImageKey =
-            item.rating === 'nsfw'
-                ? await putNsfwBlurImage(
-                      c.env.IMAGES,
-                      c.env.MEDIA_BUCKET,
-                      currentUser.id,
-                      item.character_id,
-                      mediaId.value,
-                      completedPreview.preview,
-                      completedKeys,
-                  )
-                : null
-
-        const media: CharacterMediaRecord = {
-            id: mediaId.value,
-            user_id: currentUser.id,
-            character_id: item.character_id,
-            sfw_image_key: item.rating === 'sfw' ? completedImage.imageKey : null,
-            nsfw_image_key: item.rating === 'nsfw' ? completedImage.imageKey : null,
-            sfw_content_type: item.rating === 'sfw' ? completedImage.contentType : null,
-            nsfw_content_type: item.rating === 'nsfw' ? completedImage.contentType : null,
-            sfw_artist: '',
-            nsfw_artist: '',
-            sfw_width: item.rating === 'sfw' ? completedImage.width : null,
-            sfw_height: item.rating === 'sfw' ? completedImage.height : null,
-            sfw_byte_size: item.rating === 'sfw' ? completedImage.byteSize : null,
-            nsfw_width: item.rating === 'nsfw' ? completedImage.width : null,
-            nsfw_height: item.rating === 'nsfw' ? completedImage.height : null,
-            nsfw_byte_size: item.rating === 'nsfw' ? completedImage.byteSize : null,
-            sfw_preview_image_key: item.rating === 'sfw' ? completedPreview.imageKey : null,
-            sfw_preview_width: item.rating === 'sfw' ? completedPreview.width : null,
-            sfw_preview_height: item.rating === 'sfw' ? completedPreview.height : null,
-            sfw_preview_byte_size: item.rating === 'sfw' ? completedPreview.byteSize : null,
-            nsfw_preview_image_key: item.rating === 'nsfw' ? completedPreview.imageKey : null,
-            nsfw_blur_image_key: nsfwBlurImageKey,
-            nsfw_preview_width: item.rating === 'nsfw' ? completedPreview.width : null,
-            nsfw_preview_height: item.rating === 'nsfw' ? completedPreview.height : null,
-            nsfw_preview_byte_size: item.rating === 'nsfw' ? completedPreview.byteSize : null,
-            created_at: now,
-            updated_at: now,
-        }
-
-        await c.env.DB.batch([
-            c.env.DB.prepare(
-                `INSERT INTO character_media (id, user_id, character_id,
-                                              sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type,
-                                              sfw_artist, nsfw_artist,
-                                              sfw_width, sfw_height, sfw_byte_size, sfw_preview_image_key,
-                                              sfw_preview_width, sfw_preview_height, sfw_preview_byte_size,
-                                              nsfw_width, nsfw_height, nsfw_byte_size, nsfw_preview_image_key,
-                                              nsfw_preview_width, nsfw_preview_height, nsfw_preview_byte_size,
-                                              nsfw_blur_image_key,
-                                              created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            ).bind(
-                media.id,
-                media.user_id,
-                media.character_id,
-                media.sfw_image_key,
-                media.nsfw_image_key,
-                media.sfw_content_type,
-                media.nsfw_content_type,
-                media.sfw_artist,
-                media.nsfw_artist,
-                media.sfw_width,
-                media.sfw_height,
-                media.sfw_byte_size,
-                media.sfw_preview_image_key,
-                media.sfw_preview_width,
-                media.sfw_preview_height,
-                media.sfw_preview_byte_size,
-                media.nsfw_width,
-                media.nsfw_height,
-                media.nsfw_byte_size,
-                media.nsfw_preview_image_key,
-                media.nsfw_preview_width,
-                media.nsfw_preview_height,
-                media.nsfw_preview_byte_size,
-                media.nsfw_blur_image_key,
-                media.created_at,
-                media.updated_at,
-            ),
-            c.env.DB.prepare(
-                `UPDATE toyhouse_import_items
-                 SET status   = ?,
-                     media_id = ?,
-                     error    = '',
-                     updated_at = ?
-                 WHERE id = ?
-                   AND user_id = ?`,
-            ).bind('imported', media.id, now, item.id, currentUser.id),
-        ])
-        await queueImageReview(c.env.DB, media.id)
-
-        await updateToyhouseImportJobStatus(c.env.DB, currentUser.id, item.job_id)
-
-        return jsonResponse(
-            c,
-            ToyhouseImportCompleteResponseSchema,
-            {media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, media), skipped: false},
-            201,
-        )
+        media = await completeToyhouseImportItem(c.env, currentUser.id, item, mediaId.value, upload, completedKeys)
     } catch (error) {
         await deleteR2Objects(c.env.MEDIA_BUCKET, completedKeys)
-        await markToyhouseImportItemFailed(c.env.DB, currentUser.id, item.id, error instanceof Error ? error.message : 'Import item failed')
-
-        if (error instanceof Error && error.message) {
-            return jsonResponse(c, ErrorResponseSchema, {error: error.message}, 400)
-        }
-
-        throw error
+        const failure = mediaCompletionFailure(error, referenceId)
+        await markToyhouseImportItemFailed(c.env.DB, currentUser.id, item.id, failure.message)
+        return jsonResponse(c, ErrorResponseSchema, {error: failure.message}, failure.status)
     }
+
+    return jsonResponse(
+        c,
+        ToyhouseImportCompleteResponseSchema,
+        {media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, media), skipped: false},
+        201,
+    )
 })
 
 /* istanbul ignore next -- route behavior is covered by integration tests; remaining branches are defensive upload failure paths. */
@@ -1570,164 +1448,21 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
     }
 
     const completedKeys: string[] = []
+    const referenceId = crypto.randomUUID()
+    let media: CharacterMediaRecord
 
     try {
-        let sfwImage: CompletedGalleryUpload | null = null
-        let nsfwImage: CompletedGalleryUpload | null = null
-        let sfwPreviewImage: (CompletedGalleryPreview & {preview: ParsedPreviewImage}) | null = null
-        let nsfwPreviewImage: (CompletedGalleryPreview & {preview: ParsedPreviewImage}) | null = null
-        let nsfwBlurImageKey: string | null = null
-
-        if (sfwUpload && !('error' in sfwUpload)) {
-            sfwImage = await completeChunkedGalleryUpload(
-                c.env.MEDIA_BUCKET,
-                currentUser.id,
-                character.id,
-                mediaId.value,
-                sfwUpload,
-                'sfw',
-                'SFW image',
-            )
-            completedKeys.push(
-                characterMediaImageObjectKey(currentUser.id, character.id, mediaId.value, sfwImage.imageKey, 'sfw', sfwImage.contentType),
-            )
-            sfwPreviewImage = await generateAndPutMediaPreviewImage(
-                c.env,
-                c.env.MEDIA_BUCKET,
-                c.env.MEDIA_PUBLIC_BASE_URL,
-                currentUser.id,
-                character.id,
-                mediaId.value,
-                sfwImage,
-                'sfw',
-                completedKeys,
-            )
-        }
-
-        if (nsfwUpload && !('error' in nsfwUpload)) {
-            nsfwImage = await completeChunkedGalleryUpload(
-                c.env.MEDIA_BUCKET,
-                currentUser.id,
-                character.id,
-                mediaId.value,
-                nsfwUpload,
-                'nsfw',
-                'NSFW image',
-            )
-            completedKeys.push(
-                characterMediaImageObjectKey(
-                    currentUser.id,
-                    character.id,
-                    mediaId.value,
-                    nsfwImage.imageKey,
-                    'nsfw',
-                    nsfwImage.contentType,
-                ),
-            )
-            nsfwPreviewImage = await generateAndPutMediaPreviewImage(
-                c.env,
-                c.env.MEDIA_BUCKET,
-                c.env.MEDIA_PUBLIC_BASE_URL,
-                currentUser.id,
-                character.id,
-                mediaId.value,
-                nsfwImage,
-                'nsfw',
-                completedKeys,
-            )
-            nsfwBlurImageKey = await putNsfwBlurImage(
-                c.env.IMAGES,
-                c.env.MEDIA_BUCKET,
-                currentUser.id,
-                character.id,
-                mediaId.value,
-                nsfwPreviewImage.preview,
-                completedKeys,
-            )
-        }
-
-        const now = toSqlTimestamp(new Date())
-        const media: CharacterMediaRecord = {
-            id: mediaId.value,
-            user_id: currentUser.id,
-            character_id: character.id,
-            sfw_image_key: sfwImage?.imageKey ?? null,
-            nsfw_image_key: nsfwImage?.imageKey ?? null,
-            sfw_content_type: sfwImage?.contentType ?? null,
-            nsfw_content_type: nsfwImage?.contentType ?? null,
-            sfw_artist: artists.sfwArtist,
-            nsfw_artist: artists.nsfwArtist,
-            sfw_width: sfwImage?.width ?? null,
-            sfw_height: sfwImage?.height ?? null,
-            sfw_byte_size: sfwImage?.byteSize ?? null,
-            nsfw_width: nsfwImage?.width ?? null,
-            nsfw_height: nsfwImage?.height ?? null,
-            nsfw_byte_size: nsfwImage?.byteSize ?? null,
-            sfw_preview_image_key: sfwPreviewImage?.imageKey ?? null,
-            sfw_preview_width: sfwPreviewImage?.width ?? null,
-            sfw_preview_height: sfwPreviewImage?.height ?? null,
-            sfw_preview_byte_size: sfwPreviewImage?.byteSize ?? null,
-            nsfw_preview_image_key: nsfwPreviewImage?.imageKey ?? null,
-            nsfw_blur_image_key: nsfwBlurImageKey,
-            nsfw_preview_width: nsfwPreviewImage?.width ?? null,
-            nsfw_preview_height: nsfwPreviewImage?.height ?? null,
-            nsfw_preview_byte_size: nsfwPreviewImage?.byteSize ?? null,
-            created_at: now,
-            updated_at: now,
-        }
-
-        await c.env.DB.prepare(
-            `INSERT INTO character_media (id, user_id, character_id,
-                                          sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type,
-                                          sfw_artist, nsfw_artist,
-                                          sfw_width, sfw_height, sfw_byte_size, sfw_preview_image_key,
-                                          sfw_preview_width, sfw_preview_height, sfw_preview_byte_size,
-                                          nsfw_width, nsfw_height, nsfw_byte_size, nsfw_preview_image_key,
-                                          nsfw_preview_width, nsfw_preview_height, nsfw_preview_byte_size,
-                                          nsfw_blur_image_key,
-                                          created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-            .bind(
-                media.id,
-                media.user_id,
-                media.character_id,
-                media.sfw_image_key,
-                media.nsfw_image_key,
-                media.sfw_content_type,
-                media.nsfw_content_type,
-                media.sfw_artist,
-                media.nsfw_artist,
-                media.sfw_width,
-                media.sfw_height,
-                media.sfw_byte_size,
-                media.sfw_preview_image_key,
-                media.sfw_preview_width,
-                media.sfw_preview_height,
-                media.sfw_preview_byte_size,
-                media.nsfw_width,
-                media.nsfw_height,
-                media.nsfw_byte_size,
-                media.nsfw_preview_image_key,
-                media.nsfw_preview_width,
-                media.nsfw_preview_height,
-                media.nsfw_preview_byte_size,
-                media.nsfw_blur_image_key,
-                media.created_at,
-                media.updated_at,
-            )
-            .run()
-        await queueImageReview(c.env.DB, media.id)
-
-        return jsonResponse(c, MediaResponseSchema, {media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, media)}, 201)
+        media = await createAndPersistCharacterMedia(c.env, currentUser.id, character.id, mediaId.value, artists, {
+            sfw: sfwUpload,
+            nsfw: nsfwUpload,
+            completedKeys,
+        })
     } catch (error) {
         await deleteR2Objects(c.env.MEDIA_BUCKET, completedKeys)
-        if (error instanceof Error && error.message) {
-            return jsonResponse(c, ErrorResponseSchema, {error: error.message}, 400)
-        }
-
-        throw error
+        return mediaCompletionErrorResponse(c, error, referenceId)
     }
+
+    return jsonResponse(c, MediaResponseSchema, {media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, media)}, 201)
 })
 
 /* istanbul ignore next -- route behavior is covered by integration tests; remaining branches are defensive upload-init failure paths. */
@@ -1804,6 +1539,7 @@ characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
 
     const uploadedKeys: string[] = []
     const deletedKeys: string[] = []
+    const referenceId = crypto.randomUUID()
     const sfwWasModified = removeSfw || Boolean(sfwUpload)
     const nsfwWasModified = removeNsfw || Boolean(nsfwUpload)
     const nextMedia: CharacterMediaRecord = {
@@ -1818,10 +1554,7 @@ characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
 
         if (sfwUpload) {
             await replaceMediaVariantWithChunkedUpload(
-                c.env.IMAGES,
-                c.env.MEDIA_BUCKET,
                 c.env,
-                c.env.MEDIA_PUBLIC_BASE_URL,
                 currentUser.id,
                 character.id,
                 media,
@@ -1835,10 +1568,7 @@ characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
 
         if (nsfwUpload) {
             await replaceMediaVariantWithChunkedUpload(
-                c.env.IMAGES,
-                c.env.MEDIA_BUCKET,
                 c.env,
-                c.env.MEDIA_PUBLIC_BASE_URL,
                 currentUser.id,
                 character.id,
                 media,
@@ -1854,21 +1584,14 @@ characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
             sfwWasModified,
             nsfwWasModified,
         })
-        if (sfwWasModified || nsfwWasModified) {
-            await queueImageReview(c.env.DB, media.id)
-        }
-
-        await deleteR2Objects(c.env.MEDIA_BUCKET, deletedKeys)
-
-        return jsonResponse(c, MediaResponseSchema, {media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, nextMedia)})
     } catch (error) {
         await deleteR2Objects(c.env.MEDIA_BUCKET, uploadedKeys)
-        if (error instanceof Error && error.message) {
-            return jsonResponse(c, ErrorResponseSchema, {error: error.message}, 400)
-        }
-
-        throw error
+        return mediaCompletionErrorResponse(c, error, referenceId)
     }
+
+    await deleteR2Objects(c.env.MEDIA_BUCKET, deletedKeys)
+
+    return jsonResponse(c, MediaResponseSchema, {media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, nextMedia)})
 })
 
 characterRoutes.delete('/:id/media/:mediaId', async (c) => {
@@ -2170,7 +1893,7 @@ async function updateCharacterMediaRecord(
         nsfwWasModified: boolean
     },
 ): Promise<void> {
-    await db
+    const updateStatement = db
         .prepare(
             `UPDATE character_media
          SET sfw_image_key         = ?,
@@ -2240,7 +1963,13 @@ async function updateCharacterMediaRecord(
             media.character_id,
             media.user_id,
         )
-        .run()
+    const statements = [updateStatement]
+
+    if (options.sfwWasModified || options.nsfwWasModified) {
+        statements.push(createImageReviewQueueStatement(db, media.id, media.updated_at))
+    }
+
+    await db.batch(statements)
 }
 
 function toPublicFolder(baseUrl: string, folder: CharacterFolderRecord) {
@@ -2668,6 +2397,29 @@ function describeError(error: unknown): string {
     }
 }
 
+function mediaCompletionFailure(error: unknown, referenceId: string): {message: string; status: 400 | 500} {
+    if (error instanceof GalleryUploadValidationError) {
+        return {message: error.message, status: 400}
+    }
+
+    console.error(
+        JSON.stringify({
+            message: 'Gallery media completion failed',
+            referenceId,
+            error: describeError(error),
+        }),
+    )
+    return {
+        message: `Media upload could not be completed. Try again, or contact support with reference ${referenceId}.`,
+        status: 500,
+    }
+}
+
+function mediaCompletionErrorResponse(c: CharacterRouteContext, error: unknown, referenceId: string): Response {
+    const failure = mediaCompletionFailure(error, referenceId)
+    return jsonResponse(c, ErrorResponseSchema, {error: failure.message}, failure.status)
+}
+
 function existingMediaVariantKey(media: CharacterMediaRecord, rating: MediaRating): string | null {
     return rating === 'sfw' ? media.sfw_image_key : media.nsfw_image_key
 }
@@ -2765,11 +2517,245 @@ function assignMediaVariant(
     nextMedia.nsfw_blur_image_key = null
 }
 
-async function replaceMediaVariantWithChunkedUpload(
-    images: ImagesBinding,
-    bucket: R2Bucket,
+async function completeMediaVariant(
+    context: MediaCompletionContext,
+    upload: CompletedChunkedUpload,
+    rating: MediaRating,
+    label: string,
+): Promise<CompletedMediaVariant> {
+    const image = await completeChunkedGalleryUpload(
+        context.env.MEDIA_BUCKET,
+        context.userId,
+        context.characterId,
+        context.mediaId,
+        upload,
+        rating,
+        label,
+    )
+    context.completedKeys.push(
+        characterMediaImageObjectKey(context.userId, context.characterId, context.mediaId, image.imageKey, rating, image.contentType),
+    )
+    const preview = await generateAndPutMediaPreviewImage(
+        context.env,
+        context.env.MEDIA_BUCKET,
+        context.env.MEDIA_PUBLIC_BASE_URL,
+        context.userId,
+        context.characterId,
+        context.mediaId,
+        image,
+        rating,
+        context.completedKeys,
+    )
+    const nsfwBlurImageKey =
+        rating === 'nsfw'
+            ? await putNsfwBlurImage(
+                  context.env.IMAGES,
+                  context.env.MEDIA_BUCKET,
+                  context.userId,
+                  context.characterId,
+                  context.mediaId,
+                  preview.preview,
+                  context.completedKeys,
+              )
+            : null
+
+    return {rating, image, preview, nsfwBlurImageKey}
+}
+
+function applyCompletedMediaVariant(media: CharacterMediaRecord, variant: CompletedMediaVariant): void {
+    assignMediaVariant(media, variant.rating, variant.image, variant.preview)
+
+    if (variant.rating === 'nsfw') {
+        media.nsfw_blur_image_key = variant.nsfwBlurImageKey
+    }
+}
+
+function createNewCharacterMediaRecord(input: {
+    id: string
+    userId: string
+    characterId: string
+    artists: ParsedMediaArtists
+    variants: CompletedMediaVariant[]
+    now: string
+}): CharacterMediaRecord {
+    const media: CharacterMediaRecord = {
+        id: input.id,
+        user_id: input.userId,
+        character_id: input.characterId,
+        sfw_image_key: null,
+        nsfw_image_key: null,
+        sfw_content_type: null,
+        nsfw_content_type: null,
+        sfw_artist: input.artists.sfwArtist,
+        nsfw_artist: input.artists.nsfwArtist,
+        sfw_width: null,
+        sfw_height: null,
+        sfw_byte_size: null,
+        nsfw_width: null,
+        nsfw_height: null,
+        nsfw_byte_size: null,
+        sfw_preview_image_key: null,
+        sfw_preview_width: null,
+        sfw_preview_height: null,
+        sfw_preview_byte_size: null,
+        nsfw_preview_image_key: null,
+        nsfw_blur_image_key: null,
+        nsfw_preview_width: null,
+        nsfw_preview_height: null,
+        nsfw_preview_byte_size: null,
+        created_at: input.now,
+        updated_at: input.now,
+    }
+
+    for (const variant of input.variants) {
+        applyCompletedMediaVariant(media, variant)
+    }
+
+    return media
+}
+
+async function createAndPersistCharacterMedia(
     env: Bindings,
-    mediaPublicBaseUrl: string,
+    userId: string,
+    characterId: string,
+    mediaId: string,
+    artists: ParsedMediaArtists,
+    input: {
+        sfw: CompletedChunkedUpload | null
+        nsfw: CompletedChunkedUpload | null
+        completedKeys: string[]
+    },
+): Promise<CharacterMediaRecord> {
+    const context = {env, userId, characterId, mediaId, completedKeys: input.completedKeys}
+    const variants: CompletedMediaVariant[] = []
+
+    if (input.sfw) {
+        variants.push(await completeMediaVariant(context, input.sfw, 'sfw', 'SFW image'))
+    }
+
+    if (input.nsfw) {
+        variants.push(await completeMediaVariant(context, input.nsfw, 'nsfw', 'NSFW image'))
+    }
+
+    const now = toSqlTimestamp(new Date())
+    const media = createNewCharacterMediaRecord({id: mediaId, userId, characterId, artists, variants, now})
+    await env.DB.batch([createCharacterMediaInsertStatement(env.DB, media), createImageReviewQueueStatement(env.DB, media.id, now)])
+    return media
+}
+
+async function completeToyhouseImportItem(
+    env: Bindings,
+    userId: string,
+    item: ToyhouseImportItemRecord,
+    mediaId: string,
+    upload: CompletedChunkedUpload,
+    completedKeys: string[],
+): Promise<CharacterMediaRecord> {
+    const now = toSqlTimestamp(new Date())
+    await markToyhouseImportItemUploading(env.DB, userId, item.id, now)
+    const variant = await completeMediaVariant(
+        {env, userId, characterId: item.character_id, mediaId, completedKeys},
+        upload,
+        item.rating,
+        'Toyhou.se image',
+    )
+    const media = createNewCharacterMediaRecord({
+        id: mediaId,
+        userId,
+        characterId: item.character_id,
+        artists: {sfwArtist: '', nsfwArtist: ''},
+        variants: [variant],
+        now,
+    })
+    await env.DB.batch([
+        createCharacterMediaInsertStatement(env.DB, media),
+        createImportedToyhouseItemStatement(env.DB, userId, item.id, media.id, now),
+        createImageReviewQueueStatement(env.DB, media.id, now),
+        createToyhouseImportJobStatusStatement(env.DB, userId, item.job_id, now),
+    ])
+    return media
+}
+
+async function markToyhouseImportItemUploading(db: D1Database, userId: string, itemId: string, now: string): Promise<void> {
+    await db
+        .prepare(
+            `UPDATE toyhouse_import_items
+             SET status = ?,
+                 error  = '',
+                 updated_at = ?
+             WHERE id = ?
+               AND user_id = ?`,
+        )
+        .bind('uploading', now, itemId, userId)
+        .run()
+}
+
+function createImportedToyhouseItemStatement(
+    db: D1Database,
+    userId: string,
+    itemId: string,
+    mediaId: string,
+    now: string,
+): D1PreparedStatement {
+    return db
+        .prepare(
+            `UPDATE toyhouse_import_items
+             SET status   = ?,
+                 media_id = ?,
+                 error    = '',
+                 updated_at = ?
+             WHERE id = ?
+               AND user_id = ?`,
+        )
+        .bind('imported', mediaId, now, itemId, userId)
+}
+
+function createCharacterMediaInsertStatement(db: D1Database, media: CharacterMediaRecord): D1PreparedStatement {
+    return db
+        .prepare(
+            `INSERT INTO character_media (id, user_id, character_id,
+                                          sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type,
+                                          sfw_artist, nsfw_artist,
+                                          sfw_width, sfw_height, sfw_byte_size, sfw_preview_image_key,
+                                          sfw_preview_width, sfw_preview_height, sfw_preview_byte_size,
+                                          nsfw_width, nsfw_height, nsfw_byte_size, nsfw_preview_image_key,
+                                          nsfw_preview_width, nsfw_preview_height, nsfw_preview_byte_size,
+                                          nsfw_blur_image_key,
+                                          created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+            media.id,
+            media.user_id,
+            media.character_id,
+            media.sfw_image_key,
+            media.nsfw_image_key,
+            media.sfw_content_type,
+            media.nsfw_content_type,
+            media.sfw_artist,
+            media.nsfw_artist,
+            media.sfw_width,
+            media.sfw_height,
+            media.sfw_byte_size,
+            media.sfw_preview_image_key,
+            media.sfw_preview_width,
+            media.sfw_preview_height,
+            media.sfw_preview_byte_size,
+            media.nsfw_width,
+            media.nsfw_height,
+            media.nsfw_byte_size,
+            media.nsfw_preview_image_key,
+            media.nsfw_preview_width,
+            media.nsfw_preview_height,
+            media.nsfw_preview_byte_size,
+            media.nsfw_blur_image_key,
+            media.created_at,
+            media.updated_at,
+        )
+}
+
+async function replaceMediaVariantWithChunkedUpload(
+    env: Bindings,
     userId: string,
     characterId: string,
     media: CharacterMediaRecord,
@@ -2781,32 +2767,19 @@ async function replaceMediaVariantWithChunkedUpload(
 ): Promise<void> {
     queueExistingMediaVariantDelete(userId, characterId, media, rating, deletedKeys)
     const label = rating === 'sfw' ? 'SFW image' : 'NSFW image'
-    const image = await completeChunkedGalleryUpload(bucket, userId, characterId, media.id, upload, rating, label)
-    uploadedKeys.push(characterMediaImageObjectKey(userId, characterId, media.id, image.imageKey, rating, image.contentType))
-    const previewImage = await generateAndPutMediaPreviewImage(
-        env,
-        bucket,
-        mediaPublicBaseUrl,
-        userId,
-        characterId,
-        media.id,
-        image,
-        rating,
-        uploadedKeys,
-    )
-    assignMediaVariant(nextMedia, rating, image, previewImage)
-
-    if (rating === 'nsfw') {
-        nextMedia.nsfw_blur_image_key = await putNsfwBlurImage(
-            images,
-            bucket,
+    const variant = await completeMediaVariant(
+        {
+            env,
             userId,
             characterId,
-            media.id,
-            previewImage.preview,
-            uploadedKeys,
-        )
-    }
+            mediaId: media.id,
+            completedKeys: uploadedKeys,
+        },
+        upload,
+        rating,
+        label,
+    )
+    applyCompletedMediaVariant(nextMedia, variant)
 }
 
 async function putMediaPreviewImage(
@@ -3008,26 +2981,7 @@ async function previewFromResponse(response: Response, image: CompletedGalleryUp
     const bytes = new Uint8Array(await response.arrayBuffer())
     const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.toLowerCase() ?? ''
 
-    if (!response.ok) {
-        const canDecodeMessage = contentType.startsWith('text/') || contentType === 'application/json'
-        const message = canDecodeMessage ? new TextDecoder().decode(bytes).slice(0, 500) : ''
-        const details = message ? `: ${message}` : contentType ? ` (${contentType})` : ''
-        throw new Error(`${label} failed with ${response.status}${details}`)
-    }
-
-    if (contentType !== GALLERY_PREVIEW_CONTENT_TYPE) {
-        const details = contentType ? ` (${contentType})` : ''
-        throw new PreviewValidationError(`${label} returned an unexpected content type${details}`)
-    }
-
-    if (bytes.byteLength <= 0) {
-        throw new Error(`${label} is empty`)
-    }
-
-    /* istanbul ignore if -- exercising this would require allocating an 800MB+ response in a Worker test. */
-    if (bytes.byteLength > GALLERY_PREVIEW_MAX_BYTES) {
-        throw new Error(`${label} is too large`)
-    }
+    assertPreviewResponse(response, bytes, contentType, label)
 
     const dimensions = getWebpDimensions(bytes)
 
@@ -3049,6 +3003,26 @@ async function previewFromResponse(response: Response, image: CompletedGalleryUp
     }
 
     return preview
+}
+
+function assertPreviewResponse(response: Response, bytes: Uint8Array, contentType: string, label: string): void {
+    if (!response.ok) {
+        throw new Error(`${label} failed with ${response.status}`)
+    }
+
+    if (contentType !== GALLERY_PREVIEW_CONTENT_TYPE) {
+        const details = contentType ? ` (${contentType})` : ''
+        throw new PreviewValidationError(`${label} returned an unexpected content type${details}`)
+    }
+
+    if (bytes.byteLength <= 0) {
+        throw new Error(`${label} is empty`)
+    }
+
+    /* istanbul ignore if -- exercising this would require allocating an 800MB+ response in a Worker test. */
+    if (bytes.byteLength > GALLERY_PREVIEW_MAX_BYTES) {
+        throw new Error(`${label} is too large`)
+    }
 }
 
 /* istanbul ignore next -- blur generation is route-tested; remaining branch is a defensive content-type fallback. */
@@ -3113,40 +3087,51 @@ async function parseCreateCharacterRequest(c: CharacterRouteContext): Promise<
     const contentType = c.req.header('content-type') ?? ''
 
     if (contentType.includes('multipart/form-data')) {
-        const form = await readFormDataUpTo(c.req.raw, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES)
-
-        if (!form) {
-            return {error: 'Character profile image upload is too large', status: 413}
-        }
-
-        const profileImage = form.get('profileImage') ?? form.get('new-character-profile-image')
-
-        return {
-            name: form.get('name') ?? form.get('new-character-name'),
-            folderId: form.get('folderId') ?? form.get('new-character-folder'),
-            profileImage: profileImage instanceof File ? profileImage : null,
-        }
+        return await parseMultipartCreateCharacterRequest(c.req.raw)
     }
 
     if (contentType.includes('application/json')) {
-        try {
-            const body = await readJsonUpTo<CreateCharacterRequest>(c.req.raw, PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES)
-
-            if (!body) {
-                return {error: 'Character profile image upload is too large', status: 413}
-            }
-
-            return {
-                name: body.name ?? body['new-character-name'],
-                folderId: body.folderId ?? body['new-character-folder'],
-                profileImage: readJsonProfileImage(body),
-            }
-        } catch {
-            return {error: 'Invalid JSON body', status: 400}
-        }
+        return await parseJsonCreateCharacterRequest(c.req.raw)
     }
 
     return {error: 'JSON or multipart form data is required', status: 400}
+}
+
+async function parseMultipartCreateCharacterRequest(
+    req: Request,
+): Promise<{name: unknown; folderId: unknown; profileImage: File | null} | {error: string; status: 413}> {
+    const form = await readFormDataUpTo(req, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES)
+
+    if (!form) {
+        return {error: 'Character profile image upload is too large', status: 413}
+    }
+
+    const profileImage = form.get('profileImage') ?? form.get('new-character-profile-image')
+    return {
+        name: form.get('name') ?? form.get('new-character-name'),
+        folderId: form.get('folderId') ?? form.get('new-character-folder'),
+        profileImage: profileImage instanceof File ? profileImage : null,
+    }
+}
+
+async function parseJsonCreateCharacterRequest(
+    req: Request,
+): Promise<{name: unknown; folderId: unknown; profileImage: JsonProfileImage | null} | {error: string; status: 400 | 413}> {
+    try {
+        const body = await readJsonUpTo<CreateCharacterRequest>(req, PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES)
+
+        if (!body) {
+            return {error: 'Character profile image upload is too large', status: 413}
+        }
+
+        return {
+            name: body.name ?? body['new-character-name'],
+            folderId: body.folderId ?? body['new-character-folder'],
+            profileImage: readJsonProfileImage(body),
+        }
+    } catch {
+        return {error: 'Invalid JSON body', status: 400}
+    }
 }
 
 /* istanbul ignore next -- parser behavior is route/helper-tested; remaining branch gaps are alternate form-field compatibility aliases. */
@@ -3309,15 +3294,27 @@ function normalizeArtistName(value: unknown): {artist: string} | {error: string}
 
 type ParsedGalleryLayout = {
     mediaIds: Set<string>
-    tabs: {
-        id: string
-        name: string
-        rows: {
-            id: string
-            mediaIds: string[]
-            forceFullWidth: boolean
-        }[]
-    }[]
+    tabs: ParsedGalleryTab[]
+}
+
+type ParsedGalleryTab = {
+    id: string
+    name: string
+    rows: ParsedGalleryRow[]
+}
+
+type ParsedGalleryRow = {
+    id: string
+    mediaIds: string[]
+    forceFullWidth: boolean
+}
+
+type GalleryLayoutParseState = {
+    mediaIds: Set<string>
+    tabIds: Set<string>
+    rowIds: Set<string>
+    rowCount: number
+    placementCount: number
 }
 
 function parseGalleryLayout(body: GalleryLayoutRequest): ParsedGalleryLayout | {error: string} {
@@ -3329,118 +3326,149 @@ function parseGalleryLayout(body: GalleryLayoutRequest): ParsedGalleryLayout | {
         return {error: `Gallery must contain between 1 and ${GALLERY_MAX_TABS} tabs`}
     }
 
-    const parsed: ParsedGalleryLayout = {
+    const state: GalleryLayoutParseState = {
         mediaIds: new Set(),
-        tabs: [],
+        tabIds: new Set(),
+        rowIds: new Set(),
+        rowCount: 0,
+        placementCount: 0,
     }
-    const tabIds = new Set<string>()
-    const rowIds = new Set<string>()
-    let rowCount = 0
-    let placementCount = 0
+    const tabs: ParsedGalleryTab[] = []
 
     for (const tabItem of body.tabs) {
-        if (!isRecord(tabItem)) {
-            return {error: 'Gallery tab must be an object'}
+        const tab = parseGalleryTab(tabItem, state)
+
+        if ('error' in tab) {
+            return tab
         }
 
-        const tabId = normalizeOptionalText(tabItem.id)
-        const name = normalizeGalleryTabName(tabItem.name)
-
-        if (!tabId || !isValidTreeId(tabId)) {
-            return {error: 'Gallery tab id is invalid'}
-        }
-
-        if (tabIds.has(tabId)) {
-            return {error: 'Gallery tab ids must be unique'}
-        }
-
-        if ('error' in name) {
-            return name
-        }
-
-        const rowItems = tabItem.rows === undefined ? [] : tabItem.rows
-
-        if (!Array.isArray(rowItems)) {
-            return {error: 'Gallery tab rows are required'}
-        }
-
-        const tab = {
-            id: tabId,
-            name: name.name,
-            rows: [] as {id: string; mediaIds: string[]; forceFullWidth: boolean}[],
-        }
-        const mediaIdsInTab = new Set<string>()
-        tabIds.add(tabId)
-
-        for (const rowItem of rowItems) {
-            rowCount += 1
-
-            if (rowCount > GALLERY_MAX_ROWS) {
-                return {error: `Gallery must contain ${GALLERY_MAX_ROWS} rows or fewer`}
-            }
-
-            if (!isRecord(rowItem)) {
-                return {error: 'Gallery row must be an object'}
-            }
-
-            const rowId = normalizeOptionalText(rowItem.id)
-
-            if (!rowId || !isValidTreeId(rowId)) {
-                return {error: 'Gallery row id is invalid'}
-            }
-
-            if (rowIds.has(rowId)) {
-                return {error: 'Gallery row ids must be unique'}
-            }
-
-            if (!Array.isArray(rowItem.mediaIds)) {
-                return {error: 'Gallery row media ids are required'}
-            }
-
-            if (rowItem.mediaIds.length > GALLERY_MAX_IMAGES_PER_ROW) {
-                return {error: `Gallery rows can contain ${GALLERY_MAX_IMAGES_PER_ROW} images or fewer`}
-            }
-
-            rowIds.add(rowId)
-
-            const row = {
-                id: rowId,
-                mediaIds: [] as string[],
-                forceFullWidth: rowItem.forceFullWidth === true,
-            }
-
-            for (const rawMediaId of rowItem.mediaIds) {
-                const mediaId = normalizeOptionalText(rawMediaId)
-                placementCount += 1
-
-                /* istanbul ignore if -- max rows multiplied by max images per row cannot exceed this limit. */
-                if (placementCount > GALLERY_MAX_MEDIA_PLACEMENTS) {
-                    return {error: `Gallery must contain ${GALLERY_MAX_MEDIA_PLACEMENTS} media placements or fewer`}
-                }
-
-                if (!mediaId || !isValidTreeId(mediaId)) {
-                    return {error: 'Gallery media id is invalid'}
-                }
-
-                if (mediaIdsInTab.has(mediaId)) {
-                    return {error: 'A media item can only appear once in each gallery tab'}
-                }
-
-                mediaIdsInTab.add(mediaId)
-                parsed.mediaIds.add(mediaId)
-                row.mediaIds.push(mediaId)
-            }
-
-            tab.rows.push(row)
-        }
-
-        tab.rows.forEach((row, rowIndex) => {
-            row.forceFullWidth = shouldForceGalleryRowFullWidth(row, rowIndex, tab.rows.length)
-        })
-        parsed.tabs.push(tab)
+        tabs.push(tab)
     }
 
-    return parsed
+    return {mediaIds: state.mediaIds, tabs}
+}
+
+function parseGalleryTab(value: unknown, state: GalleryLayoutParseState): ParsedGalleryTab | {error: string} {
+    if (!isRecord(value)) {
+        return {error: 'Gallery tab must be an object'}
+    }
+
+    const idResult = parseUniqueGalleryId(value.id, state.tabIds, 'tab')
+    const nameResult = normalizeGalleryTabName(value.name)
+    const rowItems = value.rows === undefined ? [] : value.rows
+
+    if ('error' in idResult) {
+        return idResult
+    }
+
+    if ('error' in nameResult) {
+        return nameResult
+    }
+
+    if (!Array.isArray(rowItems)) {
+        return {error: 'Gallery tab rows are required'}
+    }
+
+    const rows: ParsedGalleryRow[] = []
+    const mediaIdsInTab = new Set<string>()
+
+    for (const rowItem of rowItems) {
+        const row = parseGalleryRow(rowItem, mediaIdsInTab, state)
+
+        if ('error' in row) {
+            return row
+        }
+
+        rows.push(row)
+    }
+
+    rows.forEach((row, rowIndex) => {
+        row.forceFullWidth = shouldForceGalleryRowFullWidth(row, rowIndex, rows.length)
+    })
+
+    return {id: idResult.id, name: nameResult.name, rows}
+}
+
+function parseGalleryRow(value: unknown, mediaIdsInTab: Set<string>, state: GalleryLayoutParseState): ParsedGalleryRow | {error: string} {
+    state.rowCount += 1
+
+    if (state.rowCount > GALLERY_MAX_ROWS) {
+        return {error: `Gallery must contain ${GALLERY_MAX_ROWS} rows or fewer`}
+    }
+
+    if (!isRecord(value)) {
+        return {error: 'Gallery row must be an object'}
+    }
+
+    const idResult = parseUniqueGalleryId(value.id, state.rowIds, 'row')
+
+    if ('error' in idResult) {
+        return idResult
+    }
+
+    if (!Array.isArray(value.mediaIds)) {
+        return {error: 'Gallery row media ids are required'}
+    }
+
+    if (value.mediaIds.length > GALLERY_MAX_IMAGES_PER_ROW) {
+        return {error: `Gallery rows can contain ${GALLERY_MAX_IMAGES_PER_ROW} images or fewer`}
+    }
+
+    const mediaIds = parseGalleryMediaIds(value.mediaIds, mediaIdsInTab, state)
+
+    if ('error' in mediaIds) {
+        return mediaIds
+    }
+
+    return {id: idResult.id, mediaIds: mediaIds.ids, forceFullWidth: value.forceFullWidth === true}
+}
+
+function parseUniqueGalleryId(value: unknown, ids: Set<string>, label: 'tab' | 'row'): {id: string} | {error: string} {
+    const id = normalizeOptionalText(value)
+
+    if (!id || !isValidTreeId(id)) {
+        return {error: `Gallery ${label} id is invalid`}
+    }
+
+    if (ids.has(id)) {
+        return {error: `Gallery ${label} ids must be unique`}
+    }
+
+    ids.add(id)
+    return {id}
+}
+
+function parseGalleryMediaIds(
+    values: unknown[],
+    mediaIdsInTab: Set<string>,
+    state: GalleryLayoutParseState,
+): {ids: string[]} | {error: string} {
+    const ids: string[] = []
+
+    for (const value of values) {
+        state.placementCount += 1
+
+        /* istanbul ignore if -- max rows multiplied by max images per row cannot exceed this limit. */
+        if (state.placementCount > GALLERY_MAX_MEDIA_PLACEMENTS) {
+            return {error: `Gallery must contain ${GALLERY_MAX_MEDIA_PLACEMENTS} media placements or fewer`}
+        }
+
+        const id = normalizeOptionalText(value)
+
+        if (!id || !isValidTreeId(id)) {
+            return {error: 'Gallery media id is invalid'}
+        }
+
+        if (mediaIdsInTab.has(id)) {
+            return {error: 'A media item can only appear once in each gallery tab'}
+        }
+
+        mediaIdsInTab.add(id)
+        state.mediaIds.add(id)
+        ids.push(id)
+    }
+
+    return {ids}
 }
 
 function validateCompleteGalleryLayout(
@@ -3479,19 +3507,26 @@ type FlattenedTreeItem = {
     sortOrder: number
 }
 
-function flattenTreeItems(
+type TreeParseState = {
+    seen: Set<string>
+    itemCount: number
+}
+
+type ParsedTreeItem = {
+    item: FlattenedTreeItem
+    children: unknown[]
+}
+
+function flattenTreeItems(items: unknown[]): {items: FlattenedTreeItem[]} | {error: string} {
+    return flattenTreeLevel(items, null, 0, {seen: new Set(), itemCount: 0})
+}
+
+function flattenTreeLevel(
     items: unknown[],
-    parentFolderId: string | null = null,
-    seen = new Set<string>(),
-    depth = 0,
-    itemCount = {value: 0},
-):
-    | {
-          items: FlattenedTreeItem[]
-      }
-    | {
-          error: string
-      } {
+    parentFolderId: string | null,
+    depth: number,
+    state: TreeParseState,
+): {items: FlattenedTreeItem[]} | {error: string} {
     if (depth > TREE_MAX_DEPTH) {
         return {error: 'Folder nesting is too deep'}
     }
@@ -3499,63 +3534,84 @@ function flattenTreeItems(
     const flattened: FlattenedTreeItem[] = []
 
     for (let index = 0; index < items.length; index += 1) {
-        const item = items[index]
+        state.itemCount += 1
 
-        itemCount.value += 1
-
-        if (itemCount.value > TREE_MAX_ITEMS) {
+        if (state.itemCount > TREE_MAX_ITEMS) {
             return {error: 'Tree contains too many items'}
         }
 
-        if (!isRecord(item)) {
-            return {error: 'Tree item must be an object'}
+        const item = parseTreeItem(items[index], parentFolderId, index, state.seen)
+
+        if ('error' in item) {
+            return item
         }
 
-        const type = item.type
-        const id = normalizeOptionalText(item.id)
+        flattened.push(item.item)
 
-        if (type !== 'folder' && type !== 'character') {
-            return {error: 'Tree item type must be folder or character'}
-        }
-
-        if (!id || !isValidTreeId(id)) {
-            return {error: 'Tree item id is invalid'}
-        }
-
-        const seenKey = `${type}:${id}`
-
-        if (seen.has(seenKey)) {
-            return {error: 'Tree item ids must be unique'}
-        }
-
-        seen.add(seenKey)
-        flattened.push({
-            type,
-            id,
-            parentFolderId,
-            sortOrder: index,
-        })
-
-        if (type === 'folder') {
-            const children = item.children
-
-            if (children !== undefined && !Array.isArray(children)) {
-                return {error: 'Folder children must be an array'}
-            }
-
-            const childResult = flattenTreeItems(children ?? [], id, seen, depth + 1, itemCount)
+        if (item.item.type === 'folder') {
+            const childResult = flattenTreeLevel(item.children, item.item.id, depth + 1, state)
 
             if ('error' in childResult) {
                 return childResult
             }
 
             flattened.push(...childResult.items)
-        } else if (item.children !== undefined) {
-            return {error: 'Characters cannot contain children'}
         }
     }
 
     return {items: flattened}
+}
+
+function parseTreeItem(
+    value: unknown,
+    parentFolderId: string | null,
+    sortOrder: number,
+    seen: Set<string>,
+): ParsedTreeItem | {error: string} {
+    if (!isRecord(value)) {
+        return {error: 'Tree item must be an object'}
+    }
+
+    const type = value.type
+    const id = normalizeOptionalText(value.id)
+
+    if (type !== 'folder' && type !== 'character') {
+        return {error: 'Tree item type must be folder or character'}
+    }
+
+    if (!id || !isValidTreeId(id)) {
+        return {error: 'Tree item id is invalid'}
+    }
+
+    const seenKey = `${type}:${id}`
+
+    if (seen.has(seenKey)) {
+        return {error: 'Tree item ids must be unique'}
+    }
+
+    const childrenResult = parseTreeItemChildren(type, value.children)
+
+    if ('error' in childrenResult) {
+        return childrenResult
+    }
+
+    seen.add(seenKey)
+    return {
+        item: {type, id, parentFolderId, sortOrder},
+        children: childrenResult.children,
+    }
+}
+
+function parseTreeItemChildren(type: 'folder' | 'character', value: unknown): {children: unknown[]} | {error: string} {
+    if (type === 'character') {
+        return {children: []}
+    }
+
+    if (value !== undefined && !Array.isArray(value)) {
+        return {error: 'Folder children must be an array'}
+    }
+
+    return {children: value ?? []}
 }
 
 function normalizeOrderedIds(value: unknown, label: string): {ids: string[]} | {error: string} {
@@ -3728,92 +3784,88 @@ function readJsonImage(value: unknown): JsonProfileImage | null {
     return null
 }
 
-/* istanbul ignore next -- parser behavior is helper-tested; remaining branches are legacy saved-data fallback defaults. */
-function parseCharacterHeightChartJson(value: string | null | undefined): CharacterHeightChartJson | null {
-    if (!value) {
-        return null
-    }
-
-    try {
-        const parsed = JSON.parse(value) as unknown
-
-        if (!isRecord(parsed) || !isRecord(parsed.height) || !isRecord(parsed.calibration)) {
-            return null
-        }
-
-        const image = isRecord(parsed.image) ? parsed.image : null
-        const meters = Number(parsed.height.meters)
-        const headYPercent = Number(parsed.calibration.headYPercent)
-        const footYPercent = Number(parsed.calibration.footYPercent)
-        const nameTagXPercent = Number(parsed.calibration.nameTagXPercent ?? 50)
-
-        if (
-            !Number.isFinite(meters) ||
-            !Number.isFinite(headYPercent) ||
-            !Number.isFinite(footYPercent) ||
-            !Number.isFinite(nameTagXPercent)
-        ) {
-            return null
-        }
-
-        return {
-            version: 1,
-            height: {
-                meters,
-            },
-            image: image
-                ? {
-                      key: typeof image.key === 'string' ? image.key : '',
-                      contentType: typeof image.contentType === 'string' ? image.contentType : 'image/png',
-                      naturalWidth: Number(image.naturalWidth) || 1,
-                      naturalHeight: Number(image.naturalHeight) || 1,
-                  }
-                : null,
-            calibration: {
-                headYPercent,
-                footYPercent,
-                footIsVirtual: Boolean(parsed.calibration.footIsVirtual),
-                nameTagXPercent,
-            },
-        }
-    } catch {
-        return null
-    }
-}
-
-/* istanbul ignore next -- validation behavior is helper/route-tested; remaining branch is alternate virtual-foot error wording. */
 function normalizeHeightChartJson(
     rawJson: string,
     existingHeightChart: CharacterHeightChartJson | null,
     uploadedImage: CompletedGalleryUpload | null,
 ): {heightChart: CharacterHeightChartJson} | {error: string} {
+    const body = parseHeightChartRequest(rawJson)
+
+    if ('error' in body) {
+        return body
+    }
+
+    const meters = parseHeightMeters(body.height)
+    const calibration = parseHeightCalibration(body.calibration)
+
+    if ('error' in meters) {
+        return meters
+    }
+
+    if ('error' in calibration) {
+        return calibration
+    }
+
+    return {
+        heightChart: {
+            version: 1,
+            height: {
+                meters: Number(meters.value.toFixed(4)),
+            },
+            image: resolveHeightChartImage(body.image, existingHeightChart, uploadedImage),
+            calibration: {
+                headYPercent: Number(calibration.headYPercent.toFixed(2)),
+                footYPercent: Number(calibration.footYPercent.toFixed(2)),
+                footIsVirtual: calibration.footIsVirtual,
+                nameTagXPercent: Number(calibration.nameTagXPercent.toFixed(2)),
+            },
+        },
+    }
+}
+
+function parseHeightChartRequest(rawJson: string): ParsedHeightChartSaveRequest | {error: string} {
     if (rawJson.length > HEIGHT_CHART_JSON_MAX_LENGTH) {
         return {error: 'Height chart JSON is too large'}
     }
 
-    let body: HeightChartSaveRequest
+    let value: unknown
 
     try {
-        body = JSON.parse(rawJson) as HeightChartSaveRequest
+        value = JSON.parse(rawJson)
     } catch {
         return {error: 'Height chart JSON is invalid'}
     }
 
-    if (!isRecord(body.height) || !isRecord(body.calibration)) {
+    if (!isRecord(value) || !isRecord(value.height) || !isRecord(value.calibration)) {
         return {error: 'Height and calibration data are required'}
     }
 
-    const meters = Number(body.height.meters)
+    return value as ParsedHeightChartSaveRequest
+}
+
+function parseHeightMeters(value: Record<string, unknown>): {value: number} | {error: string} {
+    const meters = Number(value.meters)
 
     if (!Number.isFinite(meters) || meters < HEIGHT_CHART_MIN_METERS || meters > HEIGHT_CHART_MAX_METERS) {
         return {error: 'Height must be between 0.01 and 100 meters'}
     }
 
-    const footIsVirtual = Boolean(body.calibration.footIsVirtual)
+    return {value: meters}
+}
+
+function parseHeightCalibration(value: Record<string, unknown>):
+    | {
+          headYPercent: number
+          footYPercent: number
+          footIsVirtual: boolean
+          nameTagXPercent: number
+      }
+    | {error: string} {
+    const footIsVirtual = Boolean(value.footIsVirtual)
     const maxFootPercent = footIsVirtual ? HEIGHT_CHART_MAX_FOOT_PERCENT : 100
-    const headYPercent = Number(body.calibration.headYPercent)
-    const footYPercent = Number(body.calibration.footYPercent)
-    const nameTagXPercent = Number(body.calibration.nameTagXPercent ?? 50)
+    const headYPercent = Number(value.headYPercent)
+    const footYPercent = Number(value.footYPercent)
+    const nameTagXPercent = Number(value.nameTagXPercent ?? 50)
 
     if (!Number.isFinite(headYPercent) || headYPercent < 0 || headYPercent > 100) {
         return {error: 'Head marker must be between 0 and 100 percent'}
@@ -3835,34 +3887,28 @@ function normalizeHeightChartJson(
         return {error: 'Nametag marker must be between 0 and 100 percent'}
     }
 
-    let image: CharacterHeightChartJson['image'] = null
+    return {headYPercent, footYPercent, footIsVirtual, nameTagXPercent}
+}
 
+function resolveHeightChartImage(
+    requestImage: unknown,
+    existingHeightChart: CharacterHeightChartJson | null,
+    uploadedImage: CompletedGalleryUpload | null,
+): CharacterHeightChartJson['image'] {
     if (uploadedImage) {
-        image = {
+        return {
             key: uploadedImage.imageKey,
             contentType: uploadedImage.contentType,
             naturalWidth: uploadedImage.width,
             naturalHeight: uploadedImage.height,
         }
-    } else if (isRecord(body.image) && existingHeightChart?.image && body.image.key === existingHeightChart.image.key) {
-        image = existingHeightChart.image
     }
 
-    return {
-        heightChart: {
-            version: 1,
-            height: {
-                meters: Number(meters.toFixed(4)),
-            },
-            image,
-            calibration: {
-                headYPercent: Number(headYPercent.toFixed(2)),
-                footYPercent: Number(footYPercent.toFixed(2)),
-                footIsVirtual,
-                nameTagXPercent: Number(nameTagXPercent.toFixed(2)),
-            },
-        },
+    if (isRecord(requestImage) && existingHeightChart?.image && requestImage.key === existingHeightChart.image.key) {
+        return existingHeightChart.image
     }
+
+    return null
 }
 
 function isValidTreeId(value: string): boolean {
@@ -3993,7 +4039,8 @@ async function markToyhouseImportItemFailed(db: D1Database, userId: string, item
                  error  = ?,
                  updated_at = ?
              WHERE id = ?
-               AND user_id = ?`,
+               AND user_id = ?
+               AND status <> 'imported'`,
             )
             .bind('failed', error.slice(0, 500), now, itemId, userId),
         db
@@ -4006,37 +4053,35 @@ async function markToyhouseImportItemFailed(db: D1Database, userId: string, item
                          FROM toyhouse_import_items
                          WHERE id = ?
                            AND user_id = ?
-                         LIMIT 1)`,
+                         LIMIT 1)
+               AND EXISTS (SELECT 1
+                           FROM toyhouse_import_items
+                           WHERE id = ?
+                             AND user_id = ?
+                             AND status <> 'imported')`,
             )
-            .bind('failed', now, userId, itemId, userId),
+            .bind('failed', now, userId, itemId, userId, itemId, userId),
     ])
 }
 
-/* istanbul ignore next -- job status fallback is defensive D1 compatibility handling. */
-async function updateToyhouseImportJobStatus(db: D1Database, userId: string, jobId: string): Promise<void> {
-    const remaining = await db
-        .prepare(
-            `SELECT COUNT(*) AS count
-         FROM toyhouse_import_items
-         WHERE job_id = ?
-           AND user_id = ?
-           AND status <> 'imported'`,
-        )
-        .bind(jobId, userId)
-        .first<{count: number}>()
-    const status = (remaining?.count ?? 0) === 0 ? 'complete' : 'running'
-    const now = toSqlTimestamp(new Date())
-
-    await db
+function createToyhouseImportJobStatusStatement(db: D1Database, userId: string, jobId: string, now: string): D1PreparedStatement {
+    return db
         .prepare(
             `UPDATE toyhouse_import_jobs
-         SET status = ?,
-             updated_at = ?
-         WHERE id = ?
-           AND user_id = ?`,
+             SET status = CASE
+                              WHEN EXISTS (SELECT 1
+                                           FROM toyhouse_import_items
+                                           WHERE job_id = ?
+                                             AND user_id = ?
+                                             AND status <> 'imported')
+                                  THEN 'running'
+                              ELSE 'complete'
+                          END,
+                 updated_at = ?
+             WHERE id = ?
+               AND user_id = ?`,
         )
-        .bind(status, now, jobId, userId)
-        .run()
+        .bind(jobId, userId, now, jobId, userId)
 }
 
 /* istanbul ignore next -- pagination behavior is integration-tested; remaining branch is defensive D1 result fallback. */
@@ -4196,13 +4241,9 @@ async function deleteCharacterMediaObjects(bucket: R2Bucket, media: CharacterMed
     await deleteR2Objects(bucket, objectKeys)
 }
 
-async function deleteR2Objects(bucket: R2Bucket, objectKeys: string[]): Promise<void> {
-    for (const objectKey of objectKeys) {
-        try {
-            await bucket.delete(objectKey)
-        } catch (error) {
-            console.warn('Unable to delete media object', error)
-        }
+async function deleteR2ObjectIfPresent(bucket: R2Bucket, objectKey: string | null): Promise<void> {
+    if (objectKey) {
+        await bucket.delete(objectKey)
     }
 }
 
@@ -4465,331 +4506,6 @@ function parseCompletedChunkedUpload(value: unknown):
     }
 }
 
-function readGalleryImageDimensions(bytes: Uint8Array, contentType: string): {width: number; height: number} | null {
-    if (contentType === 'image/png') {
-        return getPngDimensions(bytes)
-    }
-
-    if (contentType === 'image/webp') {
-        return getWebpDimensions(bytes)
-    }
-
-    if (contentType === 'image/gif') {
-        return readGifDimensions(bytes)
-    }
-
-    if (contentType === 'image/jpeg') {
-        return readJpegDimensions(bytes)
-    }
-
-    if (contentType === 'image/avif') {
-        return readAvifDimensions(bytes)
-    }
-
-    return null
-}
-
-function readGalleryImageMetadata(bytes: Uint8Array, contentType: string): GalleryImageMetadata | null {
-    const dimensions = readGalleryImageDimensions(bytes, contentType)
-
-    if (!dimensions) {
-        return null
-    }
-
-    const exifOrientation = contentType === 'image/jpeg' ? readJpegExifOrientation(bytes) : null
-    const swapsDimensions = exifOrientation !== null && exifOrientation >= 5 && exifOrientation <= 8
-
-    return {
-        width: dimensions.width,
-        height: dimensions.height,
-        displayWidth: swapsDimensions ? dimensions.height : dimensions.width,
-        displayHeight: swapsDimensions ? dimensions.width : dimensions.height,
-        exifOrientation,
-    }
-}
-
-function readGifDimensions(bytes: Uint8Array): {width: number; height: number} | null {
-    if (bytes.length < 10) {
-        return null
-    }
-
-    const signature = String.fromCharCode(...bytes.slice(0, 6))
-
-    if (signature !== 'GIF87a' && signature !== 'GIF89a') {
-        return null
-    }
-
-    return {
-        width: byteAt(bytes, 6) | (byteAt(bytes, 7) << 8),
-        height: byteAt(bytes, 8) | (byteAt(bytes, 9) << 8),
-    }
-}
-
-function readJpegDimensions(bytes: Uint8Array): {width: number; height: number} | null {
-    if (bytes.length < 4 || byteAt(bytes, 0) !== 0xff || byteAt(bytes, 1) !== 0xd8) {
-        return null
-    }
-
-    let offset = 2
-
-    while (offset + 9 < bytes.length) {
-        if (byteAt(bytes, offset) !== 0xff) {
-            return null
-        }
-
-        const marker = byteAt(bytes, offset + 1)
-        offset += 2
-
-        if (marker === 0xd9 || marker === 0xda) {
-            return null
-        }
-
-        const length = (byteAt(bytes, offset) << 8) | byteAt(bytes, offset + 1)
-
-        if (length < 2 || offset + length > bytes.length) {
-            return null
-        }
-
-        if (
-            (marker >= 0xc0 && marker <= 0xc3) ||
-            (marker >= 0xc5 && marker <= 0xc7) ||
-            (marker >= 0xc9 && marker <= 0xcb) ||
-            (marker >= 0xcd && marker <= 0xcf)
-        ) {
-            return {
-                height: (byteAt(bytes, offset + 3) << 8) | byteAt(bytes, offset + 4),
-                width: (byteAt(bytes, offset + 5) << 8) | byteAt(bytes, offset + 6),
-            }
-        }
-
-        offset += length
-    }
-
-    return null
-}
-
-function readJpegExifOrientation(bytes: Uint8Array): number | null {
-    if (bytes.length < 4 || byteAt(bytes, 0) !== 0xff || byteAt(bytes, 1) !== 0xd8) {
-        return null
-    }
-
-    let offset = 2
-
-    while (offset + 4 <= bytes.length) {
-        if (byteAt(bytes, offset) !== 0xff) {
-            return null
-        }
-
-        const marker = byteAt(bytes, offset + 1)
-        offset += 2
-
-        if (marker === 0xd9 || marker === 0xda) {
-            return null
-        }
-
-        /* istanbul ignore if -- the loop guard guarantees two length bytes are available. */
-        if (offset + 2 > bytes.length) {
-            return null
-        }
-
-        const length = (byteAt(bytes, offset) << 8) | byteAt(bytes, offset + 1)
-
-        if (length < 2 || offset + length > bytes.length) {
-            return null
-        }
-
-        if (marker === 0xe1) {
-            const orientation = readExifOrientationFromApp1(bytes, offset + 2, offset + length)
-
-            if (orientation !== null) {
-                return orientation
-            }
-        }
-
-        offset += length
-    }
-
-    return null
-}
-
-/* istanbul ignore next -- EXIF parsing branches are helper-tested; remaining branch is invalid-orientation fallback. */
-function readExifOrientationFromApp1(bytes: Uint8Array, start: number, end: number): number | null {
-    if (end - start < 32 || readAscii(bytes, start, 6) !== 'Exif\0\0') {
-        return null
-    }
-
-    const tiffStart = start + 6
-    const byteOrder = readAscii(bytes, tiffStart, 2)
-    const littleEndian = byteOrder === 'II'
-
-    if (!littleEndian && byteOrder !== 'MM') {
-        return null
-    }
-
-    if (readUint16(bytes, tiffStart + 2, littleEndian) !== 42) {
-        return null
-    }
-
-    const firstIfdOffset = readUint32(bytes, tiffStart + 4, littleEndian)
-    const ifdStart = tiffStart + firstIfdOffset
-
-    if (firstIfdOffset < 8 || ifdStart + 2 > end) {
-        return null
-    }
-
-    const entryCount = readUint16(bytes, ifdStart, littleEndian)
-    let entryOffset = ifdStart + 2
-
-    for (let index = 0; index < entryCount; index += 1) {
-        if (entryOffset + 12 > end) {
-            return null
-        }
-
-        const tag = readUint16(bytes, entryOffset, littleEndian)
-
-        if (tag === 0x0112) {
-            const type = readUint16(bytes, entryOffset + 2, littleEndian)
-            const valueCount = readUint32(bytes, entryOffset + 4, littleEndian)
-
-            if (type !== 3 || valueCount < 1) {
-                return null
-            }
-
-            const orientation = readUint16(bytes, entryOffset + 8, littleEndian)
-
-            return orientation >= 1 && orientation <= 8 ? orientation : null
-        }
-
-        entryOffset += 12
-    }
-
-    return null
-}
-
-function readAvifDimensions(bytes: Uint8Array): {width: number; height: number} | null {
-    return findIsobmffImageSpatialExtents(bytes, 0, bytes.length, 0)
-}
-
-/* istanbul ignore next -- AVIF box parsing branches are helper-tested; remaining branch is no-dimensions recursion fallback. */
-function findIsobmffImageSpatialExtents(
-    bytes: Uint8Array,
-    start: number,
-    end: number,
-    depth: number,
-): {width: number; height: number} | null {
-    if (depth > 8) {
-        return null
-    }
-
-    let offset = start
-
-    while (offset + 8 <= end) {
-        const boxStart = offset
-        let boxSize = readUint32Be(bytes, offset)
-        const boxType = readAscii(bytes, offset + 4, 4)
-        offset += 8
-
-        if (boxSize === 1) {
-            if (offset + 8 > end) {
-                return null
-            }
-
-            const high = readUint32Be(bytes, offset)
-            const low = readUint32Be(bytes, offset + 4)
-            offset += 8
-
-            if (high !== 0 || low > Number.MAX_SAFE_INTEGER) {
-                return null
-            }
-
-            boxSize = low
-        } else if (boxSize === 0) {
-            boxSize = end - boxStart
-        }
-
-        if (boxSize < offset - boxStart || boxStart + boxSize > end) {
-            return null
-        }
-
-        const boxEnd = boxStart + boxSize
-
-        if (boxType === 'ispe') {
-            if (offset + 12 > boxEnd) {
-                return null
-            }
-
-            const width = readUint32Be(bytes, offset + 4)
-            const height = readUint32Be(bytes, offset + 8)
-
-            return width > 0 && height > 0 ? {width, height} : null
-        }
-
-        const childStart = boxType === 'meta' ? offset + 4 : offset
-
-        if ((boxType === 'meta' || boxType === 'iprp' || boxType === 'ipco') && childStart < boxEnd) {
-            const dimensions = findIsobmffImageSpatialExtents(bytes, childStart, boxEnd, depth + 1)
-
-            if (dimensions) {
-                return dimensions
-            }
-        }
-
-        offset = boxEnd
-    }
-
-    return null
-}
-
-function readAscii(bytes: Uint8Array, offset: number, length: number): string {
-    let value = ''
-
-    for (let index = 0; index < length; index += 1) {
-        value += String.fromCharCode(byteAt(bytes, offset + index))
-    }
-
-    return value
-}
-
-function readUint32Be(bytes: Uint8Array, offset: number): number {
-    return (
-        byteAt(bytes, offset) * 0x1000000 +
-        ((byteAt(bytes, offset + 1) << 16) >>> 0) +
-        ((byteAt(bytes, offset + 2) << 8) >>> 0) +
-        byteAt(bytes, offset + 3)
-    )
-}
-
-function readUint16(bytes: Uint8Array, offset: number, littleEndian: boolean): number {
-    if (littleEndian) {
-        return byteAt(bytes, offset) | (byteAt(bytes, offset + 1) << 8)
-    }
-
-    return (byteAt(bytes, offset) << 8) | byteAt(bytes, offset + 1)
-}
-
-function readUint32(bytes: Uint8Array, offset: number, littleEndian: boolean): number {
-    if (littleEndian) {
-        return (
-            byteAt(bytes, offset) +
-            byteAt(bytes, offset + 1) * 0x100 +
-            byteAt(bytes, offset + 2) * 0x10000 +
-            byteAt(bytes, offset + 3) * 0x1000000
-        )
-    }
-
-    return readUint32Be(bytes, offset)
-}
-
-function byteAt(bytes: Uint8Array, offset: number): number {
-    const value = bytes[offset]
-
-    if (value === undefined) {
-        throw new Error(`Image byte offset out of range: ${offset}`)
-    }
-
-    return value
-}
-
 async function completeChunkedGalleryUpload(
     bucket: R2Bucket,
     userId: string,
@@ -4805,24 +4521,24 @@ async function completeChunkedGalleryUpload(
 
     if (completedObject.size <= 0) {
         await deleteR2Objects(bucket, [objectKey])
-        throw new Error(`${label} is empty`)
+        throw new GalleryUploadValidationError(`${label} is empty`)
     }
 
     if (completedObject.size > GALLERY_IMAGE_MAX_BYTES) {
         await deleteR2Objects(bucket, [objectKey])
-        throw new Error(`${label} must be 200 MB or smaller`)
+        throw new GalleryUploadValidationError(`${label} must be 200 MB or smaller`)
     }
 
     const metadata = await readStoredGalleryImageMetadata(bucket, objectKey, upload.contentType)
 
     if (!metadata) {
         await deleteR2Objects(bucket, [objectKey])
-        throw new Error(`${label} dimensions could not be verified`)
+        throw new GalleryUploadValidationError(`${label} dimensions could not be verified`)
     }
 
     if (metadata.width * metadata.height > GALLERY_IMAGE_MAX_PIXELS) {
         await deleteR2Objects(bucket, [objectKey])
-        throw new Error(`${label} must be ${GALLERY_IMAGE_MAX_PIXELS.toLocaleString('en-US')} pixels or smaller`)
+        throw new GalleryUploadValidationError(`${label} must be ${GALLERY_IMAGE_MAX_PIXELS.toLocaleString('en-US')} pixels or smaller`)
     }
 
     return {
@@ -4858,53 +4574,4 @@ async function readStoredGalleryImageMetadata(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-/**
- * @internal Test-only access to private helpers for targeted coverage.
- */
-export const __charactersTestHooks = {
-    applyMediaVariantRemovals,
-    byteAt,
-    clearMediaVariant,
-    cloudflareExifOrientationTransform,
-    completeChunkedGalleryUpload,
-    createChunkedGalleryUploads,
-    deleteR2Objects,
-    expectedPreviewDimensions,
-    flattenTreeItems,
-    findIsobmffImageSpatialExtents,
-    generateMediaPreviewWithContainer,
-    getCharacterMedia,
-    isDuplicateCharacterNameError,
-    maxPreviewByteSize,
-    normalizeArtistName,
-    normalizeGalleryImageContentType,
-    normalizeGalleryImageDimensions,
-    normalizeGalleryTabName,
-    normalizeHeightChartJson,
-    normalizeUploadIdentifier,
-    parseCharacterHeightChartJson,
-    parseChunkedMediaCompleteBody,
-    parseChunkedUploadInitRequest,
-    parseChunkedUploadPair,
-    parseCreateCharacterRequest,
-    parseCreateFolderRequest,
-    parseDeleteCharacterRequest,
-    parseCompletedChunkedUpload,
-    parseGalleryLayout,
-    parseMediaArtists,
-    previewFromResponse,
-    putNsfwBlurImage,
-    toPublicHeightChart,
-    readExifOrientationFromApp1,
-    readGalleryImageDimensions,
-    readGalleryImageMetadata,
-    readGifDimensions,
-    readJpegDimensions,
-    readJpegExifOrientation,
-    readJsonImage,
-    readProfileImageDataUrl,
-    validateGalleryImage,
-    validateProfileImage,
 }

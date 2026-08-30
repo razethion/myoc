@@ -1,8 +1,10 @@
 import type {Bindings} from '../../types/bindings'
 
-const MANAGED_PREFIXES = ['users/', 'characters/']
-const LIST_LIMIT = 1000
-const DELETE_LIMIT_PER_RUN = 5000
+const MANAGED_PREFIXES = ['users/', 'characters/'] as const
+const CLEANUP_CURSOR_CACHE_KEY = 'admin:r2-media-cleanup:cursor:v1'
+const LIST_LIMIT = 500
+const SCAN_LIMIT_PER_RUN = 900
+const DELETE_LIMIT_PER_RUN = 500
 const MIN_STALE_AGE_MS = 24 * 60 * 60 * 1000
 const SAFE_SEGMENT = /^[A-Za-z0-9_-]{1,128}$/
 
@@ -80,9 +82,29 @@ export type R2CleanupSummary = {
     deleted: number
     errors: number
     stoppedAtDeleteLimit: boolean
+    stoppedAtScanLimit: boolean
 }
 
-type R2CleanupEnv = Pick<Bindings, 'DB' | 'MEDIA_BUCKET'>
+type R2CleanupEnv = Pick<Bindings, 'CACHE' | 'DB' | 'MEDIA_BUCKET'>
+
+type CleanupCursor = {
+    cursor?: string
+    prefix: (typeof MANAGED_PREFIXES)[number]
+}
+
+type PrefixCleanupResult = {status: 'complete'} | {status: 'stopped'; cursor?: string; reason: 'deleteLimit' | 'scanLimit'}
+
+type ManagedR2MediaKeyParser = (key: string, parts: string[]) => ManagedR2MediaKey | null
+
+const MANAGED_KEY_PARSERS: ManagedR2MediaKeyParser[] = [
+    parseUserProfileKey,
+    parseCharacterProfileKey,
+    parseCharacterFolderImageKey,
+    parseCharacterMediaKey,
+    parseCharacterMediaPreviewKey,
+    parseCharacterMediaBlurKey,
+    parseCharacterHeightChartKey,
+]
 
 export async function cleanupStaleR2Media(env: R2CleanupEnv, now: Date = new Date()): Promise<R2CleanupSummary> {
     const summary: R2CleanupSummary = {
@@ -94,216 +116,308 @@ export async function cleanupStaleR2Media(env: R2CleanupEnv, now: Date = new Dat
         deleted: 0,
         errors: 0,
         stoppedAtDeleteLimit: false,
+        stoppedAtScanLimit: false,
+    }
+    const savedCursor = await readCleanupCursor(env.CACHE)
+    const startingPrefixIndex = savedCursor ? MANAGED_PREFIXES.indexOf(savedCursor.prefix) : 0
+
+    const prefixes = MANAGED_PREFIXES.slice(startingPrefixIndex)
+
+    for (const [prefixIndex, prefix] of prefixes.entries()) {
+        const cursor = prefixIndex === 0 ? savedCursor?.cursor : undefined
+        const result = await cleanupR2Prefix(env, prefix, cursor, now, summary)
+
+        if (result.status === 'stopped') {
+            summary.stoppedAtDeleteLimit = result.reason === 'deleteLimit'
+            summary.stoppedAtScanLimit = result.reason === 'scanLimit'
+            await writeCleanupCursor(env.CACHE, {prefix, cursor: result.cursor})
+            logCleanupSummary(
+                `R2 media cleanup stopped at per-run ${result.reason === 'deleteLimit' ? 'delete' : 'scan'} limit`,
+                summary,
+                'warn',
+            )
+            return summary
+        }
+
+        const nextPrefix = prefixes[prefixIndex + 1]
+
+        if (summary.scanned >= SCAN_LIMIT_PER_RUN && nextPrefix) {
+            summary.stoppedAtScanLimit = true
+            await writeCleanupCursor(env.CACHE, {prefix: nextPrefix})
+            logCleanupSummary('R2 media cleanup stopped at per-run scan limit', summary, 'warn')
+            return summary
+        }
     }
 
-    for (const prefix of MANAGED_PREFIXES) {
-        let cursor: string | undefined
-
-        do {
-            const listed = await env.MEDIA_BUCKET.list({
-                prefix,
-                limit: LIST_LIMIT,
-                cursor,
-            })
-
-            for (const object of listed.objects) {
-                summary.scanned += 1
-
-                if (!isOldEnoughToClean(object, now)) {
-                    summary.skippedRecent += 1
-                    continue
-                }
-
-                const parsed = parseManagedR2MediaKey(object.key)
-
-                if (!parsed) {
-                    summary.skippedUnknown += 1
-                    continue
-                }
-
-                summary.recognized += 1
-
-                try {
-                    const referenced = await isManagedR2MediaKeyReferenced(env.DB, parsed)
-
-                    if (referenced) {
-                        summary.keptReferenced += 1
-                        continue
-                    }
-
-                    await env.MEDIA_BUCKET.delete(object.key)
-                    summary.deleted += 1
-
-                    if (summary.deleted >= DELETE_LIMIT_PER_RUN) {
-                        summary.stoppedAtDeleteLimit = true
-                        console.warn('R2 media cleanup stopped at per-run delete limit', summary)
-                        return summary
-                    }
-                } catch (error) {
-                    summary.errors += 1
-                    console.warn('Unable to evaluate R2 media object for cleanup', {
-                        key: object.key,
-                        error,
-                    })
-                }
-            }
-
-            cursor = listed.truncated ? listed.cursor : undefined
-        } while (cursor)
-    }
-
-    console.log('R2 media cleanup complete', summary)
+    await env.CACHE.delete(CLEANUP_CURSOR_CACHE_KEY)
+    logCleanupSummary('R2 media cleanup complete', summary, 'log')
     return summary
+}
+
+async function cleanupR2Prefix(
+    env: R2CleanupEnv,
+    prefix: string,
+    initialCursor: string | undefined,
+    now: Date,
+    summary: R2CleanupSummary,
+): Promise<PrefixCleanupResult> {
+    let cursor = initialCursor
+
+    do {
+        const remainingScanCount = SCAN_LIMIT_PER_RUN - summary.scanned
+        const pageStartCursor = cursor
+        const listed = await env.MEDIA_BUCKET.list({prefix, limit: Math.min(LIST_LIMIT, remainingScanCount), cursor})
+
+        for (const object of listed.objects) {
+            if (await cleanupR2Object(env, object, now, summary)) {
+                return {status: 'stopped', reason: 'deleteLimit', cursor: pageStartCursor}
+            }
+        }
+
+        cursor = listed.truncated ? listed.cursor : undefined
+
+        if (cursor && summary.scanned >= SCAN_LIMIT_PER_RUN) {
+            return {status: 'stopped', reason: 'scanLimit', cursor}
+        }
+    } while (cursor)
+
+    return {status: 'complete'}
+}
+
+async function readCleanupCursor(cache: KVNamespace): Promise<CleanupCursor | null> {
+    const rawValue = await cache.get(CLEANUP_CURSOR_CACHE_KEY)
+
+    if (!rawValue) {
+        return null
+    }
+
+    let value: unknown
+
+    try {
+        value = JSON.parse(rawValue) as unknown
+    } catch {
+        await cache.delete(CLEANUP_CURSOR_CACHE_KEY)
+        return null
+    }
+
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        await cache.delete(CLEANUP_CURSOR_CACHE_KEY)
+        return null
+    }
+
+    const {cursor, prefix} = value as Record<string, unknown>
+
+    if (!MANAGED_PREFIXES.includes(prefix as CleanupCursor['prefix']) || (cursor !== undefined && typeof cursor !== 'string')) {
+        await cache.delete(CLEANUP_CURSOR_CACHE_KEY)
+        return null
+    }
+
+    return {
+        prefix: prefix as CleanupCursor['prefix'],
+        ...(typeof cursor === 'string' ? {cursor} : {}),
+    }
+}
+
+async function writeCleanupCursor(cache: KVNamespace, cursor: CleanupCursor): Promise<void> {
+    await cache.put(CLEANUP_CURSOR_CACHE_KEY, JSON.stringify(cursor))
+}
+
+async function cleanupR2Object(env: R2CleanupEnv, object: R2Object, now: Date, summary: R2CleanupSummary): Promise<boolean> {
+    summary.scanned += 1
+
+    if (!isOldEnoughToClean(object, now)) {
+        summary.skippedRecent += 1
+        return false
+    }
+
+    const parsed = parseManagedR2MediaKey(object.key)
+
+    if (!parsed) {
+        summary.skippedUnknown += 1
+        return false
+    }
+
+    summary.recognized += 1
+
+    try {
+        if (await isManagedR2MediaKeyReferenced(env.DB, parsed)) {
+            summary.keptReferenced += 1
+            return false
+        }
+
+        await env.MEDIA_BUCKET.delete(object.key)
+        summary.deleted += 1
+        summary.stoppedAtDeleteLimit = summary.deleted >= DELETE_LIMIT_PER_RUN
+        return summary.stoppedAtDeleteLimit
+    } catch (error) {
+        summary.errors += 1
+        console.warn(
+            JSON.stringify({
+                message: 'Unable to evaluate R2 media object for cleanup',
+                key: object.key,
+                error: error instanceof Error ? error.message : String(error),
+            }),
+        )
+        return false
+    }
+}
+
+function logCleanupSummary(message: string, summary: R2CleanupSummary, level: 'log' | 'warn'): void {
+    console[level](JSON.stringify({message, ...summary}))
 }
 
 export function parseManagedR2MediaKey(key: string): ManagedR2MediaKey | null {
     const parts = key.split('/')
 
-    if (parts.length === 4 && parts[0] === 'users' && parts[2] === 'profile') {
-        const userId = pathPart(parts, 1)
-        const [profilePhotoKey, extension] = splitFileName(pathPart(parts, 3))
+    for (const parser of MANAGED_KEY_PARSERS) {
+        const parsed = parser(key, parts)
 
-        if (isSafeSegment(userId) && isSafeSegment(profilePhotoKey) && extension === 'webp') {
-            return {
-                kind: 'userProfile',
-                key,
-                userId,
-                profilePhotoKey,
-            }
-        }
-    }
-
-    if (parts.length === 5 && parts[0] === 'characters' && parts[3] === 'profile') {
-        const userId = pathPart(parts, 1)
-        const characterId = pathPart(parts, 2)
-        const [profileImageKey, extension] = splitFileName(pathPart(parts, 4))
-
-        if (isSafeSegment(userId) && isSafeSegment(characterId) && isSafeSegment(profileImageKey) && extension === 'webp') {
-            return {
-                kind: 'characterProfile',
-                key,
-                userId,
-                characterId,
-                profileImageKey,
-            }
-        }
-    }
-
-    if (parts.length === 6 && parts[0] === 'characters' && parts[2] === 'folders' && parts[4] === 'image') {
-        const userId = pathPart(parts, 1)
-        const folderId = pathPart(parts, 3)
-        const [folderImageKey, extension] = splitFileName(pathPart(parts, 5))
-
-        if (isSafeSegment(userId) && isSafeSegment(folderId) && isSafeSegment(folderImageKey) && extension === 'webp') {
-            return {
-                kind: 'characterFolderImage',
-                key,
-                userId,
-                folderId,
-                folderImageKey,
-            }
-        }
-    }
-
-    if (parts.length === 7 && parts[0] === 'characters' && parts[3] === 'media') {
-        const userId = pathPart(parts, 1)
-        const characterId = pathPart(parts, 2)
-        const mediaId = pathPart(parts, 4)
-        const rating = pathPart(parts, 5)
-        const [imageKey, extension] = splitFileName(pathPart(parts, 6))
-        const contentType = contentTypeForExtension(extension)
-
-        if (
-            isSafeSegment(userId) &&
-            isSafeSegment(characterId) &&
-            isSafeSegment(mediaId) &&
-            (rating === 'sfw' || rating === 'nsfw') &&
-            isSafeSegment(imageKey) &&
-            contentType
-        ) {
-            return {
-                kind: 'characterMedia',
-                key,
-                userId,
-                characterId,
-                mediaId,
-                rating,
-                imageKey,
-                contentType,
-            }
-        }
-    }
-
-    if (parts.length === 8 && parts[0] === 'characters' && parts[3] === 'media' && parts[6] === 'preview') {
-        const userId = pathPart(parts, 1)
-        const characterId = pathPart(parts, 2)
-        const mediaId = pathPart(parts, 4)
-        const rating = pathPart(parts, 5)
-        const [imageKey, extension] = splitFileName(pathPart(parts, 7))
-
-        if (
-            isSafeSegment(userId) &&
-            isSafeSegment(characterId) &&
-            isSafeSegment(mediaId) &&
-            (rating === 'sfw' || rating === 'nsfw') &&
-            isSafeSegment(imageKey) &&
-            extension === 'webp'
-        ) {
-            return {
-                kind: 'characterMediaPreview',
-                key,
-                userId,
-                characterId,
-                mediaId,
-                rating,
-                imageKey,
-            }
-        }
-    }
-
-    if (parts.length === 8 && parts[0] === 'characters' && parts[3] === 'media' && parts[5] === 'nsfw' && parts[6] === 'blur') {
-        const userId = pathPart(parts, 1)
-        const characterId = pathPart(parts, 2)
-        const mediaId = pathPart(parts, 4)
-        const [imageKey, extension] = splitFileName(pathPart(parts, 7))
-
-        if (
-            isSafeSegment(userId) &&
-            isSafeSegment(characterId) &&
-            isSafeSegment(mediaId) &&
-            isSafeSegment(imageKey) &&
-            extension === 'webp'
-        ) {
-            return {
-                kind: 'characterMediaNsfwBlur',
-                key,
-                userId,
-                characterId,
-                mediaId,
-                imageKey,
-            }
-        }
-    }
-
-    if (parts.length === 5 && parts[0] === 'characters' && parts[3] === 'height-chart') {
-        const userId = pathPart(parts, 1)
-        const characterId = pathPart(parts, 2)
-        const [imageKey, extension] = splitFileName(pathPart(parts, 4))
-        const contentType = contentTypeForExtension(extension)
-
-        if (isSafeSegment(userId) && isSafeSegment(characterId) && isSafeSegment(imageKey) && contentType) {
-            return {
-                kind: 'characterHeightChart',
-                key,
-                userId,
-                characterId,
-                imageKey,
-                contentType,
-            }
+        if (parsed) {
+            return parsed
         }
     }
 
     return null
+}
+
+function parseUserProfileKey(key: string, parts: string[]): ManagedR2MediaKey | null {
+    const [prefix, userId, segment, fileName] = parts
+
+    if (parts.length !== 4 || prefix !== 'users' || segment !== 'profile' || !isSafeSegment(userId) || typeof fileName !== 'string') {
+        return null
+    }
+
+    const [profilePhotoKey, extension] = splitFileName(fileName)
+    return isSafeSegment(profilePhotoKey) && extension === 'webp' ? {kind: 'userProfile', key, userId, profilePhotoKey} : null
+}
+
+function parseCharacterProfileKey(key: string, parts: string[]): ManagedR2MediaKey | null {
+    const [prefix, userId, characterId, segment, fileName] = parts
+
+    if (
+        parts.length !== 5 ||
+        prefix !== 'characters' ||
+        segment !== 'profile' ||
+        !isSafeSegment(userId) ||
+        !isSafeSegment(characterId) ||
+        typeof fileName !== 'string'
+    ) {
+        return null
+    }
+
+    const [profileImageKey, extension] = splitFileName(fileName)
+    return isSafeSegment(profileImageKey) && extension === 'webp'
+        ? {kind: 'characterProfile', key, userId, characterId, profileImageKey}
+        : null
+}
+
+function parseCharacterFolderImageKey(key: string, parts: string[]): ManagedR2MediaKey | null {
+    const [prefix, userId, folderSegment, folderId, imageSegment, fileName] = parts
+
+    if (
+        parts.length !== 6 ||
+        prefix !== 'characters' ||
+        folderSegment !== 'folders' ||
+        imageSegment !== 'image' ||
+        !isSafeSegment(userId) ||
+        !isSafeSegment(folderId) ||
+        typeof fileName !== 'string'
+    ) {
+        return null
+    }
+
+    const [folderImageKey, extension] = splitFileName(fileName)
+    return isSafeSegment(folderImageKey) && extension === 'webp'
+        ? {kind: 'characterFolderImage', key, userId, folderId, folderImageKey}
+        : null
+}
+
+function parseCharacterMediaKey(key: string, parts: string[]): ManagedR2MediaKey | null {
+    const [prefix, userId, characterId, mediaSegment, mediaId, rating, fileName] = parts
+
+    if (
+        parts.length !== 7 ||
+        prefix !== 'characters' ||
+        mediaSegment !== 'media' ||
+        !isSafeSegment(userId) ||
+        !isSafeSegment(characterId) ||
+        !isSafeSegment(mediaId) ||
+        !isRating(rating) ||
+        typeof fileName !== 'string'
+    ) {
+        return null
+    }
+
+    const [imageKey, extension] = splitFileName(fileName)
+    const contentType = contentTypeForExtension(extension)
+    return isSafeSegment(imageKey) && contentType
+        ? {kind: 'characterMedia', key, userId, characterId, mediaId, rating, imageKey, contentType}
+        : null
+}
+
+function parseCharacterMediaPreviewKey(key: string, parts: string[]): ManagedR2MediaKey | null {
+    const [prefix, userId, characterId, mediaSegment, mediaId, rating, previewSegment, fileName] = parts
+
+    if (
+        parts.length !== 8 ||
+        prefix !== 'characters' ||
+        mediaSegment !== 'media' ||
+        previewSegment !== 'preview' ||
+        !isSafeSegment(userId) ||
+        !isSafeSegment(characterId) ||
+        !isSafeSegment(mediaId) ||
+        !isRating(rating) ||
+        typeof fileName !== 'string'
+    ) {
+        return null
+    }
+
+    const [imageKey, extension] = splitFileName(fileName)
+    return isSafeSegment(imageKey) && extension === 'webp'
+        ? {kind: 'characterMediaPreview', key, userId, characterId, mediaId, rating, imageKey}
+        : null
+}
+
+function parseCharacterMediaBlurKey(key: string, parts: string[]): ManagedR2MediaKey | null {
+    const [prefix, userId, characterId, mediaSegment, mediaId, rating, blurSegment, fileName] = parts
+
+    if (
+        parts.length !== 8 ||
+        prefix !== 'characters' ||
+        mediaSegment !== 'media' ||
+        rating !== 'nsfw' ||
+        blurSegment !== 'blur' ||
+        !isSafeSegment(userId) ||
+        !isSafeSegment(characterId) ||
+        !isSafeSegment(mediaId) ||
+        typeof fileName !== 'string'
+    ) {
+        return null
+    }
+
+    const [imageKey, extension] = splitFileName(fileName)
+    return isSafeSegment(imageKey) && extension === 'webp'
+        ? {kind: 'characterMediaNsfwBlur', key, userId, characterId, mediaId, imageKey}
+        : null
+}
+
+function parseCharacterHeightChartKey(key: string, parts: string[]): ManagedR2MediaKey | null {
+    const [prefix, userId, characterId, segment, fileName] = parts
+
+    if (
+        parts.length !== 5 ||
+        prefix !== 'characters' ||
+        segment !== 'height-chart' ||
+        !isSafeSegment(userId) ||
+        !isSafeSegment(characterId) ||
+        typeof fileName !== 'string'
+    ) {
+        return null
+    }
+
+    const [imageKey, extension] = splitFileName(fileName)
+    const contentType = contentTypeForExtension(extension)
+    return isSafeSegment(imageKey) && contentType ? {kind: 'characterHeightChart', key, userId, characterId, imageKey, contentType} : null
 }
 
 async function isManagedR2MediaKeyReferenced(db: D1Database, parsed: ManagedR2MediaKey): Promise<boolean> {
@@ -453,16 +567,6 @@ function splitFileName(fileName: string): [string, string] {
     return [fileName.slice(0, dotIndex), fileName.slice(dotIndex + 1).toLowerCase()]
 }
 
-function pathPart(parts: string[], index: number): string {
-    const part = parts[index]
-
-    if (part === undefined) {
-        throw new Error(`Missing R2 media key segment at index ${index}`)
-    }
-
-    return part
-}
-
 function contentTypeForExtension(extension: string): string | null {
     return EXTENSION_CONTENT_TYPES[extension] ?? null
 }
@@ -471,8 +575,12 @@ function normalizeContentType(value: unknown): string {
     return typeof value === 'string' ? value.toLowerCase() : 'image/png'
 }
 
-function isSafeSegment(value: string): boolean {
-    return SAFE_SEGMENT.test(value)
+function isRating(value: unknown): value is 'sfw' | 'nsfw' {
+    return value === 'sfw' || value === 'nsfw'
+}
+
+function isSafeSegment(value: unknown): value is string {
+    return typeof value === 'string' && SAFE_SEGMENT.test(value)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

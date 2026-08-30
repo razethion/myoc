@@ -1,95 +1,36 @@
 import {describe, expect, it, vi} from 'vitest'
-import {createMockDb} from '../test/mockD1'
+import {seedCharacter, seedMedia, seedUser, useTestDatabase} from '../test/d1'
 import {createMockKVNamespace} from '../test/mockKV'
 import {createMockR2Bucket} from '../test/mockR2'
 import {getLeaderboardSnapshot, refreshLeaderboard} from './leaderboard'
 
 const LEADERBOARD_CACHE_KEY = 'leaderboard:daily:v1'
+const db = useTestDatabase()
 
 describe('refreshLeaderboard', () => {
     it('stores daily leaderboard rankings in KV', async () => {
-        const {db} = createMockDb({
-            firstResults: [
-                {
-                    total_users: 3,
-                    total_characters: 4,
-                    total_images: 6,
-                },
-            ],
-            allResults: [
-                [
-                    {
-                        id: 'user-1',
-                        username: 'alice',
-                        profile_photo_key: null,
-                        character_count: 3,
-                    },
-                    {
-                        id: 'user-2',
-                        username: 'bob',
-                        profile_photo_key: 'bob-photo',
-                        character_count: 1,
-                    },
-                ],
-                [
-                    {
-                        id: 'user-2',
-                        username: 'bob',
-                        profile_photo_key: 'bob-photo',
-                        image_count: 4,
-                    },
-                    {
-                        id: 'user-1',
-                        username: 'alice',
-                        profile_photo_key: null,
-                        image_count: 2,
-                    },
-                ],
-                [
-                    {
-                        id: 'user-1',
-                        username: 'alice',
-                        profile_photo_key: null,
-                        character_count: 3,
-                        image_count: 2,
-                    },
-                    {
-                        id: 'user-2',
-                        username: 'bob',
-                        profile_photo_key: 'bob-photo',
-                        character_count: 1,
-                        image_count: 4,
-                    },
-                ],
-                [
-                    {
-                        id: 'user-1',
-                        username: 'alice',
-                        profile_photo_key: null,
-                    },
-                    {
-                        id: 'user-2',
-                        username: 'bob',
-                        profile_photo_key: 'bob-photo',
-                    },
-                ],
-                [
-                    {
-                        id: 'char-1',
-                        user_id: 'user-1',
-                        name: 'Aster',
-                        profile_image_key: 'aster-profile',
-                        owner_username: 'alice',
-                    },
-                    {
-                        id: 'char-2',
-                        user_id: 'user-2',
-                        name: 'Beryl',
-                        profile_image_key: 'beryl-profile',
-                        owner_username: 'bob',
-                    },
-                ],
-            ],
+        await seedUser({id: 'user-1', username: 'alice'})
+        await seedUser({id: 'user-2', username: 'bob', profilePhotoKey: 'bob-photo'})
+        await seedUser({id: 'user-3', username: 'inactive'})
+        await seedCharacter({id: 'char-1', userId: 'user-1', name: 'Aster', profileImageKey: 'aster-profile'})
+        await seedCharacter({id: 'char-2', userId: 'user-2', name: 'Beryl', profileImageKey: 'beryl-profile'})
+        await seedCharacter({id: 'char-3', userId: 'user-1', name: 'Cinder'})
+        await seedCharacter({id: 'char-4', userId: 'user-1', name: 'Dahlia'})
+        await seedMedia({id: 'media-1', userId: 'user-1', characterId: 'char-1', sfwImageKey: 'alice-sfw-1'})
+        await seedMedia({id: 'media-3', userId: 'user-1', characterId: 'char-3', sfwImageKey: 'alice-sfw-2'})
+        await seedMedia({
+            id: 'media-2',
+            userId: 'user-2',
+            characterId: 'char-2',
+            sfwImageKey: 'bob-sfw-1',
+            nsfwImageKey: 'bob-nsfw-1',
+        })
+        await seedMedia({
+            id: 'media-4',
+            userId: 'user-2',
+            characterId: 'char-2',
+            sfwImageKey: 'bob-sfw-2',
+            nsfwImageKey: 'bob-nsfw-2',
         })
         const bucket = createMockR2Bucket()
         const cache = createMockKVNamespace()
@@ -125,12 +66,11 @@ describe('refreshLeaderboard', () => {
                 totalManagedBytes: 3_148_464,
             }),
         )
-        expect(cache.put).toHaveBeenCalledTimes(1)
-
-        const [key, value] = vi.mocked(cache.put).mock.calls[0] ?? []
-        expect(key).toBe(LEADERBOARD_CACHE_KEY)
-
-        const snapshot = JSON.parse(String(value))
+        const snapshot = await getLeaderboardSnapshot(cache)
+        expect(snapshot).not.toBeNull()
+        if (!snapshot) {
+            throw new Error('Leaderboard snapshot was not stored')
+        }
 
         expect(snapshot.topUsers).toEqual([
             expect.objectContaining({rank: 1, username: 'alice', characterCount: 3, imageCount: 2, bytes: 1_049_776}),
@@ -160,8 +100,48 @@ describe('refreshLeaderboard', () => {
             expect.objectContaining({rank: 1, name: 'Beryl', ownerUsername: 'bob', bytes: 2_098_688}),
             expect.objectContaining({rank: 2, name: 'Aster', ownerUsername: 'alice', bytes: 1_049_376}),
         ])
-        expect(snapshot.charactersByData[0].monthlyStorageCostUsd).toBeCloseTo((2_098_688 / (1024 * 1024 * 1024)) * 0.015)
-        await expect(getLeaderboardSnapshot(cache)).resolves.toEqual(snapshot)
+        const largestCharacter = snapshot.charactersByData[0]
+        if (!largestCharacter) {
+            throw new Error('Leaderboard snapshot has no character rankings')
+        }
+        expect(largestCharacter.monthlyStorageCostUsd).toBeCloseTo((2_098_688 / (1024 * 1024 * 1024)) * 0.015)
+    })
+
+    it('reads all R2 listing pages', async () => {
+        const bucket = createMockR2Bucket()
+        vi.mocked(bucket.list).mockImplementation(async (options) => {
+            if (options?.prefix === 'users/' && !options.cursor) {
+                return {
+                    objects: [],
+                    truncated: true,
+                    cursor: 'next-page',
+                    delimitedPrefixes: [],
+                }
+            }
+
+            if (options?.prefix === 'users/' && options.cursor === 'next-page') {
+                return {
+                    objects: [
+                        {
+                            key: 'users/alice/profile/photo.webp',
+                            size: 10,
+                        } as R2Object,
+                    ],
+                    truncated: false,
+                    delimitedPrefixes: [],
+                }
+            }
+
+            if (options?.prefix === 'characters/') {
+                return {objects: [], truncated: false, delimitedPrefixes: []}
+            }
+
+            throw new Error(`Unexpected R2 list options: ${JSON.stringify(options)}`)
+        })
+
+        const summary = await refreshLeaderboard({DB: db, MEDIA_BUCKET: bucket, CACHE: createMockKVNamespace()})
+
+        expect(summary).toMatchObject({scannedObjects: 1, recognizedObjects: 1, totalManagedBytes: 10})
     })
 })
 

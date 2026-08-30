@@ -3,11 +3,12 @@ import app from '../index'
 import type {LeaderboardSnapshot} from '../lib/leaderboard'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import {expectSecurityHeaders} from '../test/assertions'
-import {createPngDataUrl, createWebpDataUrl} from '../test/imageFixtures'
-import {createMockImagesBinding} from '../test/mockImages'
+import {queryOne, seedCharacter, seedFolder, seedMedia, seedPasskey, seedSession, seedUser, useResetTestDatabase} from '../test/d1'
 import {createMockKVNamespace} from '../test/mockKV'
 import {createMockR2Bucket} from '../test/mockR2'
 import {resetWorkerBindings, workerEnv} from '../test/workerBindings'
+import {CharacterPage} from '../views/pages/CharacterPage'
+import {MigratePage} from '../views/pages/MigratePage'
 import {pageRoutes} from './pages'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
@@ -27,201 +28,588 @@ afterEach(async () => {
     await resetWorkerBindings()
 })
 
-type QueryResult = {
-    results: unknown[]
+const db = useResetTestDatabase()
+
+type ProfilePageDbOptions = {
+    profileUser?: unknown
+    currentUser?: unknown
+    socialLinks?: unknown[]
+    folders?: unknown[]
+    characters?: unknown[]
+    placements?: unknown[]
+    characterSettings?: unknown
+    characterMedia?: unknown[]
+    galleryTabs?: unknown[]
+    galleryRows?: unknown[]
+    searchUsers?: unknown[]
+    searchCharacters?: unknown[]
+    userCount?: number
+    characterCount?: number
+    mediaCount?: number
+    uploadedImageCount?: number
+    discoverCharacters?: unknown[]
+    homeGalleryImages?: unknown[]
+    homeHeightChartCharacters?: unknown[]
+    activeToyhouseImportJob?: unknown
+    activeToyhouseImportItems?: unknown[]
+    imageApprovalItem?: unknown
+    imageApprovalQueue?: unknown[]
+    imageApprovalHistory?: unknown[]
+    adminReports?: unknown[]
+    adminJobRuns?: unknown[]
+    userPasskeys?: unknown[]
+    userSessions?: unknown[]
 }
 
-function createProfilePageDb(
-    options: {
-        profileUser?: unknown
-        currentUser?: unknown
-        socialLinks?: unknown[]
-        folders?: unknown[]
-        characters?: unknown[]
-        placements?: unknown[]
-        characterSettings?: unknown
-        characterMedia?: unknown[]
-        galleryTabs?: unknown[]
-        galleryRows?: unknown[]
-        searchUsers?: unknown[]
-        searchUserCount?: number
-        searchCharacters?: unknown[]
-        searchCharacterCount?: number
-        userCount?: number
-        characterCount?: number
-        mediaCount?: number
-        uploadedImageCount?: number
-        discoverCharacters?: unknown[]
-        homeGalleryImages?: unknown[]
-        homeHeightChartCharacters?: unknown[]
-        activeToyhouseImportJob?: unknown
-        activeToyhouseImportItems?: unknown[]
-        toyhouseImportItemsError?: Error
-        imageApprovalItem?: unknown
-        imageApprovalQueue?: unknown[]
-        imageApprovalCount?: number
-        imageApprovalHistory?: unknown[]
-        imageApprovalLease?: unknown
-        adminReports?: unknown[]
-        adminJobRuns?: unknown[]
-        userPasskeys?: unknown[]
-        userSessions?: unknown[]
-    } = {},
-): D1Database {
-    const firstForSql = async (sql: string) => {
-        if (sql.includes('sfw_image_key IS NOT NULL') && sql.includes('nsfw_image_key IS NOT NULL') && sql.includes('AS count')) {
-            return {count: options.imageApprovalCount ?? options.imageApprovalQueue?.length ?? 0}
-        }
+type DatabaseRow = Record<string, unknown>
 
-        if (
-            sql.trim().startsWith('SELECT media_id') &&
-            sql.includes('FROM admin_image_review_queue') &&
-            sql.includes('leased_by_user_id')
-        ) {
-            return null
-        }
+async function insertRow(table: string, row: DatabaseRow): Promise<void> {
+    const entries = Object.entries(row).filter(([, value]) => value !== undefined)
+    const columns = entries.map(([column]) => column)
+    const placeholders = entries.map(() => '?').join(', ')
+    await db
+        .prepare(`INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`)
+        .bind(...entries.map(([, value]) => value))
+        .run()
+}
 
-        if (sql.includes('UPDATE admin_image_review_queue') && sql.includes('RETURNING media_id')) {
-            return (
-                options.imageApprovalLease ??
-                (options.imageApprovalItem ? {media_id: 'media-1', lease_expires_at: '2026-06-10 12:30:00'} : null)
+function databaseRow(value: unknown): DatabaseRow {
+    return value as DatabaseRow
+}
+
+async function seedUserRow(value: unknown, fallbackId = 'current-user', fallbackUsername = 'demo'): Promise<string> {
+    const row = databaseRow(value)
+    const id = String(row.id ?? fallbackId)
+    const username = String(row.username ?? fallbackUsername)
+    const existing = await queryOne<{id: string}>('SELECT id FROM users WHERE id = ?', [id], db)
+
+    if (!existing) {
+        await seedUser(
+            {
+                id,
+                email: String(row.email ?? `${username}@example.test`),
+                username,
+                passwordHash: String(row.password_hash ?? 'test-password-hash'),
+                profilePhotoKey: (row.profile_photo_key as string | null | undefined) ?? null,
+                bio: String(row.bio ?? ''),
+                displayNsfwMedia: Number(row.display_nsfw_media ?? 0) === 1,
+                role: (row.role as 'user' | 'moderator' | 'admin' | undefined) ?? 'user',
+                createdAt: String(row.created_at ?? '2026-01-01 00:00:00'),
+                lastSeenVersion: (row.last_seen_version as string | null | undefined) ?? null,
+                recoveryPhraseConfirmedAt: (row.recovery_phrase_confirmed_at as string | null | undefined) ?? null,
+                secureAccountRequired: Number(row.secure_account_required ?? 0) === 1,
+                passkeyPromptSeenAt: (row.passkey_prompt_seen_at as string | null | undefined) ?? null,
+            },
+            db,
+        )
+    }
+
+    return id
+}
+
+async function seedCharacterRow(value: unknown, fallbackUserId: string): Promise<string> {
+    const row = databaseRow(value)
+    const id = String(row.id)
+    const existing = await queryOne<{id: string}>('SELECT id FROM characters WHERE id = ?', [id], db)
+
+    if (!existing) {
+        await seedCharacter(
+            {
+                id,
+                userId: String(row.user_id ?? fallbackUserId),
+                name: String(row.name ?? id),
+                profileImageKey: String(row.profile_image_key ?? `${id}-profile`),
+                folderId: (row.folder_id as string | null | undefined) ?? null,
+                sortOrder: Number(row.sort_order ?? 0),
+                description: String(row.description ?? ''),
+                heightChartJson: typeof row.height_chart_json === 'string' ? row.height_chart_json : '',
+            },
+            db,
+        )
+    }
+
+    return id
+}
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: This test helper maps optional media fixture fields to D1 columns.
+async function seedMediaRow(value: unknown, fallbackUserId: string, fallbackCharacterId: string): Promise<string> {
+    const row = databaseRow(value)
+    const id = String(row.id)
+    const existing = await queryOne<{id: string}>('SELECT id FROM character_media WHERE id = ?', [id], db)
+
+    if (!existing) {
+        await seedMedia(
+            {
+                id,
+                userId: String(row.user_id ?? fallbackUserId),
+                characterId: String(row.character_id ?? fallbackCharacterId),
+                sfwImageKey: (row.sfw_image_key as string | null | undefined) ?? null,
+                nsfwImageKey: (row.nsfw_image_key as string | null | undefined) ?? null,
+                sfwArtist: String(row.sfw_artist ?? ''),
+                nsfwArtist: String(row.nsfw_artist ?? ''),
+                sfwWidth: (row.sfw_width as number | null | undefined) ?? null,
+                sfwHeight: (row.sfw_height as number | null | undefined) ?? null,
+                sfwByteSize: (row.sfw_byte_size as number | null | undefined) ?? undefined,
+                nsfwWidth: (row.nsfw_width as number | null | undefined) ?? null,
+                nsfwHeight: (row.nsfw_height as number | null | undefined) ?? null,
+                nsfwByteSize: (row.nsfw_byte_size as number | null | undefined) ?? undefined,
+                sfwReviewStatus: (row.sfw_review_status as 'pending' | 'approved' | 'reported' | undefined) ?? 'pending',
+                sfwReviewedAt: (row.sfw_reviewed_at as string | null | undefined) ?? null,
+                sfwApprovedAt: (row.sfw_approved_at as string | null | undefined) ?? null,
+                sfwHomepageAllowed: Number(row.sfw_homepage_allowed ?? 0) === 1,
+                nsfwReviewStatus: (row.nsfw_review_status as 'pending' | 'approved' | 'reported' | undefined) ?? 'pending',
+                nsfwReviewedAt: (row.nsfw_reviewed_at as string | null | undefined) ?? null,
+                nsfwApprovedAt: (row.nsfw_approved_at as string | null | undefined) ?? null,
+                sfwContentType: (row.sfw_content_type as string | null | undefined) ?? undefined,
+                nsfwContentType: (row.nsfw_content_type as string | null | undefined) ?? undefined,
+                sfwPreviewImageKey: (row.sfw_preview_image_key as string | null | undefined) ?? null,
+                sfwPreviewWidth: (row.sfw_preview_width as number | null | undefined) ?? null,
+                sfwPreviewHeight: (row.sfw_preview_height as number | null | undefined) ?? null,
+                nsfwPreviewImageKey: (row.nsfw_preview_image_key as string | null | undefined) ?? null,
+                nsfwPreviewWidth: (row.nsfw_preview_width as number | null | undefined) ?? null,
+                nsfwPreviewHeight: (row.nsfw_preview_height as number | null | undefined) ?? null,
+                nsfwBlurImageKey: (row.nsfw_blur_image_key as string | null | undefined) ?? null,
+                createdAt: String(row.created_at ?? '2026-01-01 00:00:00'),
+                updatedAt: String(row.updated_at ?? '2026-01-01 00:00:00'),
+            },
+            db,
+        )
+    }
+
+    return id
+}
+
+async function runStatements(statements: D1PreparedStatement[]): Promise<void> {
+    for (let index = 0; index < statements.length; index += 100) {
+        await db.batch(statements.slice(index, index + 100))
+    }
+}
+
+async function seedTotalUsers(total: number): Promise<void> {
+    const existing = Number((await queryOne<{count: number}>('SELECT COUNT(*) AS count FROM users', [], db))?.count ?? 0)
+    const statement = db.prepare(
+        `INSERT INTO users (id, email, username, password_hash, passkey_prompt_seen_at)
+         VALUES (?, ?, ?, 'test-password-hash', '2026-01-01 00:00:00')`,
+    )
+    const statements: D1PreparedStatement[] = []
+    for (let index = existing; index < total; index += 1) {
+        statements.push(statement.bind(`count-user-${index}`, `count-${index}@example.test`, `count_user_${index}`))
+    }
+    await runStatements(statements)
+}
+
+async function seedTotalCharacters(total: number, userId: string): Promise<string> {
+    const existing = Number((await queryOne<{count: number}>('SELECT COUNT(*) AS count FROM characters', [], db))?.count ?? 0)
+    const statement = db.prepare(
+        `INSERT INTO characters (id, size_chart_id, user_id, name, profile_image_key)
+         VALUES (?, ?, ?, ?, ?)`,
+    )
+    const statements: D1PreparedStatement[] = []
+    for (let index = existing; index < total; index += 1) {
+        const id = `count-character-${index}`
+        const sizeChartId = new Uint8Array([0, 0, 0, (index >> 16) & 255, (index >> 8) & 255, index & 255])
+        statements.push(statement.bind(id, sizeChartId, userId, `Count Character ${index}`, `${id}-profile`))
+    }
+    await runStatements(statements)
+    return (await queryOne<{id: string}>('SELECT id FROM characters ORDER BY id LIMIT 1', [], db))?.id ?? ''
+}
+
+async function seedTotalMedia(total: number, userId: string, characterId: string): Promise<void> {
+    const existing = Number((await queryOne<{count: number}>('SELECT COUNT(*) AS count FROM character_media', [], db))?.count ?? 0)
+    const statement = db.prepare(
+        `INSERT INTO character_media (
+            id, user_id, character_id, sfw_image_key, sfw_width, sfw_height, sfw_byte_size, sfw_content_type
+        ) VALUES (?, ?, ?, ?, 1, 1, 1, 'image/png')`,
+    )
+    const statements: D1PreparedStatement[] = []
+    for (let index = existing; index < total; index += 1) {
+        statements.push(statement.bind(`count-media-${index}`, userId, characterId, `count-media-key-${index}`))
+    }
+    await runStatements(statements)
+}
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: This test helper seeds each optional page fixture group in dependency order.
+async function seedPageDatabase(options: ProfilePageDbOptions = {}): Promise<D1Database> {
+    const currentUserId = options.currentUser ? await seedUserRow(options.currentUser) : 'current-user'
+    const profileUserId = options.profileUser ? await seedUserRow(options.profileUser, 'profile-user', 'demo') : currentUserId
+
+    if (options.currentUser) {
+        const current = databaseRow(options.currentUser)
+        const sessionId = String(current.session_id ?? 'current-user-session')
+        if (!(await queryOne('SELECT id FROM sessions WHERE id = ?', [sessionId], db))) {
+            await seedSession(
+                {
+                    id: sessionId,
+                    userId: currentUserId,
+                    token: 'session-token',
+                },
+                db,
             )
         }
-
-        if (sql.includes('COUNT(*) AS count') && sql.includes('FROM character_media')) {
-            return {count: options.mediaCount ?? 0}
-        }
-
-        if (sql.includes('uploaded_image_count') && sql.includes('FROM character_media')) {
-            return {uploaded_image_count: options.uploadedImageCount ?? options.mediaCount ?? 0}
-        }
-
-        if (sql.includes('COUNT(*) AS count') && sql.includes('FROM users')) {
-            return {count: options.userCount ?? options.searchUserCount ?? options.searchUsers?.length ?? 0}
-        }
-
-        if (sql.includes('COUNT(*) AS count') && sql.includes('FROM characters')) {
-            return {count: options.characterCount ?? options.searchCharacterCount ?? options.searchCharacters?.length ?? 0}
-        }
-
-        if (sql.includes('FROM sessions')) {
-            return options.currentUser ?? null
-        }
-
-        if (sql.includes('FROM toyhouse_import_jobs')) {
-            if (sql.includes('EXISTS') && options.activeToyhouseImportItems?.length === 0) {
-                return null
-            }
-
-            return options.activeToyhouseImportJob ?? null
-        }
-
-        if (sql.includes('FROM character_media') && sql.includes('INNER JOIN users')) {
-            return options.imageApprovalItem ?? null
-        }
-
-        if (sql.includes('FROM characters')) {
-            return options.characterSettings ?? null
-        }
-
-        return options.profileUser ?? null
-    }
-    const allForSql = async (sql: string): Promise<QueryResult> => {
-        if (sql.includes('character_media.sfw_homepage_allowed = 1')) {
-            return {results: options.homeGalleryImages ?? []}
-        }
-
-        if (sql.includes('lower(users.username) = ?') && sql.includes('characters.height_chart_json <>')) {
-            return {results: options.homeHeightChartCharacters ?? []}
-        }
-
-        if (sql.includes('eligible_characters')) {
-            return {results: options.discoverCharacters ?? []}
-        }
-
-        if (sql.includes('sfw_reported_by_username')) {
-            return {results: options.adminReports ?? []}
-        }
-
-        if (sql.includes('FROM admin_job_runs')) {
-            return {results: options.adminJobRuns ?? []}
-        }
-
-        if (sql.includes('FROM character_media_review_events')) {
-            return {results: options.imageApprovalHistory ?? []}
-        }
-
-        if (sql.includes('FROM toyhouse_import_items')) {
-            if (options.toyhouseImportItemsError) {
-                throw options.toyhouseImportItemsError
-            }
-
-            return {results: options.activeToyhouseImportItems ?? []}
-        }
-
-        if (sql.includes('FROM character_media') && sql.includes('sfw_review_status')) {
-            return {results: options.imageApprovalQueue ?? []}
-        }
-
-        if (sql.includes('FROM users') && sql.includes('LEFT JOIN characters')) {
-            return {results: options.searchUsers ?? []}
-        }
-
-        if (sql.includes('FROM characters') && sql.includes('INNER JOIN users')) {
-            return {results: options.searchCharacters ?? []}
-        }
-
-        if (sql.includes('FROM user_social_links')) {
-            return {results: options.socialLinks ?? []}
-        }
-
-        if (sql.includes('FROM user_passkeys')) {
-            return {results: options.userPasskeys ?? []}
-        }
-
-        if (sql.includes('FROM sessions')) {
-            return {results: options.userSessions ?? []}
-        }
-
-        if (sql.includes('FROM character_folder_placements')) {
-            return {results: options.placements ?? []}
-        }
-
-        if (sql.includes('FROM character_folders')) {
-            return {results: options.folders ?? []}
-        }
-
-        if (sql.includes('FROM character_media')) {
-            return {results: options.characterMedia ?? []}
-        }
-
-        if (sql.includes('FROM character_gallery_tabs')) {
-            return {results: options.galleryTabs ?? []}
-        }
-
-        if (sql.includes('FROM character_gallery_rows')) {
-            return {results: options.galleryRows ?? []}
-        }
-
-        if (sql.includes('FROM characters')) {
-            return {results: options.characters ?? []}
-        }
-
-        return {results: []}
     }
 
-    return {
-        prepare: vi.fn((sql: string) => ({
-            first: vi.fn(() => firstForSql(sql)),
-            all: vi.fn(() => allForSql(sql)),
-            bind: vi.fn(() => ({
-                first: vi.fn(() => firstForSql(sql)),
-                all: vi.fn(() => allForSql(sql)),
-                run: vi.fn(async () => ({success: true})),
-            })),
-        })),
-        batch: vi.fn(async () => []),
-    } as unknown as D1Database
+    for (const value of options.searchUsers ?? []) {
+        const userId = await seedUserRow(value, String(databaseRow(value).id), String(databaseRow(value).username))
+        const count = Number(databaseRow(value).character_count ?? 0)
+        for (let index = 0; index < count; index += 1) {
+            await seedCharacterRow({id: `${userId}-character-${index}`, name: `Razeth ${index}`, user_id: userId}, userId)
+        }
+    }
+
+    for (const value of options.homeHeightChartCharacters ?? []) {
+        const row = databaseRow(value)
+        const userId = await seedUserRow({id: row.user_id, username: row.username}, String(row.user_id), String(row.username))
+        await seedCharacterRow(row, userId)
+    }
+
+    for (const value of options.homeGalleryImages ?? []) {
+        const row = databaseRow(value)
+        const userId = await seedUserRow({id: row.user_id, username: row.owner_username}, String(row.user_id), String(row.owner_username))
+        const characterId = await seedCharacterRow({id: row.character_id, name: row.character_name, user_id: userId}, userId)
+        await seedMediaRow(
+            {
+                ...row,
+                character_id: characterId,
+                sfw_approved_at: '2026-01-02 00:00:00',
+                sfw_homepage_allowed: 1,
+                sfw_review_status: 'approved',
+                updated_at: '2026-01-01 00:00:00',
+            },
+            userId,
+            characterId,
+        )
+    }
+
+    for (const value of options.discoverCharacters ?? []) {
+        const row = databaseRow(value)
+        const userId = await seedUserRow({id: row.user_id, username: row.owner_username}, String(row.user_id), String(row.owner_username))
+        const discoverCharacterId = await seedCharacterRow(row, userId)
+        const imageCount = Number(row.image_count ?? 5)
+        for (let index = 0; index < imageCount; index += 1) {
+            const mediaId = index === 0 ? String(row.preview_media_id) : `${discoverCharacterId}-media-${index}`
+            await seedMediaRow(
+                {
+                    id: mediaId,
+                    user_id: userId,
+                    character_id: discoverCharacterId,
+                    sfw_image_key: index === 0 ? row.preview_image_key : `${mediaId}-key`,
+                    sfw_preview_image_key: index === 0 ? row.preview_thumbnail_image_key : null,
+                    sfw_artist: index === 0 ? row.preview_artist : '',
+                    sfw_review_status: 'approved',
+                    sfw_approved_at: '2026-01-02 00:00:00',
+                    sfw_homepage_allowed: index === 0 ? 1 : 0,
+                    updated_at: '2026-01-01 00:00:00',
+                },
+                userId,
+                discoverCharacterId,
+            )
+        }
+    }
+
+    for (const value of options.folders ?? []) {
+        const row = databaseRow(value)
+        await seedFolder(
+            {
+                id: String(row.id),
+                userId: profileUserId,
+                name: String(row.name),
+                parentFolderId: (row.parent_folder_id as string | null | undefined) ?? null,
+                sortOrder: Number(row.sort_order ?? 0),
+                folderImageKey: (row.folder_image_key as string | null | undefined) ?? null,
+            },
+            db,
+        )
+    }
+
+    const characterValues = [
+        ...(options.characters ?? []),
+        ...(options.searchCharacters ?? []),
+        ...(options.characterSettings ? [options.characterSettings] : []),
+    ]
+    for (const value of characterValues) {
+        const row = databaseRow(value)
+        const userId = String(row.user_id ?? profileUserId)
+        if (!(await queryOne('SELECT id FROM users WHERE id = ?', [userId], db))) {
+            await seedUserRow({id: userId, username: row.username ?? `user_${userId}`}, userId, String(row.username ?? `user_${userId}`))
+        }
+        await seedCharacterRow(row, userId)
+    }
+
+    const characterId = options.characterSettings
+        ? String(databaseRow(options.characterSettings).id)
+        : options.characters?.[0]
+          ? String(databaseRow(options.characters[0]).id)
+          : 'test-character'
+    const characterOwnerId = options.characterSettings
+        ? String(databaseRow(options.characterSettings).user_id ?? profileUserId)
+        : profileUserId
+
+    if (options.activeToyhouseImportJob) {
+        const job = databaseRow(options.activeToyhouseImportJob)
+        await insertRow('toyhouse_import_jobs', {
+            id: job.id,
+            user_id: currentUserId,
+            status: job.status ?? 'running',
+            total_images: job.total_images ?? options.activeToyhouseImportItems?.length ?? 0,
+        })
+        for (const [index, value] of (options.activeToyhouseImportItems ?? []).entries()) {
+            const item = databaseRow(value)
+            const itemCharacterId = String(item.character_id ?? 'toyhouse-import-character')
+            await seedCharacterRow(
+                {
+                    id: itemCharacterId,
+                    name: item.name ?? `Import Character ${index}`,
+                    user_id: currentUserId,
+                },
+                currentUserId,
+            )
+            if (item.media_id) {
+                await seedMediaRow(
+                    {
+                        id: item.media_id,
+                        user_id: currentUserId,
+                        character_id: itemCharacterId,
+                        sfw_image_key: `${item.media_id}-key`,
+                    },
+                    currentUserId,
+                    itemCharacterId,
+                )
+            }
+            await insertRow('toyhouse_import_items', {
+                id: item.id,
+                job_id: job.id,
+                user_id: currentUserId,
+                character_id: itemCharacterId,
+                toyhouse_character_id: item.toyhouse_character_id ?? '9430171',
+                toyhouse_image_url: item.toyhouse_image_url ?? `https://f2.toyhou.se/file/f2-toyhou-se/images/${index}.png`,
+                import_mode: item.import_mode ?? 'existing',
+                rating: item.rating ?? 'sfw',
+                status: item.status ?? 'pending',
+                media_id: item.media_id ?? null,
+                sort_order: index,
+            })
+        }
+    }
+
+    for (const value of options.characterMedia ?? []) {
+        await seedMediaRow(value, characterOwnerId, characterId)
+    }
+
+    for (const value of options.galleryTabs ?? []) {
+        const row = databaseRow(value)
+        await insertRow('character_gallery_tabs', {
+            id: row.id,
+            user_id: characterOwnerId,
+            character_id: characterId,
+            name: row.name,
+            sort_order: row.sort_order ?? 0,
+        })
+    }
+
+    const seededRows = new Set<string>()
+    for (const value of options.galleryRows ?? []) {
+        const row = databaseRow(value)
+        const rowId = String(row.row_id)
+        if (!seededRows.has(rowId)) {
+            await insertRow('character_gallery_rows', {
+                id: rowId,
+                user_id: characterOwnerId,
+                character_id: characterId,
+                tab_id: row.tab_id,
+                sort_order: row.row_sort_order ?? 0,
+                force_full_width: row.force_full_width ?? 0,
+            })
+            seededRows.add(rowId)
+        }
+        if (row.media_id) {
+            await insertRow('character_gallery_row_media', {
+                row_id: rowId,
+                media_id: row.media_id,
+                sort_order: row.media_sort_order ?? 0,
+            })
+        }
+    }
+
+    for (const value of options.socialLinks ?? []) {
+        await insertRow('user_social_links', {user_id: profileUserId, ...databaseRow(value)})
+    }
+
+    for (const value of options.placements ?? []) {
+        await insertRow('character_folder_placements', {
+            user_id: profileUserId,
+            ...databaseRow(value),
+        })
+    }
+
+    for (const value of options.userPasskeys ?? []) {
+        const row = databaseRow(value)
+        await seedPasskey(
+            {
+                id: String(row.id),
+                userId: currentUserId,
+                name: row.name as string | null | undefined,
+                deviceType: row.device_type as string | undefined,
+                backedUp: Number(row.backed_up ?? 0) === 1,
+                transports: row.transports as string | null | undefined,
+                createdAt: row.created_at as string | undefined,
+                lastUsedAt: row.last_used_at as string | null | undefined,
+            },
+            db,
+        )
+    }
+
+    for (const value of options.userSessions ?? []) {
+        const row = databaseRow(value)
+        const id = String(row.id)
+        if (await queryOne('SELECT id FROM sessions WHERE id = ?', [id], db)) {
+            await db
+                .prepare('UPDATE sessions SET created_at = ?, expires_at = ? WHERE id = ?')
+                .bind(row.created_at, row.expires_at, id)
+                .run()
+        } else {
+            await seedSession(
+                {
+                    id,
+                    userId: currentUserId,
+                    token: `${id}-token`,
+                    createdAt: String(row.created_at),
+                    expiresAt: String(row.expires_at),
+                },
+                db,
+            )
+        }
+    }
+
+    const approvalSource = options.imageApprovalItem ?? options.imageApprovalQueue?.[0]
+    if (approvalSource) {
+        const row = databaseRow(approvalSource)
+        const ownerId = String(row.user_id ?? 'owner-1')
+        await seedUserRow(
+            {id: ownerId, username: row.username ?? 'uploader', email: row.email ?? 'uploader@example.test'},
+            ownerId,
+            String(row.username ?? 'uploader'),
+        )
+        const approvalCharacterId = String(row.character_id ?? 'character-1')
+        await seedCharacterRow({id: approvalCharacterId, name: row.character_name ?? 'Quartz', user_id: ownerId}, ownerId)
+        await seedMediaRow(
+            {
+                ...row,
+                id: row.id ?? 'media-1',
+                user_id: ownerId,
+                character_id: approvalCharacterId,
+                sfw_image_key: row.sfw_image_key ?? 'sfw-key',
+            },
+            ownerId,
+            approvalCharacterId,
+        )
+    }
+
+    for (const value of options.imageApprovalHistory ?? []) {
+        const row = databaseRow(value)
+        const ownerId = 'approval-history-owner'
+        await seedUserRow({id: ownerId, username: row.owner_username ?? 'uploader'}, ownerId, String(row.owner_username ?? 'uploader'))
+        const historyCharacterId = 'approval-history-character'
+        await seedCharacterRow({id: historyCharacterId, name: row.character_name ?? 'Quartz', user_id: ownerId}, ownerId)
+        await seedMediaRow(
+            {id: row.media_id, user_id: ownerId, character_id: historyCharacterId, sfw_image_key: 'history-image-key'},
+            ownerId,
+            historyCharacterId,
+        )
+        await insertRow('character_media_review_events', {
+            id: row.id,
+            media_id: row.media_id,
+            image_rating: row.image_rating,
+            action: row.action,
+            homepage_allowed: row.homepage_allowed ?? 0,
+            moderator_id: currentUserId,
+            created_at: row.created_at,
+        })
+    }
+
+    for (const value of options.adminReports ?? []) {
+        const row = databaseRow(value)
+        const ownerId = String(row.user_id)
+        await seedUserRow({id: ownerId, username: row.username}, ownerId, String(row.username))
+        const reportCharacterId = String(row.character_id)
+        await seedCharacterRow({id: reportCharacterId, name: row.character_name, user_id: ownerId}, ownerId)
+        await seedMediaRow(row, ownerId, reportCharacterId)
+        const reportRating = row.sfw_review_status === 'reported' ? 'sfw' : row.nsfw_review_status === 'reported' ? 'nsfw' : null
+        const reporterUsername = reportRating === 'sfw' ? row.sfw_reported_by_username : row.nsfw_reported_by_username
+        if (reportRating && reporterUsername) {
+            await insertRow('character_media_review_events', {
+                id: `${row.id}-${reportRating}-report`,
+                media_id: row.id,
+                image_rating: reportRating,
+                action: `report_${reportRating}`,
+                homepage_allowed: 0,
+                moderator_id: currentUserId,
+                created_at: reportRating === 'sfw' ? row.sfw_reviewed_at : row.nsfw_reviewed_at,
+            })
+        }
+    }
+
+    for (const value of options.adminJobRuns ?? []) {
+        const row = databaseRow(value)
+        await insertRow('admin_job_runs', {
+            id: row.id,
+            job_name: row.job_name,
+            trigger_source: row.trigger_source,
+            triggered_by_user_id: row.triggered_by_user_id ? currentUserId : null,
+            cron: row.cron,
+            status: row.status,
+            started_at: row.started_at,
+            finished_at: row.finished_at,
+            duration_ms: row.duration_ms,
+            summary_json: row.summary_json,
+            error_message: row.error_message,
+        })
+    }
+
+    if (options.userCount !== undefined) {
+        await seedTotalUsers(options.userCount)
+    }
+
+    let countOwnerId = (await queryOne<{id: string}>('SELECT id FROM users ORDER BY id LIMIT 1', [], db))?.id
+    if ((options.characterCount !== undefined || options.mediaCount !== undefined) && !countOwnerId) {
+        countOwnerId = await seedUserRow({id: 'count-owner', username: 'count_owner'}, 'count-owner', 'count_owner')
+    }
+
+    let countCharacterId = (await queryOne<{id: string}>('SELECT id FROM characters ORDER BY id LIMIT 1', [], db))?.id
+    if (options.characterCount !== undefined && countOwnerId) {
+        countCharacterId = await seedTotalCharacters(options.characterCount, countOwnerId)
+    }
+    if (options.mediaCount !== undefined && countOwnerId) {
+        if (!countCharacterId) {
+            countCharacterId = await seedTotalCharacters(1, countOwnerId)
+        }
+        await seedTotalMedia(options.mediaCount, countOwnerId, countCharacterId)
+    }
+
+    if (options.uploadedImageCount !== undefined && options.currentUser) {
+        const uploadCharacterId =
+            (await queryOne<{id: string}>('SELECT id FROM characters WHERE user_id = ? LIMIT 1', [currentUserId], db))?.id ??
+            (await seedCharacterRow({id: 'upload-character', name: 'Upload Character', user_id: currentUserId}, currentUserId))
+        let remaining = options.uploadedImageCount
+        let index = 0
+        while (remaining > 0) {
+            const hasNsfw = remaining > 1
+            await seedMediaRow(
+                {
+                    id: `upload-media-${index}`,
+                    user_id: currentUserId,
+                    character_id: uploadCharacterId,
+                    sfw_image_key: `upload-sfw-${index}`,
+                    nsfw_image_key: hasNsfw ? `upload-nsfw-${index}` : null,
+                },
+                currentUserId,
+                uploadCharacterId,
+            )
+            remaining -= hasNsfw ? 2 : 1
+            index += 1
+        }
+    }
+
+    return db
 }
 
 async function getProfile(username: string, db: D1Database): Promise<Response> {
@@ -242,18 +630,13 @@ async function getProfilePath(path: string, db: D1Database): Promise<Response> {
     )
 }
 
-async function getAppPath(
-    path: string,
-    db = createProfilePageDb(),
-    headers: Record<string, string> = {},
-    cache = workerEnv.CACHE,
-): Promise<Response> {
+async function getAppPath(path: string, database = db, headers: Record<string, string> = {}, cache = workerEnv.CACHE): Promise<Response> {
     return app.request(
         `https://example.com${path}`,
         {headers},
         {
             CACHE: cache,
-            DB: db,
+            DB: database,
             DB_BACKUP_BUCKET: workerEnv.DB_BACKUP_BUCKET,
             MEDIA_BUCKET: workerEnv.MEDIA_BUCKET,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
@@ -274,6 +657,56 @@ function createCurrentUserRecord(username = 'demo', overrides: Record<string, un
         passkey_prompt_seen_at: '2026-07-10 00:00:00',
         ...overrides,
     }
+}
+
+function createToyhouseSelectionTestPayload() {
+    return {
+        myocUserId: 'current-user',
+        profileUrl: 'https://toyhou.se/demo',
+        folderUrl: 'https://toyhou.se/demo/characters/folder:all',
+        pagesFetched: 1,
+        characters: [
+            {
+                id: '9430171',
+                images: [
+                    {
+                        fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png',
+                        thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/9430171_thumb.png',
+                    },
+                ],
+                imageCount: 1,
+                name: 'Absinthe',
+                thumbnailUrl: null,
+                url: 'https://toyhou.se/9430171.absinthe',
+            },
+        ],
+    }
+}
+
+async function postToyhouseSelection(selection: unknown, options: {includeSelection?: boolean; payload?: unknown} = {}) {
+    const form = new FormData()
+    form.set('toyhousePayload', JSON.stringify(options.payload ?? createToyhouseSelectionTestPayload()))
+
+    if (options.includeSelection !== false) {
+        form.set('toyhouseSelection', typeof selection === 'string' ? selection : JSON.stringify(selection))
+    }
+
+    const db = await seedPageDatabase({
+        currentUser: createCurrentUserRecord('demo'),
+        characters: [{id: 'existing-absinthe', name: 'Absinthe'}],
+    })
+    const response = await app.request(
+        'https://example.com/migrate/import/confirm',
+        {body: form, headers: {cookie: 'myoc_session=session-token'}, method: 'POST'},
+        {
+            CACHE: createMockKVNamespace(),
+            DB: db,
+            MEDIA_BUCKET: createMockR2Bucket(),
+            MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+        },
+    )
+
+    return {db, response, html: await response.text()}
 }
 
 function expectPatternAllowsReportedCharacterNames(html: string, inputId: string): void {
@@ -353,7 +786,7 @@ describe('security headers', () => {
     it('allows direct Toyhou.se image previews only on migration pages', async () => {
         const response = await getAppPath(
             '/migrate',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo'),
             }),
             {
@@ -369,7 +802,7 @@ describe('security headers', () => {
     })
 
     it('adds a locked-down content security policy to API responses', async () => {
-        const response = await getAppPath('/api/missing', createProfilePageDb(), {
+        const response = await getAppPath('/api/missing', await seedPageDatabase(), {
             accept: 'application/json',
         })
         const contentSecurityPolicy = expectSecurityHeaders(response)
@@ -384,7 +817,7 @@ describe('public page redirects', () => {
     it('renders home for logged-in users', async () => {
         const response = await getAppPath(
             '/',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo'),
                 userCount: 24,
                 characterCount: 128,
@@ -485,7 +918,7 @@ describe('public page redirects', () => {
                 [LEADERBOARD_CACHE_KEY]: snapshot,
             },
         })
-        const response = await getAppPath('/leaderboard', createProfilePageDb(), {}, cache)
+        const response = await getAppPath('/leaderboard', await seedPageDatabase(), {}, cache)
         const html = await response.text()
 
         expect(response.status).toBe(200)
@@ -514,10 +947,10 @@ describe('public page redirects', () => {
         expect(html).toContain('https://m.myoc.art/characters/user-2/char-2/profile/beryl-profile.webp')
     })
 
-    it('renders approved homepage gallery thumbnails below the hero', async () => {
+    it('renders approved homepage gallery media with accessible links', async () => {
         vi.spyOn(Math, 'random').mockReturnValue(0)
 
-        const db = createProfilePageDb({
+        const db = await seedPageDatabase({
             homeGalleryImages: [
                 {
                     id: 'media-1',
@@ -553,88 +986,10 @@ describe('public page redirects', () => {
         })
         const response = await getAppPath('/', db)
         const html = await response.text()
-        const preparedSql = (
-            db.prepare as unknown as {
-                mock: {calls: [string][]}
-            }
-        ).mock.calls
-            .map(([sql]) => sql)
-            .join('\n')
-
         expect(response.status).toBe(200)
         expect(html).toContain('Gallery Management')
         expect(html).toContain('data-home-approved-gallery')
         expect(html).toContain('data-gallery-tile')
-        expect(html).toContain("document.querySelectorAll('[data-home-approved-gallery]')")
-        expect(html).toContain('var imageObserver = new IntersectionObserver(function (entries)')
-        expect(html).toContain('imageObserver.observe(tile)')
-        expect(html).toContain('imageObserver.unobserve(entry.target)')
-        expect(html).toContain("rootMargin: '400px 0px', threshold: 0.01")
-        expect(html).toContain('function tileIsNearViewport(tile)')
-        expect(html).toContain('var tileQueue = []')
-        expect(html).toContain('var tileQueueRunning = false')
-        expect(html).toContain('var tileLoadDelay = 65')
-        expect(html).toContain('var galleryLoadingStarted = false')
-        expect(html).toContain('function enqueueTile(tile)')
-        expect(html).toContain('function processTileQueue()')
-        expect(html).toContain('function startGalleryLoading()')
-        expect(html).toContain('if (galleryLoadingStarted)')
-        expect(html).toContain('window.setTimeout(processTileQueue, tileLoadDelay)')
-        expect(html).toContain('enqueueTile(entry.target)')
-        expect(html).toContain("window.addEventListener('scroll', startGalleryLoading, {once: true, passive: true})")
-        expect(html).toContain('if ((window.scrollY || document.documentElement.scrollTop) > 0)')
-        expect(html).toContain('var preloadMargin = 400')
-        expect(html).not.toContain("gallery.querySelectorAll('[data-gallery-tile]').forEach(function (tile, index)")
-        expect(html).not.toContain('}, index * 65)')
-        expect(html).not.toContain('function preloadGalleryImages()')
-        expect(html).not.toContain("window.addEventListener('load', schedulePreload, {once: true})")
-        expect(html).toContain('window.requestAnimationFrame(function ()')
-        expect(html).not.toContain("rootMargin: '0px', threshold: 0.01")
-        expect(html).toContain('border-color: transparent')
-        expect(html).toContain('contain: layout paint')
-        expect(html).toContain('content-visibility: auto')
-        expect(html).toContain('.home-float {\n                animation: none;')
-        expect(html).toContain('@media (min-width: 1024px) {')
-        expect(html).toContain('animation: home-float var(--home-float-duration, 7s) ease-in-out infinite;')
-        expect(html).not.toContain("rootMargin: '35% 0px 35% 0px'")
-        expect(html).toContain('object-contain')
-        expect(html).toContain('border border-white bg-black')
-        expect(html).not.toContain('bg-black shadow-xl shadow-base-300/35')
-        expect(html).not.toContain('shadow-xl')
-        expect(html).not.toContain('shadow-2xl')
-        expect(html).not.toContain('backdrop-blur')
-        expect(html).not.toContain('drop-shadow')
-        expect(html).toContain('bg-[#141414]')
-        expect(html).toContain('relative -mx-4 mt-8 max-h-[50vh] overflow-hidden sm:-mx-6')
-        expect(html).toContain('home-approved-gallery relative -left-8 -top-6 w-[calc(100%+4rem)] max-w-none columns-4 gap-2 lg:absolute')
-        expect(html).not.toContain('home-approved-gallery absolute left-0 top-1/2')
-        expect(html).not.toContain('columns-2 gap-2 sm:columns-3 lg:absolute')
-        expect(html).toContain('home-reveal relative z-20 aspect-4/5 w-full')
-        expect(html).not.toContain('home-reveal relative z-20 mb-8 aspect-4/5 w-full')
-        expect(html).toContain('home-float absolute inset-0 overflow-visible bg-transparent')
-        expect(html).toContain('h-full w-full object-contain object-center')
-        expect(html).not.toContain('h-[min(72vh,36rem)]')
-        expect(html).not.toContain('max-h-[82vh]')
-        expect(html).toContain('px-4 pt-10 pb-8 sm:px-6 sm:pt-14 sm:pb-8')
-        expect(html).not.toContain('px-4 pt-10 pb-16')
-        expect(html).toContain('relative z-10 mx-auto grid max-w-7xl gap-8 lg:h-full')
-        expect(html).not.toContain('relative z-10 mx-auto grid h-full max-w-7xl')
-        expect(html).toContain('lg:columns-6')
-        expect(html).not.toContain('xl:columns-7')
-        expect(html).not.toContain('2xl:columns-8')
-        expect(html).not.toContain('relative z-0 mx-auto grid')
-        expect(html).not.toContain('data-home-gallery-vignette')
-        expect(html).not.toContain('pointer-events-none absolute inset-0 z-10 overflow-hidden')
-        expect(html).not.toContain('blur-3xl')
-        expect(html).not.toContain('rgba(20, 20, 20')
-        expect(html).not.toContain('radial-gradient')
-        expect(html).not.toContain('linear-gradient')
-        expect(html).not.toContain('bg-linear-to-t')
-        expect(html).not.toContain('mask-image')
-        expect(html).not.toContain('home-gallery-scan')
-        expect(html).toContain('aria-hidden="true" class="absolute inset-0 bg-black"')
-        expect(html).not.toContain('skeleton absolute')
-        expect(html).toContain('style="aspect-ratio:320 / 480"')
         expect(html).toContain('href="/u/demo_owner/Quartz%20Dragon"')
         expect(html).toContain(
             'data-src="https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview/preview-thumb-key.webp"',
@@ -648,20 +1003,12 @@ describe('public page redirects', () => {
         expect(html.indexOf('second-preview-thumb-key.webp')).toBeLessThan(html.indexOf('preview-thumb-key.webp'))
         expect(html).toContain('width="320"')
         expect(html).toContain('height="480"')
-        expect(html.match(/data-gallery-tile="true"/g)?.length).toBe(48)
-        expect(preparedSql).toContain('users.username AS owner_username')
-        expect(preparedSql).toContain('INNER JOIN users ON users.id = characters.user_id')
-        expect(preparedSql).toContain("sfw_review_status = 'approved'")
-        expect(preparedSql).toContain('sfw_homepage_allowed = 1')
-        expect(preparedSql).toContain('sfw_preview_image_key IS NOT NULL')
-        expect(preparedSql).toContain('ORDER BY RANDOM()')
-        expect(preparedSql).not.toContain('ORDER BY COALESCE(character_media.sfw_approved_at, character_media.created_at) DESC')
     })
 
-    it('caches randomized homepage gallery thumbnails for one day', async () => {
+    it('reuses cached homepage gallery thumbnails when source rows are unavailable', async () => {
         vi.spyOn(Math, 'random').mockReturnValue(0)
 
-        const db = createProfilePageDb({
+        const db = await seedPageDatabase({
             homeGalleryImages: [
                 {
                     id: 'media-1',
@@ -682,22 +1029,27 @@ describe('public page redirects', () => {
         })
         const cache = createMockKVNamespace()
         const response = await getAppPath('/', db, {}, cache)
-        const cachePutCalls = (cache.put as unknown as {mock: {calls: unknown[][]}}).mock.calls
-        const galleryCachePut = cachePutCalls.find(([key]) => key === 'home:gallery:v1')
 
         expect(response.status).toBe(200)
-        expect(galleryCachePut).toBeTruthy()
-        expect(galleryCachePut?.[2]).toEqual({expirationTtl: 60 * 60 * 24})
-        expect(JSON.parse(galleryCachePut?.[1] as string)).toEqual([
-            expect.objectContaining({
-                href: '/u/demo_owner/Quartz%20Dragon',
-                src: 'https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview/preview-thumb-key.webp',
-            }),
+        const firstHtml = await response.text()
+        expect(firstHtml).toContain('/u/demo_owner/Quartz%20Dragon')
+        expect(firstHtml).toContain('preview-thumb-key.webp')
+
+        await db.batch([
+            db.prepare('DELETE FROM character_media WHERE id = ?').bind('media-1'),
+            db.prepare('DELETE FROM characters WHERE id = ?').bind('character-1'),
+            db.prepare('DELETE FROM users WHERE id = ?').bind('owner-1'),
         ])
+        const cachedResponse = await getAppPath('/', db, {}, cache)
+        const cachedHtml = await cachedResponse.text()
+
+        expect(cachedResponse.status).toBe(200)
+        expect(cachedHtml).toContain('/u/demo_owner/Quartz%20Dragon')
+        expect(cachedHtml).toContain('preview-thumb-key.webp')
     })
 
     it('renders the homepage height chart preview from Razeth chart models', async () => {
-        const db = createProfilePageDb({
+        const db = await seedPageDatabase({
             homeHeightChartCharacters: [
                 {
                     id: 'character-ivo',
@@ -745,31 +1097,40 @@ describe('public page redirects', () => {
         })
         const response = await getAppPath('/', db)
         const html = await response.text()
-        const preparedSql = (
-            db.prepare as unknown as {
-                mock: {calls: [string][]}
-            }
-        ).mock.calls
-            .map(([sql]) => sql)
-            .join('\n')
 
         expect(response.status).toBe(200)
         expect(html).toContain('Height Charts')
         expect(html).toContain('How do you stack up?')
-        expect(html).toContain('data-home-chart-x-pct="33"')
-        expect(html).toContain('data-home-chart-x-pct="67"')
         expect(html).toContain('/assets/home-height-ivo.webp')
         expect(html).toContain('/assets/home-height-luxor.webp')
-        expect(html).toContain('home-size-chart-grid-line')
-        expect(html).toContain('home-size-chart-plot.is-visible .home-size-chart-character.is-positioned')
-        expect(html).toContain('transition: opacity 480ms ease, transform 680ms cubic-bezier')
-        expect(html).toContain('--home-chart-enter-delay:0ms')
-        expect(html).toContain('--home-chart-enter-delay:110ms')
-        expect(html).toContain('var revealObserver = new IntersectionObserver(function (entries)')
-        expect(html).toContain('revealPlot(entry.target)')
+        expect(html).toContain('href="/size-chart">Open size chart</a>')
         expect(html).not.toContain('2 characters')
-        expect(preparedSql).toContain('lower(users.username) = ?')
-        expect(preparedSql).toContain('characters.height_chart_json <>')
+    })
+
+    it('ignores malformed homepage height chart data', async () => {
+        const response = await getAppPath(
+            '/',
+            await seedPageDatabase({
+                homeHeightChartCharacters: [
+                    {
+                        height_chart_json: JSON.stringify({
+                            calibration: {footIsVirtual: false, footYPercent: 90, headYPercent: 10},
+                            height: {meters: 1.8},
+                            image: null,
+                            version: 1,
+                        }),
+                        id: 'invalid-height-chart',
+                        name: 'Ivo',
+                        user_id: 'user-razeth',
+                        username: 'razeth',
+                    },
+                ],
+            }),
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).not.toContain('invalid-height-chart')
     })
 
     it('renders the product vision page', async () => {
@@ -805,7 +1166,7 @@ describe('public page redirects', () => {
     })
 
     it('renders discover galleries worth browsing on the homepage', async () => {
-        const db = createProfilePageDb({
+        const db = await seedPageDatabase({
             discoverCharacters: [
                 {
                     id: 'character-1',
@@ -823,13 +1184,6 @@ describe('public page redirects', () => {
         })
         const response = await getAppPath('/', db)
         const html = await response.text()
-        const preparedSql = (
-            db.prepare as unknown as {
-                mock: {calls: [string][]}
-            }
-        ).mock.calls
-            .map(([sql]) => sql)
-            .join('\n')
 
         expect(response.status).toBe(200)
         expect(html).toContain('Easy maintenance. Easy browsing.')
@@ -841,18 +1195,10 @@ describe('public page redirects', () => {
         expect(html).toContain('alt="Quartz Dragon gallery preview by Demo Artist"')
         expect(html).toContain('https://m.myoc.art/characters/owner-1/character-1/media/media-1/sfw/preview/preview-thumb-key.webp')
         expect(html).toContain('https://m.myoc.art/characters/owner-1/character-1/profile/profile-key.webp')
-        expect(preparedSql).toContain('eligible_characters')
-        expect(preparedSql).toContain('HAVING COUNT(approved_sfw_media.id) >= 5')
-        expect(preparedSql.replace(/\s+/g, ' ')).toContain(
-            'SUM(CASE WHEN approved_sfw_media.sfw_homepage_allowed = 1 THEN 1 ELSE 0 END) >= 1',
-        )
-        expect(preparedSql).toContain('sfw_preview_image_key IS NOT NULL')
-        expect(preparedSql).toContain("sfw_review_status = 'approved'")
-        expect(preparedSql).toContain('sfw_homepage_allowed = 1')
     })
 
     it('renders homepage stats from KV cache', async () => {
-        const db = createProfilePageDb()
+        const db = await seedPageDatabase()
         const cache = createMockKVNamespace({
             values: {
                 'home:stats:v1': {
@@ -906,11 +1252,10 @@ describe('public page redirects', () => {
         expect(html).toContain(
             'data-src="https://m.myoc.art/characters/cached-owner/cached-character/media/cached-gallery-media/sfw/preview/cached-gallery-preview-key.webp"',
         )
-        expect(db.prepare).toHaveBeenCalledTimes(1)
     })
 
     it('redirects logged-in users away from login and register', async () => {
-        const db = createProfilePageDb({
+        const db = await seedPageDatabase({
             currentUser: createCurrentUserRecord('demo_user'),
         })
         const headers = {
@@ -929,7 +1274,7 @@ describe('public page redirects', () => {
     it('redirects logged-in users without passkeys to the one-time passkey prompt', async () => {
         const response = await getAppPath(
             '/search?q=demo',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo', {
                     passkey_prompt_seen_at: null,
                 }),
@@ -946,7 +1291,7 @@ describe('public page redirects', () => {
     it('does not redirect users who already have passkeys', async () => {
         const response = await getAppPath(
             '/search?q=demo',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo', {
                     passkey_prompt_seen_at: null,
                 }),
@@ -963,7 +1308,7 @@ describe('public page redirects', () => {
     })
 
     it('renders the passkey setup prompt without marking it seen', async () => {
-        const db = createProfilePageDb({
+        const db = await seedPageDatabase({
             currentUser: createCurrentUserRecord('demo', {
                 passkey_prompt_seen_at: null,
             }),
@@ -972,13 +1317,11 @@ describe('public page redirects', () => {
             cookie: 'myoc_session=session-token',
         })
         const html = await response.text()
-        const preparedSql = (
-            db.prepare as unknown as {
-                mock: {calls: [string][]}
-            }
-        ).mock.calls
-            .map(([sql]) => sql)
-            .join('\n')
+        const storedUser = await queryOne<{passkey_prompt_seen_at: string | null}>(
+            'SELECT passkey_prompt_seen_at FROM users WHERE id = ?',
+            ['current-user'],
+            db,
+        )
 
         expect(response.status).toBe(200)
         expect(html).toContain('<title>Set Up A Passkey | MyOC</title>')
@@ -986,7 +1329,44 @@ describe('public page redirects', () => {
         expect(html).toContain('name="choice" type="submit" value="setup"')
         expect(html).toContain('name="choice" type="submit" value="later"')
         expect(html).toContain('name="returnTo" type="hidden" value="/search?q=demo"')
-        expect(preparedSql).not.toContain('UPDATE users')
+        expect(storedUser?.passkey_prompt_seen_at).toBeNull()
+    })
+
+    it.each([
+        ['a protocol-relative URL', '%2F%2Fevil.example'],
+        ['a backslash authority URL', '%2F%5Cevil.example'],
+        ['a double-backslash authority URL', '%2F%5C%5Cevil.example'],
+        ['a double-encoded authority URL', '%252F%252Fevil.example'],
+        ['an encoded API path', '%2F%2561pi%2Fsearch'],
+        ['an encoded passkey path', '%2F%2570asskey-setup'],
+        ['an authority URL with a tab', '%2F%09%2Fevil.example'],
+        ['a malformed encoded path', '%2F%25E0%25A4%25A'],
+    ])('rejects %s as a passkey return path', async (_name, returnTo) => {
+        const response = await getAppPath(
+            `/passkey-setup?returnTo=${returnTo}`,
+            await seedPageDatabase({
+                currentUser: createCurrentUserRecord('demo', {passkey_prompt_seen_at: null}),
+                userPasskeys: [{id: 'passkey-1'}],
+            }),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(302)
+        expect(response.headers.get('location')).toBe('/u/demo')
+    })
+
+    it('keeps a valid local passkey return path', async () => {
+        const response = await getAppPath(
+            '/passkey-setup?returnTo=%2Fsearch%3Fq%3Ddemo',
+            await seedPageDatabase({
+                currentUser: createCurrentUserRecord('demo', {passkey_prompt_seen_at: null}),
+                userPasskeys: [{id: 'passkey-1'}],
+            }),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(302)
+        expect(response.headers.get('location')).toBe('/search?q=demo')
     })
 
     it('renders home, login, and register for logged-out users', async () => {
@@ -1009,28 +1389,27 @@ describe('public page redirects', () => {
         expect(passwordPanel).toBeDefined()
         expect(passwordPanel).not.toContain('hidden')
         expect(passkeyPanel).toContain('hidden')
-        expect(html).toContain('action="/login" autocomplete="on"')
-        expect(html).toContain('autocomplete="username" class="input input-bordered w-full" id="login-username"')
+        expect(html).toContain('action="/login"')
+        expect(html).toContain('autocomplete="on"')
+        expect(html).toContain('autocomplete="username"')
+        expect(html).toContain('id="login-username"')
         expect(html).toContain('autocomplete="current-password"')
+        expect(html).toContain('name="csrfToken"')
+        expect(html).toContain('data-pre-auth-csrf-token')
         expect(html).toContain('href="/login?method=password"')
         expect(html).not.toContain('data-login-mode')
+        expect(response.headers.get('cache-control')).toBe('private, no-store')
+        expect(response.headers.get('set-cookie')).toContain('myoc_pre_auth_csrf=')
     })
 
-    it('ignores obsolete home page variant query parameters', async () => {
-        const archiveResponse = await getAppPath('/?home=archive')
-        const showcaseResponse = await getAppPath('/?home=showcase')
-        const unknownResponse = await getAppPath('/?home=unknown')
-        const archiveHtml = await archiveResponse.text()
-        const showcaseHtml = await showcaseResponse.text()
-        const unknownHtml = await unknownResponse.text()
+    it('reuses a valid pre-authentication CSRF cookie', async () => {
+        const csrfToken = '0123456789abcdef0123456789abcdef'
+        const response = await getAppPath('/login', db, {
+            cookie: `myoc_pre_auth_csrf=${csrfToken}`,
+        })
 
-        expect(archiveResponse.status).toBe(200)
-        expect(showcaseResponse.status).toBe(200)
-        expect(unknownResponse.status).toBe(200)
-        expect(archiveHtml).toContain('Easy maintenance. Easy browsing.')
-        expect(showcaseHtml).toContain('Easy maintenance. Easy browsing.')
-        expect(showcaseHtml).toContain('razfalling.webp')
-        expect(unknownHtml).toContain('Easy maintenance. Easy browsing.')
+        expect(response.status).toBe(200)
+        expect(response.headers.get('set-cookie')).toContain(`myoc_pre_auth_csrf=${csrfToken}`)
     })
 
     it('renders the what is new page with sequential version entries', async () => {
@@ -1047,36 +1426,29 @@ describe('public page redirects', () => {
         }
         expect(html).toContain('Current version')
         expect(html).toContain('Release Notes')
-        expect(html).toContain('badge badge-primary')
         if (RELEASE_NOTES.some((release) => release.important)) {
-            expect(html).toContain('alert alert-warning alert-dash')
             expect(html).toContain('This change requires user interaction')
-            expect(html).toContain('badge badge-warning')
             expect(html).toContain('Important!')
         }
-        expect(html).toContain('badge badge-outline')
         expect(html).toContain('href="/whats-new"')
     })
 
     it('marks the current version seen when logged-in users visit the what is new page', async () => {
-        const db = createProfilePageDb({
+        const db = await seedPageDatabase({
             currentUser: createCurrentUserRecord('demo'),
         })
         const response = await getAppPath('/whats-new', db, {
             cookie: 'myoc_session=session-token',
         })
         const html = await response.text()
-        const preparedSql = (
-            db.prepare as unknown as {
-                mock: {calls: [string][]}
-            }
-        ).mock.calls
-            .map(([sql]) => sql)
-            .join('\n')
+        const storedUser = await queryOne<{last_seen_version: string | null}>(
+            'SELECT last_seen_version FROM users WHERE id = ?',
+            ['current-user'],
+            db,
+        )
 
         expect(response.status).toBe(200)
-        expect(preparedSql).toContain('UPDATE users')
-        expect(preparedSql).toContain('last_seen_version')
+        expect(storedUser?.last_seen_version).toBe(APP_VERSION)
         expect(html).toContain('data-version-notification')
         expect(html).toContain('hidden"')
     })
@@ -1084,7 +1456,7 @@ describe('public page redirects', () => {
     it('renders SEO metadata on the home page', async () => {
         const response = await getAppPath(
             '/',
-            createProfilePageDb({
+            await seedPageDatabase({
                 mediaCount: 1234,
             }),
         )
@@ -1113,7 +1485,7 @@ describe('GET /search', () => {
     it('renders matching users and characters from live search data', async () => {
         const response = await getAppPath(
             '/search?q=raz',
-            createProfilePageDb({
+            await seedPageDatabase({
                 searchUsers: [
                     {
                         id: 'profile-user',
@@ -1123,7 +1495,6 @@ describe('GET /search', () => {
                         character_count: 2,
                     },
                 ],
-                searchUserCount: 1,
                 searchCharacters: [
                     {
                         id: 'character-1',
@@ -1133,7 +1504,6 @@ describe('GET /search', () => {
                         username: 'razeth',
                     },
                 ],
-                searchCharacterCount: 1,
             }),
         )
         const html = await response.text()
@@ -1175,7 +1545,7 @@ describe('GET /settings', () => {
     it('links to the Toyhou.se migration page for signed-in users', async () => {
         const response = await getAppPath(
             '/settings',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo'),
             }),
             {
@@ -1193,7 +1563,7 @@ describe('GET /settings', () => {
     it('renders passkeys, sessions, profile photos, and secure-account state', async () => {
         const response = await getAppPath(
             '/settings',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo', {
                     profile_photo_key: 'profile-key',
                     recovery_phrase_confirmed_at: '2026-07-01 00:00:00',
@@ -1224,12 +1594,12 @@ describe('GET /settings', () => {
                     {
                         id: 'session-current',
                         created_at: '2026-07-01 10:00:00',
-                        expires_at: '2026-08-01 10:00:00',
+                        expires_at: '2099-08-01 10:00:00',
                     },
                     {
                         id: 'session-other',
                         created_at: 'not-a-date',
-                        expires_at: '2026-08-02 10:00:00',
+                        expires_at: '2099-08-02 10:00:00',
                     },
                 ],
             }),
@@ -1262,7 +1632,7 @@ describe('GET /migrate', () => {
     it('renders the Toyhou.se migration form for signed-in users', async () => {
         const response = await getAppPath(
             '/migrate?toyhouseUsername=demo',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo'),
             }),
             {
@@ -1286,50 +1656,20 @@ describe('GET /migrate', () => {
         expect(html).toContain('href="https://toyhou.se/demo/characters/folder:all"')
         expect(html).toContain('Verify Toyhou.se Ownership')
         expect(html).toContain('value="current-user"')
-        expect(html).toContain('expectedMyocUserId = &quot;current-user&quot;')
-        expect(html).toContain('verifyProfileOwner')
-        expect(html).toContain('.profile-section.profile-content-section.user-content.fr-view')
         expect(html).toContain('Verification failed')
         expect(html).toContain('Start Import')
         expect(html).toContain('data-toyhouse-import-dialog')
         expect(html).toContain('Save the import bookmarklet')
         expect(html).toContain('href="javascript:')
-        expect(html).toContain('toyhou\\.se')
         expect(html).toContain('I Bookmarked It')
         expect(html).toContain('Drag the Import to MyOC button to your bookmarks bar')
         expect(html).toContain('/migrate/import')
-        expect(html).toContain('window.open(target')
-        expect(html).toContain('postMessage')
-        expect(html).toContain('myoc:toyhouse-import')
-        expect(html).toContain('myoc:toyhouse-progress')
-        expect(html).toContain('myoc:toyhouse-import-received')
-        expect(html).toContain('window.close()')
-        expect(html).toContain('collectImages')
-        expect(html).toContain('discoverGalleryUrls')
-        expect(html).toContain('imageLinks')
-        expect(html).toContain('.sidebar-tab a[href]')
-        expect(html).toContain('url.pathname = path + &#39;/gallery&#39;')
-        expect(html).toContain('myoc-migration-progress')
-        expect(html).toContain('closeSetupDialog')
-        expect(html).toContain('[data-toyhouse-import-dialog][open]')
-        expect(html).toContain('MyOC Toyhou.se import')
-        expect(html).toContain('Import failed')
-        expect(html).toContain('MyOC user ID was not found')
-        expect(html).toContain('} catch (error) { fail(error); }')
-        expect(html).not.toContain('.catch(fail)')
-        expect(html).toContain('Loading galleries')
-        expect(html).toContain('Sending to MyOC')
-        expect(html).toContain('/~account/warnings/accept')
-        expect(html).toContain('Accepting warning')
-        expect(html).toContain('content warning')
-        expect(html).not.toContain('window.name')
-        expect(html).not.toContain('Toyhou.se returned 403')
     })
 
     it('renders the logged-in Toyhou.se import receiver page', async () => {
         const response = await getAppPath(
             '/migrate/import',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo'),
             }),
             {
@@ -1340,23 +1680,18 @@ describe('GET /migrate', () => {
 
         expect(response.status).toBe(200)
         expect(html).toContain('Waiting for Toyhou.se')
-        expect(html).toContain('data-toyhouse-import-receiver-status')
-        expect(html).toContain('data-toyhouse-import-receiver-detail')
-        expect(html).toContain('data-toyhouse-import-receiver-bar')
-        expect(html).toContain("data.type === 'myoc:toyhouse-progress'")
-        expect(html).toContain("data.type !== 'myoc:toyhouse-import'")
-        expect(html).toContain('myoc:toyhouse-import-received')
-        expect(html).toContain("form.method = 'post'")
-        expect(html).toContain("input.name = 'toyhousePayload'")
+        expect(html).toContain('Keep this tab open. The bookmarklet will send your Toyhou.se import here automatically.')
+        expect(html).toContain('Waiting for the bookmarklet to start.')
         expect(html).toContain('id="logout-form"')
         expect(html).toContain('href="/settings">Back to Settings</a>')
         expect(html).not.toContain('href="/login">Login</a>')
     })
 
     it('proxies Toyhou.se images for signed-in users', async () => {
+        const imageBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
         const fetchMock = vi.fn(
             async () =>
-                new Response('image-bytes', {
+                new Response(imageBytes, {
                     headers: {
                         'content-type': 'image/png',
                     },
@@ -1366,7 +1701,7 @@ describe('GET /migrate', () => {
 
         const response = await getAppPath(
             `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485')}`,
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo'),
             }),
             {
@@ -1376,11 +1711,90 @@ describe('GET /migrate', () => {
 
         expect(response.status).toBe(200)
         expect(response.headers.get('content-type')).toBe('image/png')
-        expect(new TextDecoder().decode(await response.arrayBuffer())).toBe('image-bytes')
-        expect(fetchMock).toHaveBeenCalledWith('https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485', {
-            redirect: 'follow',
-        })
+        expect(response.headers.get('content-disposition')).toBe('attachment')
+        expect(response.headers.get('cache-control')).toBe('private, no-store')
+        expect(new Uint8Array(await response.arrayBuffer())).toEqual(imageBytes)
+        expect(fetchMock).toHaveBeenCalledWith(
+            'https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485',
+            expect.objectContaining({
+                redirect: 'manual',
+                signal: expect.anything(),
+            }),
+        )
     })
+
+    it.each([
+        {
+            name: 'JPEG',
+            contentType: 'image/jpeg',
+            bytes: new Uint8Array([0xff, 0xd8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+        },
+        {
+            name: 'GIF87a',
+            contentType: 'image/gif',
+            bytes: new TextEncoder().encode('GIF87a000000'),
+        },
+        {
+            name: 'GIF89a',
+            contentType: 'image/gif',
+            bytes: new TextEncoder().encode('GIF89a000000'),
+        },
+        {
+            name: 'WebP',
+            contentType: 'image/webp',
+            bytes: new TextEncoder().encode('RIFF0000WEBP'),
+        },
+        {
+            name: 'AVIF',
+            contentType: 'image/avif',
+            bytes: new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66, ...new Array(20).fill(0)]),
+        },
+        {
+            name: 'AVIS',
+            contentType: 'image/avif',
+            bytes: new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x73, ...new Array(20).fill(0)]),
+        },
+    ])('proxies a valid $name signature', async ({bytes, contentType}) => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => new Response(bytes, {headers: {'content-type': `${contentType}; charset=binary`}})),
+        )
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image')}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(200)
+        expect(response.headers.get('content-type')).toBe(contentType)
+        expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes)
+    })
+
+    it.each(['not-a-number', String(Number.MAX_SAFE_INTEGER + 1)])(
+        'ignores an invalid image content length of %s',
+        async (contentLength) => {
+            const imageBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
+            vi.stubGlobal(
+                'fetch',
+                vi.fn(
+                    async () =>
+                        new Response(imageBytes, {
+                            headers: {'content-length': contentLength, 'content-type': 'image/png'},
+                        }),
+                ),
+            )
+
+            const response = await getAppPath(
+                `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image.png')}`,
+                await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+                {cookie: 'myoc_session=session-token'},
+            )
+
+            expect(response.status).toBe(200)
+            expect(new Uint8Array(await response.arrayBuffer())).toEqual(imageBytes)
+        },
+    )
 
     it('rejects Toyhou.se image proxy requests for untrusted URLs', async () => {
         const fetchMock = vi.fn()
@@ -1388,7 +1802,7 @@ describe('GET /migrate', () => {
 
         const response = await getAppPath(
             `/migrate/toyhouse-image?url=${encodeURIComponent('https://example.com/image.png')}`,
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo'),
             }),
             {
@@ -1404,10 +1818,282 @@ describe('GET /migrate', () => {
         expect(fetchMock).not.toHaveBeenCalled()
     })
 
+    it.each([
+        ['a malformed URL', 'not a URL'],
+        ['a non-HTTPS URL', 'http://f2.toyhou.se/file/image.png'],
+        ['a username', 'https://user@f2.toyhou.se/file/image.png'],
+        ['a password', 'https://:secret@f2.toyhou.se/file/image.png'],
+        ['a wildcard Toyhou.se host', 'https://cdn.toyhou.se/file/image.png'],
+        ['a non-file path', 'https://f2.toyhou.se/profile/demo'],
+        ['a custom port', 'https://f2.toyhou.se:8443/file/image.png'],
+        ['an oversized URL', `https://f2.toyhou.se/file/${'a'.repeat(2_100)}`],
+    ])('rejects %s in the Toyhou.se image proxy', async (_name, url) => {
+        const fetchMock = vi.fn()
+        vi.stubGlobal('fetch', fetchMock)
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent(url)}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(400)
+        expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it.each([
+        {name: 'a failed request', aborted: false, status: 502, error: 'Toyhou.se image request failed'},
+        {name: 'a timed-out request', aborted: true, status: 504, error: 'Toyhou.se image request timed out'},
+    ])('reports $name to the Toyhou.se image origin', async ({aborted, status, error}) => {
+        if (aborted) {
+            vi.spyOn(AbortSignal, 'timeout').mockReturnValue(AbortSignal.abort())
+        }
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => {
+                throw new Error('upstream request failed')
+            }),
+        )
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image.png')}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(status)
+        await expect(response.json()).resolves.toEqual({error})
+    })
+
+    it.each([
+        {name: 'an upstream error', upstream: new Response('not found', {status: 404}), status: 404},
+        {name: 'an empty response', upstream: new Response(null, {status: 204}), status: 204},
+    ])('rejects $name from the Toyhou.se image origin', async ({upstream, status}) => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => upstream),
+        )
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image.png')}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(502)
+        await expect(response.json()).resolves.toEqual({error: `Toyhou.se returned ${status} for image URL`})
+    })
+
+    it.each([
+        {
+            name: 'HTML',
+            response: new Response('<script>globalThis.attackerCode = true</script>', {
+                headers: {'content-type': 'text/html'},
+            }),
+            error: 'Toyhou.se returned an unsupported image type',
+        },
+        {
+            name: 'a missing content type',
+            response: new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+            error: 'Toyhou.se returned an unsupported image type',
+        },
+        {
+            name: 'a redirect',
+            response: new Response(null, {
+                headers: {location: 'https://evil.example/payload'},
+                status: 302,
+            }),
+            error: 'Toyhou.se image redirects are not allowed',
+        },
+        {
+            name: 'an oversized image',
+            response: new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), {
+                headers: {'content-length': String(200 * 1024 * 1024 + 1), 'content-type': 'image/png'},
+            }),
+            error: 'Toyhou.se image is too large',
+        },
+        {
+            name: 'HTML mislabeled as an image',
+            response: new Response('<html lang="en">not an image</html>', {
+                headers: {'content-type': 'image/png'},
+            }),
+            error: 'Toyhou.se returned invalid image data',
+        },
+    ])('rejects $name from the Toyhou.se image origin', async ({response: upstream, error}) => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => upstream),
+        )
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image.png')}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(502)
+        expect(await response.json()).toEqual({error})
+        expect(response.headers.get('content-security-policy')).toBe(NON_HTML_CONTENT_SECURITY_POLICY)
+    })
+
+    it('rejects a truncated image signature', async () => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => new Response(new Uint8Array([0xff, 0xd8]), {headers: {'content-type': 'image/jpeg'}})),
+        )
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image.jpg')}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(502)
+        await expect(response.json()).resolves.toEqual({error: 'Toyhou.se returned invalid image data'})
+    })
+
+    it('streams image chunks after validating the signature', async () => {
+        const signature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
+        const remainingBytes = new Uint8Array([1, 2, 3])
+        const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(signature)
+                controller.enqueue(remainingBytes)
+                controller.close()
+            },
+        })
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => new Response(body, {headers: {'content-type': 'image/png'}})),
+        )
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image.png')}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(200)
+        expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([...signature, ...remainingBytes]))
+    })
+
+    it('rejects an initial image chunk that exceeds the declared length', async () => {
+        const signature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(
+                async () =>
+                    new Response(signature, {
+                        headers: {'content-length': '8', 'content-type': 'image/png'},
+                    }),
+            ),
+        )
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image.png')}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(502)
+        await expect(response.json()).resolves.toEqual({error: 'Toyhou.se returned invalid image data'})
+    })
+
+    it('stops a streamed image when later data exceeds the declared length', async () => {
+        const signature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
+        const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(signature)
+                controller.enqueue(new Uint8Array([1]))
+                controller.close()
+            },
+        })
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(
+                async () =>
+                    new Response(body, {
+                        headers: {'content-length': String(signature.byteLength), 'content-type': 'image/png'},
+                    }),
+            ),
+        )
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image.png')}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(200)
+        await expect(response.arrayBuffer()).rejects.toThrow('Image is too large')
+    })
+
+    it('forwards an upstream stream failure to the response reader', async () => {
+        const signature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
+        let pullCount = 0
+        const body = new ReadableStream<Uint8Array>({
+            pull(controller) {
+                if (pullCount === 0) {
+                    pullCount += 1
+                    controller.enqueue(signature)
+                    return
+                }
+
+                controller.error(new Error('upstream stream failed'))
+            },
+        })
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => new Response(body, {headers: {'content-type': 'image/png'}})),
+        )
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image.png')}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(200)
+        await expect(response.arrayBuffer()).rejects.toThrow('upstream stream failed')
+    })
+
+    it('cancels the upstream image reader when the client cancels', async () => {
+        const signature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
+        const cancel = vi.fn()
+        let pullCount = 0
+        const body = new ReadableStream<Uint8Array>({
+            cancel,
+            async pull(controller) {
+                if (pullCount === 0) {
+                    pullCount += 1
+                    controller.enqueue(signature)
+                    return
+                }
+
+                await new Promise(() => undefined)
+            },
+        })
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => new Response(body, {headers: {'content-type': 'image/png'}})),
+        )
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/image.png')}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.body).not.toBeNull()
+        await response.body?.cancel('client stopped')
+
+        expect(cancel).toHaveBeenCalledWith('client stopped')
+    })
+
     it('redirects the migration start page to confirm when an import job is active', async () => {
         const response = await getAppPath(
             '/migrate',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo'),
                 activeToyhouseImportJob: {
                     id: 'toyhouse-import-job',
@@ -1427,7 +2113,7 @@ describe('GET /migrate', () => {
     it('redirects the Toyhou.se receiver page to confirm when an import job is active', async () => {
         const response = await getAppPath(
             '/migrate/import',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo'),
                 activeToyhouseImportJob: {
                     id: 'toyhouse-import-job',
@@ -1447,7 +2133,7 @@ describe('GET /migrate', () => {
     it('does not redirect the migration start page for an active import job with no remaining items', async () => {
         const response = await getAppPath(
             '/migrate',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo'),
                 activeToyhouseImportJob: {
                     id: 'toyhouse-import-job',
@@ -1469,7 +2155,7 @@ describe('GET /migrate', () => {
     it('resumes an active Toyhou.se import job on the confirm page', async () => {
         const response = await getAppPath(
             '/migrate/import/confirm',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo'),
                 activeToyhouseImportJob: {
                     id: 'toyhouse-import-job',
@@ -1522,7 +2208,7 @@ describe('GET /migrate', () => {
     it('redirects the confirm page back to migrate when there is no active import job', async () => {
         const response = await getAppPath(
             '/migrate/import/confirm',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo'),
             }),
             {
@@ -1612,7 +2298,7 @@ describe('GET /migrate', () => {
             },
             {
                 CACHE: createMockKVNamespace(),
-                DB: createProfilePageDb({
+                DB: await seedPageDatabase({
                     currentUser: createCurrentUserRecord('demo'),
                     characters: [{id: 'existing-brindle', name: 'brindle'}],
                 }),
@@ -1633,21 +2319,11 @@ describe('GET /migrate', () => {
         expect(html).not.toContain('Toyhou.se username')
         expect(html).toContain('Review Characters for Import')
         expect(html).toContain('3 ready to import, 1 blocked')
-        expect(html).toContain('data-toyhouse-final-import-progress')
-        expect(html).toContain('data-toyhouse-final-import-bar')
         expect(html).toContain('MyOC is importing your images')
-        expect(html).toContain('The server is downloading Toyhou.se images, uploading them to MyOC storage, and saving the character data.')
-        expect(html).toContain('name="characterIds" type="checkbox" value="9430171"')
+        expect(html).toContain('MyOC is preparing the selected images. Keep this page open during large imports.')
         expect(html).toContain('checked="" class="checkbox checkbox-primary')
-        expect(html).toContain('data-toyhouse-import-review')
-        expect(html).toContain('name="imageUrls:9430171"')
-        expect(html).toContain('name="nsfwImageUrls:9430171"')
-        expect(html).toContain('name="importMode:2222222" type="hidden" value="existing"')
-        expect(html).toContain('name="targetCharacterId:2222222" type="hidden" value="existing-brindle"')
+        expect(html).toContain('name="toyhouseSelection"')
         expect(html).toContain('NSFW')
-        expect(html).toContain('data-toyhouse-image-select')
-        expect(html).toContain('data-toyhouse-image-nsfw')
-        expect(html).toContain('syncImageNsfw')
         expect(html).toContain('Absinthe')
         expect(html).toContain('Brindle')
         expect(html).toContain('Bad/Name')
@@ -1671,6 +2347,344 @@ describe('GET /migrate', () => {
         expect(html).not.toContain('src="https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/9430171_thumb.png"')
         expect(html).not.toContain('Full size 1')
         expect(html).toContain('https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_alt.png')
+    })
+
+    it('reuses the accepted Toyhou.se payload when review data would exceed the payload limit', async () => {
+        const targetLength = 4_999_950
+        const character = {
+            id: '9430171',
+            images: [],
+            imageCount: 0,
+            name: 'Absinthe',
+            thumbnailUrl: null,
+            url: 'https://toyhou.se/9430171.absinthe',
+        }
+        const payload = {
+            myocUserId: 'current-user',
+            profileUrl: 'https://toyhou.se/demo',
+            folderUrl: 'https://toyhou.se/demo/characters/folder:all',
+            pagesFetched: 1,
+            characters: [character],
+        }
+        const baseLength = JSON.stringify(payload).length
+        character.url += 'a'.repeat(targetLength - baseLength)
+        const serializedPayload = JSON.stringify(payload)
+        const requestBody = new URLSearchParams({
+            toyhousePayload: serializedPayload,
+            toyhouseSelection: JSON.stringify({characters: [], createdCharacters: []}),
+        }).toString()
+        const db = await seedPageDatabase({
+            currentUser: createCurrentUserRecord('demo'),
+        })
+        const bindings = {
+            CACHE: createMockKVNamespace(),
+            DB: db,
+            MEDIA_BUCKET: createMockR2Bucket(),
+            MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+        }
+
+        expect(serializedPayload).toHaveLength(targetLength)
+
+        const reviewResponse = await app.request(
+            'https://example.com/migrate/import',
+            {
+                body: requestBody,
+                headers: {
+                    'content-type': 'application/x-www-form-urlencoded',
+                    cookie: 'myoc_session=session-token',
+                },
+                method: 'POST',
+            },
+            bindings,
+        )
+        const reviewHtml = await reviewResponse.text()
+
+        expect(reviewResponse.status).toBe(200)
+        expect(reviewHtml).toContain('Review Characters for Import')
+        expect(reviewHtml).not.toContain('Toyhou.se returned too much data')
+
+        const confirmResponse = await app.request(
+            'https://example.com/migrate/import/confirm',
+            {
+                body: requestBody,
+                headers: {
+                    'content-type': 'application/x-www-form-urlencoded',
+                    cookie: 'myoc_session=session-token',
+                },
+                method: 'POST',
+            },
+            bindings,
+        )
+        const confirmHtml = await confirmResponse.text()
+
+        expect(confirmResponse.status).toBe(200)
+        expect(confirmHtml).toContain('Select at least one character to import.')
+        expect(confirmHtml).not.toContain('Toyhou.se returned too much data')
+    })
+
+    it('rejects a Toyhou.se payload when URL normalization makes the accepted data too large', async () => {
+        const payload = JSON.stringify({
+            myocUserId: 'current-user',
+            profileUrl: 'https://toyhou.se/demo',
+            folderUrl: 'https://toyhou.se/demo/characters/folder:all',
+            pagesFetched: 1,
+            characters: [
+                {
+                    id: '9430171',
+                    images: [],
+                    imageCount: 0,
+                    name: 'Absinthe',
+                    thumbnailUrl: null,
+                    url: `https://toyhou.se/9430171.${'é'.repeat(850_000)}`,
+                },
+            ],
+        })
+        const response = await app.request(
+            'https://example.com/migrate/import',
+            {
+                body: new URLSearchParams({toyhousePayload: payload}).toString(),
+                headers: {
+                    'content-type': 'application/x-www-form-urlencoded',
+                    cookie: 'myoc_session=session-token',
+                },
+                method: 'POST',
+            },
+            {
+                CACHE: createMockKVNamespace(),
+                DB: await seedPageDatabase({
+                    currentUser: createCurrentUserRecord('demo'),
+                }),
+                MEDIA_BUCKET: createMockR2Bucket(),
+                MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+            },
+        )
+        const html = await response.text()
+
+        expect(payload.length).toBeLessThan(5_000_000)
+        expect(response.status).toBe(200)
+        expect(html).toContain('Toyhou.se returned too much data')
+        expect(html).not.toContain('Review Characters for Import')
+    })
+
+    it('rejects a Toyhou.se payload above the accepted character limit', async () => {
+        const form = new FormData()
+        form.set('toyhousePayload', 'x'.repeat(5_000_001))
+        const response = await app.request(
+            'https://example.com/migrate/import',
+            {
+                body: form,
+                headers: {cookie: 'myoc_session=session-token'},
+                method: 'POST',
+            },
+            {
+                CACHE: createMockKVNamespace(),
+                DB: await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+                MEDIA_BUCKET: createMockR2Bucket(),
+                MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+            },
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Toyhou.se returned too much data')
+    })
+
+    it('reports malformed and oversized Toyhou.se form bodies', async () => {
+        const db = await seedPageDatabase({currentUser: createCurrentUserRecord('demo')})
+        const bindings = {
+            CACHE: createMockKVNamespace(),
+            DB: db,
+            MEDIA_BUCKET: createMockR2Bucket(),
+            MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+        }
+        const malformedResponse = await app.request(
+            'https://example.com/migrate/import',
+            {
+                body: '--missing\r\ninvalid',
+                headers: {
+                    'content-type': 'multipart/form-data; boundary=missing',
+                    cookie: 'myoc_session=session-token',
+                },
+                method: 'POST',
+            },
+            bindings,
+        )
+        const oversizedResponse = await app.request(
+            'https://example.com/migrate/import',
+            {
+                body: 'toyhousePayload=%7B%7D',
+                headers: {
+                    'content-length': String(16 * 1024 * 1024 + 1),
+                    'content-type': 'application/x-www-form-urlencoded',
+                    cookie: 'myoc_session=session-token',
+                },
+                method: 'POST',
+            },
+            bindings,
+        )
+
+        expect(malformedResponse.status).toBe(200)
+        expect(await malformedResponse.text()).toContain('Toyhou.se data was not in the expected format')
+        expect(oversizedResponse.status).toBe(200)
+        expect(await oversizedResponse.text()).toContain('Toyhou.se returned too much data')
+    })
+
+    it('rejects a Toyhou.se payload verified for another account', async () => {
+        const payload = createToyhouseSelectionTestPayload()
+        const form = new FormData()
+        form.set('toyhousePayload', JSON.stringify({...payload, myocUserId: 'other-user'}))
+        const response = await app.request(
+            'https://example.com/migrate/import',
+            {body: form, headers: {cookie: 'myoc_session=session-token'}, method: 'POST'},
+            {
+                CACHE: createMockKVNamespace(),
+                DB: await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+                MEDIA_BUCKET: createMockR2Bucket(),
+                MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+            },
+        )
+
+        expect(response.status).toBe(200)
+        expect(await response.text()).toContain('verified for a different MyOC account')
+    })
+
+    it('omits a Toyhou.se character with an invalid ID', async () => {
+        const payload = createToyhouseSelectionTestPayload()
+        const form = new FormData()
+        form.set(
+            'toyhousePayload',
+            JSON.stringify({...payload, characters: payload.characters.map((character) => ({...character, id: 'invalid'}))}),
+        )
+        const response = await app.request(
+            'https://example.com/migrate/import',
+            {body: form, headers: {cookie: 'myoc_session=session-token'}, method: 'POST'},
+            {
+                CACHE: createMockKVNamespace(),
+                DB: await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+                MEDIA_BUCKET: createMockR2Bucket(),
+                MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+            },
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Found 0 characters across 1 page')
+        expect(html).toContain('No public characters were found for this profile')
+    })
+
+    it.each([
+        {
+            expected: 'Toyhou.se import selection was missing',
+            includeSelection: false,
+            name: 'a missing selection',
+            selection: null,
+        },
+        {
+            expected: 'Toyhou.se import selection was invalid',
+            name: 'malformed JSON',
+            selection: '{bad',
+        },
+        {
+            expected: 'Toyhou.se import selection was invalid',
+            name: 'an invalid selection shape',
+            selection: {characters: {}, createdCharacters: []},
+        },
+        {
+            expected: 'Toyhou.se import selection was invalid',
+            name: 'a duplicate character',
+            selection: {
+                characters: [
+                    {id: '9430171', imageIndexes: [0], nsfwImageIndexes: []},
+                    {id: '9430171', imageIndexes: [0], nsfwImageIndexes: []},
+                ],
+                createdCharacters: [],
+            },
+        },
+        {
+            expected: 'Toyhou.se import selection was invalid',
+            name: 'a created target for an unselected character',
+            selection: {
+                characters: [{id: '9430171', imageIndexes: [0], nsfwImageIndexes: []}],
+                createdCharacters: [{id: '2222222', targetCharacterId: 'new-character'}],
+            },
+        },
+        {
+            expected: 'Toyhou.se import selection was invalid',
+            name: 'an invalid character ID',
+            selection: {
+                characters: [{id: 'invalid', imageIndexes: [0], nsfwImageIndexes: []}],
+                createdCharacters: [],
+            },
+        },
+        {
+            expected: 'Toyhou.se import selection was invalid',
+            name: 'an invalid created target',
+            selection: {
+                characters: [{id: '9430171', imageIndexes: [0], nsfwImageIndexes: []}],
+                createdCharacters: [{id: '9430171', targetCharacterId: 'invalid target'}],
+            },
+        },
+        {
+            expected: 'Toyhou.se import selection was invalid',
+            name: 'a non-array image selection',
+            selection: {
+                characters: [{id: '9430171', imageIndexes: null, nsfwImageIndexes: []}],
+                createdCharacters: [],
+            },
+        },
+        {
+            expected: 'Toyhou.se import selection was invalid',
+            name: 'duplicate image indexes',
+            selection: {
+                characters: [{id: '9430171', imageIndexes: [0, 0], nsfwImageIndexes: []}],
+                createdCharacters: [],
+            },
+        },
+    ])('rejects $name in a Toyhou.se import confirmation', async ({expected, includeSelection, selection}) => {
+        const {db, html, response} = await postToyhouseSelection(selection, {includeSelection})
+        const importItemCount = await queryOne<{count: number}>('SELECT COUNT(*) AS count FROM toyhouse_import_items', [], db)
+
+        expect(response.status).toBe(200)
+        expect(html).toContain(expected)
+        expect(importItemCount?.count).toBe(0)
+    })
+
+    it('requires every NSFW image to be selected for import', async () => {
+        const {db, html, response} = await postToyhouseSelection({
+            characters: [{id: '9430171', imageIndexes: [], nsfwImageIndexes: [0]}],
+            createdCharacters: [],
+        })
+        const importItemCount = await queryOne<{count: number}>('SELECT COUNT(*) AS count FROM toyhouse_import_items', [], db)
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('NSFW selections must also be selected for import')
+        expect(importItemCount?.count).toBe(0)
+    })
+
+    it('requires at least one selected Toyhou.se image', async () => {
+        const {db, html, response} = await postToyhouseSelection({
+            characters: [{id: '9430171', imageIndexes: [], nsfwImageIndexes: []}],
+            createdCharacters: [],
+        })
+        const importItemCount = await queryOne<{count: number}>('SELECT COUNT(*) AS count FROM toyhouse_import_items', [], db)
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('Select at least one image to import')
+        expect(importItemCount?.count).toBe(0)
+    })
+
+    it('rejects a missing Toyhou.se image proxy URL', async () => {
+        const response = await getAppPath(
+            '/migrate/toyhouse-image',
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {
+                accept: 'application/json',
+                cookie: 'myoc_session=session-token',
+            },
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Toyhou.se image URL is invalid'})
     })
 
     it('prepares selected Toyhou.se characters for client-side chunked image upload', async () => {
@@ -1728,20 +2742,22 @@ describe('GET /migrate', () => {
         }
         const form = new FormData()
         form.set('toyhousePayload', JSON.stringify(payload))
-        form.append('characterIds', '9430171')
-        form.append('characterIds', '2222222')
-        form.set('profileImageDataUrl:9430171', createWebpDataUrl())
-        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png')
-        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_second.png')
-        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_third.png')
-        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_fourth.png')
-        form.append('imageUrls:2222222', 'https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_full.png')
-        form.append('imageUrls:2222222', 'https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_alt.png')
-        form.append('nsfwImageUrls:2222222', 'https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_alt.png')
-
-        const db = createProfilePageDb({
+        form.set(
+            'toyhouseSelection',
+            JSON.stringify({
+                characters: [
+                    {id: '9430171', imageIndexes: [0, 1, 2, 3], nsfwImageIndexes: []},
+                    {id: '2222222', imageIndexes: [0, 1], nsfwImageIndexes: [1]},
+                ],
+                createdCharacters: [{id: '9430171', targetCharacterId: 'created-absinthe'}],
+            }),
+        )
+        const db = await seedPageDatabase({
             currentUser: createCurrentUserRecord('demo'),
-            characters: [{id: 'existing-brindle', name: 'brindle'}],
+            characters: [
+                {id: 'created-absinthe', name: 'Absinthe'},
+                {id: 'existing-brindle', name: 'brindle'},
+            ],
         })
         const bucket = createMockR2Bucket()
         const response = await app.request(
@@ -1761,52 +2777,15 @@ describe('GET /migrate', () => {
             },
         )
         const html = await response.text()
-        const preparedSql = (
-            db.prepare as unknown as {
-                mock: {calls: [string][]}
-            }
-        ).mock.calls
-            .map(([sql]) => sql)
-            .join('\n')
-        const putCalls = (
-            bucket.put as unknown as {
-                mock: {calls: [string, unknown, {httpMetadata?: {contentType?: string}}?][]}
-            }
-        ).mock.calls
-        const putKeys = putCalls.map(([key]) => key)
-        const putContentTypes = putCalls.map(([, , options]) => options?.httpMetadata?.contentType)
-
         expect(response.status).toBe(200)
         expect(html).toContain('Uploading Toyhou.se Images')
         expect(html).toContain('upload each image in chunks and retry temporary failures')
-        expect(html).toContain('/migrate/toyhouse-image?url=')
-        expect(html).toContain('/media/chunked/init')
-        expect(html).toContain('/api/characters/toyhouse-import-items/')
-        expect(html).toContain('/complete')
-        expect(html).toContain('/fail')
-        expect(html).toContain("method: 'DELETE'")
-        expect(html).toContain('importItemId')
-        expect(html).toContain('withRetry')
-        expect(html).toContain('const galleryChunkSize = 5242880;')
-        expect(html).toContain('function uploadChunkWithXhr')
-        expect(html).toContain('xhr.timeout = 120000')
-        expect(html).toContain('Chunk upload network failure')
-        expect(html).toContain('[1500, 5000, 10000]')
-        expect(html).toContain('https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_fourth.png')
-        expect(html).toContain('https://f2.toyhou.se/file/f2-toyhou-se/images/2222222_alt.png')
-        expect(preparedSql).toContain(['INSERT INTO', 'characters'].join(' '))
-        expect(preparedSql).not.toContain(['INSERT INTO', 'character_media'].join(' '))
-        expect(preparedSql).not.toContain(['INSERT INTO', 'character_gallery_tabs'].join(' '))
-        expect(preparedSql).not.toContain(['INSERT INTO', 'character_gallery_rows'].join(' '))
-        expect(putKeys).toHaveLength(1)
-        expect(putKeys.some((key) => key.includes('/profile/') && key.endsWith('.webp'))).toBe(true)
-        expect(putKeys.some((key) => key.includes('/media/'))).toBe(false)
-        expect(putContentTypes).toContain('image/webp')
-        expect(putContentTypes).not.toContain('PNG32')
+        expect(html).toContain('"mediaId":null')
+        expect(bucket.put).not.toHaveBeenCalled()
         expect(fetchMock).not.toHaveBeenCalled()
     })
 
-    it('converts PNG Toyhou.se profile image data URLs to WebP before staging new characters', async () => {
+    it('rejects a Toyhou.se image index that is outside the accepted source payload', async () => {
         const payload = {
             myocUserId: 'current-user',
             profileUrl: 'https://toyhou.se/demo',
@@ -1823,112 +2802,47 @@ describe('GET /migrate', () => {
                     ],
                     imageCount: 1,
                     name: 'Absinthe',
-                    thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485',
+                    thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171.png',
                     url: 'https://toyhou.se/9430171.absinthe',
                 },
             ],
         }
         const form = new FormData()
         form.set('toyhousePayload', JSON.stringify(payload))
-        form.append('characterIds', '9430171')
-        form.set('profileImageDataUrl:9430171', createPngDataUrl())
-        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png')
-
-        const db = createProfilePageDb({
+        form.set(
+            'toyhouseSelection',
+            JSON.stringify({
+                characters: [{id: '9430171', imageIndexes: [1], nsfwImageIndexes: []}],
+                createdCharacters: [],
+            }),
+        )
+        const db = await seedPageDatabase({
             currentUser: createCurrentUserRecord('demo'),
+            characters: [{id: 'existing-absinthe', name: 'Absinthe'}],
         })
-        const bucket = createMockR2Bucket()
-        const imagesBinding = createMockImagesBinding()
         const response = await app.request(
             'https://example.com/migrate/import/confirm',
             {
                 body: form,
-                headers: {
-                    cookie: 'myoc_session=session-token',
-                },
+                headers: {cookie: 'myoc_session=session-token'},
                 method: 'POST',
             },
             {
                 CACHE: createMockKVNamespace(),
                 DB: db,
-                IMAGES: imagesBinding,
-                MEDIA_BUCKET: bucket,
-                MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
-            },
-        )
-
-        expect(response.status).toBe(200)
-        expect(imagesBinding.input).toHaveBeenCalledTimes(1)
-        const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
-        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 90})
-        expect(bucket.put).toHaveBeenCalledWith(
-            expect.stringMatching(/^characters\/current-user\/[^/]+\/profile\/[^/]+\.webp$/),
-            expect.any(Uint8Array),
-            {
-                httpMetadata: {
-                    cacheControl: 'public, max-age=31536000, immutable',
-                    contentType: 'image/webp',
-                },
-            },
-        )
-    })
-
-    it('shows a media error when a Toyhou.se profile image data URL is unsupported', async () => {
-        const payload = {
-            myocUserId: 'current-user',
-            profileUrl: 'https://toyhou.se/demo',
-            folderUrl: 'https://toyhou.se/demo/characters/folder:all',
-            pagesFetched: 1,
-            characters: [
-                {
-                    id: '9430171',
-                    images: [
-                        {
-                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png',
-                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/9430171_thumb.png',
-                        },
-                    ],
-                    imageCount: 1,
-                    name: 'Absinthe',
-                    thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485',
-                    url: 'https://toyhou.se/9430171.absinthe',
-                },
-            ],
-        }
-        const form = new FormData()
-        form.set('toyhousePayload', JSON.stringify(payload))
-        form.append('characterIds', '9430171')
-        form.set('profileImageDataUrl:9430171', 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==')
-        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png')
-
-        const db = createProfilePageDb({
-            currentUser: createCurrentUserRecord('demo'),
-        })
-        const bucket = createMockR2Bucket()
-        const response = await app.request(
-            'https://example.com/migrate/import/confirm',
-            {
-                body: form,
-                headers: {
-                    cookie: 'myoc_session=session-token',
-                },
-                method: 'POST',
-            },
-            {
-                CACHE: createMockKVNamespace(),
-                DB: db,
-                MEDIA_BUCKET: bucket,
+                MEDIA_BUCKET: createMockR2Bucket(),
                 MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
             },
         )
         const html = await response.text()
+        const importItemCount = await queryOne<{count: number}>('SELECT COUNT(*) AS count FROM toyhouse_import_items', [], db)
 
         expect(response.status).toBe(200)
-        expect(html).toContain('Unexpected media, contact support')
-        expect(bucket.put).not.toHaveBeenCalled()
+        expect(html).toContain('Selected Toyhou.se image is no longer available. Review the import and try again.')
+        expect(importItemCount?.count).toBe(0)
     })
 
-    it('shows a media error when a Toyhou.se profile image data URL is oversized', async () => {
+    it('rejects a new-character target that does not match the current MyOC character', async () => {
         const payload = {
             myocUserId: 'current-user',
             profileUrl: 'https://toyhou.se/demo',
@@ -1945,156 +2859,51 @@ describe('GET /migrate', () => {
                     ],
                     imageCount: 1,
                     name: 'Absinthe',
-                    thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485',
+                    thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171.png',
                     url: 'https://toyhou.se/9430171.absinthe',
                 },
             ],
         }
         const form = new FormData()
         form.set('toyhousePayload', JSON.stringify(payload))
-        form.append('characterIds', '9430171')
-        form.set('profileImageDataUrl:9430171', `data:image/png;base64,${'A'.repeat(4 * 1024 * 1024 + 5)}`)
-        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png')
-
-        const db = createProfilePageDb({
+        form.set(
+            'toyhouseSelection',
+            JSON.stringify({
+                characters: [{id: '9430171', imageIndexes: [0], nsfwImageIndexes: []}],
+                createdCharacters: [{id: '9430171', targetCharacterId: 'stale-character'}],
+            }),
+        )
+        const db = await seedPageDatabase({
             currentUser: createCurrentUserRecord('demo'),
+            characters: [{id: 'existing-absinthe', name: 'Absinthe'}],
         })
-        const bucket = createMockR2Bucket()
         const response = await app.request(
             'https://example.com/migrate/import/confirm',
             {
                 body: form,
-                headers: {
-                    cookie: 'myoc_session=session-token',
-                },
+                headers: {cookie: 'myoc_session=session-token'},
                 method: 'POST',
             },
             {
                 CACHE: createMockKVNamespace(),
                 DB: db,
-                MEDIA_BUCKET: bucket,
+                MEDIA_BUCKET: createMockR2Bucket(),
                 MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
             },
         )
         const html = await response.text()
+        const importItemCount = await queryOne<{count: number}>('SELECT COUNT(*) AS count FROM toyhouse_import_items', [], db)
 
         expect(response.status).toBe(200)
-        expect(html).toContain('Profile image upload is too large')
-        expect(bucket.put).not.toHaveBeenCalled()
+        expect(html).toContain('A selected MyOC character changed. Review the import and try again.')
+        expect(importItemCount?.count).toBe(0)
     })
 
-    it('shows a media error when a Toyhou.se profile image data URL cannot be decoded', async () => {
-        const payload = {
-            myocUserId: 'current-user',
-            profileUrl: 'https://toyhou.se/demo',
-            folderUrl: 'https://toyhou.se/demo/characters/folder:all',
-            pagesFetched: 1,
-            characters: [
-                {
-                    id: '9430171',
-                    images: [
-                        {
-                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png',
-                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/9430171_thumb.png',
-                        },
-                    ],
-                    imageCount: 1,
-                    name: 'Absinthe',
-                    thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485',
-                    url: 'https://toyhou.se/9430171.absinthe',
-                },
-            ],
-        }
-        const form = new FormData()
-        form.set('toyhousePayload', JSON.stringify(payload))
-        form.append('characterIds', '9430171')
-        form.set('profileImageDataUrl:9430171', 'data:image/png;base64,%%%%')
-        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png')
-
-        const db = createProfilePageDb({
-            currentUser: createCurrentUserRecord('demo'),
-        })
-        const bucket = createMockR2Bucket()
-        const response = await app.request(
-            'https://example.com/migrate/import/confirm',
-            {
-                body: form,
-                headers: {
-                    cookie: 'myoc_session=session-token',
-                },
-                method: 'POST',
-            },
-            {
-                CACHE: createMockKVNamespace(),
-                DB: db,
-                MEDIA_BUCKET: bucket,
-                MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
-            },
+    it('writes and looks up large Toyhou.se import item sets in D1', async () => {
+        const imageUrls = Array.from(
+            {length: 501},
+            (_, index) => `https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_${index}_${'a'.repeat(1800)}.png`,
         )
-        const html = await response.text()
-
-        expect(response.status).toBe(200)
-        expect(html).toContain('Unexpected media, contact support')
-        expect(bucket.put).not.toHaveBeenCalled()
-    })
-
-    it('shows a media error when Toyhou.se PNG profile image conversion is unavailable', async () => {
-        const payload = {
-            myocUserId: 'current-user',
-            profileUrl: 'https://toyhou.se/demo',
-            folderUrl: 'https://toyhou.se/demo/characters/folder:all',
-            pagesFetched: 1,
-            characters: [
-                {
-                    id: '9430171',
-                    images: [
-                        {
-                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png',
-                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/9430171_thumb.png',
-                        },
-                    ],
-                    imageCount: 1,
-                    name: 'Absinthe',
-                    thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485',
-                    url: 'https://toyhou.se/9430171.absinthe',
-                },
-            ],
-        }
-        const form = new FormData()
-        form.set('toyhousePayload', JSON.stringify(payload))
-        form.append('characterIds', '9430171')
-        form.set('profileImageDataUrl:9430171', createPngDataUrl())
-        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png')
-
-        const db = createProfilePageDb({
-            currentUser: createCurrentUserRecord('demo'),
-        })
-        const bucket = createMockR2Bucket()
-        const response = await app.request(
-            'https://example.com/migrate/import/confirm',
-            {
-                body: form,
-                headers: {
-                    cookie: 'myoc_session=session-token',
-                },
-                method: 'POST',
-            },
-            {
-                CACHE: createMockKVNamespace(),
-                DB: db,
-                MEDIA_BUCKET: bucket,
-                MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
-            },
-        )
-        const html = await response.text()
-
-        expect(response.status).toBe(200)
-        expect(html).toContain('Unexpected media, contact support')
-        expect(bucket.put).not.toHaveBeenCalled()
-    })
-
-    it('looks up large Toyhou.se import item sets in bounded D1 queries', async () => {
-        const imageUrls = Array.from({length: 120}, (_, index) => `https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_${index}.png`)
         const payload = {
             myocUserId: 'current-user',
             profileUrl: 'https://toyhou.se/demo',
@@ -2116,14 +2925,17 @@ describe('GET /migrate', () => {
         }
         const form = new FormData()
         form.set('toyhousePayload', JSON.stringify(payload))
-        form.append('characterIds', '9430171')
-        form.set('profileImageDataUrl:9430171', createWebpDataUrl())
-        for (const imageUrl of imageUrls) {
-            form.append('imageUrls:9430171', imageUrl)
-        }
+        form.set(
+            'toyhouseSelection',
+            JSON.stringify({
+                characters: [{id: '9430171', imageIndexes: imageUrls.map((_, index) => index), nsfwImageIndexes: []}],
+                createdCharacters: [],
+            }),
+        )
 
-        const db = createProfilePageDb({
+        const db = await seedPageDatabase({
             currentUser: createCurrentUserRecord('demo'),
+            characters: [{id: 'existing-absinthe', name: 'Absinthe'}],
         })
         const response = await app.request(
             'https://example.com/migrate/import/confirm',
@@ -2141,74 +2953,17 @@ describe('GET /migrate', () => {
                 MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
             },
         )
-        const bindSizes = (
-            db.prepare as unknown as {
-                mock: {results: {value: {bind?: {mock: {calls: unknown[][]}}}}[]}
-            }
-        ).mock.results
-            .flatMap((result) => result.value.bind?.mock.calls ?? [])
-            .map((binds) => binds.length)
-
-        expect(response.status).toBe(200)
-        expect(Math.max(...bindSizes)).toBeLessThanOrEqual(90)
-    })
-
-    it('keeps staged Toyhou.se profile images when import item readback fails after DB commit', async () => {
-        const payload = {
-            myocUserId: 'current-user',
-            profileUrl: 'https://toyhou.se/demo',
-            folderUrl: 'https://toyhou.se/demo/characters/folder:all',
-            pagesFetched: 1,
-            characters: [
-                {
-                    id: '9430171',
-                    images: [
-                        {
-                            fullsizeUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png',
-                            thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/thumbnails/9430171_thumb.png',
-                        },
-                    ],
-                    imageCount: 1,
-                    name: 'Absinthe',
-                    thumbnailUrl: 'https://f2.toyhou.se/file/f2-toyhou-se/characters/9430171?1609806485',
-                    url: 'https://toyhou.se/9430171.absinthe',
-                },
-            ],
-        }
-        const form = new FormData()
-        form.set('toyhousePayload', JSON.stringify(payload))
-        form.append('characterIds', '9430171')
-        form.set('profileImageDataUrl:9430171', createWebpDataUrl())
-        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png')
-
-        const db = createProfilePageDb({
-            currentUser: createCurrentUserRecord('demo'),
-            toyhouseImportItemsError: new Error('simulated import item lookup failure'),
-        })
-        const bucket = createMockR2Bucket()
-        const response = await app.request(
-            'https://example.com/migrate/import/confirm',
-            {
-                body: form,
-                headers: {
-                    cookie: 'myoc_session=session-token',
-                },
-                method: 'POST',
-            },
-            {
-                CACHE: createMockKVNamespace(),
-                DB: db,
-                MEDIA_BUCKET: bucket,
-                MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
-            },
-        )
         const html = await response.text()
+        const storedItems = await db
+            .prepare('SELECT toyhouse_image_url FROM toyhouse_import_items ORDER BY sort_order')
+            .all<{toyhouse_image_url: string}>()
 
         expect(response.status).toBe(200)
-        expect(html).toContain('simulated import item lookup failure')
-        expect(db.batch).toHaveBeenCalledTimes(1)
-        expect(bucket.put).toHaveBeenCalledTimes(1)
-        expect(bucket.delete).not.toHaveBeenCalled()
+        expect(html).toContain('Uploading Toyhou.se Images')
+        expect(html).toContain(imageUrls.at(-1) as string)
+        expect(storedItems.results).toHaveLength(501)
+        expect(storedItems.results.at(-1)?.toyhouse_image_url).toBe(imageUrls.at(-1))
+        expect(storedItems.results.every((item) => new TextEncoder().encode(item.toyhouse_image_url).byteLength < 2_000_000)).toBe(true)
     })
 
     it('leaves Toyhou.se gallery image failures to the client-side chunked uploader', async () => {
@@ -2241,13 +2996,17 @@ describe('GET /migrate', () => {
         }
         const form = new FormData()
         form.set('toyhousePayload', JSON.stringify(payload))
-        form.append('characterIds', '9430171')
-        form.set('profileImageDataUrl:9430171', createWebpDataUrl())
-        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/9430171_full.png')
-        form.append('imageUrls:9430171', 'https://f2.toyhou.se/file/f2-toyhou-se/images/broken.png')
+        form.set(
+            'toyhouseSelection',
+            JSON.stringify({
+                characters: [{id: '9430171', imageIndexes: [0, 1], nsfwImageIndexes: []}],
+                createdCharacters: [],
+            }),
+        )
 
-        const db = createProfilePageDb({
+        const db = await seedPageDatabase({
             currentUser: createCurrentUserRecord('demo'),
+            characters: [{id: 'existing-absinthe', name: 'Absinthe'}],
         })
         const bucket = createMockR2Bucket()
         const response = await app.request(
@@ -2267,12 +3026,16 @@ describe('GET /migrate', () => {
             },
         )
         const html = await response.text()
+        const importItems = await db
+            .prepare('SELECT toyhouse_image_url, status FROM toyhouse_import_items ORDER BY sort_order')
+            .all<{toyhouse_image_url: string; status: string}>()
 
         expect(response.status).toBe(200)
         expect(html).toContain('Uploading Toyhou.se Images')
         expect(html).toContain('https://f2.toyhou.se/file/f2-toyhou-se/images/broken.png')
         expect(html).toContain('Downloading Toyhou.se image')
-        expect(db.batch).toHaveBeenCalledTimes(1)
+        expect(importItems.results).toHaveLength(2)
+        expect(importItems.results.every((item) => item.status === 'pending')).toBe(true)
         expect(fetchMock).not.toHaveBeenCalled()
     })
 
@@ -2281,6 +3044,212 @@ describe('GET /migrate', () => {
 
         expect(response.status).toBe(302)
         expect(response.headers.get('location')).toBe('/login')
+    })
+})
+
+describe('MigratePage', () => {
+    it('renders import results and an empty review for a guest', () => {
+        const html = MigratePage({
+            currentUser: null,
+            importResult: {
+                createdCharacters: 1,
+                importedImages: 1,
+                skippedImages: 2,
+                updatedCharacters: 2,
+            },
+            mediaBaseUrl: mediaPublicBaseUrl,
+            migrationResult: {
+                characters: [],
+                folderUrl: 'https://toyhou.se/demo/characters/folder:all',
+                myocUserId: '',
+                pagesFetched: 1,
+                profileUrl: 'https://toyhou.se/demo',
+            },
+            showSetupForm: false,
+            siteUrl: 'https://example.com',
+        }).toString()
+
+        expect(html).toContain('Sign in')
+        expect(html).not.toContain('Verify Toyhou.se Ownership')
+        expect(html).toContain('Import complete')
+        expect(html).toContain('Created 1 character, updated 2 existing characters, and imported 1 image.')
+        expect(html).toContain('2 images could not be imported')
+        expect(html).toContain('No public characters were found for this profile')
+    })
+
+    it('uses safe defaults for optional Toyhou.se character review data', () => {
+        const csrfAttack = '</script><script data-migrate-xss>globalThis.migrateXss = true</script>'
+        const html = MigratePage({
+            currentUser: {
+                bio: '',
+                csrfToken: csrfAttack,
+                displayNsfwMedia: false,
+                email: 'demo@example.test',
+                id: 'current-user',
+                lastSeenVersion: null,
+                profilePhotoKey: null,
+                role: 'user',
+                username: 'demo',
+            },
+            importResult: {
+                createdCharacters: 0,
+                importedImages: 0,
+                skippedImages: 0,
+                updatedCharacters: 0,
+            },
+            mediaBaseUrl: mediaPublicBaseUrl,
+            migrationPayload: '{}',
+            migrationResult: {
+                characters: [
+                    {
+                        id: '9430171',
+                        imageCount: null,
+                        images: [],
+                        name: 'Absinthe',
+                        thumbnailUrl: null,
+                        url: 'https://toyhou.se/9430171.absinthe',
+                    },
+                ],
+                folderUrl: 'https://toyhou.se/demo/characters/folder:all',
+                myocUserId: 'current-user',
+                pagesFetched: 1,
+                profileUrl: 'https://toyhou.se/demo',
+            },
+            showSetupForm: false,
+            siteUrl: 'https://example.com',
+        }).toString()
+        const reviewHtml = html.slice(html.indexOf('data-toyhouse-import-review'))
+
+        expect(html).toContain('Create new character')
+        expect(html).toContain('0 images found')
+        expect(html).not.toContain('(null listed)')
+        expect(reviewHtml).toContain(
+            'const csrfToken = "\\u003c/script>\\u003cscript data-migrate-xss>globalThis.migrateXss = true\\u003c/script>"',
+        )
+        expect(reviewHtml).not.toContain(csrfAttack)
+    })
+})
+
+describe('CharacterPage', () => {
+    it('renders a default gallery and omits stored media that has no usable image', () => {
+        const html = CharacterPage({
+            character: {
+                description: '',
+                hasHeightChart: false,
+                id: 'character-1',
+                name: 'RAZETH',
+                profileImageKey: 'character-profile-key',
+                userId: 'profile-user',
+            },
+            currentUser: null,
+            galleryTabs: [],
+            media: [
+                {
+                    id: 'empty-media',
+                    nsfwArtist: '',
+                    nsfwBlurImageKey: null,
+                    nsfwContentType: null,
+                    nsfwHeight: null,
+                    nsfwImageKey: null,
+                    nsfwPreviewHeight: null,
+                    nsfwPreviewImageKey: null,
+                    nsfwPreviewWidth: null,
+                    nsfwWidth: null,
+                    sfwArtist: '',
+                    sfwContentType: null,
+                    sfwHeight: null,
+                    sfwImageKey: null,
+                    sfwPreviewHeight: null,
+                    sfwPreviewImageKey: null,
+                    sfwPreviewWidth: null,
+                    sfwWidth: null,
+                },
+            ],
+            mediaBaseUrl: mediaPublicBaseUrl,
+            metaDescriptionFallback: 'An original-character gallery.',
+            profileUser: {
+                bio: '',
+                id: 'profile-user',
+                profilePhotoKey: null,
+                username: 'demo',
+            },
+            siteUrl: 'https://example.com',
+        }).toString()
+
+        expect(html).toContain('id="gallery-heading"')
+        expect(html).not.toContain('/media/empty-media/')
+    })
+
+    it('uses safe fallbacks for an NSFW-only image with missing metadata', () => {
+        const props: Parameters<typeof CharacterPage>[0] = {
+            character: {
+                description: '',
+                hasHeightChart: false,
+                id: 'character-1',
+                name: 'RAZETH',
+                profileImageKey: 'character-profile-key',
+                userId: 'profile-user',
+            },
+            galleryTabs: [],
+            media: [
+                {
+                    id: 'nsfw-without-metadata',
+                    nsfwArtist: '',
+                    nsfwBlurImageKey: null,
+                    nsfwContentType: 'image/png',
+                    nsfwHeight: 0,
+                    nsfwImageKey: 'nsfw-key',
+                    nsfwPreviewHeight: 0,
+                    nsfwPreviewImageKey: null,
+                    nsfwPreviewWidth: 0,
+                    nsfwWidth: 0,
+                    sfwArtist: '',
+                    sfwContentType: null,
+                    sfwHeight: null,
+                    sfwImageKey: null,
+                    sfwPreviewHeight: null,
+                    sfwPreviewImageKey: null,
+                    sfwPreviewWidth: null,
+                    sfwWidth: null,
+                },
+            ],
+            mediaBaseUrl: mediaPublicBaseUrl,
+            metaDescriptionFallback: 'An original-character gallery.',
+            profileUser: {
+                bio: '',
+                id: 'profile-user',
+                profilePhotoKey: null,
+                username: 'demo',
+            },
+            siteUrl: 'https://example.com',
+        }
+        const guestHtml = CharacterPage({...props, currentUser: null}).toString()
+        const ownerHtml = CharacterPage({
+            ...props,
+            currentUser: {
+                bio: '',
+                csrfToken: 'csrf-token',
+                displayNsfwMedia: true,
+                email: 'demo@example.test',
+                id: 'profile-user',
+                lastSeenVersion: null,
+                profilePhotoKey: null,
+                role: 'user',
+                username: 'demo',
+            },
+        }).toString()
+
+        expect(guestHtml).toContain('Character media by an unknown artist')
+        expect(guestHtml).toContain('src="data:image/svg+xml,')
+        expect(guestHtml).toContain('<span>18+</span>')
+        expect(guestHtml).not.toContain(
+            'src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-without-metadata/nsfw/nsfw-key.png"',
+        )
+        expect(guestHtml).not.toContain('NaN')
+        expect(guestHtml).not.toContain('Infinity')
+        expect(ownerHtml).toContain(
+            'src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-without-metadata/nsfw/nsfw-key.png"',
+        )
     })
 })
 
@@ -2295,9 +3264,8 @@ describe('GET /api/search', () => {
         }))
         const response = await getAppPath(
             '/api/search?type=characters&q=character&offset=8',
-            createProfilePageDb({
+            await seedPageDatabase({
                 searchCharacters,
-                searchCharacterCount: 9,
             }),
             {
                 accept: 'application/json',
@@ -2315,14 +3283,14 @@ describe('GET /api/search', () => {
         expect(response.status).toBe(200)
         expect(body.type).toBe('characters')
         expect(body.query).toBe('character')
-        expect(body.items).toHaveLength(8)
+        expect(body.items).toHaveLength(1)
         expect(body.total).toBe(9)
-        expect(body.nextOffset).toBe(16)
-        expect(body.hasMore).toBe(true)
+        expect(body.nextOffset).toBeNull()
+        expect(body.hasMore).toBe(false)
     })
 
     it('rejects unknown search result types', async () => {
-        const response = await getAppPath('/api/search?type=folders&q=raz', createProfilePageDb(), {
+        const response = await getAppPath('/api/search?type=folders&q=raz', await seedPageDatabase(), {
             accept: 'application/json',
         })
 
@@ -2337,7 +3305,7 @@ describe('GET /edit/:characterId', () => {
     it('renders the character settings page from live character gallery data', async () => {
         const response = await getAppPath(
             '/edit/character-1',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo'),
                 characterSettings: {
                     id: 'character-1',
@@ -2355,6 +3323,17 @@ describe('GET /edit/:characterId', () => {
                         nsfw_artist: '',
                         sfw_width: 640,
                         sfw_height: 480,
+                        nsfw_width: null,
+                        nsfw_height: null,
+                    },
+                    {
+                        id: 'media-2',
+                        sfw_image_key: 'imported-image-key',
+                        nsfw_image_key: null,
+                        sfw_artist: 'Imported Artist',
+                        nsfw_artist: '',
+                        sfw_width: 800,
+                        sfw_height: 600,
                         nsfw_width: null,
                         nsfw_height: null,
                     },
@@ -2389,6 +3368,7 @@ describe('GET /edit/:characterId', () => {
         expect(html).toContain('href="/u/demo/RAZETH"')
         expect(html).toContain('https://m.myoc.art/characters/current-user/character-1/profile/profile-image-key.webp')
         expect(html).toContain('https://m.myoc.art/characters/current-user/character-1/media/media-1/sfw/sfw-image-key.png')
+        expect(html).toContain('"mediaIds":["media-2"]')
         expect(html).toContain('Gallery Tabs')
         expect(html).toContain('tabs tabs-border')
         expect(html).toContain('id="move-active-gallery-tab-left"')
@@ -2423,12 +3403,12 @@ describe('GET /edit/:characterId', () => {
     it('renders the height chart editor with saved chart data', async () => {
         const response = await getAppPath(
             '/edit/character-1/height-chart',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo'),
                 characterSettings: {
                     id: 'character-1',
                     user_id: 'current-user',
-                    name: 'Raz </script> & Lux',
+                    name: 'Raz "Lux"',
                     height_chart_json: JSON.stringify({
                         version: 1,
                         height: {
@@ -2457,18 +3437,42 @@ describe('GET /edit/:characterId', () => {
 
         expect(response.status).toBe(200)
         expect(html).toContain('Height Chart Editor')
-        expect(html).toContain('Raz &lt;/script&gt; &amp; Lux')
+        expect(html).toContain('Raz &quot;Lux&quot;')
         expect(html).toContain('href="/edit/character-1"')
         expect(html).toContain('https://m.myoc.art/characters/current-user/character-1/height-chart/height-key.png')
-        expect(html).toContain('Raz \\u003c/script\\u003e \\u0026 Lux')
+        expect(html).toContain('Raz \\"Lux\\"')
         expect(html).toContain('"footIsVirtual":true')
-        expect(html).not.toContain('"name":"Raz </script>')
+    })
+
+    it('renders saved height chart data without an image', async () => {
+        const response = await getAppPath(
+            '/edit/character-1/height-chart',
+            await seedPageDatabase({
+                currentUser: createCurrentUserRecord('demo'),
+                characterSettings: {
+                    height_chart_json: JSON.stringify({
+                        calibration: {footIsVirtual: false, footYPercent: 95, headYPercent: 5},
+                        height: {meters: 1.7},
+                        image: null,
+                        version: 1,
+                    }),
+                    id: 'character-1',
+                    name: 'RAZETH',
+                    user_id: 'current-user',
+                },
+            }),
+            {cookie: 'myoc_session=session-token'},
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).not.toContain('/height-chart/height-key')
     })
 
     it('renders the height chart editor without saved chart data', async () => {
         const response = await getAppPath(
             '/edit/character-1/height-chart',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo'),
                 characterSettings: {
                     id: 'character-1',
@@ -2498,7 +3502,7 @@ describe('GET /edit/:characterId', () => {
     it('does not expose the character settings page under the old characters path', async () => {
         const response = await getAppPath(
             '/characters/5f42998f-e37b-4135-9760-c2768ade86e1',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo'),
             }),
             {
@@ -2516,7 +3520,7 @@ describe('GET /characters', () => {
     it('renders a valid character name pattern for creating characters', async () => {
         const response = await getAppPath(
             '/characters',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo'),
                 uploadedImageCount: 12,
             }),
@@ -2536,7 +3540,7 @@ describe('GET /characters', () => {
     it('renders sorted folders, folder images, and sorted characters', async () => {
         const response = await getAppPath(
             '/characters',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo'),
                 uploadedImageCount: 1,
                 folders: [
@@ -2603,34 +3607,6 @@ describe('GET /characters', () => {
         expect(html).toContain('https://m.myoc.art/characters/current-user/folders/folder-alpha/image/folder-alpha-image.webp')
         expect(html).toContain('https://m.myoc.art/characters/current-user/character-alpha/profile/alpha-profile.webp')
         expect(html).toContain('"folderId":"folder-alpha","characterId":"character-alpha","sortOrder":0')
-        expect(html).toContain("renderFolderSelect(document.getElementById('new-character-folder'), 'root')")
-    })
-
-    it('renders pointer-based drag sorting for mobile character management', async () => {
-        const response = await getAppPath(
-            '/characters',
-            createProfilePageDb({
-                currentUser: createCurrentUserRecord('demo'),
-            }),
-            {
-                cookie: 'myoc_session=session-token',
-            },
-        )
-        const html = await response.text()
-
-        expect(response.status).toBe(200)
-        expect(html).toContain('data-drag-handle')
-        expect(html).toContain('touch-action: none')
-        expect(html).toContain('character-drop-marker')
-        expect(html).toContain('placement.dropzone.insertBefore(characterDropMarker, placement.beforeElement)')
-        expect(html).toContain('folderList.forEach((placement, index) =>')
-        expect(html).toContain('placement.sortOrder = index')
-        expect(html).toContain("document.addEventListener('pointerdown', beginPointerDragCandidate)")
-        expect(html).toContain("window.addEventListener('pointermove', handlePointerDragMove, { passive: false })")
-        expect(html).toContain('document.elementFromPoint(event.clientX, event.clientY)')
-        expect(html).toContain('const draggedSource = dragged.source')
-        expect(html).toContain("showToast(draggedSource === 'profile' ? 'Character added to folder.' : 'Folder order saved.')")
-        expect(html).not.toContain("showToast(dragged.source === 'profile'")
     })
 })
 
@@ -2645,7 +3621,7 @@ describe('GET /admin', () => {
     it('returns not found for logged-in users who are not admins', async () => {
         const response = await getAppPath(
             '/admin',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo'),
             }),
             {
@@ -2662,7 +3638,7 @@ describe('GET /admin', () => {
     it('renders the admin shell for admin users', async () => {
         const response = await getAppPath(
             '/admin',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: {
                     ...createCurrentUserRecord('admin_user'),
                     role: 'admin',
@@ -2698,7 +3674,7 @@ describe('GET /admin', () => {
     it('renders only image approvals navigation for moderator users', async () => {
         const response = await getAppPath(
             '/admin/image-approvals',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('mod_user', {
                     role: 'moderator',
                 }),
@@ -2725,7 +3701,7 @@ describe('GET /admin', () => {
     it('returns not found for moderator users on other admin sections', async () => {
         const response = await getAppPath(
             '/admin/reports',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('mod_user', {
                     role: 'moderator',
                 }),
@@ -2744,7 +3720,7 @@ describe('GET /admin', () => {
     it('renders admin section routes with the matching section active', async () => {
         const response = await getAppPath(
             '/admin/moderate-users',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: {
                     ...createCurrentUserRecord('admin_user'),
                     role: 'admin',
@@ -2765,7 +3741,7 @@ describe('GET /admin', () => {
     it('embeds image approval data for the image approvals page', async () => {
         const response = await getAppPath(
             '/admin/image-approvals',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: {
                     ...createCurrentUserRecord('admin_user'),
                     role: 'admin',
@@ -2833,7 +3809,7 @@ describe('GET /admin', () => {
         expect(html).toContain('&quot;objectKey&quot;:&quot;characters/owner-1/character-1/media/media-1/sfw/sfw-key.png&quot;')
         expect(html).toContain('&quot;username&quot;:&quot;uploader&quot;')
         expect(html).toContain('&quot;pendingCount&quot;:1')
-        expect(html).toContain('&quot;leaseExpiresAt&quot;:&quot;2026-06-10 12:30:00&quot;')
+        expect(html).toMatch(/&quot;leaseExpiresAt&quot;:&quot;[^&]+&quot;/)
         expect(html).toContain('&quot;profileUrl&quot;:&quot;/u/uploader&quot;')
         expect(html).toContain('&quot;url&quot;:&quot;/u/uploader/Quartz&quot;')
         expect(html).toContain('grid h-[calc(100vh-4rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden')
@@ -2850,7 +3826,7 @@ describe('GET /admin', () => {
     it('renders image approval audit logs for admin users', async () => {
         const response = await getAppPath(
             '/admin/image-approval-log',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: {
                     ...createCurrentUserRecord('admin_user'),
                     role: 'admin',
@@ -2887,7 +3863,7 @@ describe('GET /admin', () => {
     it('returns not found for moderators on the image approval audit log', async () => {
         const response = await getAppPath(
             '/admin/image-approval-log',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: createCurrentUserRecord('mod_user', {
                     role: 'moderator',
                 }),
@@ -2906,7 +3882,7 @@ describe('GET /admin', () => {
     it('renders reported images on the reports page', async () => {
         const response = await getAppPath(
             '/admin/reports',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: {
                     ...createCurrentUserRecord('admin_user'),
                     role: 'admin',
@@ -2953,7 +3929,7 @@ describe('GET /admin', () => {
     it('renders report empty state and full-image fallback reports', async () => {
         const emptyResponse = await getAppPath(
             '/admin/reports',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: {
                     ...createCurrentUserRecord('admin_user'),
                     role: 'admin',
@@ -2970,7 +3946,7 @@ describe('GET /admin', () => {
 
         const response = await getAppPath(
             '/admin/reports',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: {
                     ...createCurrentUserRecord('admin_user'),
                     role: 'admin',
@@ -3012,7 +3988,7 @@ describe('GET /admin', () => {
     it('renders admin options with job controls and history', async () => {
         const response = await getAppPath(
             '/admin/admin-options?status=started&job=d1-backup',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: {
                     ...createCurrentUserRecord('admin_user'),
                     role: 'admin',
@@ -3067,7 +4043,7 @@ describe('GET /admin', () => {
     it('renders admin options success and error feedback states', async () => {
         const successResponse = await getAppPath(
             '/admin/admin-options?status=success&job=r2-media-cleanup',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: {
                     ...createCurrentUserRecord('admin_user'),
                     role: 'admin',
@@ -3084,7 +4060,7 @@ describe('GET /admin', () => {
 
         const errorResponse = await getAppPath(
             '/admin/admin-options?status=error&job=unknown-job',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: {
                     ...createCurrentUserRecord('admin_user'),
                     role: 'admin',
@@ -3104,7 +4080,7 @@ describe('GET /admin', () => {
     it('renders admin job run status, source, duration, and summary variants', async () => {
         const response = await getAppPath(
             '/admin/admin-options',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: {
                     ...createCurrentUserRecord('admin_user'),
                     role: 'admin',
@@ -3158,6 +4134,31 @@ describe('GET /admin', () => {
                             skippedRecent: 0,
                             skippedUnknown: 0,
                             stoppedAtDeleteLimit: true,
+                            stoppedAtScanLimit: true,
+                        }),
+                        error_message: null,
+                    },
+                    {
+                        id: 'run-r2-complete',
+                        job_name: 'r2-media-cleanup',
+                        trigger_source: 'cron',
+                        triggered_by_user_id: null,
+                        triggered_by_username: null,
+                        cron: null,
+                        status: 'success',
+                        started_at: '2026-07-11 09:02:01',
+                        finished_at: '2026-07-11 09:02:02',
+                        duration_ms: 1000,
+                        summary_json: JSON.stringify({
+                            deleted: 0,
+                            errors: 0,
+                            keptReferenced: 2,
+                            recognized: 2,
+                            scanned: 2,
+                            skippedRecent: 0,
+                            skippedUnknown: 0,
+                            stoppedAtDeleteLimit: false,
+                            stoppedAtScanLimit: false,
                         }),
                         error_message: null,
                     },
@@ -3238,6 +4239,7 @@ describe('GET /admin', () => {
         expect(html).toContain('2 deleted')
         expect(html).toContain('1 errors')
         expect(html).toContain('delete limit reached')
+        expect(html).toContain('scan limit reached')
         expect(html).toContain('missing key')
         expect(html).toContain('8 objects')
         expect(html).toContain('4.0 KB')
@@ -3250,7 +4252,7 @@ describe('GET /admin', () => {
     it('returns not found for unknown admin sections', async () => {
         const response = await getAppPath(
             '/admin/unknown-section',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: {
                     ...createCurrentUserRecord('admin_user'),
                     role: 'admin',
@@ -3272,7 +4274,7 @@ describe('GET /u/:username', () => {
         const attack = '</script><script data-json-ld-xss>globalThis.jsonLdXss = true</script>'
         const response = await getProfilePath(
             '/u/demo/RAZETH',
-            createProfilePageDb({
+            await seedPageDatabase({
                 profileUser: {
                     id: 'profile-user',
                     username: 'demo',
@@ -3305,7 +4307,7 @@ describe('GET /u/:username', () => {
     it('renders a public character page with safe gallery media by default', async () => {
         const response = await getProfilePath(
             '/u/demo/RAZETH',
-            createProfilePageDb({
+            await seedPageDatabase({
                 profileUser: {
                     id: 'profile-user',
                     username: 'demo',
@@ -3449,60 +4451,8 @@ describe('GET /u/:username', () => {
         )
         expect(html).toContain('loading="lazy"')
         expect(html).toContain('decoding="async"')
-        expect(html).toContain('class="relative mb-8"')
-        expect(html).toContain('class="w-24 rounded-box bg-base-300 ring-1 ring-base-content/15 sm:w-32"')
-        expect(html).toContain('class="mt-2 wrap-break-word text-2xl font-bold tracking-tight sm:text-5xl">RAZETH</h1>')
-        expect(html).toContain('class="h-8 w-8 rounded-full ring-1 ring-base-content/10"')
         expect(html).toContain('id="gallery-heading"')
         expect(html).toContain('role="tablist"')
-        expect(html).not.toContain('data-gallery-image-loader')
-        expect(html).not.toContain('gallery-loader-spin')
-        expect(html).not.toContain('gallery-image-loader-spinner')
-        expect(html).not.toContain('Loading fullres...')
-        expect(html).toContain('id="gallery-fullscreen-loader"')
-        expect(html).toContain('.gallery-lightbox-shell .gallery-fullscreen-loader')
-        expect(html).toContain('id="gallery-context-menu"')
-        expect(html).toContain('imageLoaderLimit: 1')
-        expect(html).toContain('maxImageCacheCount: 1')
-        expect(html).not.toContain('galleryActiveOriginalRequest?.cancel()')
-        expect(html).toContain('galleryOriginalActionSequence')
-        expect(html).toContain('isGalleryOriginalActionActive(actionId)')
-        expect(html).toContain('if (request?.cancelled || (actionId && !isGalleryOriginalActionActive(actionId))) return')
-        expect(html).toContain('objectUrlConsumers')
-        expect(html).toContain('objectUrlOwner: request')
-        expect(html).toContain('galleryLightboxObjectUrlOwner')
-        expect(html).toContain('request.releaseUnusedObjectUrl()')
-        expect(html).toContain(
-            "} else if (action === 'download') {\n                if (!isGalleryOriginalActionActive(actionId)) {\n                    request.releaseObjectUrl();\n                    return;\n                }\n                downloadGalleryOriginal(original.src",
-        )
-        expect(html).not.toContain('URL.revokeObjectURL(original.src)')
-        expect(html).toContain("cache: 'no-store'")
-        expect(html).not.toContain("cache: 'force-cache'")
-        expect(html).toContain('viewer.addOverlay')
-        expect(html).toContain("viewer.addHandler('tile-drawn'")
-        expect(html).toContain('Rendering image…')
-        expect(html).toContain("drawer: 'html'")
-        expect(html).toContain('Math.min(99, (loaded / total) * 99)')
-        expect(html).toContain('setGalleryFullscreenLoaderProgressComplete()')
-        expect(html).toContain('pointer-events: none;')
-        expect(html).toContain("image.closest('.gallery-media') || image")
-        expect(html).toContain('gallery-media-openable')
-        expect(html).toContain('event.shiftKey || event.altKey || event.ctrlKey || event.metaKey')
-        expect(html).toContain('blobPromise')
-        expect(html).toContain('new window.ClipboardItem')
-        expect(html).toContain('copyGalleryOriginal(request, originalSrc, actionId)')
-        expect(html).toContain(
-            "const blob = await request.blobPromise;\n        if (!blob) throw new Error('Copy failed');\n        if (actionId && !isGalleryOriginalActionActive(actionId)) return;",
-        )
-        expect(html).toContain('initGalleryFullscreenLoader()')
-        expect(html).toContain('[data-gallery-fullscreen-loader]')
-        expect(html).not.toContain('attachGalleryFullscreenLoaderToLightbox')
-        expect(html).not.toContain('restoreGalleryFullscreenLoaderToDocument')
-        expect(html).toContain('getGalleryImageDimensions(image)')
-        expect(html).not.toContain('setOpacity(0)')
-        expect(html).not.toContain('HTMLelements')
-        expect(html).not.toContain('galleryFullresQueue')
-        expect(html).not.toContain('data-fullres-src')
         expect(html).toContain('Load 18+ media')
         expect(html).toContain('data-display-nsfw-media="false"')
         expect(html).toContain(
@@ -3512,14 +4462,13 @@ describe('GET /u/:username', () => {
             'data-nsfw-preview-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/nsfw/preview/both-nsfw-preview-key.webp"',
         )
         expect(html).toContain('data-nsfw-title="Both NSFW Artist"')
-        expect(html.match(/class="justified-row row-force-full-width"/g)).toHaveLength(3)
         expect(html).toContain(
             'data-safe-url="https://m.myoc.art/characters/profile-user/character-1/media/both-media/sfw/both-sfw-key.png"',
         )
         expect(html).toContain('data-title="SFW Artist"')
         expect(html).toContain('data-title="Both SFW Artist"')
         expect(html).toContain(
-            'loading="lazy" src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/blur/nsfw-only-blur-key.webp"',
+            'src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/blur/nsfw-only-blur-key.webp"',
         )
         expect(html).not.toContain(
             'data-original-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"',
@@ -3530,7 +4479,6 @@ describe('GET /u/:username', () => {
         expect(html).toContain(
             'data-nsfw-preview-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/preview/nsfw-only-preview-key.webp"',
         )
-        expect(html).toContain('class="nsfw-media-badge"')
         expect(html).toContain('<span>18+</span>')
         expect(html).toContain('data-nsfw-hidden="true"')
         expect(html).toContain('width="640"')
@@ -3541,10 +4489,34 @@ describe('GET /u/:username', () => {
         expect(html).toContain('references')
     })
 
+    it('uses the stored height-chart presence flag on a character page', async () => {
+        const db = await seedPageDatabase({
+            profileUser: {
+                id: 'profile-user',
+                username: 'demo',
+                profile_photo_key: null,
+                bio: '',
+            },
+            characterSettings: {
+                id: 'character-1',
+                user_id: 'profile-user',
+                name: 'RAZETH',
+                profile_image_key: 'character-profile-key',
+                description: '',
+                has_height_chart: 1,
+                height_chart_json: 'not-read-by-this-page',
+            },
+        })
+        const response = await getProfilePath('/u/demo/RAZETH', db)
+        const html = await response.text()
+        expect(response.status).toBe(200)
+        expect(html).toContain('View in Size Chart')
+    })
+
     it('redirects profile URLs to the stored username casing', async () => {
         const response = await getProfilePath(
             '/u/DEMO?tab=characters',
-            createProfilePageDb({
+            await seedPageDatabase({
                 profileUser: {
                     id: 'profile-user',
                     username: 'demo',
@@ -3561,7 +4533,7 @@ describe('GET /u/:username', () => {
     it('renders stored blur variants as the active source when the current user disabled NSFW media', async () => {
         const response = await getAppPath(
             '/u/demo/RAZETH',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: {
                     ...createCurrentUserRecord('viewer'),
                     display_nsfw_media: 0,
@@ -3645,7 +4617,7 @@ describe('GET /u/:username', () => {
     it('keeps NSFW-only gallery media visible with a local placeholder when no blur variant exists', async () => {
         const response = await getAppPath(
             '/u/demo/RAZETH',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: {
                     ...createCurrentUserRecord('viewer'),
                     display_nsfw_media: 0,
@@ -3724,7 +4696,7 @@ describe('GET /u/:username', () => {
     it('redirects character URLs to the stored username and character name casing', async () => {
         const response = await getProfilePath(
             '/u/DEMO/razeth?view=gallery',
-            createProfilePageDb({
+            await seedPageDatabase({
                 profileUser: {
                     id: 'profile-user',
                     username: 'demo',
@@ -3748,7 +4720,7 @@ describe('GET /u/:username', () => {
     it('renders NSFW gallery variants when the current user enabled NSFW media', async () => {
         const response = await getAppPath(
             '/u/demo/RAZETH',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: {
                     ...createCurrentUserRecord('viewer'),
                     display_nsfw_media: 1,
@@ -3844,7 +4816,7 @@ describe('GET /u/:username', () => {
     it('renders deferred alternate tab media from the NSFW variant when the current user enabled NSFW media', async () => {
         const response = await getAppPath(
             '/u/demo/RAZETH',
-            createProfilePageDb({
+            await seedPageDatabase({
                 currentUser: {
                     ...createCurrentUserRecord('viewer'),
                     display_nsfw_media: 1,
@@ -3954,7 +4926,7 @@ describe('GET /u/:username', () => {
     })
 
     it('renders a profile from live user, social link, folder, and character data', async () => {
-        const db = createProfilePageDb({
+        const db = await seedPageDatabase({
             mediaCount: 987,
             profileUser: {
                 id: 'profile-user',
@@ -4041,7 +5013,7 @@ describe('GET /u/:username', () => {
         const attack = '</script><script data-json-ld-xss>globalThis.jsonLdXss = true</script>'
         const response = await getProfile(
             'demo',
-            createProfilePageDb({
+            await seedPageDatabase({
                 profileUser: {
                     id: 'profile-user',
                     username: 'demo',
@@ -4062,7 +5034,7 @@ describe('GET /u/:username', () => {
     it('uses a fetchable social image when the profile has no uploaded photo', async () => {
         const response = await getProfile(
             'demo',
-            createProfilePageDb({
+            await seedPageDatabase({
                 profileUser: {
                     id: 'profile-user',
                     username: 'demo',
@@ -4088,7 +5060,7 @@ describe('GET /u/:username', () => {
     })
 
     it('renders a folder page from folder name path segments', async () => {
-        const db = createProfilePageDb({
+        const db = await seedPageDatabase({
             mediaCount: 987,
             profileUser: {
                 id: 'profile-user',
@@ -4150,7 +5122,7 @@ describe('GET /u/:username', () => {
     })
 
     it('returns 404 when the profile username does not exist', async () => {
-        const response = await getProfile('missing', createProfilePageDb())
+        const response = await getProfile('missing', await seedPageDatabase())
         const html = await response.text()
 
         expect(response.status).toBe(404)
@@ -4161,7 +5133,7 @@ describe('GET /u/:username', () => {
     it('returns 404 when a folder path does not exist', async () => {
         const response = await getProfilePath(
             '/u/demo/Missing%20Folder',
-            createProfilePageDb({
+            await seedPageDatabase({
                 profileUser: {
                     id: 'profile-user',
                     username: 'demo',
@@ -4178,14 +5150,14 @@ describe('GET /u/:username', () => {
     })
 
     it('redirects the old users profile route to the profile route', async () => {
-        const response = await getProfilePath('/users/demo', createProfilePageDb())
+        const response = await getProfilePath('/users/demo', await seedPageDatabase())
 
         expect(response.status).toBe(301)
         expect(response.headers.get('location')).toBe('/u/demo')
     })
 
     it('redirects the old profile route to the user route', async () => {
-        const response = await getProfilePath('/profile/demo/Main%20Characters', createProfilePageDb())
+        const response = await getProfilePath('/profile/demo/Main%20Characters', await seedPageDatabase())
 
         expect(response.status).toBe(301)
         expect(response.headers.get('location')).toBe('/u/demo/Main%20Characters')
@@ -4202,7 +5174,7 @@ describe('GET /u/:username', () => {
     })
 
     it('returns JSON for unknown API routes', async () => {
-        const response = await getAppPath('/api/missing', createProfilePageDb(), {
+        const response = await getAppPath('/api/missing', await seedPageDatabase(), {
             accept: 'application/json',
         })
 

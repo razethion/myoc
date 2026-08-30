@@ -253,6 +253,7 @@ const R2CleanupSummarySchema = z
         deleted: PositiveIntegerSchema,
         errors: PositiveIntegerSchema,
         stoppedAtDeleteLimit: z.boolean(),
+        stoppedAtScanLimit: z.boolean().default(false),
     })
     .strict()
 

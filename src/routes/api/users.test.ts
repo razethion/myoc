@@ -1,9 +1,11 @@
+import {env} from 'cloudflare:workers'
 import {compare} from 'bcryptjs'
 import {describe, expect, it, vi} from 'vitest'
 import {createCsrfToken} from '../../lib/auth/session'
 import {PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/profileImage'
 import {APP_VERSION} from '../../lib/releases'
 import {expectSessionCookie} from '../../test/assertions'
+import {queryAll, queryOne, seedAuthenticatedUser, seedUser, useTestDatabase, withFailingTrigger} from '../../test/d1'
 import {
     createGifFile,
     createJpegFile,
@@ -12,9 +14,9 @@ import {
     createPngFile,
     createWebpFile,
 } from '../../test/imageFixtures'
-import {createMockDb} from '../../test/mockD1'
 import {createMockImagesBinding} from '../../test/mockImages'
 import {createMockR2Bucket} from '../../test/mockR2'
+import {createAllowingAuthRateLimits} from '../../test/mockRateLimit'
 import {createRequestHeaders, type TestRequestOptions} from '../../test/request'
 import {apiRoutes} from '../api'
 import {authPageActionRoutes} from '../page-actions/auth'
@@ -48,9 +50,11 @@ async function postUser(body: unknown, db: D1Database, url = 'https://example.co
             body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: {
                 'content-type': 'application/json',
+                origin: new URL(url).origin,
             },
         },
         {
+            ...createAllowingAuthRateLimits(),
             DB: db,
             MEDIA_BUCKET: mediaBucket,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
@@ -73,6 +77,27 @@ async function postCurrentUserSettings(body: unknown, db: D1Database, options: U
             MEDIA_BUCKET: mediaBucket,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         },
+    )
+}
+
+async function postRawCurrentUserSettings(
+    body: BodyInit | null,
+    db: D1Database,
+    sessionToken: string,
+    contentType?: string,
+): Promise<Response> {
+    return settingsPageActionRoutes.request(
+        'https://example.com/settings',
+        {
+            method: 'POST',
+            body,
+            headers: {
+                cookie: `myoc_session=${sessionToken}`,
+                'x-csrf-token': await createCsrfToken(sessionToken),
+                ...(contentType ? {'content-type': contentType} : {}),
+            },
+        },
+        {DB: db},
     )
 }
 
@@ -117,6 +142,22 @@ async function postPasskeyPromptResponse(body: unknown, db: D1Database, options:
     )
 }
 
+async function postRawPasskeyPromptResponse(body: BodyInit, db: D1Database, sessionToken: string, contentType?: string): Promise<Response> {
+    return settingsPageActionRoutes.request(
+        'https://example.com/passkey-setup',
+        {
+            method: 'POST',
+            body,
+            headers: {
+                cookie: `myoc_session=${sessionToken}`,
+                'x-csrf-token': await createCsrfToken(sessionToken),
+                ...(contentType ? {'content-type': contentType} : {}),
+            },
+        },
+        {DB: db},
+    )
+}
+
 async function postProfilePhoto(
     db: D1Database,
     mediaBucket: R2Bucket,
@@ -148,21 +189,54 @@ async function postProfilePhoto(
     )
 }
 
-const currentUserRecord = {
+type CurrentUserSeedOverrides = {
+    id?: string
+    email?: string
+    username?: string
+    role?: 'user' | 'moderator' | 'admin'
+    passwordHash?: string
+    profilePhotoKey?: string | null
+    bio?: string
+    displayNsfwMedia?: boolean
+    lastSeenVersion?: string | null
+}
+
+const currentUser = {
     id: 'current-user',
     email: 'old@example.com',
     username: 'olduser',
-    role: 'user',
-    profile_photo_key: null,
+    role: 'user' as const,
+    profilePhotoKey: null,
     bio: 'Old bio',
-    display_nsfw_media: 0,
-    last_seen_version: null,
+    displayNsfwMedia: false,
+    lastSeenVersion: null,
+}
+
+const db = env.DB
+useTestDatabase()
+
+async function seedCurrentUser(overrides: CurrentUserSeedOverrides = {}, sessionToken = 'session-token'): Promise<void> {
+    const user = {...currentUser, ...overrides}
+
+    await seedAuthenticatedUser(
+        {
+            id: user.id,
+            email: user.email,
+            username: user.username,
+            role: user.role,
+            passwordHash: user.passwordHash,
+            profilePhotoKey: user.profilePhotoKey,
+            bio: user.bio,
+            displayNsfwMedia: user.displayNsfwMedia,
+            lastSeenVersion: user.lastSeenVersion,
+        },
+        sessionToken,
+        db,
+    )
 }
 
 describe('POST /register', () => {
     it('returns 400 for invalid JSON', async () => {
-        const {db} = createMockDb()
-
         const response = await postUser('{bad json', db)
 
         expect(response.status).toBe(400)
@@ -172,8 +246,6 @@ describe('POST /register', () => {
     })
 
     it('returns 400 when required fields are missing', async () => {
-        const {db} = createMockDb()
-
         const response = await postUser(
             {
                 email: 'test@example.com',
@@ -189,8 +261,6 @@ describe('POST /register', () => {
     })
 
     it('returns 400 for an invalid email', async () => {
-        const {db} = createMockDb()
-
         const response = await postUser(
             {
                 email: 'not-an-email',
@@ -207,8 +277,6 @@ describe('POST /register', () => {
     })
 
     it('returns 400 for an invalid username', async () => {
-        const {db} = createMockDb()
-
         const response = await postUser(
             {
                 email: 'test@example.com',
@@ -225,8 +293,6 @@ describe('POST /register', () => {
     })
 
     it('returns 400 when the username contains URL-hostile characters', async () => {
-        const {db} = createMockDb()
-
         const response = await postUser(
             {
                 email: 'test@example.com',
@@ -243,8 +309,6 @@ describe('POST /register', () => {
     })
 
     it('returns 400 for a short password', async () => {
-        const {db} = createMockDb()
-
         const response = await postUser(
             {
                 email: 'test@example.com',
@@ -261,7 +325,7 @@ describe('POST /register', () => {
     })
 
     it('returns 409 when the email or username is already in use', async () => {
-        const {db} = createMockDb({firstResults: [{id: 'existing-user'}]})
+        await seedUser({id: 'existing-user', email: 'test@example.com', username: 'testuser'}, db)
 
         const response = await postUser(
             {
@@ -279,17 +343,22 @@ describe('POST /register', () => {
     })
 
     it('returns 409 when the insert hits a unique constraint', async () => {
-        const {db} = createMockDb({
-            firstResults: [null],
-            runError: new Error('UNIQUE constraint failed: users.email'),
-        })
-
-        const response = await postUser(
+        const response = await withFailingTrigger(
             {
-                email: 'test@example.com',
-                username: 'testuser',
-                password: 'password123',
+                name: 'register_unique_constraint',
+                operation: 'INSERT',
+                table: 'users',
+                message: 'UNIQUE constraint failed: users.email',
             },
+            async () =>
+                await postUser(
+                    {
+                        email: 'test@example.com',
+                        username: 'testuser',
+                        password: 'password123',
+                    },
+                    db,
+                ),
             db,
         )
 
@@ -300,8 +369,6 @@ describe('POST /register', () => {
     })
 
     it('creates a user, starts a session, and returns the public user', async () => {
-        const {db, boundStatements} = createMockDb({firstResults: [null]})
-
         const response = await postUser(
             {
                 email: ' Test@Example.com ',
@@ -326,25 +393,31 @@ describe('POST /register', () => {
 
         expectSessionCookie(response)
 
-        expect(db.batch).toHaveBeenCalledTimes(1)
-        expect(boundStatements).toHaveLength(4)
-        expect(boundStatements[0]?.binds).toEqual(['test@example.com', 'testuser'])
-        expect(boundStatements[1]?.sql).toContain(['INSERT INTO', 'users'].join(' '))
-        expect(boundStatements[1]?.binds[1]).toBe('test@example.com')
-        expect(boundStatements[1]?.binds[2]).toBe('testuser')
-        expect(await compare('password123', boundStatements[1]?.binds[3] as string)).toBe(true)
-        expect(boundStatements[1]?.binds[4]).toBe('user')
-        expect(boundStatements[1]?.binds[6]).toBe(0)
-        expect(boundStatements[2]?.sql).toContain(['DELETE FROM', 'sessions'].join(' '))
-        expect(boundStatements[3]?.sql).toContain(['INSERT INTO', 'sessions'].join(' '))
-        expect(boundStatements[3]?.binds[1]).toBe(boundStatements[1]?.binds[0])
+        const storedUser = await queryOne<{
+            id: string
+            email: string
+            username: string
+            password_hash: string
+            role: string
+            bio: string
+            display_nsfw_media: number
+        }>('SELECT id, email, username, password_hash, role, bio, display_nsfw_media FROM users WHERE email = ?', ['test@example.com'], db)
+        expect(storedUser).toMatchObject({
+            email: 'test@example.com',
+            username: 'testuser',
+            role: 'user',
+            bio: '',
+            display_nsfw_media: 0,
+        })
+        expect(await compare('password123', storedUser?.password_hash ?? '')).toBe(true)
+        expect(await queryOne<{user_id: string}>('SELECT user_id FROM sessions WHERE user_id = ?', [storedUser?.id], db)).toEqual({
+            user_id: storedUser?.id,
+        })
     })
 })
 
 describe('POST /settings', () => {
     it('returns 401 when the user is not logged in', async () => {
-        const {db} = createMockDb()
-
         const response = await postCurrentUserSettings(
             {
                 email: 'test@example.com',
@@ -361,8 +434,6 @@ describe('POST /settings', () => {
     })
 
     it('returns 403 when a logged-in request is missing CSRF protection', async () => {
-        const {db} = createMockDb()
-
         const response = await postCurrentUserSettings(
             {
                 email: 'test@example.com',
@@ -381,11 +452,77 @@ describe('POST /settings', () => {
         })
     })
 
+    it('reads a multipart CSRF token after a large file field', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser({}, sessionToken)
+        const form = new FormData()
+        form.set('largeFile', new File([new Uint8Array(70 * 1024)], 'large.bin'))
+        form.set('csrfToken', await createCsrfToken(sessionToken))
+
+        const response = await postCurrentUserSettings(form, db, {sessionToken})
+
+        expect(response.status).toBe(413)
+        expect(await response.json()).toEqual({
+            error: 'Request body is too large',
+        })
+    })
+
+    it('rejects an oversized JSON settings request', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser({}, sessionToken)
+        const response = await postCurrentUserSettings({padding: 'x'.repeat(64 * 1024)}, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(413)
+        await expect(response.json()).resolves.toEqual({error: 'Request body is too large'})
+    })
+
+    it.each([
+        {name: 'malformed JSON', body: '{bad json', contentType: 'application/json'},
+        {name: 'JSON with a scalar root', body: '"text"', contentType: 'application/json'},
+        {name: 'a request without a body or content type', body: null, contentType: undefined},
+    ])('rejects $name as an invalid settings update', async ({body, contentType}) => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser({}, sessionToken)
+        const response = await postRawCurrentUserSettings(body, db, sessionToken, contentType)
+
+        expect(response.status).toBe(400)
+        await expect(response.json()).resolves.toEqual({error: 'Email and username are required'})
+    })
+
+    it.each([
+        {
+            name: 'an invalid email',
+            body: {email: 'invalid', username: 'newuser'},
+            error: 'Email must be valid',
+        },
+        {
+            name: 'an oversized bio',
+            body: {email: 'new@example.com', username: 'newuser', bio: 'a'.repeat(256)},
+            error: 'Bio must be 255 characters or fewer',
+        },
+        {
+            name: 'a short password',
+            body: {email: 'new@example.com', username: 'newuser', password: 'short'},
+            error: 'Password must be at least 8 characters',
+        },
+    ])('rejects $name', async ({body, error}) => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser({}, sessionToken)
+        const response = await postCurrentUserSettings(body, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        await expect(response.json()).resolves.toEqual({error})
+    })
+
     it('returns 400 when the updated username contains URL-hostile characters', async () => {
         const sessionToken = 'session-token'
-        const {db} = createMockDb({
-            firstResults: [currentUserRecord],
-        })
+        await seedCurrentUser({}, sessionToken)
 
         const response = await postCurrentUserSettings(
             {
@@ -408,9 +545,7 @@ describe('POST /settings', () => {
 
     it('updates the current user without changing the password', async () => {
         const sessionToken = 'session-token'
-        const {db, boundStatements} = createMockDb({
-            firstResults: [currentUserRecord, null],
-        })
+        await seedCurrentUser({passwordHash: 'old-password-hash'}, sessionToken)
 
         const response = await postCurrentUserSettings(
             {
@@ -431,15 +566,19 @@ describe('POST /settings', () => {
             ok: true,
         })
 
-        expect(db.batch).toHaveBeenCalledTimes(1)
-        expect(boundStatements).toHaveLength(4)
-        expect(boundStatements[0]?.sql).toContain('INNER JOIN users')
-        expect(boundStatements[1]?.binds).toEqual(['new@example.com', 'newuser', currentUserRecord.id])
-        expect(boundStatements[2]?.sql).toContain('UPDATE users')
-        expect(boundStatements[2]?.sql).not.toContain('password_hash')
-        expect(boundStatements[2]?.binds).toEqual(['new@example.com', 'newuser', 'Updated bio', 0, currentUserRecord.id])
-        expect(boundStatements[3]?.sql).toContain(['DELETE FROM', 'user_social_links'].join(' '))
-        expect(boundStatements[3]?.binds).toEqual([currentUserRecord.id])
+        expect(
+            await queryOne<{email: string; username: string; bio: string; display_nsfw_media: number; password_hash: string}>(
+                'SELECT email, username, bio, display_nsfw_media, password_hash FROM users WHERE id = ?',
+                [currentUser.id],
+                db,
+            ),
+        ).toEqual({
+            email: 'new@example.com',
+            username: 'newuser',
+            bio: 'Updated bio',
+            display_nsfw_media: 0,
+            password_hash: 'old-password-hash',
+        })
     })
 
     it('updates the NSFW media display preference from the settings form checkbox', async () => {
@@ -450,9 +589,7 @@ describe('POST /settings', () => {
         form.set('bio', 'Updated bio')
         form.set('password', '')
         form.set('displayNsfwMedia', 'true')
-        const {db, boundStatements} = createMockDb({
-            firstResults: [currentUserRecord, null],
-        })
+        await seedCurrentUser({}, sessionToken)
 
         const response = await postCurrentUserSettings(form, db, {
             sessionToken,
@@ -463,14 +600,15 @@ describe('POST /settings', () => {
         expect(await response.json()).toEqual({
             ok: true,
         })
-        expect(boundStatements[2]?.binds).toEqual(['new@example.com', 'newuser', 'Updated bio', 1, currentUserRecord.id])
+        expect(
+            await queryOne<{display_nsfw_media: number}>('SELECT display_nsfw_media FROM users WHERE id = ?', [currentUser.id], db),
+        ).toEqual({display_nsfw_media: 1})
     })
 
     it('returns 409 when the updated email or username already exists', async () => {
         const sessionToken = 'session-token'
-        const {db} = createMockDb({
-            firstResults: [currentUserRecord, {id: 'other-user'}],
-        })
+        await seedCurrentUser({}, sessionToken)
+        await seedUser({id: 'other-user', email: 'taken@example.com', username: 'takenuser'}, db)
 
         const response = await postCurrentUserSettings(
             {
@@ -493,9 +631,7 @@ describe('POST /settings', () => {
 
     it('updates the password when a new password is provided', async () => {
         const sessionToken = 'session-token'
-        const {db, boundStatements} = createMockDb({
-            firstResults: [currentUserRecord, null],
-        })
+        await seedCurrentUser({passwordHash: 'old-password-hash'}, sessionToken)
 
         const response = await postCurrentUserSettings(
             {
@@ -516,20 +652,19 @@ describe('POST /settings', () => {
             ok: true,
         })
 
-        expect(boundStatements[2]?.sql).toContain('password_hash')
-        expect(boundStatements[2]?.binds[0]).toBe('new@example.com')
-        expect(boundStatements[2]?.binds[1]).toBe('newuser')
-        expect(boundStatements[2]?.binds[2]).toBe('Updated bio')
-        expect(boundStatements[2]?.binds[3]).toBe(0)
-        expect(await compare('newpassword123', boundStatements[2]?.binds[4] as string)).toBe(true)
-        expect(boundStatements[2]?.binds[5]).toBe(currentUserRecord.id)
+        const updatedUser = await queryOne<{password_hash: string}>('SELECT password_hash FROM users WHERE id = ?', [currentUser.id], db)
+        expect(await compare('newpassword123', updatedUser?.password_hash ?? '')).toBe(true)
     })
 
     it('replaces the current social links when settings are saved', async () => {
         const sessionToken = 'session-token'
-        const {db, boundStatements} = createMockDb({
-            firstResults: [currentUserRecord, null],
-        })
+        await seedCurrentUser({}, sessionToken)
+        await db
+            .prepare(
+                "INSERT INTO user_social_links (user_id, platform, label, url, updated_at) VALUES (?, 'custom', 'Old', 'https://old.example/', CURRENT_TIMESTAMP)",
+            )
+            .bind(currentUser.id)
+            .run()
 
         const response = await postCurrentUserSettings(
             {
@@ -557,20 +692,22 @@ describe('POST /settings', () => {
             ok: true,
         })
 
-        expect(db.batch).toHaveBeenCalledTimes(1)
-        expect(boundStatements).toHaveLength(7)
-        expect(boundStatements[3]?.sql).toContain(['DELETE FROM', 'user_social_links'].join(' '))
-        expect(boundStatements[4]?.sql).toContain(['INSERT INTO', 'user_social_links'].join(' '))
-        expect(boundStatements[4]?.binds).toEqual([currentUserRecord.id, 'twitter', null, 'https://twitter.com/newuser'])
-        expect(boundStatements[5]?.binds).toEqual([currentUserRecord.id, 'bluesky', null, 'https://bsky.app/profile/newuser.test'])
-        expect(boundStatements[6]?.binds).toEqual([currentUserRecord.id, 'custom', 'Website', 'https://example.com/'])
+        expect(
+            await queryAll<{platform: string; label: string | null; url: string}>(
+                'SELECT platform, label, url FROM user_social_links WHERE user_id = ? ORDER BY platform',
+                [currentUser.id],
+                db,
+            ),
+        ).toEqual([
+            {platform: 'bluesky', label: null, url: 'https://bsky.app/profile/newuser.test'},
+            {platform: 'custom', label: 'Website', url: 'https://example.com/'},
+            {platform: 'twitter', label: null, url: 'https://twitter.com/newuser'},
+        ])
     })
 
     it('returns 400 when a social link is not a valid URL', async () => {
         const sessionToken = 'session-token'
-        const {db, boundStatements} = createMockDb({
-            firstResults: [currentUserRecord],
-        })
+        await seedCurrentUser({}, sessionToken)
 
         const response = await postCurrentUserSettings(
             {
@@ -590,15 +727,11 @@ describe('POST /settings', () => {
         expect(await response.json()).toEqual({
             error: 'Twitter / X must be a valid URL',
         })
-        expect(db.batch).not.toHaveBeenCalled()
-        expect(boundStatements).toHaveLength(1)
     })
 
     it('returns 400 when a social link is not HTTPS', async () => {
         const sessionToken = 'session-token'
-        const {db, boundStatements} = createMockDb({
-            firstResults: [currentUserRecord],
-        })
+        await seedCurrentUser({}, sessionToken)
 
         // noinspection HttpUrlsUsage
         const response = await postCurrentUserSettings(
@@ -619,15 +752,11 @@ describe('POST /settings', () => {
         expect(await response.json()).toEqual({
             error: 'Twitter / X must start with https://',
         })
-        expect(db.batch).not.toHaveBeenCalled()
-        expect(boundStatements).toHaveLength(1)
     })
 })
 
 describe('POST /users/me/release-view', () => {
     it('returns 401 when the user is not logged in', async () => {
-        const {db} = createMockDb()
-
         const response = await postCurrentUserReleaseView(db)
 
         expect(response.status).toBe(401)
@@ -637,8 +766,6 @@ describe('POST /users/me/release-view', () => {
     })
 
     it('returns 403 when a logged-in request is missing CSRF protection', async () => {
-        const {db} = createMockDb()
-
         const response = await postCurrentUserReleaseView(db, {
             sessionToken: 'session-token',
         })
@@ -651,9 +778,7 @@ describe('POST /users/me/release-view', () => {
 
     it('stores the current app version as seen for the current user', async () => {
         const sessionToken = 'session-token'
-        const {db, boundStatements} = createMockDb({
-            firstResults: [currentUserRecord],
-        })
+        await seedCurrentUser({}, sessionToken)
 
         const response = await postCurrentUserReleaseView(db, {
             sessionToken,
@@ -665,16 +790,16 @@ describe('POST /users/me/release-view', () => {
             ok: true,
             version: APP_VERSION,
         })
-        expect(boundStatements[1]?.sql).toContain('UPDATE users')
-        expect(boundStatements[1]?.sql).toContain('last_seen_version')
-        expect(boundStatements[1]?.binds).toEqual([APP_VERSION, currentUserRecord.id])
+        expect(
+            await queryOne<{last_seen_version: string}>('SELECT last_seen_version FROM users WHERE id = ?', [currentUser.id], db),
+        ).toEqual({
+            last_seen_version: APP_VERSION,
+        })
     })
 })
 
 describe('POST /passkey-setup', () => {
     it('returns 401 when the user is not logged in', async () => {
-        const {db} = createMockDb()
-
         const response = await postPasskeyPromptResponse({choice: 'later'}, db)
 
         expect(response.status).toBe(401)
@@ -685,9 +810,7 @@ describe('POST /passkey-setup', () => {
 
     it('stores the prompt response and returns the setup redirect', async () => {
         const sessionToken = 'session-token'
-        const {db, boundStatements} = createMockDb({
-            firstResults: [currentUserRecord],
-        })
+        await seedCurrentUser({}, sessionToken)
 
         const response = await postPasskeyPromptResponse(
             {
@@ -707,10 +830,67 @@ describe('POST /passkey-setup', () => {
             choice: 'setup',
             redirectTo: '/settings',
         })
-        expect(boundStatements[1]?.sql).toContain('UPDATE users')
-        expect(boundStatements[1]?.sql).toContain('passkey_prompt_seen_at')
-        expect(boundStatements[1]?.binds).toHaveLength(2)
-        expect(boundStatements[1]?.binds[1]).toBe(currentUserRecord.id)
+        expect(
+            await queryOne<{passkey_prompt_seen_at: string | null}>(
+                'SELECT passkey_prompt_seen_at FROM users WHERE id = ?',
+                [currentUser.id],
+                db,
+            ),
+        ).toEqual({passkey_prompt_seen_at: expect.any(String)})
+    })
+
+    it('rejects an oversized JSON prompt response', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser({}, sessionToken)
+        const response = await postPasskeyPromptResponse({choice: 'later', padding: 'x'.repeat(64 * 1024)}, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(413)
+        await expect(response.json()).resolves.toEqual({error: 'Request body is too large'})
+    })
+
+    it.each([
+        {name: 'malformed JSON', body: '{bad json', contentType: 'application/json'},
+        {name: 'JSON with a scalar root', body: '"text"', contentType: 'application/json'},
+        {name: 'a body without a content type', body: 'raw body', contentType: undefined},
+    ])('uses safe defaults for $name', async ({body, contentType}) => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser({}, sessionToken)
+        const response = await postRawPasskeyPromptResponse(body, db, sessionToken, contentType)
+
+        expect(response.status).toBe(200)
+        await expect(response.json()).resolves.toEqual({ok: true, choice: 'later', redirectTo: '/u/olduser'})
+    })
+
+    it('rejects an oversized form prompt response', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser({}, sessionToken)
+        const form = new FormData()
+        form.set('choice', 'later')
+        form.set('padding', 'x'.repeat(64 * 1024))
+        const response = await postPasskeyPromptResponse(form, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(413)
+        await expect(response.json()).resolves.toEqual({error: 'Request body is too large'})
+    })
+
+    it('reads a setup choice from a small form without a return path', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser({}, sessionToken)
+        const form = new FormData()
+        form.set('choice', 'setup')
+        const response = await postPasskeyPromptResponse(form, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(302)
+        expect(response.headers.get('location')).toBe('/settings')
     })
 
     it('redirects browser form submissions back to a safe local path', async () => {
@@ -719,9 +899,7 @@ describe('POST /passkey-setup', () => {
         form.set('csrfToken', await createCsrfToken(sessionToken))
         form.set('choice', 'later')
         form.set('returnTo', '/search?q=demo')
-        const {db} = createMockDb({
-            firstResults: [currentUserRecord],
-        })
+        await seedCurrentUser({}, sessionToken)
 
         const response = await postPasskeyPromptResponse(form, db, {
             sessionToken,
@@ -731,32 +909,30 @@ describe('POST /passkey-setup', () => {
         expect(response.headers.get('location')).toBe('/search?q=demo')
     })
 
-    it('rejects unsafe return paths for browser form submissions', async () => {
-        const sessionToken = 'session-token'
-        const form = new FormData()
-        form.set('csrfToken', await createCsrfToken(sessionToken))
-        form.set('choice', 'later')
-        form.set('returnTo', '//evil.example')
-        const {db} = createMockDb({
-            firstResults: [currentUserRecord],
-        })
+    it.each(['//evil.example', '/\\evil.example', '/\\\\evil.example', '/%61pi/search', '/%70asskey-setup'])(
+        'rejects unsafe return path %s for browser form submissions',
+        async (returnTo) => {
+            const sessionToken = 'session-token'
+            const form = new FormData()
+            form.set('csrfToken', await createCsrfToken(sessionToken))
+            form.set('choice', 'later')
+            form.set('returnTo', returnTo)
+            await seedCurrentUser({}, sessionToken)
 
-        const response = await postPasskeyPromptResponse(form, db, {
-            sessionToken,
-        })
+            const response = await postPasskeyPromptResponse(form, db, {
+                sessionToken,
+            })
 
-        expect(response.status).toBe(302)
-        expect(response.headers.get('location')).toBe('/u/olduser')
-    })
+            expect(response.status).toBe(302)
+            expect(response.headers.get('location')).toBe('/u/olduser')
+        },
+    )
 })
 
 describe('POST /users/me/profile-photo', () => {
     it('returns 401 when the user is not logged in', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const {db} = createMockDb({
-            firstResults: [null],
-        })
 
         const response = await postProfilePhoto(db, mediaBucket, {
             sessionToken,
@@ -774,9 +950,7 @@ describe('POST /users/me/profile-photo', () => {
     it('returns 400 when the profile photo file is missing', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const {db} = createMockDb({
-            firstResults: [currentUserRecord],
-        })
+        await seedCurrentUser({}, sessionToken)
 
         const response = await postProfilePhoto(db, mediaBucket, {
             sessionToken,
@@ -793,14 +967,7 @@ describe('POST /users/me/profile-photo', () => {
     it('uploads a validated 512x512 WebP profile photo to R2', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const {db, boundStatements} = createMockDb({
-            firstResults: [
-                {
-                    ...currentUserRecord,
-                    profile_photo_key: 'old-profile-photo-key',
-                },
-            ],
-        })
+        await seedCurrentUser({profilePhotoKey: 'old-profile-photo-key'}, sessionToken)
 
         const response = await postProfilePhoto(db, mediaBucket, {
             sessionToken,
@@ -816,30 +983,38 @@ describe('POST /users/me/profile-photo', () => {
         expect(mediaBucket.put).toHaveBeenCalledTimes(1)
         expect(mediaBucket.put).toHaveBeenCalledWith(`users/current-user/profile/${body.profilePhotoKey}.webp`, expect.any(Uint8Array), {
             httpMetadata: {
-                cacheControl: 'public, max-age=31536000, immutable',
+                cacheControl: 'public, max-age=300, must-revalidate',
                 contentType: 'image/webp',
             },
         })
         expect(mediaBucket.delete).toHaveBeenCalledWith('users/current-user/profile/old-profile-photo-key.webp')
-        expect(boundStatements[1]?.sql).toContain('UPDATE users')
-        expect(boundStatements[1]?.binds).toEqual([body.profilePhotoKey, currentUserRecord.id])
+        expect(
+            await queryOne<{profile_photo_key: string}>('SELECT profile_photo_key FROM users WHERE id = ?', [currentUser.id], db),
+        ).toEqual({profile_photo_key: body.profilePhotoKey})
     })
 
     it('deletes the new R2 object when the D1 profile update fails', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
         const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-        const {db} = createMockDb({
-            firstResults: [currentUserRecord],
-            runError: new Error('D1 update failed'),
-        })
+        await seedCurrentUser({}, sessionToken)
 
         try {
-            const response = await postProfilePhoto(db, mediaBucket, {
-                sessionToken,
-                csrfToken: await createCsrfToken(sessionToken),
-                file: createWebpFile(),
-            })
+            const response = await withFailingTrigger(
+                {
+                    name: 'profile_photo_update',
+                    operation: 'UPDATE',
+                    table: 'users',
+                    columns: ['profile_photo_key'],
+                },
+                async () =>
+                    await postProfilePhoto(db, mediaBucket, {
+                        sessionToken,
+                        csrfToken: await createCsrfToken(sessionToken),
+                        file: createWebpFile(),
+                    }),
+                db,
+            )
 
             expect(response.status).toBe(500)
             const uploadedKey = vi.mocked(mediaBucket.put).mock.calls[0]?.[0]
@@ -856,14 +1031,7 @@ describe('POST /users/me/profile-photo', () => {
         const mediaBucket = createMockR2Bucket()
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
         vi.mocked(mediaBucket.delete).mockRejectedValueOnce(new Error('R2 delete failed'))
-        const {db} = createMockDb({
-            firstResults: [
-                {
-                    ...currentUserRecord,
-                    profile_photo_key: 'old-profile-photo-key',
-                },
-            ],
-        })
+        await seedCurrentUser({profilePhotoKey: 'old-profile-photo-key'}, sessionToken)
 
         try {
             const response = await postProfilePhoto(db, mediaBucket, {
@@ -883,9 +1051,7 @@ describe('POST /users/me/profile-photo', () => {
     it('rejects profile photos that are not exactly 512x512', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const {db} = createMockDb({
-            firstResults: [currentUserRecord],
-        })
+        await seedCurrentUser({}, sessionToken)
 
         const response = await postProfilePhoto(db, mediaBucket, {
             sessionToken,
@@ -904,9 +1070,7 @@ describe('POST /users/me/profile-photo', () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
         const imagesBinding = createMockImagesBinding()
-        const {db} = createMockDb({
-            firstResults: [currentUserRecord],
-        })
+        await seedCurrentUser({}, sessionToken)
 
         const response = await postProfilePhoto(db, mediaBucket, {
             sessionToken,
@@ -922,7 +1086,7 @@ describe('POST /users/me/profile-photo', () => {
         const body = (await response.json()) as {profilePhotoKey: string}
         expect(mediaBucket.put).toHaveBeenCalledWith(`users/current-user/profile/${body.profilePhotoKey}.webp`, expect.any(Uint8Array), {
             httpMetadata: {
-                cacheControl: 'public, max-age=31536000, immutable',
+                cacheControl: 'public, max-age=300, must-revalidate',
                 contentType: 'image/webp',
             },
         })
@@ -932,9 +1096,7 @@ describe('POST /users/me/profile-photo', () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
         const imagesBinding = createMockImagesBinding()
-        const {db} = createMockDb({
-            firstResults: [currentUserRecord],
-        })
+        await seedCurrentUser({}, sessionToken)
 
         const response = await postProfilePhoto(db, mediaBucket, {
             sessionToken,
@@ -952,9 +1114,7 @@ describe('POST /users/me/profile-photo', () => {
     it('rejects profile photos that cannot be normalized', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const {db} = createMockDb({
-            firstResults: [currentUserRecord],
-        })
+        await seedCurrentUser({}, sessionToken)
 
         const response = await postProfilePhoto(db, mediaBucket, {
             sessionToken,
@@ -972,9 +1132,7 @@ describe('POST /users/me/profile-photo', () => {
     it('rejects profile photos that are larger than 2 MB after processing', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const {db} = createMockDb({
-            firstResults: [currentUserRecord],
-        })
+        await seedCurrentUser({}, sessionToken)
 
         const response = await postProfilePhoto(db, mediaBucket, {
             sessionToken,
@@ -992,9 +1150,7 @@ describe('POST /users/me/profile-photo', () => {
     it('allows multipart framing around a 3 MB profile photo before image validation', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const {db} = createMockDb({
-            firstResults: [currentUserRecord],
-        })
+        await seedCurrentUser({}, sessionToken)
 
         const response = await postProfilePhoto(db, mediaBucket, {
             sessionToken,
@@ -1012,9 +1168,7 @@ describe('POST /users/me/profile-photo', () => {
     it('rejects profile photo bodies that exceed the multipart allowance', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const {db} = createMockDb({
-            firstResults: [currentUserRecord],
-        })
+        await seedCurrentUser({}, sessionToken)
 
         const response = await postProfilePhoto(db, mediaBucket, {
             sessionToken,
@@ -1034,9 +1188,7 @@ describe('POST /users/me/profile-photo', () => {
     it('rejects profile photos with malformed WebP bytes', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const {db} = createMockDb({
-            firstResults: [currentUserRecord],
-        })
+        await seedCurrentUser({}, sessionToken)
 
         const response = await postProfilePhoto(db, mediaBucket, {
             sessionToken,

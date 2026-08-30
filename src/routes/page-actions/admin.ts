@@ -8,6 +8,7 @@ import {toSqlTimestamp} from '../../lib/auth/session'
 import {csrfProtection} from '../../lib/http/csrf'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {AdminImageReportSchema, AdminJobRunResultSchema, ErrorResponseSchema, responseSchema} from '../../lib/http/responseSchemas'
+import {deleteR2Objects} from '../../lib/media/r2Delete'
 import {
     characterMediaImageObjectKey,
     characterMediaNsfwBlurImageObjectKey,
@@ -301,6 +302,7 @@ async function deleteReportedImage(db: D1Database, bucket: R2Bucket, media: Repo
     await deleteR2Objects(
         bucket,
         [objectKey, previewObjectKey, blurObjectKey].filter((key): key is string => Boolean(key)),
+        'admin-report-media-cleanup',
     )
 }
 
@@ -336,7 +338,7 @@ async function deleteReportedCharacter(db: D1Database, bucket: R2Bucket, media: 
         db.prepare('DELETE FROM characters WHERE id = ?').bind(media.character_id),
     ])
 
-    await deleteR2Objects(bucket, objectKeys)
+    await deleteR2Objects(bucket, objectKeys, 'admin-report-character-cleanup')
 }
 
 async function banReportedUser(db: D1Database, bucket: R2Bucket, userId: string, moderatorId: string, now: string): Promise<void> {
@@ -380,7 +382,7 @@ async function banReportedUser(db: D1Database, bucket: R2Bucket, userId: string,
             .bind(now, moderatorId, userId),
     ])
 
-    await deleteR2Objects(bucket, objectKeys)
+    await deleteR2Objects(bucket, objectKeys, 'admin-report-user-cleanup')
 }
 
 function normalizeReportRating(value: string): 'sfw' | 'nsfw' | null {
@@ -614,14 +616,4 @@ function getJobErrorMessage(error: unknown): string {
     }
 
     return 'Admin job failed'
-}
-
-async function deleteR2Objects(bucket: R2Bucket, objectKeys: string[]): Promise<void> {
-    for (const objectKey of objectKeys) {
-        try {
-            await bucket.delete(objectKey)
-        } catch (error) {
-            console.warn('Unable to delete moderation object', error)
-        }
-    }
 }

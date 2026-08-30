@@ -5,7 +5,7 @@ import {
     verifyRegistrationResponse,
 } from '@simplewebauthn/server'
 import {compare, hash} from 'bcryptjs'
-import {Hono} from 'hono'
+import {type Context, Hono} from 'hono'
 import {getCookie} from 'hono/cookie'
 import {z} from 'zod'
 import {
@@ -23,6 +23,7 @@ import {
     toWebAuthnCredential,
     verifyRecoveryPhrase,
 } from '../../lib/auth/passkeys'
+import {authNetworkRateLimit, enforceAuthChallengeRateLimit, enforceAuthIdentityRateLimit} from '../../lib/auth/rateLimit'
 import {
     clearSessionCookie,
     createCsrfToken,
@@ -37,6 +38,7 @@ import {
 } from '../../lib/auth/session'
 import {csrfProtection} from '../../lib/http/csrf'
 import {jsonResponse} from '../../lib/http/jsonResponse'
+import {readFormDataUpTo, readJsonUpTo} from '../../lib/http/requestBody'
 import {ErrorResponseSchema, OwnUserSchema, responseSchema} from '../../lib/http/responseSchemas'
 import type {Bindings} from '../../types/bindings'
 
@@ -76,7 +78,10 @@ type RecoveryLoginRequest = {
     recoveryPhrase?: unknown
 }
 
+type AuthRouteContext = Context<{Bindings: Bindings}>
+
 const PASSWORD_HASH_ROUNDS = 10
+const AUTH_REQUEST_MAX_BYTES = 1024 * 1024
 const AuthUserResponseSchema = responseSchema({user: OwnUserSchema})
 const PasskeyOptionsResponseSchema = responseSchema({
     challengeId: z.string(),
@@ -106,6 +111,10 @@ for (const path of [
     '/recovery/login',
 ]) {
     authPageActionRoutes.use(path, csrfProtection)
+
+    if (path !== '/logout') {
+        authPageActionRoutes.use(path, authNetworkRateLimit)
+    }
 }
 
 authPageActionRoutes.post('/logout', async (c) => {
@@ -137,6 +146,12 @@ authPageActionRoutes.post('/login', async (c) => {
 
     if (!username || !password) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Username and password are required'}, 400)
+    }
+
+    const rateLimitResponse = await enforceAuthIdentityRateLimit(c, username)
+
+    if (rateLimitResponse) {
+        return rateLimitResponse
     }
 
     const user = await c.env.DB.prepare(
@@ -208,19 +223,8 @@ authPageActionRoutes.post('/register', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Password must be at least 8 characters'}, 400)
     }
 
-    const existingUser = await c.env.DB.prepare(
-        `SELECT id
-         FROM users
-         WHERE lower(email) = lower(?)
-            OR username = ?
-         LIMIT 1`,
-    )
-        .bind(email, username)
-        .first<Pick<UserRecord, 'id'>>()
-
-    if (existingUser) {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Email or username is already in use'}, 409)
-    }
+    const registrationError = await enforceAvailableRegistrationIdentity(c, email, username)
+    if (registrationError) return registrationError
 
     const now = new Date()
     const user: UserRecord = {
@@ -288,19 +292,8 @@ authPageActionRoutes.post('/register/passkey/options', async (c) => {
         )
     }
 
-    const existingUser = await c.env.DB.prepare(
-        `SELECT id
-         FROM users
-         WHERE lower(email) = lower(?)
-            OR username = ?
-         LIMIT 1`,
-    )
-        .bind(email, username)
-        .first<Pick<UserRecord, 'id'>>()
-
-    if (existingUser) {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Email or username is already in use'}, 409)
-    }
+    const registrationError = await enforceAvailableRegistrationIdentity(c, email, username)
+    if (registrationError) return registrationError
 
     const registration = await createNewAccountPasskeyRegistrationOptions(c, {email, username})
 
@@ -321,6 +314,12 @@ authPageActionRoutes.post('/register/passkey/verify', async (c) => {
 
     if (!challengeId || !body.credential) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Challenge and passkey response are required'}, 400)
+    }
+
+    const rateLimitResponse = await enforceAuthChallengeRateLimit(c, challengeId)
+
+    if (rateLimitResponse) {
+        return rateLimitResponse
     }
 
     const challenge = await getWebAuthnChallenge(c.env.DB, challengeId, 'registration')
@@ -463,6 +462,12 @@ authPageActionRoutes.post('/login/passkey/options', async (c) => {
     let user: {id: string} | null = null
 
     if (username) {
+        const rateLimitResponse = await enforceAuthIdentityRateLimit(c, username)
+
+        if (rateLimitResponse) {
+            return rateLimitResponse
+        }
+
         user = await c.env.DB.prepare(
             `SELECT users.id
              FROM users
@@ -501,6 +506,12 @@ authPageActionRoutes.post('/login/passkey/verify', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Challenge and passkey response are required'}, 400)
     }
 
+    const challengeRateLimitResponse = await enforceAuthChallengeRateLimit(c, challengeId)
+
+    if (challengeRateLimitResponse) {
+        return challengeRateLimitResponse
+    }
+
     const challenge = await getWebAuthnChallenge(c.env.DB, challengeId, 'authentication')
 
     if (!challenge) {
@@ -511,6 +522,12 @@ authPageActionRoutes.post('/login/passkey/verify', async (c) => {
 
     if (!passkey || (challenge.user_id && passkey.user_id !== challenge.user_id)) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Passkey is not registered for this login'}, 401)
+    }
+
+    const identityRateLimitResponse = await enforceAuthIdentityRateLimit(c, passkey.user_id)
+
+    if (identityRateLimitResponse) {
+        return identityRateLimitResponse
     }
 
     const {origin, rpID} = getWebAuthnRelyingParty(c)
@@ -576,6 +593,12 @@ authPageActionRoutes.post('/recovery/login', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Username and recovery phrase are required'}, 400)
     }
 
+    const rateLimitResponse = await enforceAuthIdentityRateLimit(c, username)
+
+    if (rateLimitResponse) {
+        return rateLimitResponse
+    }
+
     const user = await c.env.DB.prepare(
         `SELECT id,
                 email,
@@ -629,21 +652,38 @@ authPageActionRoutes.post('/recovery/login', async (c) => {
     })
 })
 
+async function enforceAvailableRegistrationIdentity(c: AuthRouteContext, email: string, username: string): Promise<Response | null> {
+    const rateLimitResponse = await enforceAuthIdentityRateLimit(c, `${email}:${username}`)
+    if (rateLimitResponse) return rateLimitResponse
+
+    const existingUser = await c.env.DB.prepare(
+        `SELECT id
+         FROM users
+         WHERE lower(email) = lower(?)
+            OR username = ?
+         LIMIT 1`,
+    )
+        .bind(email, username)
+        .first<Pick<UserRecord, 'id'>>()
+
+    return existingUser ? jsonResponse(c, ErrorResponseSchema, {error: 'Email or username is already in use'}, 409) : null
+}
+
 async function parseBody<T extends object>(request: Request): Promise<T | null> {
     const contentType = request.headers.get('content-type') ?? ''
 
-    if (contentType.includes('application/json')) {
-        try {
-            return (await request.json()) as T
-        } catch {
-            return null
+    try {
+        if (contentType.includes('application/json')) {
+            return await readJsonUpTo<T>(request, AUTH_REQUEST_MAX_BYTES)
         }
-    }
 
-    if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {
-        const form = await request.formData()
+        if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {
+            const form = await readFormDataUpTo(request, AUTH_REQUEST_MAX_BYTES)
 
-        return Object.fromEntries(form.entries()) as T
+            return form ? (Object.fromEntries(form.entries()) as T) : null
+        }
+    } catch {
+        return null
     }
 
     return {} as T
