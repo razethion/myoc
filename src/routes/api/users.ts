@@ -18,8 +18,44 @@ const ProfilePhotoResponseSchema = responseSchema({
     profilePhotoKey: z.string(),
     profilePhotoUrl: z.string(),
 })
+const RecentMediaPreferenceRequestSchema = z
+    .object({
+        showUnapproved: z.boolean(),
+    })
+    .strict()
+const RecentMediaPreferenceResponseSchema = responseSchema({
+    ok: z.literal(true),
+    showUnapproved: z.boolean(),
+})
 
 export const userRoutes = new Hono<{Bindings: Bindings}>()
+
+userRoutes.post('/me/recent-media-preference', async (c) => {
+    const currentUser = await getCurrentUser(c)
+
+    if (!currentUser) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
+    }
+
+    const parsed = RecentMediaPreferenceRequestSchema.safeParse(await c.req.json().catch(() => null))
+
+    if (!parsed.success) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Recent media preference is invalid'}, 400)
+    }
+
+    await c.env.DB.prepare(
+        `UPDATE users
+         SET show_unapproved_media = ?
+         WHERE id = ?`,
+    )
+        .bind(parsed.data.showUnapproved ? 1 : 0, currentUser.id)
+        .run()
+
+    return jsonResponse(c, RecentMediaPreferenceResponseSchema, {
+        ok: true,
+        showUnapproved: parsed.data.showUnapproved,
+    })
+})
 
 userRoutes.post('/me/release-view', async (c) => {
     const currentUser = await getCurrentUser(c)

@@ -38,7 +38,7 @@
     }
   ],
   "triggers": {
-    "crons": ["0 8 * * *", "0 9 * * *", "0 10 * * *"]
+    "crons": ["* * * * *", "0 8 * * *", "0 9 * * *", "30 9 * * *", "0 10 * * *"]
   },
   "assets": {
     "directory": "./public"
@@ -50,10 +50,15 @@
   "vars": {
     "CLOUDFLARE_ACCOUNT_ID": "9b7b3de391cdb5368247e2c468ad1643",
     "D1_DATABASE_ID": "909ada8f-fc57-47ad-83e1-18ffe863debb",
-    "MEDIA_PUBLIC_BASE_URL": "https://m.myoc.art"
+    "MEDIA_PUBLIC_BASE_URL": "https://m.myoc.art",
+    "RECENT_FEED_BLOCK_ITEMS": "96",
+    "RECENT_FEED_CLEANUP_ENABLED": "true",
+    "RECENT_FEED_PUBLISH_ENABLED": "true",
+    "RECENT_FEED_PUBLIC_BASE_URL": "https://feed-data.myoc.art",
+    "RECENT_FEED_RETENTION_DAYS": "30"
   },
   "secrets": {
-    "required": ["D1_REST_API_TOKEN", "PREVIEW_PROCESSOR_TOKEN"]
+    "required": ["D1_REST_API_TOKEN", "PREVIEW_PROCESSOR_TOKEN", "RECENT_FEED_CURSOR_SECRET"]
   },
   "d1_databases": [
     {
@@ -112,6 +117,12 @@
     {
       "binding": "DB_BACKUP_BUCKET",
       "bucket_name": "myoc-db-bak",
+      "remote": true
+    },
+    {
+      "binding": "RECENT_FEED_BUCKET",
+      "bucket_name": "myoc-recent-feed-prod",
+      "preview_bucket_name": "myoc-recent-feed-dev",
       "remote": true
     }
   ]

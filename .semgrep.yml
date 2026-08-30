@@ -34,6 +34,27 @@ rules:
           regex: (?is)^['"`]\s*delete\s+from\b
       - pattern-not-regex: (?i)\bwhere\b
 
+  - id: myoc.scripts.no-literal-delete-without-where
+    message: Literal DELETE statements in scripts must include a WHERE clause.
+    severity: ERROR
+    languages:
+      - javascript
+      - typescript
+    paths:
+      include:
+        - /scripts/**/*.js
+        - /scripts/**/*.mjs
+        - /scripts/**/*.ts
+        - /semgrep-tests/noLiteralDeleteWithoutWhere.mjs
+    patterns:
+      - pattern-either:
+          - pattern: const $NAME = $SQL
+          - pattern: let $NAME = $SQL
+          - pattern: var $NAME = $SQL
+      - metavariable-regex:
+          metavariable: $SQL
+          regex: (?is)^['"`]?\s*delete\s+from\s+(?:"[a-z_][a-z0-9_]*"|[a-z_][a-z0-9_]*)\s*;
+
   - id: myoc.routes.no-direct-json-response
     message: API and page-action JSON responses must go through jsonResponse with an explicit Zod response schema.
     severity: ERROR

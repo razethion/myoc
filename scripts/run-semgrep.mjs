@@ -8,6 +8,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const semgrepAutoArgs = ['scan', '--config', 'auto', '.']
 const semgrepTestTargets = [
     'semgrep-tests/noDeleteWithoutWhere.ts',
+    'semgrep-tests/noLiteralDeleteWithoutWhere.mjs',
     'semgrep-tests/noSelectStar.ts',
     'semgrep-tests/routes/directImageResponse.ts',
     'semgrep-tests/routes/directJsonResponse.ts',

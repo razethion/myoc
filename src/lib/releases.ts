@@ -9,6 +9,17 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
     {
+        version: '2026.08.30.01',
+        releasedOn: 'August 30, 2026',
+        title: 'Recent uploads',
+        summary: 'See things live as they happen!',
+        changes: [
+            'Added a /recent uploads page.',
+            '/recent is now the default home page for users.',
+            'This is our first step forward towards following users!',
+        ],
+    },
+    {
         version: '2026.07.31.01',
         releasedOn: 'July 31, 2026',
         title: 'Character page refresh',

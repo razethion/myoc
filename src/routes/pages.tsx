@@ -12,6 +12,7 @@ import {readFormDataUpTo} from '../lib/http/requestBody'
 import {getLeaderboardSnapshot} from '../lib/leaderboard'
 import {parseHeightChartJson} from '../lib/media/heightChart'
 import {characterHeightChartImageUrl, characterMediaImageUrl, characterMediaPreviewImageUrl} from '../lib/media/url'
+import {getGeneratedRecentMediaPage} from '../lib/recentMedia/reader'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import {searchAll} from '../lib/search'
 import type {UserSocialLink} from '../lib/socialLinks'
@@ -59,6 +60,7 @@ import {NotFoundPage} from '../views/pages/NotFoundPage'
 import {PasskeyPromptPage} from '../views/pages/PasskeyPromptPage'
 import {ProductVisionPage} from '../views/pages/ProductVisionPage'
 import {ProfilePage, type ProfilePageUser} from '../views/pages/ProfilePage'
+import {RecentMediaPage} from '../views/pages/RecentMediaPage'
 import {SearchPage} from '../views/pages/SearchPage'
 import {SitePoliciesPage} from '../views/pages/SitePoliciesPage'
 import {SizeChartViewerPage} from '../views/pages/SizeChartViewerPage'
@@ -147,8 +149,13 @@ function getLoginMethod(value: string | undefined): AuthLoginMethod {
 }
 
 pageRoutes.get('/', async (c) => {
-    const [currentUser, stats, discoverCharacters, galleryImages, heightChartCharacters] = await Promise.all([
-        getCurrentUser(c),
+    const currentUser = await getCurrentUser(c)
+
+    if (currentUser) {
+        return c.redirect('/recent')
+    }
+
+    const [stats, discoverCharacters, galleryImages, heightChartCharacters] = await Promise.all([
         getCachedHomePageStats(c.env.CACHE, c.env.DB),
         getCachedHomePageDiscoverCharacters(c.env.CACHE, c.env.DB),
         getCachedHomePageGalleryImages(c.env.CACHE, c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL),
@@ -661,6 +668,27 @@ pageRoutes.get('/search', async (c) => {
             guestInitial={getRandomLetter()}
             mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
             results={results}
+        />,
+    )
+})
+
+pageRoutes.get('/recent', async (c) => {
+    const currentUser = await getCurrentUser(c)
+    const showNsfw = Boolean(currentUser?.displayNsfwMedia)
+    const showUnapproved = currentUser?.showUnapprovedMedia !== false
+    const page = await getGeneratedRecentMediaPage(c.env, {
+        showNsfw,
+        showUnapproved,
+    })
+
+    return c.html(
+        <RecentMediaPage
+            currentUser={currentUser}
+            guestInitial={currentUser?.username.charAt(0).toUpperCase() ?? getRandomLetter()}
+            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+            page={page}
+            showNsfw={showNsfw}
+            showUnapproved={showUnapproved}
         />,
     )
 })

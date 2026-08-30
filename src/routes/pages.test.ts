@@ -11,6 +11,17 @@ import {CharacterPage} from '../views/pages/CharacterPage'
 import {MigratePage} from '../views/pages/MigratePage'
 import {pageRoutes} from './pages'
 
+vi.mock('../lib/recentMedia/reader', () => ({
+    getGeneratedRecentMediaPage: vi.fn(async () => ({
+        generation: null,
+        items: [],
+        nextCursor: null,
+        nextPosition: null,
+        publicRootUrl: null,
+        publishedAt: null,
+    })),
+}))
+
 const mediaPublicBaseUrl = 'https://m.myoc.art'
 const NON_HTML_CONTENT_SECURITY_POLICY = [
     "default-src 'none'",
@@ -814,18 +825,29 @@ describe('security headers', () => {
 })
 
 describe('public page redirects', () => {
-    it('renders home for logged-in users', async () => {
+    it('redirects logged-in users from home to recent uploads', async () => {
         const response = await getAppPath(
             '/',
             await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo'),
-                userCount: 24,
-                characterCount: 128,
-                mediaCount: 4096,
             }),
             {
                 cookie: 'myoc_session=session-token',
             },
+        )
+
+        expect(response.status).toBe(302)
+        expect(response.headers.get('location')).toBe('/recent')
+    })
+
+    it('renders home for guests', async () => {
+        const response = await getAppPath(
+            '/',
+            await seedPageDatabase({
+                userCount: 24,
+                characterCount: 128,
+                mediaCount: 4096,
+            }),
         )
         const html = await response.text()
 
@@ -841,14 +863,22 @@ describe('public page redirects', () => {
         expect(html).not.toContain('href="https://github.com/razethion/myoc"')
         expect(html).not.toContain('home-loading-image')
         expect(html).not.toContain('data-gallery-image-loader')
-        expect(html).toContain('href="/u/demo"')
-        expect(html).toContain('Report issue')
-        expect(html).toContain('href="https://github.com/razethion/myoc/issues"')
-        expect(html).toContain('Ask a question')
-        expect(html).toContain('href="https://github.com/razethion/myoc/discussions"')
+        expect(html).toContain('href="/login"')
+        expect(html).toContain('href="/recent"')
         expect(html).toContain('24')
         expect(html).toContain('128')
         expect(html).toContain('4,096')
+    })
+
+    it('renders recent uploads for guests', async () => {
+        const response = await getAppPath('/recent')
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        expect(html).toContain('<title>Recently uploaded media | MyOC</title>')
+        expect(html).toContain('data-recent-feed')
+        expect(html).toContain('data-persist-unapproved="false"')
+        expect(html).toContain('Show unapproved')
     })
 
     it('renders the latest leaderboard snapshot from KV', async () => {
@@ -3084,6 +3114,7 @@ describe('MigratePage', () => {
                 bio: '',
                 csrfToken: csrfAttack,
                 displayNsfwMedia: false,
+                showUnapprovedMedia: true,
                 email: 'demo@example.test',
                 id: 'current-user',
                 lastSeenVersion: null,
@@ -3230,6 +3261,7 @@ describe('CharacterPage', () => {
                 bio: '',
                 csrfToken: 'csrf-token',
                 displayNsfwMedia: true,
+                showUnapprovedMedia: true,
                 email: 'demo@example.test',
                 id: 'profile-user',
                 lastSeenVersion: null,
