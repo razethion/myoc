@@ -192,6 +192,10 @@ function CharacterPageHead({
             url: absoluteUrl(siteUrl, `/u/${encodeURIComponent(profileUser.username)}`),
         },
     }
+    // nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml -- serializeJsonForHtmlScript escapes script-breaking characters.
+    const structuredDataScript = (
+        <script dangerouslySetInnerHTML={{__html: serializeJsonForHtmlScript(structuredData)}} type="application/ld+json"></script>
+    )
 
     return (
         <>
@@ -215,7 +219,7 @@ function CharacterPageHead({
             <meta content={imageUrl} name="twitter:image" />
             <meta content={imageAlt} name="twitter:image:alt" />
 
-            <script dangerouslySetInnerHTML={{__html: serializeJsonForHtmlScript(structuredData)}} type="application/ld+json"></script>
+            {structuredDataScript}
         </>
     )
 }

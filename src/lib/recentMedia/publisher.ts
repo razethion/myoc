@@ -1322,7 +1322,9 @@ async function publishCompletedBootstrap(
         initialItems,
     }
     await putJsonIfMissing(env.RECENT_FEED_BUCKET, rootKey, JSON.stringify(root), config.immutableCacheControl, metrics)
-    Object.assign(totalMetrics, combinedBootstrapMetrics(state, metrics))
+    const completedMetrics = combinedBootstrapMetrics(state, metrics)
+    totalMetrics.objectsWritten = completedMetrics.objectsWritten
+    totalMetrics.bytesWritten = completedMetrics.bytesWritten
     const pointer: RecentFeedPointer = {generation, rootKey, publishedAt, throughRevision: targetRevision}
     await checkpointInitialPublication(env.DB, leaseOwner, pointer, variantRoots, totalMetrics)
     await deleteBootstrapCheckpointKeys(env.RECENT_FEED_BUCKET, page.checkpointKeysToDelete)

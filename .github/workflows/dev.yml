@@ -546,6 +546,8 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          HEAD_SHA: ${{ needs.validate.outputs.head_sha }}
+          PR_NUMBER: ${{ inputs.pull_request }}
           WRANGLER: ${{ steps.wrangler.outputs.path }}
         working-directory: ${{ runner.temp }}/myoc-dev-control
         run: |
@@ -562,7 +564,7 @@ jobs:
             fs.writeFileSync('preview-secrets.json', JSON.stringify({ PREVIEW_PROCESSOR_TOKEN: token }));
           "
 
-          "$WRANGLER" deploy --config wrangler.preview.jsonc --secrets-file preview-secrets.json --no-bundle --message "Approved dev preview ${{ needs.validate.outputs.head_sha }}" 2>&1 | tee wrangler-preview.log
+          "$WRANGLER" deploy --config wrangler.preview.jsonc --secrets-file preview-secrets.json --no-bundle --message "Approved dev preview $HEAD_SHA" 2>&1 | tee wrangler-preview.log
 
           preview_url="$(node -e "
             const fs = require('node:fs');
@@ -580,8 +582,8 @@ jobs:
           {
             echo "### Dev preview"
             echo
-            echo "- Pull request: #${{ inputs.pull_request }}"
-            echo "- Commit: ${{ needs.validate.outputs.head_sha }}"
+            echo "- Pull request: #${PR_NUMBER}"
+            echo "- Commit: $HEAD_SHA"
             echo "- URL: $preview_url"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -628,6 +630,7 @@ jobs:
           CONTAINER_NAME: myoc-docker-sharp-pr-${{ inputs.pull_request }}
           DB_NAME: myoc-pr-${{ inputs.pull_request }}
           MEDIA_BUCKET: myoc-pr-${{ inputs.pull_request }}-media
+          PR_NUMBER: ${{ inputs.pull_request }}
           WORKER_NAME: myoc-pr-${{ inputs.pull_request }}
           WRANGLER: ${{ steps.wrangler.outputs.path }}
         working-directory: ${{ runner.temp }}/myoc-dev-cleanup
@@ -769,9 +772,9 @@ jobs:
             echo "### Dev preview cleanup"
             echo
             if [ "${#failures[@]}" -eq 0 ]; then
-              echo "Cleanup finished for pull request #${{ inputs.pull_request }}."
+              echo "Cleanup finished for pull request #${PR_NUMBER}."
             else
-              echo "Cleanup is partial for pull request #${{ inputs.pull_request }}."
+              echo "Cleanup is partial for pull request #${PR_NUMBER}."
               echo
               for failure in "${failures[@]}"; do
                 echo "- $failure"

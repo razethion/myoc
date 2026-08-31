@@ -2,6 +2,7 @@ import type {CurrentUser} from '../../lib/auth/session'
 import type {SearchCharacterResult, SearchResults, SearchUserResult} from '../../lib/search'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
+import {serializeJsonForHtmlScript} from '../scriptJson'
 
 type SearchPageProps = {
     currentUser?: CurrentUser | null
@@ -51,18 +52,17 @@ function CharacterResultCard({character}: {character: SearchCharacterResult}) {
 }
 
 function SearchPageScript({results}: {results: SearchResults}) {
-    const queryJson = safeScriptJson(results.query)
     const script = `
-        const searchQuery = ${queryJson};
+        const searchQuery = ${serializeJsonForHtmlScript(results.query)};
         const loadMoreState = {
             users: {
-                nextOffset: ${JSON.stringify(results.users.nextOffset)},
-                hasMore: ${JSON.stringify(results.users.hasMore)},
+                nextOffset: ${serializeJsonForHtmlScript(results.users.nextOffset)},
+                hasMore: ${serializeJsonForHtmlScript(results.users.hasMore)},
                 inFlight: false,
             },
             characters: {
-                nextOffset: ${JSON.stringify(results.characters.nextOffset)},
-                hasMore: ${JSON.stringify(results.characters.hasMore)},
+                nextOffset: ${serializeJsonForHtmlScript(results.characters.nextOffset)},
+                hasMore: ${serializeJsonForHtmlScript(results.characters.hasMore)},
                 inFlight: false,
             },
         };
@@ -169,16 +169,8 @@ function SearchPageScript({results}: {results: SearchResults}) {
         });
     `
 
+    // nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml -- serializeJsonForHtmlScript escapes every dynamic value before interpolation.
     return <script dangerouslySetInnerHTML={{__html: script}}></script>
-}
-
-function safeScriptJson(value: string): string {
-    return JSON.stringify(value)
-        .replace(/&/g, '\\u0026')
-        .replace(/</g, '\\u003c')
-        .replace(/>/g, '\\u003e')
-        .replace(/\u2028/g, '\\u2028')
-        .replace(/\u2029/g, '\\u2029')
 }
 
 export function SearchPage({currentUser, guestInitial, mediaBaseUrl, results}: SearchPageProps) {

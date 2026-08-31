@@ -226,9 +226,11 @@ async function readResponseBytes(response, maxBytes) {
 }
 
 /**
+ * @param {Buffer} sourceBytes
  * @returns {Promise<{bytes: Buffer, height: number, width: number}>}
  */
 async function createWebpPreview(sourceBytes) {
+    // nosemgrep: javascript.express.file.sharp-express.sharp-express -- sourceBytes is an in-memory Buffer from fetchImageBytes, not a file path.
     const image = sharp(sourceBytes, {
         limitInputPixels: sourceLimitInputPixels,
     }).rotate()
