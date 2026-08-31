@@ -1,9 +1,9 @@
 import type {CurrentUser} from '../../lib/auth/session'
 import {characterMediaImageUrl, characterMediaPreviewImageUrl, characterProfileImageUrl} from '../../lib/media/url'
+import {JsonLdScript} from '../components/JsonLdScript'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 import {absoluteUrl} from '../meta'
-import {serializeJsonForHtmlScript} from '../scriptJson'
 
 export type HomePageStats = {
     users: number
@@ -204,11 +204,6 @@ function HomePageHead({siteUrl, stats}: {siteUrl: string; stats: HomePageStats})
             },
         ],
     }
-    // nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml -- serializeJsonForHtmlScript escapes script-breaking characters.
-    const structuredDataScript = (
-        <script dangerouslySetInnerHTML={{__html: serializeJsonForHtmlScript(structuredData)}} type="application/ld+json"></script>
-    )
-
     return (
         <>
             <meta content={description} name="description" />
@@ -241,7 +236,7 @@ function HomePageHead({siteUrl, stats}: {siteUrl: string; stats: HomePageStats})
             <meta content={imageUrl} name="twitter:image" />
             <meta content={HOME_PAGE_IMAGE_ALT} name="twitter:image:alt" />
 
-            {structuredDataScript}
+            <JsonLdScript value={structuredData} />
             <HomePageMotionStyles />
         </>
     )
