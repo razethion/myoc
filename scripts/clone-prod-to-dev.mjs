@@ -491,7 +491,7 @@ async function deleteR2S3Objects(bucket, keys) {
         bucket,
         query: {delete: ''},
         headers: {
-            'content-md5': md5Base64(body),
+            'content-md5': s3ContentMd5Base64(body),
             'content-type': 'application/xml',
         },
         body,
@@ -582,7 +582,8 @@ function sha256Hex(value) {
     return createHash('sha256').update(value).digest('hex')
 }
 
-function md5Base64(value) {
+function s3ContentMd5Base64(value) {
+    // nosemgrep: javascript.node-stdlib.cryptography.crypto-weak-algorithm.crypto-weak-algorithm -- S3 DeleteObjects requires Content-MD5 for body integrity. This hash does not protect credentials.
     return createHash('md5').update(value).digest('base64')
 }
 
