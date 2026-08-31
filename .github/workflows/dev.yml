@@ -1,17 +1,16 @@
 name: Dev Preview
+run-name: "Dev preview for ${{ github.event.workflow_run.head_branch || format('PR #{0}', inputs.pull_request) }}"
 
 on:
+  workflow_run:
+    workflows:
+      - Checks and Deploy
+    types:
+      - completed
   workflow_dispatch:
     inputs:
-      operation:
-        description: Deploy or clean up a dev preview.
-        required: true
-        type: choice
-        options:
-          - deploy
-          - cleanup
       pull_request:
-        description: Pull request number.
+        description: Pull request number to clean up.
         required: true
         type: string
 
@@ -20,18 +19,23 @@ permissions:
   contents: read
   pull-requests: read
 
-concurrency:
-  group: dev-preview-${{ inputs.pull_request }}
-  cancel-in-progress: false
-
 jobs:
   validate:
     name: Validate request
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) }}
+    permissions:
+      actions: read
+      contents: read
+      deployments: write
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      artifact_id: ${{ steps.pull-request.outputs.artifact_id }}
       artifact_run_id: ${{ steps.pull-request.outputs.artifact_run_id }}
+      deployment_id: ${{ steps.github-deployment.outputs.deployment_id }}
       head_sha: ${{ steps.pull-request.outputs.head_sha }}
+      pull_request: ${{ steps.pull-request.outputs.pull_request }}
 
     steps:
       - name: Require the trusted workflow
@@ -44,6 +48,7 @@ jobs:
           fi
 
       - name: Validate pull request number
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
           PR_NUMBER: ${{ inputs.pull_request }}
         run: |
@@ -54,10 +59,132 @@ jobs:
 
       - name: Resolve immutable pull request commit
         id: pull-request
-        if: ${{ inputs.operation == 'deploy' }}
+        if: ${{ github.event_name == 'workflow_run' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          script: |
+            const workflowRun = context.payload.workflow_run
+
+            if (workflowRun.event !== 'pull_request' || workflowRun.conclusion !== 'success') {
+              core.setFailed('The triggering checks run must be a successful pull request run.')
+              return
+            }
+
+            if (workflowRun.path !== '.github/workflows/checks.yml') {
+              core.setFailed('The triggering checks run must use checks.yml.')
+              return
+            }
+
+            const pullRequests = await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit, {
+              ...context.repo,
+              commit_sha: workflowRun.head_sha,
+              per_page: 100,
+            })
+            const matchingPullRequests = pullRequests.filter((pullRequest) =>
+              pullRequest.state === 'open' &&
+              pullRequest.base.ref === 'master' &&
+              pullRequest.head.sha === workflowRun.head_sha &&
+              pullRequest.head.repo?.full_name === `${context.repo.owner}/${context.repo.repo}`,
+            )
+
+            if (matchingPullRequests.length !== 1) {
+              core.setFailed('The triggering checks commit must identify one open pull request to master.')
+              return
+            }
+
+            const pullRequest = matchingPullRequests[0]
+            const pullNumber = pullRequest.number
+
+            const headSha = workflowRun.head_sha
+            if (pullRequest.head.sha !== headSha) {
+              core.setFailed('The pull request changed after this checks run completed.')
+              return
+            }
+
+            const artifactName = `dev-preview-${headSha}-${workflowRun.run_attempt}`
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              ...context.repo,
+              run_id: workflowRun.id,
+              per_page: 100,
+            })
+            const matchingArtifacts = artifacts.filter((candidate) => candidate.name === artifactName && !candidate.expired)
+
+            if (matchingArtifacts.length !== 1) {
+              core.setFailed(`The triggering checks run must have one dev preview artifact for ${headSha}.`)
+              return
+            }
+
+            const selectedArtifact = matchingArtifacts[0]
+            if (!/^sha256:[0-9a-f]{64}$/i.test(selectedArtifact.digest || '')) {
+              core.setFailed('The dev preview artifact does not have a valid SHA-256 digest.')
+              return
+            }
+
+            core.setOutput('head_sha', headSha)
+            core.setOutput('artifact_id', String(selectedArtifact.id))
+            core.setOutput('artifact_run_id', String(workflowRun.id))
+            core.setOutput('pull_request', String(pullNumber))
+
+      - name: Create pending PR deployment
+        id: github-deployment
+        if: ${{ github.event_name == 'workflow_run' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
-          PR_NUMBER: ${{ inputs.pull_request }}
+          HEAD_SHA: ${{ steps.pull-request.outputs.head_sha }}
+          PR_NUMBER: ${{ steps.pull-request.outputs.pull_request }}
+        with:
+          script: |
+            const pullNumber = Number.parseInt(process.env.PR_NUMBER, 10)
+            const logUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            const { data: deployment } = await github.rest.repos.createDeployment({
+              ...context.repo,
+              ref: process.env.HEAD_SHA,
+              task: 'deploy',
+              auto_merge: false,
+              required_contexts: [],
+              payload: { pull_request: pullNumber },
+              environment: 'development',
+              description: `Dev preview for PR #${pullNumber}`,
+              transient_environment: true,
+              production_environment: false,
+            })
+
+            core.setOutput('deployment_id', String(deployment.id))
+            await github.rest.repos.createDeploymentStatus({
+              ...context.repo,
+              deployment_id: deployment.id,
+              state: 'pending',
+              log_url: logUrl,
+              description: 'Waiting for development approval.',
+              environment: 'development',
+              auto_inactive: false,
+            })
+
+  deploy:
+    name: Approve PR #${{ needs.validate.outputs.pull_request }} at ${{ needs.validate.outputs.head_sha }} from checks run ${{ needs.validate.outputs.artifact_run_id }}
+    if: ${{ github.event_name == 'workflow_run' && needs.validate.result == 'success' }}
+    needs:
+      - validate
+    concurrency:
+      group: dev-preview-${{ needs.validate.outputs.pull_request }}
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+      deployments: write
+      pull-requests: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: development
+      deployment: false
+
+    steps:
+      - name: Confirm approved pull request commit
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        env:
+          HEAD_SHA: ${{ needs.validate.outputs.head_sha }}
+          PR_NUMBER: ${{ needs.validate.outputs.pull_request }}
         with:
           script: |
             const pullNumber = Number.parseInt(process.env.PR_NUMBER, 10)
@@ -66,79 +193,38 @@ jobs:
               pull_number: pullNumber,
             })
 
-            if (pullRequest.state !== 'open') {
-              core.setFailed('The pull request must be open.')
-              return
+            if (pullRequest.state !== 'open' || pullRequest.head.sha !== process.env.HEAD_SHA) {
+              core.setFailed('The approved pull request commit is no longer current.')
             }
 
-            if (pullRequest.base.ref !== 'master') {
-              core.setFailed('The pull request must target master.')
-              return
-            }
-
-            if (pullRequest.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
-              core.setFailed('Fork pull requests cannot use the dev deployment workflow.')
-              return
-            }
-
-            const headSha = pullRequest.head.sha
-            const artifactName = `dev-preview-${headSha}`
-            const { data: workflowRuns } = await github.rest.actions.listWorkflowRuns({
+      - name: Mark PR deployment in progress
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        env:
+          DEPLOYMENT_ID: ${{ needs.validate.outputs.deployment_id }}
+        with:
+          script: |
+            const deploymentId = Number.parseInt(process.env.DEPLOYMENT_ID, 10)
+            const { data: statuses } = await github.rest.repos.listDeploymentStatuses({
               ...context.repo,
-              workflow_id: 'checks.yml',
-              event: 'pull_request',
-              head_sha: headSha,
-              status: 'success',
-              per_page: 100,
+              deployment_id: deploymentId,
+              per_page: 1,
             })
 
-            const matchingRuns = workflowRuns.workflow_runs
-              .filter((run) => run.conclusion === 'success')
-              .sort((left, right) => right.id - left.id)
-
-            let selectedRun = null
-            let selectedArtifact = null
-
-            for (const run of matchingRuns) {
-              const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
-                ...context.repo,
-                run_id: run.id,
-                per_page: 100,
-              })
-              const artifact = artifacts.find((candidate) => candidate.name === artifactName && !candidate.expired)
-
-              if (artifact) {
-                selectedRun = run
-                selectedArtifact = artifact
-                break
-              }
-            }
-
-            if (!selectedRun || !selectedArtifact) {
-              core.setFailed(`No successful dev preview artifact exists for ${headSha}. Wait for the pull request checks to finish.`)
+            if (statuses[0]?.state === 'success' || statuses[0]?.state === 'inactive') {
               return
             }
 
-            if (!/^sha256:[0-9a-f]{64}$/i.test(selectedArtifact.digest || '')) {
-              core.setFailed('The dev preview artifact does not have a valid SHA-256 digest.')
-              return
-            }
+            const logUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            await github.rest.repos.createDeploymentStatus({
+              ...context.repo,
+              deployment_id: deploymentId,
+              state: 'in_progress',
+              log_url: logUrl,
+              description: 'Deploying the approved dev preview.',
+              environment: 'development',
+              auto_inactive: false,
+            })
 
-            core.setOutput('head_sha', headSha)
-            core.setOutput('artifact_run_id', String(selectedRun.id))
-
-  deploy:
-    name: Approve PR #${{ inputs.pull_request }} at ${{ needs.validate.outputs.head_sha }} from checks run ${{ needs.validate.outputs.artifact_run_id }}
-    if: ${{ inputs.operation == 'deploy' }}
-    needs:
-      - validate
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    environment:
-      name: development
-      url: ${{ steps.deploy-preview.outputs.preview_url }}
-
-    steps:
       - name: Validate development credentials
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -165,8 +251,8 @@ jobs:
       - name: Download immutable deployment artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
+          artifact-ids: ${{ needs.validate.outputs.artifact_id }}
           github-token: ${{ github.token }}
-          name: dev-preview-${{ needs.validate.outputs.head_sha }}
           path: ${{ runner.temp }}/myoc-dev-control/download
           repository: ${{ github.repository }}
           run-id: ${{ needs.validate.outputs.artifact_run_id }}
@@ -302,7 +388,7 @@ jobs:
       - name: Prepare resource names
         id: names
         env:
-          PR_NUMBER: ${{ inputs.pull_request }}
+          PR_NUMBER: ${{ needs.validate.outputs.pull_request }}
         working-directory: ${{ runner.temp }}/myoc-dev-control
         run: |
           echo "worker=myoc-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
@@ -415,7 +501,7 @@ jobs:
           DB_NAME: ${{ steps.names.outputs.database }}
           MEDIA_BASE_URL: ${{ steps.resources.outputs.media_base_url }}
           MEDIA_BUCKET: ${{ steps.names.outputs.media_bucket }}
-          PR_NUMBER: ${{ inputs.pull_request }}
+          PR_NUMBER: ${{ needs.validate.outputs.pull_request }}
           WORKER_NAME: ${{ steps.names.outputs.worker }}
         working-directory: ${{ runner.temp }}/myoc-dev-control
         run: |
@@ -541,13 +627,30 @@ jobs:
         working-directory: ${{ runner.temp }}/myoc-dev-control
         run: '"$WRANGLER" d1 execute "$DB_NAME" --config wrangler.preview.jsonc --remote --file artifact/seeds/development.sql'
 
+      - name: Confirm pull request is still current
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        env:
+          HEAD_SHA: ${{ needs.validate.outputs.head_sha }}
+          PR_NUMBER: ${{ needs.validate.outputs.pull_request }}
+        with:
+          script: |
+            const pullNumber = Number.parseInt(process.env.PR_NUMBER, 10)
+            const { data: pullRequest } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: pullNumber,
+            })
+
+            if (pullRequest.state !== 'open' || pullRequest.head.sha !== process.env.HEAD_SHA) {
+              core.setFailed('The approved pull request commit is no longer current.')
+            }
+
       - name: Deploy approved preview
         id: deploy-preview
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           HEAD_SHA: ${{ needs.validate.outputs.head_sha }}
-          PR_NUMBER: ${{ inputs.pull_request }}
+          PR_NUMBER: ${{ needs.validate.outputs.pull_request }}
           WRANGLER: ${{ steps.wrangler.outputs.path }}
         working-directory: ${{ runner.temp }}/myoc-dev-control
         run: |
@@ -587,14 +690,84 @@ jobs:
             echo "- URL: $preview_url"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Mark PR deployment successful
+        id: deployment-status
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        env:
+          DEPLOYMENT_ID: ${{ needs.validate.outputs.deployment_id }}
+          PREVIEW_URL: ${{ steps.deploy-preview.outputs.preview_url }}
+        with:
+          script: |
+            const logUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            await github.rest.repos.createDeploymentStatus({
+              ...context.repo,
+              deployment_id: Number.parseInt(process.env.DEPLOYMENT_ID, 10),
+              state: 'success',
+              log_url: logUrl,
+              environment_url: process.env.PREVIEW_URL,
+              description: 'The approved dev preview is ready.',
+              environment: 'development',
+              auto_inactive: false,
+            })
+
+  finalize-deployment:
+    name: Finalize failed PR deployment
+    if: ${{ always() && needs.validate.outputs.deployment_id != '' && needs.deploy.result != 'success' }}
+    needs:
+      - validate
+      - deploy
+    permissions:
+      contents: read
+      deployments: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Mark PR deployment failed
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        env:
+          DEPLOYMENT_ID: ${{ needs.validate.outputs.deployment_id }}
+        with:
+          script: |
+            const deploymentId = Number.parseInt(process.env.DEPLOYMENT_ID, 10)
+            const { data: statuses } = await github.rest.repos.listDeploymentStatuses({
+              ...context.repo,
+              deployment_id: deploymentId,
+              per_page: 1,
+            })
+
+            if (statuses[0]?.state === 'success' || statuses[0]?.state === 'inactive') {
+              return
+            }
+
+            const logUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            await github.rest.repos.createDeploymentStatus({
+              ...context.repo,
+              deployment_id: deploymentId,
+              state: 'failure',
+              log_url: logUrl,
+              description: 'The approved dev preview failed to deploy.',
+              environment: 'development',
+              auto_inactive: false,
+            })
+
   cleanup:
     name: Approve cleanup for PR #${{ inputs.pull_request }}
-    if: ${{ inputs.operation == 'cleanup' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && needs.validate.result == 'success' }}
     needs: validate
+    concurrency:
+      group: dev-preview-${{ inputs.pull_request }}
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+      deployments: write
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
       name: development
+      deployment: false
 
     steps:
       - name: Validate development credentials
@@ -785,3 +958,54 @@ jobs:
           if [ "${#failures[@]}" -ne 0 ]; then
             exit 1
           fi
+
+      - name: Mark PR deployments inactive
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        env:
+          PR_NUMBER: ${{ inputs.pull_request }}
+        with:
+          script: |
+            const pullNumber = Number.parseInt(process.env.PR_NUMBER, 10)
+            const deployments = await github.paginate(github.rest.repos.listDeployments, {
+              ...context.repo,
+              environment: 'development',
+              per_page: 100,
+            })
+
+            const matchesPullRequest = (deployment) => {
+              if (typeof deployment.payload === 'object' && deployment.payload !== null) {
+                return deployment.payload.pull_request === pullNumber
+              }
+
+              if (typeof deployment.payload !== 'string' || deployment.payload === '') {
+                return false
+              }
+
+              try {
+                return JSON.parse(deployment.payload).pull_request === pullNumber
+              } catch {
+                return false
+              }
+            }
+
+            const matchingDeployments = deployments.filter(matchesPullRequest)
+            for (const deployment of matchingDeployments) {
+              const { data: statuses } = await github.rest.repos.listDeploymentStatuses({
+                ...context.repo,
+                deployment_id: deployment.id,
+                per_page: 1,
+              })
+
+              if (statuses[0]?.state === 'inactive') {
+                continue
+              }
+
+              await github.rest.repos.createDeploymentStatus({
+                ...context.repo,
+                deployment_id: deployment.id,
+                state: 'inactive',
+                description: 'The dev preview was removed.',
+                environment: 'development',
+                auto_inactive: false,
+              })
+            }
