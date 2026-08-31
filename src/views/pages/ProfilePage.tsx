@@ -2,10 +2,10 @@ import type {CurrentUser} from '../../lib/auth/session'
 import {fallbackAvatarDataUrl} from '../../lib/media/avatar'
 import {characterFolderImageUrl, characterProfileImageUrl, profilePhotoUrl} from '../../lib/media/url'
 import {FIXED_SOCIAL_LINKS, type SocialPlatform, type UserSocialLink} from '../../lib/socialLinks'
+import {JsonLdScript} from '../components/JsonLdScript'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 import {absoluteUrl, compactDescription} from '../meta'
-import {serializeJsonForHtmlScript} from '../scriptJson'
 import type {CharacterFolderPlacement, CharacterManagementCharacter, CharacterManagementFolder} from './CharacterManagementPage'
 
 export type ProfilePageUser = {
@@ -216,11 +216,6 @@ function ProfilePageHead({
             ...(hasProfilePhoto ? {image: profileImageUrl} : {}),
         },
     }
-    // nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml -- serializeJsonForHtmlScript escapes script-breaking characters.
-    const structuredDataScript = (
-        <script dangerouslySetInnerHTML={{__html: serializeJsonForHtmlScript(structuredData)}} type="application/ld+json"></script>
-    )
-
     return (
         <>
             <meta content={description} name="description" />
@@ -243,7 +238,7 @@ function ProfilePageHead({
             <meta content={socialImageUrl} name="twitter:image" />
             <meta content={socialImageAlt} name="twitter:image:alt" />
 
-            {structuredDataScript}
+            <JsonLdScript value={structuredData} />
         </>
     )
 }
