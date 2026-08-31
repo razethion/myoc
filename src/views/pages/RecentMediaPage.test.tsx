@@ -140,9 +140,11 @@ describe('RecentMediaPage', () => {
 
         expect(html).toContain('aria-label="Show 2 more uploads for Character stack-1 by artist-stack-1"')
         expect(html).toContain('Show 2 more uploads')
-        const payload = html.match(/<script[^>]*type="application\/json"[^>]*>([^<]*)<\/script>/)?.[1]
-        const remainingItems = JSON.parse(payload ?? '[]') as RecentMediaItem[]
+        const payload = html.match(/data-recent-stack-items="([^"]*)"/)?.[1]
+        const decodedPayload = payload?.replaceAll('&quot;', '"').replaceAll('&#39;', "'").replaceAll('&amp;', '&')
+        const remainingItems = JSON.parse(decodedPayload ?? '[]') as RecentMediaItem[]
         expect(remainingItems.map((item) => item.alt)).toEqual([unsafeText, 'stack-3 character art'])
+        expect(html).not.toContain('type="application/json"')
         expect(html).not.toContain('<script>alert(1)</script>')
     })
 

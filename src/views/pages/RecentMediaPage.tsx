@@ -233,6 +233,7 @@ function RecentMediaGroupCard({group}: {group: RecentMediaGroup}) {
             data-character-name={firstItem.character.name}
             data-recent-stack
             data-recent-entry
+            data-recent-stack-items={serializeRecentMediaItems(group.items.slice(1))}
             data-stack-id={stackId}
             data-upload-key={group.key}
             data-uploader-name={firstItem.user.username}
@@ -241,11 +242,6 @@ function RecentMediaGroupCard({group}: {group: RecentMediaGroup}) {
             <div class="h-full w-full md:absolute md:inset-0" data-recent-stack-content>
                 <RecentMediaCard inStack item={firstItem} stackId={stackId} stackSize={group.items.length} />
             </div>
-            <script
-                data-recent-stack-items
-                dangerouslySetInnerHTML={{__html: serializeRecentMediaItems(group.items.slice(1))}}
-                type="application/json"
-            ></script>
         </div>
     )
 }
@@ -1558,10 +1554,9 @@ function RecentMediaScript() {
                     });
                     let recentEntry;
                     if (entry.matches('[data-recent-stack]')) {
-                        const data = entry.querySelector('[data-recent-stack-items]');
                         let items = [];
                         try {
-                            const parsed = JSON.parse(data?.textContent || '[]');
+                            const parsed = JSON.parse(entry.dataset.recentStackItems || '[]');
                             if (Array.isArray(parsed)) items = parsed;
                         } catch {
                             items = [];
@@ -1569,7 +1564,7 @@ function RecentMediaScript() {
                         items.forEach((item) => {
                             if (item && typeof item.id === 'string') recentState.itemIds.add(item.id);
                         });
-                        data?.remove();
+                        delete entry.dataset.recentStackItems;
                         recentEntry = registerRecentStack(entry, items, recentState.expandGroupsByDefault);
                     } else {
                         recentEntry = {key: entry.dataset.uploadKey, kind: 'card', node: entry};
