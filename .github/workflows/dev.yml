@@ -630,6 +630,7 @@ jobs:
           CONTAINER_NAME: myoc-docker-sharp-pr-${{ inputs.pull_request }}
           DB_NAME: myoc-pr-${{ inputs.pull_request }}
           MEDIA_BUCKET: myoc-pr-${{ inputs.pull_request }}-media
+          PR_NUMBER: ${{ inputs.pull_request }}
           WORKER_NAME: myoc-pr-${{ inputs.pull_request }}
           WRANGLER: ${{ steps.wrangler.outputs.path }}
         working-directory: ${{ runner.temp }}/myoc-dev-cleanup
@@ -771,9 +772,9 @@ jobs:
             echo "### Dev preview cleanup"
             echo
             if [ "${#failures[@]}" -eq 0 ]; then
-              echo "Cleanup finished for pull request #${{ inputs.pull_request }}."
+              echo "Cleanup finished for pull request #${PR_NUMBER}."
             else
-              echo "Cleanup is partial for pull request #${{ inputs.pull_request }}."
+              echo "Cleanup is partial for pull request #${PR_NUMBER}."
               echo
               for failure in "${failures[@]}"; do
                 echo "- $failure"
