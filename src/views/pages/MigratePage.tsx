@@ -2,6 +2,7 @@ import type {CurrentUser} from '../../lib/auth/session'
 import {GALLERY_CHUNK_SIZE} from '../../lib/gallery'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
+import {serializeJsonForHtmlScript} from '../scriptJson'
 
 type ToyhouseCharacter = {
     canImport?: boolean
@@ -342,10 +343,6 @@ function ToyhouseMigrationReview({
     )
 }
 
-function safeScriptJson(value: unknown): string {
-    return JSON.stringify(value).replace(/</g, '\\u003c')
-}
-
 function getToyhouseUsername(value: string): string {
     const username = value.trim()
 
@@ -382,9 +379,9 @@ function ToyhouseClientImportScript({csrfToken, importPlan}: {csrfToken: string;
     const root = document.querySelector('[data-toyhouse-client-import]');
     if (!root) return;
 
-    const csrfToken = ${safeScriptJson(csrfToken)};
-    const importPlan = ${safeScriptJson(importPlan)};
-    const galleryChunkSize = ${safeScriptJson(GALLERY_CHUNK_SIZE)};
+    const csrfToken = ${serializeJsonForHtmlScript(csrfToken)};
+    const importPlan = ${serializeJsonForHtmlScript(importPlan)};
+    const galleryChunkSize = ${serializeJsonForHtmlScript(GALLERY_CHUNK_SIZE)};
     const status = root.querySelector('[data-toyhouse-client-import-status]');
     const detail = root.querySelector('[data-toyhouse-client-import-detail]');
     const bar = root.querySelector('[data-toyhouse-client-import-bar]');
@@ -671,6 +668,7 @@ function ToyhouseClientImportScript({csrfToken, importPlan}: {csrfToken: string;
 })();
 `
 
+    // nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml -- serializeJsonForHtmlScript escapes each dynamic value before interpolation.
     return <script dangerouslySetInnerHTML={{__html: script}}></script>
 }
 
@@ -900,7 +898,7 @@ function ToyhouseImageReviewCard({
 function ToyhouseImportReviewScript({csrfToken}: {csrfToken: string}) {
     const script = `
 (function () {
-    const csrfToken = ${safeScriptJson(csrfToken)};
+    const csrfToken = ${serializeJsonForHtmlScript(csrfToken)};
     const form = document.querySelector('[data-toyhouse-import-review]');
     if (!form) return;
     const progressPanel = form.querySelector('[data-toyhouse-final-import-progress]');
@@ -1146,7 +1144,7 @@ function ToyhouseImportReviewScript({csrfToken}: {csrfToken: string}) {
 })();
 `
 
-    // nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml -- safeScriptJson escapes the dynamic CSRF token before interpolation.
+    // nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml -- serializeJsonForHtmlScript escapes the dynamic CSRF token before interpolation.
     return <script dangerouslySetInnerHTML={{__html: script}}></script>
 }
 

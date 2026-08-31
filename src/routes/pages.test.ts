@@ -3155,7 +3155,7 @@ describe('MigratePage', () => {
         expect(html).toContain('0 images found')
         expect(html).not.toContain('(null listed)')
         expect(reviewHtml).toContain(
-            'const csrfToken = "\\u003c/script>\\u003cscript data-migrate-xss>globalThis.migrateXss = true\\u003c/script>"',
+            'const csrfToken = "\\u003c/script\\u003e\\u003cscript data-migrate-xss\\u003eglobalThis.migrateXss = true\\u003c/script\\u003e"',
         )
         expect(reviewHtml).not.toContain(csrfAttack)
     })
