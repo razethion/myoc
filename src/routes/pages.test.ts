@@ -1753,6 +1753,24 @@ describe('GET /migrate', () => {
         )
     })
 
+    it('normalizes the PNG32 type returned for Toyhou.se profile images', async () => {
+        const imageBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => new Response(imageBytes, {headers: {'content-type': 'PNG32'}})),
+        )
+
+        const response = await getAppPath(
+            `/migrate/toyhouse-image?url=${encodeURIComponent('https://f2.toyhou.se/file/f2-toyhou-se/characters/13181023?1767837533')}`,
+            await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+            {cookie: 'myoc_session=session-token'},
+        )
+
+        expect(response.status).toBe(200)
+        expect(response.headers.get('content-type')).toBe('image/png')
+        expect(new Uint8Array(await response.arrayBuffer())).toEqual(imageBytes)
+    })
+
     it.each([
         {
             name: 'JPEG',
