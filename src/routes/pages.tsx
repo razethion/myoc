@@ -312,9 +312,9 @@ async function proxyToyhouseImage(imageUrl: string): Promise<Response> {
         return Response.json({error: `Toyhou.se returned ${upstream.status} for image URL`}, {status: 502})
     }
 
-    const contentType = upstream.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() ?? ''
+    const contentType = normalizeToyhouseImageContentType(upstream.headers.get('content-type'))
 
-    if (!isToyhouseImageContentType(contentType)) {
+    if (!contentType) {
         await upstream.body.cancel()
         return Response.json({error: 'Toyhou.se returned an unsupported image type'}, {status: 502})
     }
@@ -1767,6 +1767,20 @@ function parseContentLength(value: string | null): number | null {
 
 function isToyhouseImageContentType(value: string): value is ToyhouseImageContentType {
     return TOYHOUSE_IMAGE_CONTENT_TYPES.has(value)
+}
+
+function normalizeToyhouseImageContentType(value: string | null): ToyhouseImageContentType | null {
+    const normalized = value?.split(';', 1)[0]?.trim().toLowerCase() ?? ''
+
+    if (normalized === 'png' || normalized === 'png32') {
+        return 'image/png'
+    }
+
+    if (normalized === 'jpg' || normalized === 'jpeg' || normalized === 'image/jpg' || normalized === 'image/pjpeg') {
+        return 'image/jpeg'
+    }
+
+    return isToyhouseImageContentType(normalized) ? normalized : null
 }
 
 async function createValidatedImageStream(
