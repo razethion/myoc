@@ -1771,6 +1771,26 @@ describe('GET /migrate', () => {
         expect(new Uint8Array(await response.arrayBuffer())).toEqual(imageBytes)
     })
 
+    it.each(['https://file.toyhou.se/characters/1821629?1767837342', 'https://file.toyhou.se/images/12345882_qpgFr51uXTKJzkw.png'])(
+        'proxies a legacy Toyhou.se image URL: %s',
+        async (imageUrl) => {
+            const imageBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
+            const fetchMock = vi.fn(async () => new Response(imageBytes, {headers: {'content-type': 'png32'}}))
+            vi.stubGlobal('fetch', fetchMock)
+
+            const response = await getAppPath(
+                `/migrate/toyhouse-image?url=${encodeURIComponent(imageUrl)}`,
+                await seedPageDatabase({currentUser: createCurrentUserRecord('demo')}),
+                {cookie: 'myoc_session=session-token'},
+            )
+
+            expect(response.status).toBe(200)
+            expect(response.headers.get('content-type')).toBe('image/png')
+            expect(new Uint8Array(await response.arrayBuffer())).toEqual(imageBytes)
+            expect(fetchMock).toHaveBeenCalledWith(imageUrl, expect.objectContaining({redirect: 'manual'}))
+        },
+    )
+
     it.each([
         {
             name: 'JPEG',
@@ -1873,6 +1893,7 @@ describe('GET /migrate', () => {
         ['a password', 'https://:secret@f2.toyhou.se/file/image.png'],
         ['a wildcard Toyhou.se host', 'https://cdn.toyhou.se/file/image.png'],
         ['a non-file path', 'https://f2.toyhou.se/profile/demo'],
+        ['a legacy non-image path', 'https://file.toyhou.se/profile/demo'],
         ['a custom port', 'https://f2.toyhou.se:8443/file/image.png'],
         ['an oversized URL', `https://f2.toyhou.se/file/${'a'.repeat(2_100)}`],
     ])('rejects %s in the Toyhou.se image proxy', async (_name, url) => {
