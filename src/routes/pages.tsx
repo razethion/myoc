@@ -85,6 +85,7 @@ const TOYHOUSE_IMAGE_CONTENT_TYPE_VALUES = ['image/png', 'image/jpeg', 'image/gi
 type ToyhouseImageContentType = (typeof TOYHOUSE_IMAGE_CONTENT_TYPE_VALUES)[number]
 const TOYHOUSE_IMAGE_CONTENT_TYPES = new Set<string>(TOYHOUSE_IMAGE_CONTENT_TYPE_VALUES)
 const TOYHOUSE_IMAGE_HOSTS = new Set(['file.toyhou.se', 'f2.toyhou.se'])
+const TOYHOUSE_LEGACY_IMAGE_PATH_PREFIXES = ['/characters/', '/images/'] as const
 const TOYHOUSE_IMAGE_MAX_BYTES = 200 * 1024 * 1024
 const TOYHOUSE_IMAGE_TIMEOUT_MS = 30_000
 
@@ -1742,7 +1743,7 @@ function parseToyhouseImageProxyUrl(value: unknown): string | null {
         const url = new URL(value)
         const host = url.hostname.toLowerCase()
 
-        if (url.protocol !== 'https:' || url.username || url.password || url.port || !url.pathname.startsWith('/file/')) {
+        if (url.protocol !== 'https:' || url.username || url.password || url.port) {
             return null
         }
 
@@ -1750,10 +1751,22 @@ function parseToyhouseImageProxyUrl(value: unknown): string | null {
             return null
         }
 
+        if (!isToyhouseImagePath(host, url.pathname)) {
+            return null
+        }
+
         return url.toString()
     } catch {
         return null
     }
+}
+
+function isToyhouseImagePath(host: string, pathname: string): boolean {
+    if (host === 'f2.toyhou.se') {
+        return pathname.startsWith('/file/')
+    }
+
+    return host === 'file.toyhou.se' && TOYHOUSE_LEGACY_IMAGE_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix))
 }
 
 function parseContentLength(value: string | null): number | null {
