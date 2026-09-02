@@ -143,7 +143,7 @@ function createExifJpegBytes(width: number, height: number, orientation: number 
     return concatBytes([jpegBytes.slice(0, 2), app1Segment, jpegBytes.slice(2)])
 }
 
-function createAvifBytes(width: number, height: number): Uint8Array {
+export function createAvifBytes(width: number, height: number): Uint8Array {
     const bytes = new Uint8Array(48)
     writeUint32Be(bytes, 0, 48)
     writeAscii(bytes, 4, 'meta')

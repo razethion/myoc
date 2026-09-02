@@ -37,10 +37,12 @@ type ModerationMediaRow = {
     nsfw_height: number | null
     nsfw_byte_size: number | null
     sfw_preview_image_key?: string | null
+    sfw_preview_content_type?: string
     sfw_preview_width?: number | null
     sfw_preview_height?: number | null
     sfw_preview_byte_size?: number | null
     nsfw_preview_image_key?: string | null
+    nsfw_preview_content_type?: string
     nsfw_blur_image_key?: string | null
     nsfw_preview_width?: number | null
     nsfw_preview_height?: number | null
@@ -73,7 +75,9 @@ type MediaCleanupRow = {
     sfw_content_type: string | null
     nsfw_content_type: string | null
     sfw_preview_image_key?: string | null
+    sfw_preview_content_type?: string
     nsfw_preview_image_key?: string | null
+    nsfw_preview_content_type?: string
     nsfw_blur_image_key?: string | null
 }
 
@@ -184,10 +188,12 @@ async function getReportMedia(db: D1Database, mediaId: string): Promise<ReportMe
                 character_media.nsfw_height,
                 character_media.nsfw_byte_size,
                 character_media.sfw_preview_image_key,
+                character_media.sfw_preview_content_type,
                 character_media.sfw_preview_width,
                 character_media.sfw_preview_height,
                 character_media.sfw_preview_byte_size,
                 character_media.nsfw_preview_image_key,
+                character_media.nsfw_preview_content_type,
                 character_media.nsfw_blur_image_key,
                 character_media.nsfw_preview_width,
                 character_media.nsfw_preview_height,
@@ -259,6 +265,7 @@ async function deleteReportedImage(db: D1Database, bucket: R2Bucket, media: Repo
                      sfw_height = NULL,
                      sfw_byte_size = NULL,
                      sfw_preview_image_key = NULL,
+                     sfw_preview_content_type = 'image/webp',
                      sfw_preview_width = NULL,
                      sfw_preview_height = NULL,
                      sfw_preview_byte_size = NULL,
@@ -279,6 +286,7 @@ async function deleteReportedImage(db: D1Database, bucket: R2Bucket, media: Repo
                      nsfw_height = NULL,
                      nsfw_byte_size = NULL,
                      nsfw_preview_image_key = NULL,
+                     nsfw_preview_content_type = 'image/webp',
                      nsfw_blur_image_key    = NULL,
                      nsfw_preview_width     = NULL,
                      nsfw_preview_height = NULL,
@@ -426,8 +434,13 @@ function reportedImageObjectKey(media: ReportMediaRow, rating: 'sfw' | 'nsfw'): 
 
 function reportedPreviewObjectKey(media: ReportMediaRow, rating: 'sfw' | 'nsfw'): string | null {
     const imageKey = mediaVariantPreviewKey(media, rating)
+    const contentType = mediaVariantPreviewContentType(media, rating)
 
-    return imageKey ? characterMediaPreviewImageObjectKey(media.user_id, media.character_id, media.id, imageKey, rating) : null
+    return imageKey ? characterMediaPreviewImageObjectKey(media.user_id, media.character_id, media.id, imageKey, rating, contentType) : null
+}
+
+function mediaVariantPreviewContentType(media: ModerationMediaRow, rating: 'sfw' | 'nsfw'): string {
+    return rating === 'sfw' ? (media.sfw_preview_content_type ?? 'image/webp') : (media.nsfw_preview_content_type ?? 'image/webp')
 }
 
 function reportedBlurObjectKey(media: ReportMediaRow, rating: 'sfw' | 'nsfw'): string | null {
@@ -465,8 +478,10 @@ async function getCharacterMediaForCleanup(db: D1Database, characterId: string):
                 sfw_content_type,
                 nsfw_content_type,
                 sfw_preview_image_key,
+                sfw_preview_content_type,
                 nsfw_blur_image_key,
-                nsfw_preview_image_key
+                nsfw_preview_image_key,
+                nsfw_preview_content_type
          FROM character_media
          WHERE character_id = ?`,
         )
@@ -506,7 +521,9 @@ async function getUserMediaForCleanup(db: D1Database, userId: string): Promise<M
         .prepare(
             `SELECT id, user_id, character_id, sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type,
                 sfw_preview_image_key,
+                sfw_preview_content_type,
                 nsfw_preview_image_key,
+                nsfw_preview_content_type,
                 nsfw_blur_image_key
          FROM character_media
          WHERE user_id = ?`,
@@ -540,11 +557,7 @@ function characterObjectKeys(characters: CharacterCleanupRow[], mediaRows: Media
             )
         }
 
-        if (media.sfw_preview_image_key) {
-            objectKeys.push(
-                characterMediaPreviewImageObjectKey(media.user_id, media.character_id, media.id, media.sfw_preview_image_key, 'sfw'),
-            )
-        }
+        objectKeys.push(...mediaPreviewObjectKeys(media, 'sfw'))
 
         if (media.nsfw_image_key) {
             objectKeys.push(
@@ -559,11 +572,7 @@ function characterObjectKeys(characters: CharacterCleanupRow[], mediaRows: Media
             )
         }
 
-        if (media.nsfw_preview_image_key) {
-            objectKeys.push(
-                characterMediaPreviewImageObjectKey(media.user_id, media.character_id, media.id, media.nsfw_preview_image_key, 'nsfw'),
-            )
-        }
+        objectKeys.push(...mediaPreviewObjectKeys(media, 'nsfw'))
 
         if (media.nsfw_blur_image_key) {
             objectKeys.push(characterMediaNsfwBlurImageObjectKey(media.user_id, media.character_id, media.id, media.nsfw_blur_image_key))
@@ -571,6 +580,15 @@ function characterObjectKeys(characters: CharacterCleanupRow[], mediaRows: Media
     }
 
     return objectKeys
+}
+
+function mediaPreviewObjectKeys(media: MediaCleanupRow, rating: 'sfw' | 'nsfw'): string[] {
+    const imageKey = rating === 'sfw' ? media.sfw_preview_image_key : media.nsfw_preview_image_key
+    const contentType = rating === 'sfw' ? media.sfw_preview_content_type : media.nsfw_preview_content_type
+
+    return imageKey
+        ? [characterMediaPreviewImageObjectKey(media.user_id, media.character_id, media.id, imageKey, rating, contentType ?? 'image/webp')]
+        : []
 }
 
 async function respondToReportAction(

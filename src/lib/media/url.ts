@@ -46,8 +46,9 @@ export function characterMediaPreviewImageObjectKey(
     mediaId: string,
     imageKey: string,
     rating: 'sfw' | 'nsfw',
+    contentType: string | null | undefined = 'image/webp',
 ): string {
-    return `characters/${userId}/${characterId}/media/${mediaId}/${rating}/preview/${imageKey}.webp`
+    return `characters/${userId}/${characterId}/media/${mediaId}/${rating}/preview/${imageKey}.${extensionForImageContentType(contentType)}`
 }
 
 export function characterMediaNsfwBlurImageObjectKey(userId: string, characterId: string, mediaId: string, imageKey: string): string {
@@ -92,8 +93,9 @@ export function characterMediaPreviewImageUrl(
     mediaId: string,
     imageKey: string,
     rating: 'sfw' | 'nsfw',
+    contentType: string | null | undefined = 'image/webp',
 ): string {
-    return mediaUrlForKey(baseUrl, characterMediaPreviewImageObjectKey(userId, characterId, mediaId, imageKey, rating))
+    return mediaUrlForKey(baseUrl, characterMediaPreviewImageObjectKey(userId, characterId, mediaId, imageKey, rating, contentType))
 }
 
 export function characterMediaNsfwBlurImageUrl(

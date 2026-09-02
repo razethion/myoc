@@ -30,6 +30,7 @@ export type HomePageDiscoverCharacter = {
     previewMediaId: string
     previewImageKey: string
     previewThumbnailImageKey: string | null
+    previewThumbnailContentType: string
     previewContentType: string | null
     previewArtist: string
     imageCount: number
@@ -717,6 +718,7 @@ function DiscoverGalleriesSection({characters, mediaBaseUrl}: {characters: HomeP
                                   character.previewMediaId,
                                   character.previewThumbnailImageKey,
                                   'sfw',
+                                  character.previewThumbnailContentType,
                               )
                             : characterMediaImageUrl(
                                   mediaBaseUrl,

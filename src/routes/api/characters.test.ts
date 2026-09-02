@@ -14,6 +14,7 @@ import {
     withFailingTrigger,
 } from '../../test/d1'
 import {
+    createAvifBytes,
     createAvifFile,
     createBigEndianExifOrientationJpegFile,
     createExifOrientationJpegFile,
@@ -24,7 +25,6 @@ import {
     createOversizedWebpFile,
     createPngDataUrl,
     createPngFile,
-    createWebpBytes,
     createWebpDataUrl,
     createWebpFile,
 } from '../../test/imageFixtures'
@@ -250,8 +250,6 @@ type CharacterRequestOptions = TestRequestOptions & {
     mediaBucket?: R2Bucket
     imagesBinding?: ImagesBinding
     previewContainer?: DurableObjectNamespace
-    cloudflarePreviewResponse?: Response
-    cloudflarePreviewResponses?: Array<Response | Error>
 }
 
 type ChunkedSfwInitBody = {
@@ -538,10 +536,7 @@ async function completeChunkedMedia(
     db: D1Database,
     options: CharacterRequestOptions = {},
 ): Promise<Response> {
-    mockCloudflareImagePreviewResponse(
-        body,
-        options.cloudflarePreviewResponses ?? (options.cloudflarePreviewResponse ? [options.cloudflarePreviewResponse] : undefined),
-    )
+    const previewContainer = previewContainerForRequest(body, options.previewContainer)
 
     return apiRoutes.request(
         `https://example.com/characters/${characterId}/media/chunked/complete`,
@@ -550,49 +545,11 @@ async function completeChunkedMedia(
             body: JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding, options.previewContainer),
+        requestEnv(db, options.mediaBucket, options.imagesBinding, previewContainer),
     )
 }
 
-function mockCloudflareImagePreviewResponse(body: unknown, responses?: Array<Response | Error>): void {
-    const preview = firstPreviewPayload(body)
-
-    if (!preview) {
-        return
-    }
-
-    let responseIndex = 0
-
-    vi.stubGlobal(
-        'fetch',
-        vi.fn(async () => {
-            if (responses?.length) {
-                const response = responses[Math.min(responseIndex, responses.length - 1)]
-                responseIndex += 1
-
-                if (response instanceof Error) {
-                    throw response
-                }
-
-                if (!response) {
-                    throw new Error('Missing mocked Cloudflare preview response')
-                }
-
-                return response.clone()
-            }
-
-            const bytes = decodePreviewPayloadBytes(preview.data)
-
-            return new Response(bytes, {
-                headers: {
-                    'content-type': 'image/webp',
-                },
-            })
-        }),
-    )
-}
-
-function firstPreviewPayload(body: unknown): {data: string} | null {
+function firstPreviewPayload(body: unknown): {height: number; width: number} | null {
     if (!body || typeof body !== 'object') {
         return null
     }
@@ -602,69 +559,32 @@ function firstPreviewPayload(body: unknown): {data: string} | null {
     for (const key of ['sfwPreview', 'nsfwPreview']) {
         const preview = record[key]
 
-        if (preview && typeof preview === 'object' && typeof (preview as {data?: unknown}).data === 'string') {
-            return {data: (preview as {data: string}).data}
+        if (
+            preview &&
+            typeof preview === 'object' &&
+            typeof (preview as {height?: unknown}).height === 'number' &&
+            typeof (preview as {width?: unknown}).width === 'number'
+        ) {
+            return {height: (preview as {height: number}).height, width: (preview as {width: number}).width}
         }
     }
 
     return null
 }
 
-function decodePreviewPayloadBytes(value: string): Uint8Array {
-    const data = value.replace(/^data:image\/webp;base64,/i, '')
-    const binary = atob(data)
-    const bytes = new Uint8Array(binary.length)
+function previewContainerForRequest(body: unknown, configured?: DurableObjectNamespace): DurableObjectNamespace | undefined {
+    const preview = firstPreviewPayload(body)
 
-    for (let index = 0; index < binary.length; index += 1) {
-        bytes[index] = binary.charCodeAt(index)
-    }
-
-    return bytes
-}
-
-function expectCloudflarePreviewFetch(callIndex: number, expectedUrlWithoutQuery: string): string {
-    const call = vi.mocked(globalThis.fetch).mock.calls[callIndex]
-    const input = call?.[0]
-    const init = call?.[1]
-    const url = String(input)
-    const expectedUrl = new URL(expectedUrlWithoutQuery)
-    const pathParts = expectedUrl.pathname.split('/')
-    const expectedSourceUrl = `${expectedUrl.origin}/${pathParts.slice(4).join('/')}`
-    const expectedImageOptions = Object.fromEntries(
-        (pathParts[3] ?? '').split(',').map((option) => {
-            const [key, rawValue] = option.split('=')
-            const value = rawValue === 'true' ? true : rawValue === 'false' ? false : Number(rawValue)
-
-            return [key, Number.isNaN(value) ? rawValue : value]
-        }),
+    return (
+        configured ??
+        (preview
+            ? createMockPreviewContainer(
+                  new Response(createAvifBytes(preview.width, preview.height), {
+                      headers: {'content-type': 'image/avif'},
+                  }),
+              ).namespace
+            : undefined)
     )
-    const requestInit = init as RequestInit & {
-        cf?: {
-            cacheTtlByStatus?: Record<string, number>
-            image?: Record<string, boolean | number | string>
-        }
-    }
-
-    const parsedUrl = new URL(url)
-    expect(`${parsedUrl.origin}${parsedUrl.pathname}`).toBe(expectedSourceUrl)
-    expect(parsedUrl.searchParams.get('preview_cache_bust')).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-    )
-    expect(init).toEqual(
-        expect.objectContaining({
-            cf: {
-                cacheTtlByStatus: {'404': 0, '500-599': 0},
-                image: expectedImageOptions,
-            },
-            headers: expect.objectContaining({
-                accept: 'image/webp,image/*,*/*;q=0.8',
-                'cache-control': 'no-cache',
-            }),
-        }),
-    )
-    expect(requestInit.cf?.image).toEqual(expectedImageOptions)
-
-    return url
 }
 
 async function initExistingChunkedMedia(
@@ -692,8 +612,6 @@ async function completeExistingChunkedMedia(
     db: D1Database,
     options: CharacterRequestOptions = {},
 ): Promise<Response> {
-    mockCloudflareImagePreviewResponse(body)
-
     return apiRoutes.request(
         `https://example.com/characters/${characterId}/media/${mediaId}/chunked/complete`,
         {
@@ -701,7 +619,7 @@ async function completeExistingChunkedMedia(
             body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.imagesBinding, previewContainerForRequest(body, options.previewContainer)),
     )
 }
 
@@ -722,8 +640,6 @@ async function completeToyhouseImportItem(
     db: D1Database,
     options: CharacterRequestOptions = {},
 ): Promise<Response> {
-    mockCloudflareImagePreviewResponse(body)
-
     return apiRoutes.request(
         `https://example.com/characters/toyhouse-import-items/${itemId}/complete`,
         {
@@ -731,7 +647,7 @@ async function completeToyhouseImportItem(
             body: JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.imagesBinding, previewContainerForRequest(body, options.previewContainer)),
     )
 }
 
@@ -3994,7 +3910,7 @@ describe('character media uploads', () => {
                     contentType: 'image/png',
                     parts: [emptyUploadedPart, uploadedPart],
                 },
-                sfwPreview: createPreviewPayload(1600, 1600),
+                sfwPreview: createPreviewPayload(1200, 1200),
             },
             db,
             {
@@ -4034,21 +3950,21 @@ describe('character media uploads', () => {
         expect(body.media.sfwByteSize).toBe(pngFile.size)
         expect(body.media.sfwPreviewImageKey).toMatch(new RegExp(`^${uuidPattern}$`))
         expect(body.media.sfwPreviewImageUrl).toBe(
-            `${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/sfw/preview/${body.media.sfwPreviewImageKey}.webp`,
+            `${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/sfw/preview/${body.media.sfwPreviewImageKey}.avif`,
         )
-        expect(body.media.sfwPreviewWidth).toBe(1600)
-        expect(body.media.sfwPreviewHeight).toBe(1600)
+        expect(body.media.sfwPreviewWidth).toBe(1200)
+        expect(body.media.sfwPreviewHeight).toBe(1200)
         expect(body.media.sfwPreviewByteSize).toBeGreaterThan(0)
         expect(body.media.sfwArtist).toBe('Chunk Artist')
         expect(mediaBucket.createMultipartUpload).toHaveBeenCalledTimes(1)
         expect(mediaBucket.resumeMultipartUpload).toHaveBeenCalledTimes(3)
         expect(mediaBucket.put).toHaveBeenCalledWith(
-            `characters/current-user/character-id/media/${initBody.mediaId}/sfw/preview/${body.media.sfwPreviewImageKey}.webp`,
+            `characters/current-user/character-id/media/${initBody.mediaId}/sfw/preview/${body.media.sfwPreviewImageKey}.avif`,
             expect.any(Uint8Array),
             {
                 httpMetadata: {
                     cacheControl: 'public, max-age=300, must-revalidate',
-                    contentType: 'image/webp',
+                    contentType: 'image/avif',
                 },
             },
         )
@@ -4070,11 +3986,12 @@ describe('character media uploads', () => {
                 sfw_height: number
                 sfw_byte_size: number
                 sfw_preview_image_key: string
+                sfw_preview_content_type: string
                 sfw_preview_width: number
                 sfw_preview_height: number
             }>(
                 `SELECT sfw_image_key, sfw_content_type, sfw_artist, sfw_width, sfw_height, sfw_byte_size,
-                        sfw_preview_image_key, sfw_preview_width, sfw_preview_height
+                        sfw_preview_image_key, sfw_preview_content_type, sfw_preview_width, sfw_preview_height
                  FROM character_media WHERE id = ?`,
                 [body.media.id],
                 db,
@@ -4087,15 +4004,16 @@ describe('character media uploads', () => {
             sfw_height: 10000,
             sfw_byte_size: pngFile.size,
             sfw_preview_image_key: body.media.sfwPreviewImageKey,
-            sfw_preview_width: 1600,
-            sfw_preview_height: 1600,
+            sfw_preview_content_type: 'image/avif',
+            sfw_preview_width: 1200,
+            sfw_preview_height: 1200,
         })
         expect(
             await queryOne<{media_id: string}>('SELECT media_id FROM admin_image_review_queue WHERE media_id = ?', [body.media.id], db),
         ).toEqual({media_id: body.media.id})
     })
 
-    it('passes EXIF orientation transforms to Cloudflare Images for gallery previews', async () => {
+    it('accepts the auto-oriented AVIF dimensions from the preview container', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
         const character = createCharacterRecord()
@@ -4145,7 +4063,7 @@ describe('character media uploads', () => {
                     contentType: 'image/jpeg',
                     parts: [uploadedPart],
                 },
-                sfwPreview: createPreviewPayload(1200, 1600),
+                sfwPreview: createPreviewPayload(900, 1200),
             },
             db,
             {
@@ -4167,27 +4085,23 @@ describe('character media uploads', () => {
         }
         expect(body.media.sfwWidth).toBe(4608)
         expect(body.media.sfwHeight).toBe(3456)
-        expect(body.media.sfwPreviewWidth).toBe(1200)
-        expect(body.media.sfwPreviewHeight).toBe(1600)
-        expectCloudflarePreviewFetch(
-            0,
-            `${mediaPublicBaseUrl}/cdn-cgi/image/anim=false,fit=scale-down,format=webp,height=1600,quality=90,rotate=90,width=1600/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.jpg`,
-        )
+        expect(body.media.sfwPreviewWidth).toBe(900)
+        expect(body.media.sfwPreviewHeight).toBe(1200)
         await expectStoredSfwMedia(initBody.mediaId, {
             sfw_width: 4608,
             sfw_height: 3456,
-            sfw_preview_width: 1200,
-            sfw_preview_height: 1600,
+            sfw_preview_width: 900,
+            sfw_preview_height: 1200,
         })
     })
 
-    it('falls back to the container when Cloudflare returns the wrong EXIF-oriented preview dimensions', async () => {
+    it('uses only the container to generate an auto-oriented gallery preview', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
         const previewContainer = createMockPreviewContainer(
-            new Response(createWebpBytes(1200, 1600), {
+            new Response(createAvifBytes(900, 1200), {
                 headers: {
-                    'content-type': 'image/webp',
+                    'content-type': 'image/avif',
                 },
             }),
         )
@@ -4238,7 +4152,7 @@ describe('character media uploads', () => {
                     contentType: 'image/jpeg',
                     parts: [uploadedPart],
                 },
-                sfwPreview: createPreviewPayload(1600, 1200),
+                sfwPreview: createPreviewPayload(900, 1200),
             },
             db,
             {
@@ -4261,12 +4175,8 @@ describe('character media uploads', () => {
         }
         expect(body.media.sfwWidth).toBe(4608)
         expect(body.media.sfwHeight).toBe(3456)
-        expect(body.media.sfwPreviewWidth).toBe(1200)
-        expect(body.media.sfwPreviewHeight).toBe(1600)
-        expectCloudflarePreviewFetch(
-            0,
-            `${mediaPublicBaseUrl}/cdn-cgi/image/anim=false,fit=scale-down,format=webp,height=1600,quality=90,rotate=90,width=1600/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.jpg`,
-        )
+        expect(body.media.sfwPreviewWidth).toBe(900)
+        expect(body.media.sfwPreviewHeight).toBe(1200)
         expect(previewContainer.fetch).toHaveBeenCalledTimes(1)
         expect(await vi.mocked(previewContainer.fetch).mock.calls[0]?.[1]?.body).toBe(
             JSON.stringify({
@@ -4276,8 +4186,8 @@ describe('character media uploads', () => {
         await expectStoredSfwMedia(initBody.mediaId, {
             sfw_width: 4608,
             sfw_height: 3456,
-            sfw_preview_width: 1200,
-            sfw_preview_height: 1600,
+            sfw_preview_width: 900,
+            sfw_preview_height: 1200,
         })
     })
 
@@ -4285,15 +4195,13 @@ describe('character media uploads', () => {
         const cases = [
             {
                 file: createBigEndianExifOrientationJpegFile(4608, 3456, 6),
-                preview: createPreviewPayload(1200, 1600),
-                expectedPreview: {width: 1200, height: 1600},
-                expectedTransformOptions: 'anim=false,fit=scale-down,format=webp,height=1600,quality=90,rotate=90,width=1600',
+                preview: createPreviewPayload(900, 1200),
+                expectedPreview: {width: 900, height: 1200},
             },
             {
                 file: createJpegFileWithExifWithoutOrientation(800, 600),
                 preview: createPreviewPayload(800, 600),
                 expectedPreview: {width: 800, height: 600},
-                expectedTransformOptions: 'anim=false,fit=scale-down,format=webp,height=1600,quality=90,width=1600',
             },
         ]
         const sessionToken = 'session-token'
@@ -4370,20 +4278,16 @@ describe('character media uploads', () => {
                 sfw_preview_width: testCase.expectedPreview.width,
                 sfw_preview_height: testCase.expectedPreview.height,
             })
-            expectCloudflarePreviewFetch(
-                0,
-                `${mediaPublicBaseUrl}/cdn-cgi/image/${testCase.expectedTransformOptions}/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.jpg`,
-            )
         }
     }, 10_000)
 
-    it('falls back to the container when Cloudflare omits the preview content type', async () => {
+    it('uses the container for a gallery preview without calling global fetch', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
         const previewContainer = createMockPreviewContainer(
-            new Response(createWebpBytes(800, 600), {
+            new Response(createAvifBytes(800, 600), {
                 headers: {
-                    'content-type': 'image/webp',
+                    'content-type': 'image/avif',
                 },
             }),
         )
@@ -4437,7 +4341,6 @@ describe('character media uploads', () => {
             },
             db,
             {
-                cloudflarePreviewResponse: new Response(new Uint8Array([1, 2, 3])),
                 mediaBucket,
                 previewContainer: previewContainer.namespace,
                 sessionToken,
@@ -4459,11 +4362,6 @@ describe('character media uploads', () => {
         expect(body.media.sfwHeight).toBe(600)
         expect(body.media.sfwPreviewWidth).toBe(800)
         expect(body.media.sfwPreviewHeight).toBe(600)
-        expect(globalThis.fetch).toHaveBeenCalledTimes(1)
-        expectCloudflarePreviewFetch(
-            0,
-            `${mediaPublicBaseUrl}/cdn-cgi/image/anim=false,fit=scale-down,format=webp,height=1600,quality=90,width=1600/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.png`,
-        )
         expect(previewContainer.fetch).toHaveBeenCalledTimes(1)
         await expectStoredSfwMedia(initBody.mediaId, {sfw_preview_width: 800, sfw_preview_height: 600})
     })
@@ -4473,7 +4371,7 @@ describe('character media uploads', () => {
         const previewContainer = createMockPreviewContainer(
             new Response(new Uint8Array(), {
                 headers: {
-                    'content-type': 'image/webp',
+                    'content-type': 'image/avif',
                 },
             }),
         )
@@ -4513,11 +4411,6 @@ describe('character media uploads', () => {
                 },
                 db,
                 {
-                    cloudflarePreviewResponse: new Response(new Uint8Array([1]), {
-                        headers: {
-                            'content-type': 'image/jpeg',
-                        },
-                    }),
                     mediaBucket,
                     previewContainer: previewContainer.namespace,
                     sessionToken,
@@ -4529,6 +4422,7 @@ describe('character media uploads', () => {
             expect(await response.json()).toEqual({
                 error: expect.stringMatching(/^Media upload could not be completed\..*contact support with reference /),
             })
+            expect(previewContainer.fetch).toHaveBeenCalledTimes(1)
             expect(await queryOne('SELECT id FROM character_media WHERE id = ?', [initBody.mediaId], db)).toBeNull()
             expect(await mediaBucket.head(sourceObjectKey)).toBeNull()
         } finally {
@@ -4542,9 +4436,9 @@ describe('character media uploads', () => {
         const mediaBucket = createMockR2Bucket()
         const previewContainer = createMockPreviewContainer([
             new Error('container was destroyed while handling the request'),
-            new Response(createWebpBytes(800, 600), {
+            new Response(createAvifBytes(800, 600), {
                 headers: {
-                    'content-type': 'image/webp',
+                    'content-type': 'image/avif',
                 },
             }),
         ])
@@ -4598,11 +4492,6 @@ describe('character media uploads', () => {
             },
             db,
             {
-                cloudflarePreviewResponse: new Response(new Uint8Array([1, 2, 3]), {
-                    headers: {
-                        'content-type': 'image/jpeg',
-                    },
-                }),
                 mediaBucket,
                 previewContainer: previewContainer.namespace,
                 sessionToken,
@@ -4612,7 +4501,6 @@ describe('character media uploads', () => {
 
         const responseBody = await completeResponse.json()
         expect(completeResponse.status, JSON.stringify(responseBody)).toBe(201)
-        expect(globalThis.fetch).toHaveBeenCalledTimes(1)
         expect(previewContainer.fetch).toHaveBeenCalledTimes(2)
         expect(await vi.mocked(previewContainer.fetch).mock.calls[0]?.[1]?.body).toBe(
             JSON.stringify({
@@ -4627,9 +4515,16 @@ describe('character media uploads', () => {
         await expectStoredSfwMedia(initBody.mediaId, {sfw_preview_width: 800, sfw_preview_height: 600})
     }, 10_000)
 
-    it('retries Cloudflare preview generation when the transform request fails transiently', async () => {
+    it('retries container preview generation after a transient service response', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
+        const imagesBinding = createMockImagesBinding()
+        const previewContainer = createMockPreviewContainer([
+            new Response('Container is starting', {status: 503}),
+            new Response(createAvifBytes(800, 600), {
+                headers: {'content-type': 'image/avif'},
+            }),
+        ])
         const character = createCharacterRecord()
         await seedCurrentUser(sessionToken)
         await seedCharacterRecord(character)
@@ -4643,6 +4538,7 @@ describe('character media uploads', () => {
             db,
             {
                 mediaBucket,
+                imagesBinding,
                 sessionToken,
                 csrfToken,
             },
@@ -4680,15 +4576,8 @@ describe('character media uploads', () => {
             },
             db,
             {
-                cloudflarePreviewResponses: [
-                    new Error('temporary Cloudflare fetch failure'),
-                    new Response(createWebpBytes(800, 600), {
-                        headers: {
-                            'content-type': 'image/webp',
-                        },
-                    }),
-                ],
                 mediaBucket,
+                previewContainer: previewContainer.namespace,
                 sessionToken,
                 csrfToken,
             },
@@ -4704,16 +4593,18 @@ describe('character media uploads', () => {
         }
         expect(body.media.sfwPreviewWidth).toBe(800)
         expect(body.media.sfwPreviewHeight).toBe(600)
+        expect(previewContainer.fetch).toHaveBeenCalledTimes(2)
         await expectStoredSfwMedia(initBody.mediaId, {sfw_preview_width: 800, sfw_preview_height: 600})
     }, 10_000)
 
-    it('falls back to the container after Cloudflare preview generation keeps returning errors', async () => {
+    it('does not call Cloudflare image resizing for gallery previews', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
+        const imagesBinding = createMockImagesBinding()
         const previewContainer = createMockPreviewContainer(
-            new Response(createWebpBytes(800, 600), {
+            new Response(createAvifBytes(800, 600), {
                 headers: {
-                    'content-type': 'image/webp',
+                    'content-type': 'image/avif',
                 },
             }),
         )
@@ -4767,12 +4658,7 @@ describe('character media uploads', () => {
             },
             db,
             {
-                cloudflarePreviewResponse: new Response(JSON.stringify({error: 'preview failed'}), {
-                    status: 502,
-                    headers: {
-                        'content-type': 'application/json',
-                    },
-                }),
+                imagesBinding,
                 mediaBucket,
                 previewContainer: previewContainer.namespace,
                 sessionToken,
@@ -4790,15 +4676,8 @@ describe('character media uploads', () => {
         }
         expect(body.media.sfwPreviewWidth).toBe(800)
         expect(body.media.sfwPreviewHeight).toBe(600)
-        expect(globalThis.fetch).toHaveBeenCalledTimes(6)
-        const previewUrls = Array.from({length: 6}, (_, index) =>
-            expectCloudflarePreviewFetch(
-                index,
-                `${mediaPublicBaseUrl}/cdn-cgi/image/anim=false,fit=scale-down,format=webp,height=1600,quality=90,width=1600/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.png`,
-            ),
-        )
-        expect(new Set(previewUrls).size).toBe(6)
         expect(previewContainer.fetch).toHaveBeenCalledTimes(1)
+        expect(imagesBinding.input).not.toHaveBeenCalled()
         await expectStoredSfwMedia(initBody.mediaId, {sfw_preview_width: 800, sfw_preview_height: 600})
     }, 12_000)
 
@@ -4920,6 +4799,9 @@ describe('character media uploads', () => {
             }
         }
         expect(body.media.nsfwBlurImageKey).toMatch(new RegExp(`^${uuidPattern}$`))
+        const blurTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
+        expect(imagesBinding.input).toHaveBeenCalledOnce()
+        expect(blurTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 85})
         expect(body.media.nsfwBlurImageUrl).toBe(
             `${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/nsfw/blur/${body.media.nsfwBlurImageKey}.webp`,
         )
@@ -6017,6 +5899,7 @@ describe('character media uploads', () => {
     it('replaces the NSFW variant on existing media and regenerates its blur image', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
+        const imagesBinding = createMockImagesBinding()
         const character = createCharacterRecord()
         const media = createMediaRecord({
             character_id: character.id,
@@ -6045,6 +5928,7 @@ describe('character media uploads', () => {
             db,
             {
                 mediaBucket,
+                imagesBinding,
                 sessionToken,
                 csrfToken,
             },
@@ -6092,6 +5976,7 @@ describe('character media uploads', () => {
             db,
             {
                 mediaBucket,
+                imagesBinding,
                 sessionToken,
                 csrfToken,
             },
@@ -6132,10 +6017,11 @@ describe('character media uploads', () => {
                 nsfw_height: number
                 nsfw_preview_width: number
                 nsfw_preview_height: number
+                nsfw_preview_content_type: string
                 nsfw_blur_image_key: string
             }>(
                 `SELECT sfw_image_key, nsfw_image_key, nsfw_artist, nsfw_width, nsfw_height,
-                        nsfw_preview_width, nsfw_preview_height, nsfw_blur_image_key
+                        nsfw_preview_width, nsfw_preview_height, nsfw_preview_content_type, nsfw_blur_image_key
                  FROM character_media WHERE id = ?`,
                 [media.id],
                 db,
@@ -6148,6 +6034,7 @@ describe('character media uploads', () => {
             nsfw_height: 480,
             nsfw_preview_width: 640,
             nsfw_preview_height: 480,
+            nsfw_preview_content_type: 'image/avif',
             nsfw_blur_image_key: body.media.nsfwBlurImageKey,
         })
     })

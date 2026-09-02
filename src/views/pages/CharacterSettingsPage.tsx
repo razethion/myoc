@@ -18,7 +18,9 @@ export type CharacterSettingsMedia = {
     sfwImageKey: string | null
     nsfwImageKey: string | null
     sfwPreviewImageKey: string | null
+    sfwPreviewContentType: string
     nsfwPreviewImageKey: string | null
+    nsfwPreviewContentType: string
     nsfwBlurImageKey: string | null
     sfwContentType: string | null
     nsfwContentType: string | null
@@ -72,7 +74,15 @@ function mediaWithUrls(mediaBaseUrl: string, character: CharacterSettingsCharact
             ? characterMediaImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.sfwImageKey, 'sfw', media.sfwContentType)
             : null,
         sfwPreviewImageUrl: media.sfwPreviewImageKey
-            ? characterMediaPreviewImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.sfwPreviewImageKey, 'sfw')
+            ? characterMediaPreviewImageUrl(
+                  mediaBaseUrl,
+                  character.userId,
+                  character.id,
+                  media.id,
+                  media.sfwPreviewImageKey,
+                  'sfw',
+                  media.sfwPreviewContentType,
+              )
             : null,
         nsfwImageUrl: media.nsfwImageKey
             ? characterMediaImageUrl(
@@ -86,7 +96,15 @@ function mediaWithUrls(mediaBaseUrl: string, character: CharacterSettingsCharact
               )
             : null,
         nsfwPreviewImageUrl: media.nsfwPreviewImageKey
-            ? characterMediaPreviewImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwPreviewImageKey, 'nsfw')
+            ? characterMediaPreviewImageUrl(
+                  mediaBaseUrl,
+                  character.userId,
+                  character.id,
+                  media.id,
+                  media.nsfwPreviewImageKey,
+                  'nsfw',
+                  media.nsfwPreviewContentType,
+              )
             : null,
     }
 }

@@ -50,6 +50,7 @@ export type RecentMediaRow = {
     character_id: string
     sfw_image_key: string | null
     sfw_preview_image_key: string | null
+    sfw_preview_content_type: string
     sfw_content_type: string | null
     sfw_width: number | null
     sfw_height: number | null
@@ -59,6 +60,7 @@ export type RecentMediaRow = {
     sfw_approved_at: string | null
     nsfw_image_key: string | null
     nsfw_preview_image_key: string | null
+    nsfw_preview_content_type: string
     nsfw_content_type: string | null
     nsfw_width: number | null
     nsfw_height: number | null
@@ -112,6 +114,7 @@ type RecentMediaVariantData = {
     height: number
     imageKey: string | null
     previewImageKey: string | null
+    previewContentType: string
     width: number
 }
 
@@ -122,6 +125,7 @@ function recentMediaVariantData(row: RecentMediaRow, rating: RecentMediaRating):
             height: row.nsfw_preview_height ?? row.nsfw_height ?? 1,
             imageKey: row.nsfw_image_key,
             previewImageKey: row.nsfw_preview_image_key,
+            previewContentType: row.nsfw_preview_content_type,
             width: row.nsfw_preview_width ?? row.nsfw_width ?? 1,
         }
     }
@@ -131,13 +135,14 @@ function recentMediaVariantData(row: RecentMediaRow, rating: RecentMediaRating):
         height: row.sfw_preview_height ?? row.sfw_height ?? 1,
         imageKey: row.sfw_image_key,
         previewImageKey: row.sfw_preview_image_key,
+        previewContentType: row.sfw_preview_content_type,
         width: row.sfw_preview_width ?? row.sfw_width ?? 1,
     }
 }
 
 function recentMediaItemFromRow(row: RecentMediaRow, mediaBaseUrl: string, showNsfw: boolean, showUnapproved: boolean): RecentMediaItem {
     const rating: RecentMediaRating = showNsfw && isEligibleRecentMediaVariant(row, 'nsfw', showUnapproved) ? 'nsfw' : 'sfw'
-    const {contentType, height, imageKey, previewImageKey, width} = recentMediaVariantData(row, rating)
+    const {contentType, height, imageKey, previewContentType, previewImageKey, width} = recentMediaVariantData(row, rating)
     const characterHref = `/u/${encodeURIComponent(row.owner_username)}/${encodeURIComponent(row.character_name)}`
 
     if (!imageKey || !previewImageKey) {
@@ -150,7 +155,15 @@ function recentMediaItemFromRow(row: RecentMediaRow, mediaBaseUrl: string, showN
         alt: `${row.character_name} character art`,
         width: width > 0 ? width : 1,
         height: height > 0 ? height : 1,
-        previewSrc: characterMediaPreviewImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, previewImageKey, rating),
+        previewSrc: characterMediaPreviewImageUrl(
+            mediaBaseUrl,
+            row.user_id,
+            row.character_id,
+            row.id,
+            previewImageKey,
+            rating,
+            previewContentType,
+        ),
         originalSrc: characterMediaImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, imageKey, rating, contentType),
         character: {
             name: row.character_name,
@@ -194,6 +207,7 @@ export async function queryRecentMediaSourceRows(db: D1Database, hour?: string):
                 character_media.character_id,
                 character_media.sfw_image_key,
                 character_media.sfw_preview_image_key,
+                character_media.sfw_preview_content_type,
                 character_media.sfw_content_type,
                 character_media.sfw_width,
                 character_media.sfw_height,
@@ -203,6 +217,7 @@ export async function queryRecentMediaSourceRows(db: D1Database, hour?: string):
                 character_media.sfw_approved_at,
                 character_media.nsfw_image_key,
                 character_media.nsfw_preview_image_key,
+                character_media.nsfw_preview_content_type,
                 character_media.nsfw_content_type,
                 character_media.nsfw_width,
                 character_media.nsfw_height,
@@ -247,6 +262,7 @@ export async function queryRecentMediaSourceRowsPage(
                 character_media.character_id,
                 character_media.sfw_image_key,
                 character_media.sfw_preview_image_key,
+                character_media.sfw_preview_content_type,
                 character_media.sfw_content_type,
                 character_media.sfw_width,
                 character_media.sfw_height,
@@ -256,6 +272,7 @@ export async function queryRecentMediaSourceRowsPage(
                 character_media.sfw_approved_at,
                 character_media.nsfw_image_key,
                 character_media.nsfw_preview_image_key,
+                character_media.nsfw_preview_content_type,
                 character_media.nsfw_content_type,
                 character_media.nsfw_width,
                 character_media.nsfw_height,

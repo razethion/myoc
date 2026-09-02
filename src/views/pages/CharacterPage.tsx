@@ -29,7 +29,9 @@ export type CharacterPageMedia = {
     sfwImageKey: string | null
     nsfwImageKey: string | null
     sfwPreviewImageKey: string | null
+    sfwPreviewContentType: string
     nsfwPreviewImageKey: string | null
+    nsfwPreviewContentType: string
     nsfwBlurImageKey: string | null
     sfwContentType: string | null
     nsfwContentType: string | null
@@ -256,7 +258,15 @@ function createSfwDisplayVariant(
         imageAlt: imageAltForArtist(artist),
         displayHeight: positiveDimension(media.sfwHeight),
         displayPreviewUrl: media.sfwPreviewImageKey
-            ? characterMediaPreviewImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.sfwPreviewImageKey, 'sfw')
+            ? characterMediaPreviewImageUrl(
+                  mediaBaseUrl,
+                  character.userId,
+                  character.id,
+                  media.id,
+                  media.sfwPreviewImageKey,
+                  'sfw',
+                  media.sfwPreviewContentType,
+              )
             : null,
         displayUrl: characterMediaImageUrl(
             mediaBaseUrl,
@@ -287,7 +297,15 @@ function createNsfwDisplayVariant(
         imageAlt: imageAltForArtist(artist),
         displayHeight: positiveDimension(media.nsfwHeight),
         displayPreviewUrl: media.nsfwPreviewImageKey
-            ? characterMediaPreviewImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwPreviewImageKey, 'nsfw')
+            ? characterMediaPreviewImageUrl(
+                  mediaBaseUrl,
+                  character.userId,
+                  character.id,
+                  media.id,
+                  media.nsfwPreviewImageKey,
+                  'nsfw',
+                  media.nsfwPreviewContentType,
+              )
             : null,
         displayUrl: characterMediaImageUrl(
             mediaBaseUrl,

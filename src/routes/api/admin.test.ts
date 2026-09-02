@@ -358,25 +358,42 @@ describe('POST /admin/image-approvals/:mediaId', () => {
     })
 
     it('moves an SFW image to the NSFW path when marked NSFW', async () => {
-        await seedApprovalMedia()
+        await seedApprovalMedia({
+            id: mediaId,
+            userId: ownerId,
+            characterId,
+            sfwPreviewContentType: 'image/avif',
+        })
         const mediaBucket = createMockR2Bucket()
         const imagesBinding = createMockImagesBinding()
         await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png', new Uint8Array([1, 2, 3]))
-        await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp', new Uint8Array([4, 5, 6]))
+        await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.avif', new Uint8Array([4, 5, 6]))
         const response = await postImageApproval(mediaId, {sfwAction: 'mark_nsfw'}, mediaBucket, imagesBinding)
-        const media = await queryOne<{sfw_image_key: string | null; nsfw_image_key: string | null; nsfw_blur_image_key: string | null}>(
-            'SELECT sfw_image_key, nsfw_image_key, nsfw_blur_image_key FROM character_media WHERE id = ?',
+        const media = await queryOne<{
+            sfw_image_key: string | null
+            nsfw_image_key: string | null
+            sfw_preview_content_type: string
+            nsfw_preview_content_type: string
+            nsfw_blur_image_key: string | null
+        }>(
+            `SELECT sfw_image_key, nsfw_image_key, sfw_preview_content_type, nsfw_preview_content_type, nsfw_blur_image_key
+             FROM character_media WHERE id = ?`,
             [mediaId],
         )
         expect(response.status).toBe(200)
         await expectStoredBytes(mediaBucket, 'characters/owner-1/character-1/media/media-1/nsfw/sfw-key.png', new Uint8Array([1, 2, 3]))
         await expectStoredBytes(
             mediaBucket,
-            'characters/owner-1/character-1/media/media-1/nsfw/preview/sfw-preview-key.webp',
+            'characters/owner-1/character-1/media/media-1/nsfw/preview/sfw-preview-key.avif',
             new Uint8Array([4, 5, 6]),
         )
         expectNsfwBlurTransform(imagesBinding)
-        expect(media).toMatchObject({sfw_image_key: null, nsfw_image_key: 'sfw-key'})
+        expect(media).toMatchObject({
+            sfw_image_key: null,
+            nsfw_image_key: 'sfw-key',
+            sfw_preview_content_type: 'image/webp',
+            nsfw_preview_content_type: 'image/avif',
+        })
         expect(media?.nsfw_blur_image_key).toEqual(expect.any(String))
     })
 
