@@ -1,0 +1,27 @@
+{
+  "name": "@myoc/web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "node ../../scripts/sync-web-assets.mjs && node ../../scripts/run-wrangler.mjs types apps/web/worker-configuration.d.ts --config apps/web/wrangler.jsonc && vite build",
+    "typecheck": "node ../../scripts/clean-web-build.mjs && node ../../scripts/run-wrangler.mjs types apps/web/worker-configuration.d.ts --config apps/web/wrangler.jsonc && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "deploy": "node ../../scripts/run-wrangler.mjs deploy --config apps/web/wrangler.jsonc"
+  },
+  "dependencies": {
+    "@myoc/contracts": "*",
+    "@myoc/ui": "*"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-cloudflare": "^7.2.9",
+    "@sveltejs/kit": "^2.63.0",
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.4.1",
+    "svelte": "^5.57.0",
+    "svelte-check": "^4.7.6",
+    "typescript": "^6.0.3",
+    "vite": "^8.2.2",
+    "wrangler": "^4.115.0"
+  }
+}

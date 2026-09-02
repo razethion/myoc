@@ -1,0 +1,303 @@
+import {SearchPageDataSchema} from '@myoc/contracts/search'
+import {Hono} from 'hono'
+import {z} from 'zod'
+import {canModerateImages, getCurrentUser} from '../../lib/auth/session'
+import {jsonResponse} from '../../lib/http/jsonResponse'
+import {ErrorResponseSchema, responseSchema, SearchResponseSchema, SizeChartSearchItemSchema} from '../../lib/http/responseSchemas'
+import {fallbackAvatarDataUrl} from '../../lib/media/avatar'
+import {parseHeightChartJson} from '../../lib/media/heightChart'
+import {characterHeightChartImageUrl, characterProfileImageUrl, profilePhotoUrl} from '../../lib/media/url'
+import {APP_VERSION, RELEASE_NOTES} from '../../lib/releases'
+import {normalizeSearchOffset, normalizeSearchQuery, searchAll, searchCharacters, searchUsers} from '../../lib/search'
+import type {Bindings} from '../../types/bindings'
+
+export const searchRoutes = new Hono<{Bindings: Bindings}>()
+
+const SizeChartSearchResponseSchema = responseSchema({
+    query: z.string(),
+    wasTruncated: z.boolean(),
+    items: z.array(SizeChartSearchItemSchema),
+})
+const SizeChartByIdResponseSchema = responseSchema({
+    items: z.array(SizeChartSearchItemSchema),
+})
+
+type SizeChartCharacterSearchRow = {
+    id: string
+    size_chart_id: string
+    name: string
+    user_id: string
+    username: string
+    profile_image_key: string
+    height_chart_json: string
+}
+
+const SIZE_CHART_ID_SELECT_SQL = 'lower(hex(characters.size_chart_id)) AS size_chart_id'
+const SIZE_CHART_ID_LOOKUP_SQL = 'lower(hex(characters.size_chart_id))'
+const SIZE_CHART_ID_LOOKUP_LIMIT = 99
+const D1_MAX_BOUND_PARAMETERS = 100
+
+searchRoutes.get('/', async (c) => {
+    const type = c.req.query('type')
+    const {query, wasTruncated} = normalizeSearchQuery(c.req.query('q'))
+    const offset = normalizeSearchOffset(c.req.query('offset'))
+
+    if (type !== 'users' && type !== 'characters') {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Search type must be users or characters'}, 400)
+    }
+
+    const results =
+        type === 'users'
+            ? await searchUsers(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, query, undefined, offset)
+            : await searchCharacters(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, query, undefined, offset)
+
+    return jsonResponse(c, SearchResponseSchema, {
+        type,
+        query,
+        wasTruncated,
+        items: results.items,
+        total: results.total,
+        nextOffset: results.nextOffset,
+        hasMore: results.hasMore,
+    })
+})
+
+searchRoutes.get('/page', async (c) => {
+    const [currentUser, results] = await Promise.all([
+        getCurrentUser(c),
+        searchAll(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, c.req.query('q')),
+    ])
+    const currentRelease = RELEASE_NOTES.find((release) => release.version === APP_VERSION)
+
+    return jsonResponse(c, SearchPageDataSchema, {
+        shell: {
+            viewer: currentUser
+                ? {
+                      username: currentUser.username,
+                      profileUrl: `/u/${encodeURIComponent(currentUser.username)}`,
+                      avatarUrl: currentUser.profilePhotoKey
+                          ? profilePhotoUrl(c.env.MEDIA_PUBLIC_BASE_URL, currentUser.id, currentUser.profilePhotoKey)
+                          : fallbackAvatarDataUrl(currentUser.username, 'R'),
+                      csrfToken: currentUser.csrfToken,
+                      canModerateImages: canModerateImages(currentUser),
+                  }
+                : null,
+            appVersion: APP_VERSION,
+            showVersionNotification: Boolean(currentUser && currentUser.lastSeenVersion !== APP_VERSION),
+            importantRelease: Boolean(currentRelease?.important),
+        },
+        results,
+    })
+})
+
+searchRoutes.get('/size-chart-characters', async (c) => {
+    const {query, wasTruncated} = normalizeSearchQuery(c.req.query('q'))
+
+    if (!query) {
+        return jsonResponse(c, SizeChartSearchResponseSchema, {
+            query,
+            wasTruncated,
+            items: [],
+        })
+    }
+
+    const terms = createSizeChartSearchTerms(query)
+    const where = terms.map(() => `(lower(users.username) LIKE ? ESCAPE '\\' OR lower(characters.name) LIKE ? ESCAPE '\\')`).join(' AND ')
+    const bindings = terms.flatMap((term) => [term.contains, term.contains])
+    const result = await c.env.DB.prepare(
+        `SELECT characters.id,
+                ${SIZE_CHART_ID_SELECT_SQL},
+                characters.name,
+                characters.user_id,
+                characters.profile_image_key,
+                characters.height_chart_json,
+                users.username
+         FROM characters
+                  INNER JOIN users ON users.id = characters.user_id
+         WHERE ${where}
+         ORDER BY CASE WHEN characters.height_chart_json <> '' THEN 0 ELSE 1 END,
+                  CASE
+                      WHEN lower(users.username || ' ' || characters.name) = ? THEN 0
+                      WHEN lower(characters.name) = ? THEN 1
+                      WHEN lower(users.username) = ? THEN 2
+                      WHEN lower(characters.name) LIKE ? ESCAPE '\\' THEN 3
+                      WHEN lower(users.username) LIKE ? ESCAPE '\\' THEN 4
+                      ELSE 5
+                      END,
+                  lower(users.username),
+                  lower(characters.name)
+         LIMIT 40`,
+    )
+        .bind(
+            ...bindings,
+            query.toLowerCase(),
+            query.toLowerCase(),
+            query.toLowerCase(),
+            `${escapeSizeChartLike(query.toLowerCase())}%`,
+            `${escapeSizeChartLike(query.toLowerCase())}%`,
+        )
+        .all<SizeChartCharacterSearchRow>()
+
+    const items = (result.results ?? [])
+        .map((row) => toSizeChartCharacterSearchResult(row, c.env.MEDIA_PUBLIC_BASE_URL))
+        .sort((a, b) => Number(b.hasSizeChart) - Number(a.hasSizeChart))
+        .slice(0, 20)
+
+    return jsonResponse(c, SizeChartSearchResponseSchema, {
+        query,
+        wasTruncated,
+        items,
+    })
+})
+
+searchRoutes.get('/size-chart-characters/by-id', async (c) => {
+    const ids = normalizeSizeChartIds(c.req.query('ids'))
+
+    if (ids.length === 0) {
+        return jsonResponse(c, SizeChartByIdResponseSchema, {items: []})
+    }
+
+    const results = await Promise.all(
+        createSizeChartLookupChunks(ids as [string, ...string[]]).map(
+            async (idChunk) => await querySizeChartCharactersByIds(c.env.DB, idChunk),
+        ),
+    )
+
+    const itemsById = new Map<string, ReturnType<typeof toSizeChartCharacterSearchResult>>()
+
+    for (const result of results) {
+        for (const row of result.results) {
+            const item = toSizeChartCharacterSearchResult(row, c.env.MEDIA_PUBLIC_BASE_URL)
+            itemsById.set(row.id, item)
+
+            itemsById.set(row.size_chart_id, item)
+        }
+    }
+
+    return jsonResponse(c, SizeChartByIdResponseSchema, {
+        items: ids.map((id) => itemsById.get(id)).filter((item): item is NonNullable<typeof item> => Boolean(item)),
+    })
+})
+
+async function querySizeChartCharactersByIds(db: D1Database, ids: string[]): Promise<D1Result<SizeChartCharacterSearchRow>> {
+    const sizeChartIds = ids.filter(isSizeChartId).map((id) => id.toLowerCase())
+    const where = [
+        `characters.id IN (${ids.map(() => '?').join(', ')})`,
+        ...(sizeChartIds.length > 0 ? [`${SIZE_CHART_ID_LOOKUP_SQL} IN (${sizeChartIds.map(() => '?').join(', ')})`] : []),
+    ].join(' OR ')
+
+    return await db
+        .prepare(
+            `SELECT characters.id,
+                    ${SIZE_CHART_ID_SELECT_SQL},
+                    characters.name,
+                    characters.user_id,
+                    characters.profile_image_key,
+                    characters.height_chart_json,
+                    users.username
+             FROM characters
+                      INNER JOIN users ON users.id = characters.user_id
+             WHERE ${where}
+             LIMIT ${SIZE_CHART_ID_LOOKUP_LIMIT}`,
+        )
+        .bind(...ids, ...sizeChartIds)
+        .all<SizeChartCharacterSearchRow>()
+}
+
+function createSizeChartLookupChunks(ids: [string, ...string[]]): string[][] {
+    const chunks: string[][] = []
+    let chunk: string[] = []
+    let boundParameterCount = 0
+
+    for (const id of ids) {
+        const idParameterCount = isSizeChartId(id) ? 2 : 1
+
+        if (boundParameterCount + idParameterCount > D1_MAX_BOUND_PARAMETERS) {
+            chunks.push(chunk)
+            chunk = []
+            boundParameterCount = 0
+        }
+
+        chunk.push(id)
+        boundParameterCount += idParameterCount
+    }
+
+    chunks.push(chunk)
+
+    return chunks
+}
+
+function createSizeChartSearchTerms(query: string): {contains: string}[] {
+    return query
+        .toLowerCase()
+        .split(/\s+/)
+        .map((term) => term.trim())
+        .filter(Boolean)
+        .slice(0, 8)
+        .map((term) => ({contains: `%${escapeSizeChartLike(term)}%`}))
+}
+
+function escapeSizeChartLike(value: string): string {
+    return value.replace(/[\\%_]/g, (character) => `\\${character}`)
+}
+
+function normalizeSizeChartIds(value: string | null | undefined): string[] {
+    if (!value) {
+        return []
+    }
+
+    const seen = new Set<string>()
+    const ids: string[] = []
+
+    for (const id of value.split(',')) {
+        const trimmed = id.trim()
+        const normalized = isSizeChartId(trimmed) ? trimmed.toLowerCase() : trimmed
+
+        if (!normalized || normalized.length > 64 || seen.has(normalized)) {
+            continue
+        }
+
+        seen.add(normalized)
+        ids.push(normalized)
+
+        if (ids.length >= SIZE_CHART_ID_LOOKUP_LIMIT) {
+            break
+        }
+    }
+
+    return ids
+}
+
+function isSizeChartId(value: string): boolean {
+    return /^[0-9a-f]{12}$/i.test(value)
+}
+
+function toSizeChartCharacterSearchResult(row: SizeChartCharacterSearchRow, mediaBaseUrl: string) {
+    const heightChart = parseHeightChartJson(row.height_chart_json)
+    const hasSizeChart = Boolean(heightChart?.image)
+
+    return {
+        id: row.id,
+        sizeChartId: row.size_chart_id,
+        name: row.name,
+        ownerId: row.user_id,
+        ownerUsername: row.username,
+        profileImageUrl: characterProfileImageUrl(mediaBaseUrl, row.user_id, row.id, row.profile_image_key),
+        hasSizeChart,
+        heightChart: heightChart?.image
+            ? {
+                  ...heightChart,
+                  image: {
+                      ...heightChart.image,
+                      url: characterHeightChartImageUrl(
+                          mediaBaseUrl,
+                          row.user_id,
+                          row.id,
+                          heightChart.image.key,
+                          heightChart.image.contentType,
+                      ),
+                  },
+              }
+            : null,
+    }
+}

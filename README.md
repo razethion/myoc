@@ -12,7 +12,7 @@ share clean profile or character links.
 
 The app is intentionally gallery-first. It is not trying to be a social network, marketplace, custom website builder, or
 general lore platform. See the product direction in the in-app `/product-vision` page and the source in
-[src/views/pages/ProductVisionPage.tsx](src/views/pages/ProductVisionPage.tsx).
+[apps/backend/src/views/pages/ProductVisionPage.tsx](apps/backend/src/views/pages/ProductVisionPage.tsx).
 
 ## Highlights
 
@@ -85,7 +85,7 @@ Seeded local accounts:
 Open the local site and sign in with a seeded account:
 
 ```text
-http://localhost:8787/login
+http://127.0.0.1:5173/login
 ```
 
 Useful local routes:
@@ -97,12 +97,12 @@ Useful local routes:
 - `/search` - user and character search
 - `/leaderboard` - leaderboard view
 - `/size-chart` - character size-chart comparison
-- `/whats-new` - release notes from [src/lib/releases.ts](src/lib/releases.ts)
+- `/whats-new` - release notes from [apps/backend/src/lib/releases.ts](apps/backend/src/lib/releases.ts)
 
 Example read-only API request:
 
 ```sh
-curl "http://localhost:8787/api/search?type=characters&q=raz"
+curl "http://127.0.0.1:5173/api/search?type=characters&q=raz"
 ```
 
 ## Development
@@ -122,14 +122,14 @@ npm run ci
 
 ## Repository Guide
 
-| Path                         | Purpose                                                         |
-|------------------------------|-----------------------------------------------------------------|
-| [`src/routes`](./src/routes) | Page and API route handlers.                                    |
-| [`src/views`](./src/views)   | Server-rendered layouts, components, and pages.                 |
-| [`src/lib`](./src/lib)       | Auth, media, search, admin, gallery, and shared business logic. |
-| [`migrations`](./migrations) | D1 schema history.                                              |
-| [`scripts`](./scripts)       | Local utility scripts.                                          |
-| [`.github`](./.github)       | Issue templates and CI/deployment workflows.                    |
+| Path                                                   | Purpose                                                  |
+|--------------------------------------------------------|----------------------------------------------------------|
+| [`apps/backend`](./apps/backend)                       | Hono Worker, D1 migrations, assets, and container code. |
+| [`apps/web`](./apps/web)                               | SvelteKit entry Worker and migrated pages.              |
+| [`packages/contracts`](./packages/contracts)           | Schemas and types shared by both Workers.               |
+| [`packages/ui`](./packages/ui)                         | Styles shared by Hono and SvelteKit.                    |
+| [`scripts`](./scripts)                                 | Local utility scripts.                                  |
+| [`.github`](./.github)                                 | Issue templates and CI and deployment workflows.       |
 
 ## Project Documents
 

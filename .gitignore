@@ -16,9 +16,11 @@ skills-lock.json
 .idea/usage.statistics.xml
 .idea/shelf
 
-# deps
-node_modules/
-.wrangler/
+# workspace dependencies and generated tool state
+/node_modules/
+**/node_modules/
+/.wrangler/
+**/.wrangler/
 
 # env
 .env
@@ -43,6 +45,10 @@ lerna-debug.log*
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
-/public/app.css
-/public/vendor/
-worker-configuration.d.ts
+/apps/backend/public/app.css
+/apps/backend/public/vendor/
+**/worker-configuration.d.ts
+/apps/backend/wrangler.hono-dev.jsonc
+/apps/web/.svelte-kit/
+/apps/web/static/
+/apps/web/_headers

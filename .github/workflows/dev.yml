@@ -290,6 +290,7 @@ jobs:
               'container/server.mjs',
               'manifest.sha256',
               'seeds/development.sql',
+              'web/cloudflare/_worker.js',
               'worker/index.js',
           }
 
@@ -310,8 +311,8 @@ jobs:
               if not name:
                   return is_directory
               if is_directory:
-                  return name in {'container', 'migrations', 'public', 'seeds', 'worker'} or name.startswith(('migrations/', 'public/'))
-              return name in required_files or name.startswith(('migrations/', 'public/'))
+                  return name in {'container', 'migrations', 'public', 'seeds', 'web', 'worker'} or name.startswith(('migrations/', 'public/', 'web/'))
+              return name in required_files or name.startswith(('migrations/', 'public/', 'web/'))
 
           seen = set()
           total_size = 0
@@ -391,7 +392,8 @@ jobs:
           PR_NUMBER: ${{ needs.validate.outputs.pull_request }}
         working-directory: ${{ runner.temp }}/myoc-dev-control
         run: |
-          echo "worker=myoc-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "backend_worker=myoc-pr-${PR_NUMBER}-backend" >> "$GITHUB_OUTPUT"
+          echo "web_worker=myoc-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "container=myoc-docker-sharp-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "database=myoc-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "cache=myoc-pr-${PR_NUMBER}-cache" >> "$GITHUB_OUTPUT"
@@ -502,17 +504,18 @@ jobs:
           MEDIA_BASE_URL: ${{ steps.resources.outputs.media_base_url }}
           MEDIA_BUCKET: ${{ steps.names.outputs.media_bucket }}
           PR_NUMBER: ${{ needs.validate.outputs.pull_request }}
-          WORKER_NAME: ${{ steps.names.outputs.worker }}
+          BACKEND_WORKER_NAME: ${{ steps.names.outputs.backend_worker }}
+          WEB_WORKER_NAME: ${{ steps.names.outputs.web_worker }}
         working-directory: ${{ runner.temp }}/myoc-dev-control
         run: |
           node <<'NODE'
           const fs = require('node:fs')
 
-          const config = {
-            name: process.env.WORKER_NAME,
+          const backendConfig = {
+            name: process.env.BACKEND_WORKER_NAME,
             main: './artifact/worker/index.js',
             compatibility_date: '2026-06-10',
-            workers_dev: true,
+            workers_dev: false,
             observability: {
               logs: {
                 enabled: true,
@@ -606,7 +609,32 @@ jobs:
             ],
           }
 
-          fs.writeFileSync('wrangler.preview.jsonc', `${JSON.stringify(config, null, 2)}\n`)
+          const webConfig = {
+            name: process.env.WEB_WORKER_NAME,
+            main: './artifact/web/cloudflare/_worker.js',
+            compatibility_date: '2026-09-01',
+            compatibility_flags: ['nodejs_als'],
+            workers_dev: true,
+            observability: {
+              logs: {
+                enabled: true,
+                invocation_logs: true,
+              },
+            },
+            assets: {
+              binding: 'ASSETS',
+              directory: './artifact/web/cloudflare',
+            },
+            services: [
+              {
+                binding: 'HONO',
+                service: process.env.BACKEND_WORKER_NAME,
+              },
+            ],
+          }
+
+          fs.writeFileSync('wrangler.backend-preview.jsonc', `${JSON.stringify(backendConfig, null, 2)}\n`)
+          fs.writeFileSync('wrangler.web-preview.jsonc', `${JSON.stringify(webConfig, null, 2)}\n`)
           NODE
 
       - name: Migrate isolated dev D1
@@ -616,7 +644,7 @@ jobs:
           DB_NAME: ${{ steps.names.outputs.database }}
           WRANGLER: ${{ steps.wrangler.outputs.path }}
         working-directory: ${{ runner.temp }}/myoc-dev-control
-        run: '"$WRANGLER" d1 migrations apply "$DB_NAME" --config wrangler.preview.jsonc --remote'
+        run: '"$WRANGLER" d1 migrations apply "$DB_NAME" --config wrangler.backend-preview.jsonc --remote'
 
       - name: Seed isolated dev D1
         env:
@@ -625,7 +653,7 @@ jobs:
           DB_NAME: ${{ steps.names.outputs.database }}
           WRANGLER: ${{ steps.wrangler.outputs.path }}
         working-directory: ${{ runner.temp }}/myoc-dev-control
-        run: '"$WRANGLER" d1 execute "$DB_NAME" --config wrangler.preview.jsonc --remote --file artifact/seeds/development.sql'
+        run: '"$WRANGLER" d1 execute "$DB_NAME" --config wrangler.backend-preview.jsonc --remote --file artifact/seeds/development.sql'
 
       - name: Confirm pull request is still current
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
@@ -667,7 +695,8 @@ jobs:
             fs.writeFileSync('preview-secrets.json', JSON.stringify({ PREVIEW_PROCESSOR_TOKEN: token }));
           "
 
-          "$WRANGLER" deploy --config wrangler.preview.jsonc --secrets-file preview-secrets.json --no-bundle --message "Approved dev preview $HEAD_SHA" 2>&1 | tee wrangler-preview.log
+          "$WRANGLER" deploy --config wrangler.backend-preview.jsonc --secrets-file preview-secrets.json --no-bundle --message "Approved dev preview backend $HEAD_SHA"
+          "$WRANGLER" deploy --config wrangler.web-preview.jsonc --message "Approved dev preview web $HEAD_SHA" 2>&1 | tee wrangler-preview.log
 
           preview_url="$(node -e "
             const fs = require('node:fs');
@@ -804,7 +833,8 @@ jobs:
           DB_NAME: myoc-pr-${{ inputs.pull_request }}
           MEDIA_BUCKET: myoc-pr-${{ inputs.pull_request }}-media
           PR_NUMBER: ${{ inputs.pull_request }}
-          WORKER_NAME: myoc-pr-${{ inputs.pull_request }}
+          BACKEND_WORKER_NAME: myoc-pr-${{ inputs.pull_request }}-backend
+          WEB_WORKER_NAME: myoc-pr-${{ inputs.pull_request }}
           WRANGLER: ${{ steps.wrangler.outputs.path }}
         working-directory: ${{ runner.temp }}/myoc-dev-cleanup
         run: |
@@ -817,11 +847,13 @@ jobs:
             echo "::warning::$1"
           }
 
-          if ! worker_output=$("$WRANGLER" delete "$WORKER_NAME" --force 2>&1); then
-            if ! grep -Eqi 'not found|does not exist' <<< "$worker_output"; then
-              record_failure "Worker deletion failed: $worker_output"
+          for worker_name in "$WEB_WORKER_NAME" "$BACKEND_WORKER_NAME"; do
+            if ! worker_output=$("$WRANGLER" delete "$worker_name" --force 2>&1); then
+              if ! grep -Eqi 'not found|does not exist' <<< "$worker_output"; then
+                record_failure "Worker deletion failed for $worker_name: $worker_output"
+              fi
             fi
-          fi
+          done
 
           if "$WRANGLER" d1 list --json > d1-list.json; then
             if node -e "

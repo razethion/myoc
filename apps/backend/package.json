@@ -1,0 +1,23 @@
+{
+  "name": "@myoc/backend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/copy-vendor-assets.mjs && tailwindcss -i ../../packages/ui/src/app.css -o ./public/app.css --minify",
+    "typecheck": "node ../../scripts/run-wrangler.mjs types apps/backend/worker-configuration.d.ts --config apps/backend/wrangler.jsonc && tsc --noEmit",
+    "deploy": "node ../../scripts/run-wrangler.mjs deploy --config apps/backend/wrangler.jsonc --minify"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "^0.3.7",
+    "@myoc/contracts": "*",
+    "@scure/bip39": "^2.3.0",
+    "@simplewebauthn/browser": "^13.3.0",
+    "@simplewebauthn/server": "^13.3.2",
+    "bcryptjs": "^3.0.3",
+    "cropperjs": "^2.1.1",
+    "hono": "^4.12.34",
+    "openseadragon": "^6.1.0",
+    "zod": "^4.4.3"
+  }
+}
