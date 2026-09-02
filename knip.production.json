@@ -3,7 +3,7 @@
   "workspaces": {
     ".": {
       "entry": ["src/index.ts!", "scripts/*.mjs!", "!scripts/*.test.mjs!", "src/styles/app.css!"],
-      "project": ["src/**/*.{ts,tsx,css}!", "scripts/*.mjs!", "!scripts/*.test.mjs!", "!src/**/*.test.{ts,tsx}!", "!src/test/**!"]
+      "project": ["src/**/*.{ts,tsx,svelte,css}!", "scripts/*.mjs!", "!scripts/*.test.mjs!", "!src/**/*.test.{ts,tsx}!", "!src/test/**!"]
     },
     "containers/myoc-docker-sharp": {
       "entry": ["server.mjs!"],
@@ -12,5 +12,5 @@
   },
   "tags": ["-@internal"],
   "ignoreBinaries": ["py"],
-  "ignoreDependencies": ["@simplewebauthn/browser", "cropperjs"]
+  "ignoreDependencies": ["@simplewebauthn/browser", "cropperjs", "svelte-check"]
 }

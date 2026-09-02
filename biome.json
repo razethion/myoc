@@ -9,6 +9,8 @@
       "package.json",
       "tsconfig.json",
       "wrangler.jsonc",
+      "svelte.config.js",
+      "vite.config.ts",
       "vitest.config.ts",
       "biome.json",
       "knip*.json"
