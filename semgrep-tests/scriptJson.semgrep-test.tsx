@@ -1,4 +1,4 @@
-import {serializeJsonForHtmlScript} from '../src/views/scriptJson'
+import {serializeJsonForHtmlScript} from '../apps/backend/src/views/scriptJson'
 
 const structuredData = {description: 'Example'}
 

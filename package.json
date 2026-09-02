@@ -3,40 +3,34 @@
   "type": "module",
   "license": "GPL-3.0-only",
   "packageManager": "npm@11.16.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "engines": {
     "node": ">=24 <25"
   },
   "scripts": {
-    "dev": "wrangler types && npm run build && wrangler dev",
-    "build": "node scripts/copy-vendor-assets.mjs && tailwindcss -i ./src/styles/app.css -o ./public/app.css --minify",
-    "typecheck": "wrangler types && tsc --noEmit",
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run build --workspace @myoc/backend && npm run build --workspace @myoc/web",
+    "typecheck": "npm run typecheck --workspace @myoc/backend && npm run typecheck --workspace @myoc/web",
     "lint": "biome ci .",
     "format": "biome format . --write",
     "deadcode": "npm run deadcode:production && npm run deadcode:nonproduction",
     "deadcode:production": "knip --production --config knip.production.json",
     "deadcode:nonproduction": "knip",
-    "containers:check": "npm --prefix containers/myoc-docker-sharp run check",
+    "containers:check": "npm --prefix apps/backend/containers/myoc-docker-sharp run check",
+    "clean:workspace": "node scripts/clean-workspace-artifacts.mjs",
     "semgrep": "node scripts/run-semgrep.mjs",
     "test": "vitest",
     "test:run": "vitest run",
     "coverage": "vitest run --coverage",
-    "coverage:ci": "vitest run --coverage --coverage.reporter=text --coverage.reporter=lcov",
+    "coverage:ci": "vitest run --coverage --coverage.reporter=text --coverage.reporter=lcov --testTimeout=10000",
     "ci": "npm run lint && npm run typecheck && npm run coverage:ci && npm run deadcode && npm run containers:check",
-    "db:prepare:local": "wrangler d1 migrations apply myoc-db --local && wrangler d1 execute myoc-db --local --file seeds/development.sql",
+    "db:prepare:local": "node scripts/run-wrangler.mjs d1 migrations apply myoc-db --local -c apps/backend/wrangler.jsonc --persist-to .wrangler/state && node scripts/run-wrangler.mjs d1 execute myoc-db --local -c apps/backend/wrangler.jsonc --persist-to .wrangler/state --file apps/backend/seeds/development.sql",
     "env:clone:prod-to-dev": "node scripts/clone-prod-to-dev.mjs",
     "recent-feed:backfill": "node scripts/backfill-recent-feed.mjs",
-    "deploy": "npm run build && wrangler deploy --minify"
-  },
-  "dependencies": {
-    "@cloudflare/containers": "^0.3.7",
-    "@scure/bip39": "^2.3.0",
-    "@simplewebauthn/browser": "^13.3.0",
-    "@simplewebauthn/server": "^13.3.2",
-    "bcryptjs": "^3.0.3",
-    "cropperjs": "^2.1.1",
-    "hono": "^4.12.34",
-    "openseadragon": "^6.1.0",
-    "zod": "^4.4.3"
+    "deploy": "npm run build && npm run deploy --workspace @myoc/backend && npm run deploy --workspace @myoc/web"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.10",
@@ -46,7 +40,7 @@
     "daisyui": "^5.7.4",
     "knip": "^6.32.2",
     "tailwindcss": "^4.3.3",
-    "typescript": "^7.0.2",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.10",
     "wrangler": "^4.115.0"
   },

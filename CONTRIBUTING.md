@@ -29,7 +29,8 @@ npm run db:prepare:local
 npm run dev
 ```
 
-Wrangler prints the local URL, usually `http://localhost:8787`. Seeded accounts use `password123` as the password.
+Wrangler prints the public local URL, `http://127.0.0.1:5173`. It runs SvelteKit as the entry Worker and connects Hono through a service binding.
+Seeded accounts use `password123` as the password.
 
 ## Checks
 
@@ -42,30 +43,32 @@ npm run build
 
 Use `npm run test` while actively working on tests, and `npm run coverage` when you need a local coverage report.
 
-If you change Cloudflare bindings in [`wrangler.jsonc`](./wrangler.jsonc), run the typecheck command so Wrangler
+If you change Cloudflare bindings in either Worker configuration under [`apps`](./apps), run the typecheck command so Wrangler
 regenerates Worker types before TypeScript runs:
 
 ```sh
 npm run typecheck
 ```
 
-Generated files such as `worker-configuration.d.ts`, `public/app.css`, and `public/vendor` are local build artifacts and
-should not be committed unless the project intentionally changes that policy.
+Generated files such as `worker-configuration.d.ts`, `apps/backend/public/app.css`, `apps/backend/public/vendor`, and
+`apps/web/.svelte-kit` are local build artifacts and should not be committed unless the project intentionally changes that policy.
 
 ## Code Guidelines
 
 - Keep request validation close to the route or helper that consumes the data.
 - Use D1 prepared statements with bound parameters instead of interpolating user input into SQL.
-- Keep page markup in `src/views` and route orchestration in `src/routes` when practical.
-- Keep reusable business logic in `src/lib` instead of duplicating it in route handlers.
+- Keep Hono page markup in `apps/backend/src/views` and route orchestration in `apps/backend/src/routes` when practical.
+- Keep migrated SvelteKit pages in `apps/web/src/routes` and reusable Svelte components in `apps/web/src/lib`.
+- Keep reusable business logic in `apps/backend/src/lib` instead of duplicating it in route handlers.
+- Keep shared Worker schemas and types in `packages/contracts`.
 - Do not add secrets, production data, real user media, or private credentials to the repository.
 - Avoid broad refactors in the same pull request as behavior changes.
 
 ## Database and Media
 
-Add new numbered migrations in [`migrations`](./migrations). Do not edit migrations that may already be applied.
+Add new numbered migrations in [`apps/backend/migrations`](./apps/backend/migrations). Do not edit migrations that may already be applied.
 
-Update [`seeds/development.sql`](./seeds/development.sql) when schema or workflow changes would otherwise break local
+Update [`apps/backend/seeds/development.sql`](./apps/backend/seeds/development.sql) when schema or workflow changes would otherwise break local
 setup.
 
 Media objects are stored in R2. Be careful with changes that affect object-key shape, previews, NSFW blur objects,

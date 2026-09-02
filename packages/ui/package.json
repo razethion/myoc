@@ -1,0 +1,8 @@
+{
+  "name": "@myoc/ui",
+  "private": true,
+  "version": "0.0.0",
+  "exports": {
+    "./app.css": "./src/app.css"
+  }
+}

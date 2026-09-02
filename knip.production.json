@@ -2,15 +2,30 @@
   "$schema": "./node_modules/knip/schema.json",
   "workspaces": {
     ".": {
-      "entry": ["src/index.ts!", "scripts/*.mjs!", "!scripts/*.test.mjs!", "src/styles/app.css!"],
-      "project": ["src/**/*.{ts,tsx,css}!", "scripts/*.mjs!", "!scripts/*.test.mjs!", "!src/**/*.test.{ts,tsx}!", "!src/test/**!"]
+      "entry": ["scripts/*.mjs!", "!scripts/*.test.mjs!"],
+      "project": ["scripts/*.mjs!", "!scripts/*.test.mjs!"]
     },
-    "containers/myoc-docker-sharp": {
+    "apps/backend": {
+      "entry": ["src/index.ts!", "scripts/*.mjs!"],
+      "project": ["src/**/*.{ts,tsx}!", "scripts/*.mjs!", "!src/**/*.test.{ts,tsx}!", "!src/test/**!"]
+    },
+    "apps/web": {
+      "entry": ["src/routes/**/+*.{ts,svelte}!"],
+      "project": ["src/**/*.{ts,svelte}!"]
+    },
+    "packages/contracts": {
+      "project": ["src/**/*.ts!"]
+    },
+    "packages/ui": {
+      "entry": ["src/app.css!"],
+      "project": ["src/**/*.css!"]
+    },
+    "apps/backend/containers/myoc-docker-sharp": {
       "entry": ["server.mjs!"],
       "project": ["*.mjs!"]
     }
   },
   "tags": ["-@internal"],
   "ignoreBinaries": ["py"],
-  "ignoreDependencies": ["@simplewebauthn/browser", "cropperjs"]
+  "ignoreDependencies": ["@simplewebauthn/browser", "cropperjs", "zod"]
 }

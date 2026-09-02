@@ -1,6 +1,7 @@
 @import 'tailwindcss' source(none);
 
-@source '../views';
+@source '../../../apps/backend/src/views';
+@source '../../../apps/web/src';
 
 @plugin 'daisyui' {
     themes: dark --default;

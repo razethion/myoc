@@ -2,13 +2,24 @@
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
   "files": {
     "includes": [
-      "src/**",
+      "apps/backend/src/**",
+      "apps/backend/scripts/**/*.mjs",
       "scripts/**",
-      "containers/**/*.mjs",
-      "containers/**/package.json",
+      "apps/backend/containers/**/*.mjs",
+      "apps/backend/containers/**/package.json",
+      "apps/backend/package.json",
+      "apps/backend/tsconfig.json",
+      "apps/backend/wrangler.jsonc",
+      "apps/web/src/**",
+      "apps/web/package.json",
+      "apps/web/tsconfig.json",
+      "apps/web/vite.config.ts",
+      "apps/web/wrangler.jsonc",
+      "packages/contracts/src/**",
+      "packages/contracts/package.json",
+      "packages/ui/src/**",
+      "packages/ui/package.json",
       "package.json",
-      "tsconfig.json",
-      "wrangler.jsonc",
       "vitest.config.ts",
       "biome.json",
       "knip*.json"
@@ -58,7 +69,18 @@
   },
   "overrides": [
     {
-      "includes": ["containers/myoc-docker-sharp/server.mjs"],
+      "includes": ["**/*.svelte"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noUnusedImports": "off",
+            "noUnusedVariables": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["apps/backend/containers/myoc-docker-sharp/server.mjs"],
       "linter": {
         "rules": {
           "complexity": {

@@ -1303,7 +1303,7 @@ describe('public page redirects', () => {
 
     it('redirects logged-in users without passkeys to the one-time passkey prompt', async () => {
         const response = await getAppPath(
-            '/search?q=demo',
+            '/settings?tab=profile',
             await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo', {
                     passkey_prompt_seen_at: null,
@@ -1315,12 +1315,12 @@ describe('public page redirects', () => {
         )
 
         expect(response.status).toBe(302)
-        expect(response.headers.get('location')).toBe('/passkey-setup?returnTo=%2Fsearch%3Fq%3Ddemo')
+        expect(response.headers.get('location')).toBe('/passkey-setup?returnTo=%2Fsettings%3Ftab%3Dprofile')
     })
 
     it('does not redirect users who already have passkeys', async () => {
         const response = await getAppPath(
-            '/search?q=demo',
+            '/settings',
             await seedPageDatabase({
                 currentUser: createCurrentUserRecord('demo', {
                     passkey_prompt_seen_at: null,
@@ -1334,7 +1334,7 @@ describe('public page redirects', () => {
         const html = await response.text()
 
         expect(response.status).toBe(200)
-        expect(html).toContain('Results for &quot;demo&quot;')
+        expect(html).toContain('User Settings')
     })
 
     it('renders the passkey setup prompt without marking it seen', async () => {
@@ -1508,66 +1508,6 @@ describe('public page redirects', () => {
         expect(html).toContain('"@type":"WebSite"')
         expect(html).toContain('"description":"Hosting over 1,234 images"')
         expect(html).toContain('"target":"https://example.com/search?q={search_term_string}"')
-    })
-})
-
-describe('GET /search', () => {
-    it('renders matching users and characters from live search data', async () => {
-        const response = await getAppPath(
-            '/search?q=raz',
-            await seedPageDatabase({
-                searchUsers: [
-                    {
-                        id: 'profile-user',
-                        username: 'razeth',
-                        bio: 'Character artist.',
-                        profile_photo_key: 'profile-photo-key',
-                        character_count: 2,
-                    },
-                ],
-                searchCharacters: [
-                    {
-                        id: 'character-1',
-                        name: 'RAZETH',
-                        profile_image_key: 'character-image-key',
-                        user_id: 'profile-user',
-                        username: 'razeth',
-                    },
-                ],
-            }),
-        )
-        const html = await response.text()
-
-        expect(response.status).toBe(200)
-        expect(html).toContain('Results for &quot;raz&quot;')
-        expect(html).toContain('1 user')
-        expect(html).toContain('1 character')
-        expect(html).toContain('razeth')
-        expect(html).toContain('Character artist.')
-        expect(html).toContain('/u/razeth')
-        expect(html).toContain('RAZETH')
-        expect(html).toContain('/u/razeth/RAZETH')
-        expect(html).toContain('https://m.myoc.art/users/profile-user/profile/profile-photo-key.webp')
-        expect(html).toContain('https://m.myoc.art/characters/profile-user/character-1/profile/character-image-key.webp')
-    })
-
-    it('renders an empty search prompt when no query is provided', async () => {
-        const response = await getAppPath('/search')
-        const html = await response.text()
-
-        expect(response.status).toBe(200)
-        expect(html).toContain('Search MyOC')
-        expect(html).toContain('Enter a username or character name to start searching.')
-    })
-
-    it('safely embeds hostile-looking search query text', async () => {
-        const response = await getAppPath('/search?q=%3C%2Fscript%3E%3Cscript%3Ealert(1)%3C%2Fscript%3E')
-        const html = await response.text()
-
-        expect(response.status).toBe(200)
-        expect(html).toContain('&lt;/script&gt;&lt;script&gt;alert(1)&lt;/script&gt;')
-        expect(html).toContain('const searchQuery = "\\u003c/script\\u003e\\u003cscript\\u003ealert(1)\\u003c/script\\u003e"')
-        expect(html).not.toContain('const searchQuery = "</script>')
     })
 })
 

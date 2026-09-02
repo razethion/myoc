@@ -6,8 +6,8 @@ dist/
 .tmp/
 
 # Built frontend assets
-public/app.css
-public/vendor/
+apps/backend/public/app.css
+apps/backend/public/vendor/
 
 # Generated Cloudflare types
 worker-configuration.d.ts

@@ -43,7 +43,7 @@ jobs:
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
 
       - name: Build preview processor container
-        run: docker build --tag myoc-docker-sharp-ci containers/myoc-docker-sharp
+        run: docker build --tag myoc-docker-sharp-ci apps/backend/containers/myoc-docker-sharp
 
   preview-artifact:
     name: Build dev preview artifact
@@ -72,7 +72,7 @@ jobs:
         run: npm run build
 
       - name: Build processor container
-        run: docker build --tag myoc-docker-sharp-dev-check containers/myoc-docker-sharp
+        run: docker build --tag myoc-docker-sharp-dev-check apps/backend/containers/myoc-docker-sharp
 
       - name: Build immutable deployment artifact
         env:
@@ -82,7 +82,7 @@ jobs:
 
           build_root="$RUNNER_TEMP/myoc-dev-build"
           artifact_root="$RUNNER_TEMP/myoc-dev-artifact"
-          mkdir -p "$build_root/worker" "$artifact_root/worker" "$artifact_root/container" "$artifact_root/seeds"
+          mkdir -p "$build_root/worker" "$artifact_root/worker" "$artifact_root/container" "$artifact_root/seeds" "$artifact_root/web/output"
 
           node <<'NODE'
           const fs = require('node:fs')
@@ -90,7 +90,7 @@ jobs:
 
           const config = {
             name: 'myoc-dev-artifact',
-            main: path.join(process.env.GITHUB_WORKSPACE, 'src/index.ts'),
+            main: path.join(process.env.GITHUB_WORKSPACE, 'apps/backend/src/index.ts'),
             compatibility_date: '2026-06-10',
           }
 
@@ -103,19 +103,22 @@ jobs:
             --minify \
             --outdir "$build_root/worker"
 
-          if find public containers/myoc-docker-sharp migrations seeds/development.sql -type l -print -quit | grep -q .; then
+          if find apps/backend/public apps/backend/containers/myoc-docker-sharp apps/backend/migrations apps/backend/seeds/development.sql apps/web/.svelte-kit -type l -print -quit | grep -q .; then
             echo "::error::The deployment artifact cannot contain symbolic links."
             exit 1
           fi
 
           cp "$build_root/worker/index.js" "$artifact_root/worker/index.js"
-          cp -R public "$artifact_root/public"
-          cp -R migrations "$artifact_root/migrations"
-          cp seeds/development.sql "$artifact_root/seeds/development.sql"
-          cp containers/myoc-docker-sharp/Dockerfile "$artifact_root/container/Dockerfile"
-          cp containers/myoc-docker-sharp/package.json "$artifact_root/container/package.json"
-          cp containers/myoc-docker-sharp/package-lock.json "$artifact_root/container/package-lock.json"
-          cp containers/myoc-docker-sharp/server.mjs "$artifact_root/container/server.mjs"
+          cp -R apps/backend/public "$artifact_root/public"
+          cp -R apps/backend/migrations "$artifact_root/migrations"
+          cp apps/backend/seeds/development.sql "$artifact_root/seeds/development.sql"
+          cp apps/backend/containers/myoc-docker-sharp/Dockerfile "$artifact_root/container/Dockerfile"
+          cp apps/backend/containers/myoc-docker-sharp/package.json "$artifact_root/container/package.json"
+          cp apps/backend/containers/myoc-docker-sharp/package-lock.json "$artifact_root/container/package-lock.json"
+          cp apps/backend/containers/myoc-docker-sharp/server.mjs "$artifact_root/container/server.mjs"
+          cp -R apps/web/.svelte-kit/cloudflare "$artifact_root/web/cloudflare"
+          cp -R apps/web/.svelte-kit/cloudflare-tmp "$artifact_root/web/cloudflare-tmp"
+          cp -R apps/web/.svelte-kit/output/server "$artifact_root/web/output/server"
           printf '%s\n' "$HEAD_SHA" > "$artifact_root/commit.txt"
 
           (
@@ -160,13 +163,19 @@ jobs:
         run: npm run build
 
       - name: Migrate production D1
-        run: npx wrangler d1 migrations apply myoc-db --remote
+        run: npx wrangler d1 migrations apply myoc-db --remote --config apps/backend/wrangler.jsonc
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Deploy production Worker
-        run: npx wrangler deploy --minify --message "GitHub Actions ${GITHUB_SHA}"
+      - name: Deploy production Hono Worker
+        run: npm run deploy --workspace @myoc/backend -- --message "GitHub Actions ${GITHUB_SHA}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deploy production SvelteKit Worker
+        run: npm run deploy --workspace @myoc/web -- --message "GitHub Actions ${GITHUB_SHA}"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

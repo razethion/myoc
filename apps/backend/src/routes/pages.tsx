@@ -14,7 +14,6 @@ import {parseHeightChartJson} from '../lib/media/heightChart'
 import {characterHeightChartImageUrl, characterMediaImageUrl, characterMediaPreviewImageUrl} from '../lib/media/url'
 import {getGeneratedRecentMediaPage} from '../lib/recentMedia/reader'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
-import {searchAll} from '../lib/search'
 import type {UserSocialLink} from '../lib/socialLinks'
 import type {Bindings} from '../types/bindings'
 import {AdminImageApprovalLogPage} from '../views/pages/AdminImageApprovalLogPage'
@@ -61,7 +60,6 @@ import {PasskeyPromptPage} from '../views/pages/PasskeyPromptPage'
 import {ProductVisionPage} from '../views/pages/ProductVisionPage'
 import {ProfilePage, type ProfilePageUser} from '../views/pages/ProfilePage'
 import {RecentMediaPage} from '../views/pages/RecentMediaPage'
-import {SearchPage} from '../views/pages/SearchPage'
 import {SitePoliciesPage} from '../views/pages/SitePoliciesPage'
 import {SizeChartViewerPage} from '../views/pages/SizeChartViewerPage'
 import {UserSettingsPage} from '../views/pages/UserSettingsPage'
@@ -655,20 +653,6 @@ pageRoutes.get('/edit/:characterId', async (c) => {
             galleryTabs={includeUnplacedMediaInGalleryTabs(media, galleryTabs)}
             media={media}
             mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
-        />,
-    )
-})
-
-pageRoutes.get('/search', async (c) => {
-    const currentUser = await getCurrentUser(c)
-    const results = await searchAll(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, c.req.query('q'))
-
-    return c.html(
-        <SearchPage
-            currentUser={currentUser}
-            guestInitial={getRandomLetter()}
-            mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
-            results={results}
         />,
     )
 })

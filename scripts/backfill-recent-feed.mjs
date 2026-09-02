@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const wranglerBin = resolve(rootDir, 'node_modules', 'wrangler', 'bin', 'wrangler.js')
-const sourceConfigPath = resolve(rootDir, 'wrangler.jsonc')
+const sourceConfigPath = resolve(rootDir, 'apps/backend/wrangler.jsonc')
 const devVarsPath = resolve(rootDir, '.dev.vars')
 const persistDir = resolve(rootDir, '.wrangler', 'state')
 const recoveryCron = '* * * * *'
