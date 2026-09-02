@@ -3,11 +3,11 @@ import {createHash, randomUUID, timingSafeEqual} from 'node:crypto'
 import http from 'node:http'
 import process from 'node:process'
 import timers from 'node:timers'
-import sharp from 'sharp'
+import {createAvifPreview} from './preview.mjs'
 
 const port = Number.parseInt(process.env['PORT'] ?? '8080', 10)
-const previewLongEdge = parsePositiveInteger(process.env['PREVIEW_MAX_LONG_EDGE'], 1600)
-const previewQuality = clamp(parsePositiveInteger(process.env['PREVIEW_WEBP_QUALITY'], 90), 1, 100)
+const previewLongEdge = parsePositiveInteger(process.env['PREVIEW_MAX_LONG_EDGE'], 1200)
+const previewQuality = clamp(parsePositiveInteger(process.env['PREVIEW_AVIF_QUALITY'], 60), 1, 100)
 const requestBodyMaxBytes = parsePositiveInteger(process.env['REQUEST_BODY_MAX_BYTES'], 4096)
 const sourceImageMaxBytes = parsePositiveInteger(process.env['SOURCE_IMAGE_MAX_BYTES'], 64 * 1024 * 1024)
 const sourceFetchTimeoutMs = parsePositiveInteger(process.env['SOURCE_FETCH_TIMEOUT_MS'], 30_000)
@@ -92,7 +92,11 @@ async function handlePreviewRequest(request, response) {
 
     try {
         const sourceBytes = await fetchImageBytes(imageUrl)
-        const result = await createWebpPreview(sourceBytes)
+        const result = await createAvifPreview(sourceBytes, {
+            limitInputPixels: sourceLimitInputPixels,
+            maxLongEdge: previewLongEdge,
+            quality: previewQuality,
+        })
 
         console.log('Preview container processed image', {
             durationMs: Date.now() - startedAt,
@@ -107,7 +111,7 @@ async function handlePreviewRequest(request, response) {
         response.writeHead(200, {
             'cache-control': 'no-store',
             'content-length': Buffer.byteLength(result.bytes),
-            'content-type': 'image/webp',
+            'content-type': 'image/avif',
             'x-preview-height': result.height,
             'x-preview-width': result.width,
         })
@@ -229,33 +233,6 @@ async function readResponseBytes(response, maxBytes) {
  * @param {Buffer} sourceBytes
  * @returns {Promise<{bytes: Buffer, height: number, width: number}>}
  */
-async function createWebpPreview(sourceBytes) {
-    // nosemgrep: javascript.express.file.sharp-express.sharp-express -- sourceBytes is an in-memory Buffer from fetchImageBytes, not a file path.
-    const image = sharp(sourceBytes, {
-        limitInputPixels: sourceLimitInputPixels,
-    }).rotate()
-
-    const metadata = await image.metadata()
-    const width = metadata.autoOrient?.width ?? metadata.width ?? 0
-    const height = metadata.autoOrient?.height ?? metadata.height ?? 0
-
-    if (width < 1 || height < 1) {
-        throw new Error('Source image dimensions could not be read')
-    }
-
-    const longEdge = Math.max(width, height)
-    const scale = Math.min(1, previewLongEdge / longEdge)
-    const previewWidth = Math.max(1, Math.round(width * scale))
-    const previewHeight = Math.max(1, Math.round(height * scale))
-    const bytes = await image.resize(previewWidth, previewHeight, {fit: 'fill'}).webp({quality: previewQuality}).toBuffer()
-
-    return {
-        bytes,
-        height: previewHeight,
-        width: previewWidth,
-    }
-}
-
 /**
  * @returns {Promise<string>}
  */
