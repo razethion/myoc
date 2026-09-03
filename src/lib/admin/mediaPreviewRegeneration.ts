@@ -17,6 +17,7 @@ import {
 } from '../media/url'
 
 const PREVIEW_REGENERATION_BATCH_SIZE = 25
+export const MEDIA_PREVIEW_REGENERATION_ITEMS_PER_WORKFLOW = 250
 const GALLERY_IMAGE_DIMENSION_PROBE_BYTES = 1024 * 1024
 
 export type MediaPreviewRegenerationSummary = {
@@ -32,6 +33,21 @@ export type MediaPreviewRegenerationSummary = {
 export type MediaPreviewRegenerationCursor = {
     mediaId: string
     ratingOrder: number
+}
+
+export function mediaPreviewRegenerationWorkflowInstanceId(runId: string, segment: number): string {
+    return segment === 0 ? runId : `${runId}-segment-${segment}`
+}
+
+export function activeMediaPreviewRegenerationWorkflowInstanceIds(runId: string, processedVariants: number): string[] {
+    const segment = Math.floor(processedVariants / MEDIA_PREVIEW_REGENERATION_ITEMS_PER_WORKFLOW)
+    const currentId = mediaPreviewRegenerationWorkflowInstanceId(runId, segment)
+
+    if (segment === 0 || processedVariants % MEDIA_PREVIEW_REGENERATION_ITEMS_PER_WORKFLOW !== 0) {
+        return [currentId]
+    }
+
+    return [currentId, mediaPreviewRegenerationWorkflowInstanceId(runId, segment - 1)]
 }
 
 export type MediaPreviewRegenerationCandidate = {

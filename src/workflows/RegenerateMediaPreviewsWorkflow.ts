@@ -4,14 +4,22 @@ import {
     applyMediaPreviewRegenerationResults,
     getMediaPreviewRegenerationCandidates,
     initializeMediaPreviewRegenerationSummary,
+    MEDIA_PREVIEW_REGENERATION_ITEMS_PER_WORKFLOW,
     type MediaPreviewRegenerationCursor,
     type MediaPreviewRegenerationResult,
+    type MediaPreviewRegenerationSummary,
+    mediaPreviewRegenerationWorkflowInstanceId,
     regenerateMediaPreviewCandidate,
 } from '../lib/admin/mediaPreviewRegeneration'
 import type {Bindings} from '../types/bindings'
 
 export type RegenerateMediaPreviewsWorkflowParams = {
     runId: string
+    continuation?: {
+        cursor: MediaPreviewRegenerationCursor
+        segment: number
+        summary: MediaPreviewRegenerationSummary
+    }
 }
 
 const MEDIA_STEP_CONFIG = {
@@ -35,7 +43,7 @@ const D1_STEP_CONFIG = {
 export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings, RegenerateMediaPreviewsWorkflowParams> {
     override async run(event: Readonly<WorkflowEvent<RegenerateMediaPreviewsWorkflowParams>>, step: WorkflowStep) {
         try {
-            return await this.runRegeneration(event.payload.runId, step)
+            return await this.runRegeneration(event.payload, step)
         } catch (error) {
             const message = errorMessage(error)
 
@@ -48,22 +56,32 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
         }
     }
 
-    private async runRegeneration(runId: string, step: WorkflowStep) {
-        let summary = await step.do('initialize job', D1_STEP_CONFIG, async () => {
-            const initial = await initializeMediaPreviewRegenerationSummary(this.env.DB)
-            await updateAdminJobRunSummary(this.env.DB, runId, initial)
-            return initial
-        })
-        let cursor: MediaPreviewRegenerationCursor | null = null
+    private async runRegeneration(params: RegenerateMediaPreviewsWorkflowParams, step: WorkflowStep) {
+        const {continuation, runId} = params
+        let summary =
+            continuation?.summary ??
+            (await step.do('initialize job', D1_STEP_CONFIG, async () => {
+                const initial = await initializeMediaPreviewRegenerationSummary(this.env.DB)
+                await updateAdminJobRunSummary(this.env.DB, runId, initial)
+                return initial
+            }))
+        let cursor: MediaPreviewRegenerationCursor | null = continuation?.cursor ?? null
+        const segment = continuation?.segment ?? 0
         let batchNumber = 1
+        let processedByInstance = 0
 
-        while (true) {
+        while (processedByInstance < MEDIA_PREVIEW_REGENERATION_ITEMS_PER_WORKFLOW) {
             const candidates = await step.do(`load batch ${batchNumber}`, D1_STEP_CONFIG, async () => {
                 return await getMediaPreviewRegenerationCandidates(this.env.DB, cursor)
             })
 
             if (candidates.length === 0) {
-                break
+                await step.do('complete job', D1_STEP_CONFIG, async () => {
+                    await completeAdminJobRun(this.env.DB, runId, summary)
+                    return summary
+                })
+
+                return summary
             }
 
             const results: MediaPreviewRegenerationResult[] = []
@@ -90,6 +108,7 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
             }
 
             summary = applyMediaPreviewRegenerationResults(summary, results)
+            processedByInstance += candidates.length
             await step.do(`record batch ${batchNumber}`, D1_STEP_CONFIG, async () => {
                 await updateAdminJobRunSummary(this.env.DB, runId, summary)
                 return summary
@@ -98,9 +117,23 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
             batchNumber += 1
         }
 
-        await step.do('complete job', D1_STEP_CONFIG, async () => {
-            await completeAdminJobRun(this.env.DB, runId, summary)
-            return summary
+        const nextSegment = segment + 1
+        const continuationCursor = cursor as MediaPreviewRegenerationCursor
+        await step.do(`start continuation ${nextSegment}`, D1_STEP_CONFIG, async () => {
+            await this.env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW.createBatch([
+                {
+                    id: mediaPreviewRegenerationWorkflowInstanceId(runId, nextSegment),
+                    params: {
+                        runId,
+                        continuation: {
+                            cursor: continuationCursor,
+                            segment: nextSegment,
+                            summary,
+                        },
+                    },
+                },
+            ])
+            return {started: true}
         })
 
         return summary

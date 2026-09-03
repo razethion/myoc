@@ -320,6 +320,41 @@ describe('POST /admin/admin-options/jobs/:jobName/run', () => {
         expect(runs).toEqual([{id: firstBody.run.runId, triggered_by_user_id: currentUserId, status: 'running'}])
     })
 
+    it.each([
+        ['the continuation is queued', 250, {'continued-run': 'complete', 'continued-run-segment-1': 'queued'}],
+        ['the previous segment is still running', 250, {'continued-run': 'running', 'continued-run-segment-1': 'missing'}],
+        ['the continuation is processing', 251, {'continued-run': 'complete', 'continued-run-segment-1': 'running'}],
+    ])('reuses a continued preview job when %s', async (_caseName, processedVariants, statuses) => {
+        await seedCurrentUser()
+        await seedPreviewRegenerationRun(
+            'continued-run',
+            '2026-01-01 00:00:00',
+            JSON.stringify({
+                totalVariants: 251,
+                processedVariants,
+                regeneratedPreviews: processedVariants,
+                regeneratedBlurs: 0,
+                skippedVariants: 0,
+                failedVariants: 0,
+                lastError: null,
+            }),
+        )
+        const workflow = createMockWorkflowBinding(statuses)
+
+        const response = await postAdminJobRun(
+            'media-preview-regeneration',
+            createMockR2Bucket(),
+            'session-token',
+            'application/json',
+            workflow,
+        )
+        const body = (await response.json()) as {ok: true; run: {runId: string; status: string}}
+
+        expect(response.status).toBe(200)
+        expect(body.run).toMatchObject({runId: 'continued-run', status: 'running'})
+        expect(workflow.create).not.toHaveBeenCalled()
+    })
+
     it('records a failed preview workflow start on the job run', async () => {
         await seedCurrentUser()
         const workflow = createMockWorkflowBinding()

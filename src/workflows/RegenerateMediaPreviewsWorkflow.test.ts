@@ -1,6 +1,7 @@
 import {introspectWorkflowInstance} from 'cloudflare:test'
 import {env} from 'cloudflare:workers'
 import {describe, expect, it} from 'vitest'
+import {MEDIA_PREVIEW_REGENERATION_ITEMS_PER_WORKFLOW} from '../lib/admin/mediaPreviewRegeneration'
 import {queryOne, seedCharacter, seedMedia, seedUser, useTestDatabase} from '../test/d1'
 
 const db = useTestDatabase()
@@ -107,6 +108,35 @@ describe('RegenerateMediaPreviewsWorkflow', () => {
         const run = await getJob(runId)
         expect(run).toMatchObject({status: 'success', error_message: null})
         expect(JSON.parse(run?.summary_json ?? 'null')).toEqual(expectedSummary)
+    })
+
+    it('continues a large job in a new workflow instance and stores the final result', async () => {
+        const runId = crypto.randomUUID()
+        const totalVariants = MEDIA_PREVIEW_REGENERATION_ITEMS_PER_WORKFLOW + 1
+        await seedJob(runId)
+        await seedSfwMedia(totalVariants)
+        await using firstInstance = await introspectWorkflowInstance(env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW, runId)
+        await using continuationInstance = await introspectWorkflowInstance(env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW, `${runId}-segment-1`)
+
+        await env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW.create({id: runId, params: {runId}})
+        await firstInstance.waitForStatus('complete')
+        await continuationInstance.waitForStatus('complete')
+
+        await expect(firstInstance.getOutput()).resolves.toMatchObject({
+            totalVariants,
+            processedVariants: MEDIA_PREVIEW_REGENERATION_ITEMS_PER_WORKFLOW,
+            failedVariants: MEDIA_PREVIEW_REGENERATION_ITEMS_PER_WORKFLOW,
+        })
+        const expectedSummary = {
+            ...summary(totalVariants),
+            processedVariants: totalVariants,
+            failedVariants: totalVariants,
+            lastError: expect.stringContaining('source image is missing or invalid'),
+        }
+        await expect(continuationInstance.getOutput()).resolves.toMatchObject(expectedSummary)
+        const run = await getJob(runId)
+        expect(run).toMatchObject({status: 'success', error_message: null})
+        expect(JSON.parse(run?.summary_json ?? 'null')).toMatchObject(expectedSummary)
     })
 
     it('records one item failure and completes the remaining job', async () => {

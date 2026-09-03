@@ -4,7 +4,11 @@ import {toSqlTimestamp} from '../auth/session'
 import {backupD1Database, type D1BackupSummary} from '../db/backup'
 import {type LeaderboardRefreshSummary, refreshLeaderboard} from '../leaderboard'
 import {cleanupStaleR2Media, type R2CleanupSummary} from '../media/r2Cleanup'
-import {emptyMediaPreviewRegenerationSummary, type MediaPreviewRegenerationSummary} from './mediaPreviewRegeneration'
+import {
+    activeMediaPreviewRegenerationWorkflowInstanceIds,
+    emptyMediaPreviewRegenerationSummary,
+    type MediaPreviewRegenerationSummary,
+} from './mediaPreviewRegeneration'
 
 const ADMIN_JOBS = [
     {
@@ -29,6 +33,7 @@ export type AdminJobName = (typeof ADMIN_JOBS)[number]['name']
 type AdminJobTriggerSource = 'cron' | 'manual'
 type AdminJobRunStatus = 'running' | 'success' | 'error'
 const WORKFLOW_START_GRACE_PERIOD_MS = 5 * 60 * 1_000
+const ACTIVE_WORKFLOW_STATUSES = new Set<InstanceStatus['status']>(['paused', 'queued', 'running', 'unknown', 'waiting', 'waitingForPause'])
 export type AdminJobSummary = D1BackupSummary | R2CleanupSummary | LeaderboardRefreshSummary | MediaPreviewRegenerationSummary
 
 type AdminJobEnv = Pick<
@@ -212,7 +217,12 @@ async function startMediaPreviewRegenerationJob(
     let started = await startExclusiveAdminJobRun(env.DB, 'media-preview-regeneration', options, summary)
 
     if (!started.created) {
-        const active = await isMediaPreviewWorkflowActive(env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW, started.runId, started.startedAt)
+        const active = await isMediaPreviewWorkflowActive(
+            env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW,
+            started.runId,
+            started.startedAt,
+            started.summary,
+        )
 
         if (active) {
             return {
@@ -305,14 +315,39 @@ async function isMediaPreviewWorkflowActive(
     workflow: Bindings['REGENERATE_MEDIA_PREVIEWS_WORKFLOW'],
     runId: string,
     startedAt: string,
+    summary: MediaPreviewRegenerationSummary,
 ): Promise<boolean> {
     const startedAtMs = Date.parse(`${startedAt.replace(' ', 'T')}Z`)
     const recentlyStarted = Number.isFinite(startedAtMs) && Date.now() - startedAtMs < WORKFLOW_START_GRACE_PERIOD_MS
-    let status: InstanceStatus['status']
+    const statusErrors: Error[] = []
 
+    for (const instanceId of activeMediaPreviewRegenerationWorkflowInstanceIds(runId, summary.processedVariants)) {
+        try {
+            if (await isMediaPreviewWorkflowInstanceActive(workflow, instanceId, recentlyStarted)) {
+                return true
+            }
+        } catch (error) {
+            statusErrors.push(error instanceof Error ? error : new Error(errorMessage(error)))
+        }
+    }
+
+    const [statusError] = statusErrors
+    if (statusError) {
+        throw statusError
+    }
+
+    return false
+}
+
+async function isMediaPreviewWorkflowInstanceActive(
+    workflow: Bindings['REGENERATE_MEDIA_PREVIEWS_WORKFLOW'],
+    instanceId: string,
+    recentlyStarted: boolean,
+): Promise<boolean> {
     try {
-        const instance = await workflow.get(runId)
-        status = (await instance.status()).status
+        const instance = await workflow.get(instanceId)
+        const status = (await instance.status()).status
+        return ACTIVE_WORKFLOW_STATUSES.has(status)
     } catch (error) {
         if (recentlyStarted) {
             return true
@@ -324,12 +359,6 @@ async function isMediaPreviewWorkflowActive(
 
         throw error
     }
-
-    if (status === 'queued' || status === 'running' || status === 'paused' || status === 'waiting' || status === 'waitingForPause') {
-        return true
-    }
-
-    return status === 'unknown'
 }
 
 function isMissingWorkflowInstanceError(error: unknown): boolean {
