@@ -1,4 +1,5 @@
-import {env, introspectWorkflowInstance} from 'cloudflare:test'
+import {introspectWorkflowInstance} from 'cloudflare:test'
+import {env} from 'cloudflare:workers'
 import {describe, expect, it} from 'vitest'
 import {queryOne, seedCharacter, seedMedia, seedUser, useTestDatabase} from '../test/d1'
 

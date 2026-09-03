@@ -7,6 +7,21 @@ import {buildRecentFeedVariantTree, getRecentFeedPointer, publishRecentFeed} fro
 
 const db = useTestDatabase()
 
+function afterNextMatchingWrite(bucket: R2Bucket, keyPrefix: string, action: () => Promise<void>): void {
+    const putObject = vi.mocked(bucket.put).getMockImplementation()
+    if (!putObject) throw new Error('The R2 test bucket does not implement object writes')
+    let actionPending = true
+
+    vi.mocked(bucket.put).mockImplementation(async (key, value, options) => {
+        const result = await putObject(key, value, options)
+        if (actionPending && key.startsWith(keyPrefix)) {
+            actionPending = false
+            await action()
+        }
+        return result
+    })
+}
+
 describe('recent feed publisher', () => {
     it('stays disabled unless forced and reports an active publisher as busy', async () => {
         const bucket = createMockR2Bucket()
@@ -314,16 +329,8 @@ describe('recent feed publisher', () => {
         const initial = await publishRecentFeed(env, {now: new Date('2026-08-25T10:00:00.000Z')})
         await db.prepare('UPDATE recent_feed_state SET requested_revision = 2 WHERE singleton = 1').run()
         await db.prepare("UPDATE recent_feed_dirty_hours SET revision = 2 WHERE dirty_hour = '*'").run()
-        const putObject = vi.mocked(bucket.put).getMockImplementation()
-        if (!putObject) throw new Error('The R2 test bucket does not implement object writes')
-        let expireNextRootWrite = true
-        vi.mocked(bucket.put).mockImplementation(async (key, value, options) => {
-            const result = await putObject(key, value, options)
-            if (expireNextRootWrite && key.startsWith('generations/v1/roots/')) {
-                expireNextRootWrite = false
-                await db.prepare("UPDATE recent_feed_state SET lease_expires_at = datetime('now', '-1 second') WHERE singleton = 1").run()
-            }
-            return result
+        afterNextMatchingWrite(bucket, 'generations/v1/roots/', async () => {
+            await db.prepare("UPDATE recent_feed_state SET lease_expires_at = datetime('now', '-1 second') WHERE singleton = 1").run()
         })
 
         await expect(publishRecentFeed(env, {now: new Date('2026-08-25T13:00:00.000Z')})).rejects.toThrow(
@@ -380,16 +387,8 @@ describe('recent feed publisher', () => {
     it('retries an initial publication if its lease expires after the root write', async () => {
         const bucket = createMockR2Bucket()
         const env = {...publisherEnv(bucket), RECENT_FEED_PUBLISH_ENABLED: 'true'}
-        const putObject = vi.mocked(bucket.put).getMockImplementation()
-        if (!putObject) throw new Error('The R2 test bucket does not implement object writes')
-        let expireNextRootWrite = true
-        vi.mocked(bucket.put).mockImplementation(async (key, value, options) => {
-            const result = await putObject(key, value, options)
-            if (expireNextRootWrite && key.startsWith('generations/v1/roots/')) {
-                expireNextRootWrite = false
-                await db.prepare("UPDATE recent_feed_state SET lease_expires_at = datetime('now', '-1 second') WHERE singleton = 1").run()
-            }
-            return result
+        afterNextMatchingWrite(bucket, 'generations/v1/roots/', async () => {
+            await db.prepare("UPDATE recent_feed_state SET lease_expires_at = datetime('now', '-1 second') WHERE singleton = 1").run()
         })
 
         await expect(publishRecentFeed(env, {now: new Date('2026-08-25T13:00:00.000Z')})).rejects.toThrow(

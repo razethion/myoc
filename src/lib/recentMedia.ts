@@ -29,7 +29,7 @@ export const RecentMediaPageSchema = z.object({
     items: z.array(RecentMediaItemSchema),
     nextCursor: z.string().nullable(),
     nextPosition: z.number().int().nonnegative().nullable().default(null),
-    publicRootUrl: z.string().url().nullable().default(null),
+    publicRootUrl: z.url().nullable().default(null),
     generation: z.string().nullable().default(null),
     publishedAt: z.string().nullable().default(null),
 })

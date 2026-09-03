@@ -662,7 +662,7 @@ async function getAppPath(path: string, database = db, headers: Record<string, s
 async function postPageAction(path: string, database: D1Database, mediaBucket: R2Bucket): Promise<Response> {
     const sessionToken = 'session-token'
 
-    return await pageRoutes.request(
+    return pageRoutes.request(
         `https://example.com${path}`,
         {
             body: JSON.stringify({}),
@@ -1915,9 +1915,12 @@ describe('GET /migrate', () => {
         expect(fetchMock).not.toHaveBeenCalled()
     })
 
+    // noinspection HttpUrlsUsage -- This test requires an insecure URL.
+    const insecureToyhouseImageUrl = 'http://f2.toyhou.se/file/image.png'
+
     it.each([
         ['a malformed URL', 'not a URL'],
-        ['a non-HTTPS URL', 'http://f2.toyhou.se/file/image.png'],
+        ['a non-HTTPS URL', insecureToyhouseImageUrl],
         ['a username', 'https://user@f2.toyhou.se/file/image.png'],
         ['a password', 'https://:secret@f2.toyhou.se/file/image.png'],
         ['a wildcard Toyhou.se host', 'https://cdn.toyhou.se/file/image.png'],

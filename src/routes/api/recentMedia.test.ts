@@ -238,7 +238,7 @@ async function publishTestRoot(bucket: R2Bucket, items: Record<'n0-u0' | 'n0-u1'
 }
 
 async function requestRecentMedia(bucket: R2Bucket, query = '', init: RequestInit = {}): Promise<Response> {
-    return await app.request(
+    return app.request(
         `https://example.com/api/recent-media${query}`,
         init,
         createWorkerEnv({

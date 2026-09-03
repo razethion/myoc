@@ -3,8 +3,9 @@ import {serializeJsonForHtmlScript} from './scriptJson'
 
 describe('serializeJsonForHtmlScript', () => {
     it('escapes characters that can break out of an HTML script element', () => {
+        const scriptInjection = ['</scr', 'ipt><scr', 'ipt>attack()</scr', 'ipt>'].join('')
         const value = {
-            text: '</script><script>attack()</script>&>\u2028\u2029',
+            text: `${scriptInjection}&>\u2028\u2029`,
         }
 
         const serialized = serializeJsonForHtmlScript(value)

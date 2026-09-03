@@ -3,6 +3,7 @@ import {existsSync} from 'node:fs'
 import {mkdtemp, readFile, rmdir, unlink, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {dirname, join, resolve} from 'node:path'
+import process from 'node:process'
 import {fileURLToPath} from 'node:url'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -50,6 +51,10 @@ const resetStateSql = `DELETE FROM recent_feed_dirty_hours
                        INSERT INTO recent_feed_dirty_hours (dirty_hour, revision, reason, urgent)
                        VALUES ('*', 1, 'initial-build', 1);`
 
+function environmentValue(name) {
+    return process.env[name]
+}
+
 const options = parseOptions(process.argv.slice(2))
 
 if (options.help) {
@@ -88,12 +93,18 @@ function parseOptions(args) {
 
     const parsed = {
         confirmProduction: optionValue(args, '--confirm-production'),
-        database: optionValue(args, '--database') || process.env.RECENT_FEED_DATABASE || 'myoc-db',
-        delayMs: positiveInteger(optionValue(args, '--delay-ms') || process.env.RECENT_FEED_BACKFILL_DELAY_MS || '1000', '--delay-ms'),
+        database: optionValue(args, '--database') || environmentValue('RECENT_FEED_DATABASE') || 'myoc-db',
+        delayMs: positiveInteger(
+            optionValue(args, '--delay-ms') || environmentValue('RECENT_FEED_BACKFILL_DELAY_MS') || '1000',
+            '--delay-ms',
+        ),
         help: flags.has('--help') || flags.has('-h'),
         local: flags.has('--local'),
-        maxRuns: positiveInteger(optionValue(args, '--max-runs') || process.env.RECENT_FEED_BACKFILL_MAX_RUNS || '10000', '--max-runs'),
-        port: positiveInteger(optionValue(args, '--port') || process.env.RECENT_FEED_BACKFILL_PORT || '8798', '--port'),
+        maxRuns: positiveInteger(
+            optionValue(args, '--max-runs') || environmentValue('RECENT_FEED_BACKFILL_MAX_RUNS') || '10000',
+            '--max-runs',
+        ),
+        port: positiveInteger(optionValue(args, '--port') || environmentValue('RECENT_FEED_BACKFILL_PORT') || '8798', '--port'),
         production: flags.has('--production'),
     }
 
@@ -181,7 +192,9 @@ function httpsOrigin(value, name) {
     try {
         url = new URL(value)
     } catch (error) {
-        throw new Error(`${name} must be a valid URL.`, {cause: error})
+        const invalidUrlError = new Error(`${name} must be a valid URL.`)
+        invalidUrlError.cause = error
+        throw invalidUrlError
     }
     if (url.protocol !== 'https:' || url.username || url.password) {
         throw new Error(`${name} must be an HTTPS URL without credentials.`)
@@ -231,7 +244,9 @@ async function createRestrictedConfig() {
     try {
         config = JSON.parse(await readFile(sourceConfigPath, 'utf8'))
     } catch (error) {
-        throw new Error(`Could not read ${sourceConfigPath} as JSON.`, {cause: error})
+        const invalidConfigError = new Error(`Could not read ${sourceConfigPath} as JSON.`)
+        invalidConfigError.cause = error
+        throw invalidConfigError
     }
 
     const database = config.d1_databases?.find((binding) => binding.binding === 'DB')
@@ -381,6 +396,19 @@ async function triggerRecoveryCron() {
     }
 }
 
+/**
+ * @typedef {object} RecentFeedState
+ * @property {string | null} bootstrapCursorCreatedAt
+ * @property {string | null} bootstrapCursorId
+ * @property {number | null} bootstrapRevision
+ * @property {string | null} generation
+ * @property {string | null} lastError
+ * @property {number} publishedRevision
+ * @property {number} requestedRevision
+ * @property {string | null} rootKey
+ */
+
+/** @returns {Promise<RecentFeedState>} */
 async function readState() {
     const {stdout} = await runWrangler([
         'd1',

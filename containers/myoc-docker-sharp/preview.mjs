@@ -1,9 +1,8 @@
 import sharp from 'sharp'
 
 /**
- * @param {Buffer} sourceBytes
+ * @param {import('sharp').SharpInput} sourceBytes
  * @param {{limitInputPixels: number, maxLongEdge: number, quality: number}} options
- * @returns {Promise<{bytes: Buffer, height: number, width: number}>}
  */
 export async function createAvifPreview(sourceBytes, options) {
     // nosemgrep: javascript.express.file.sharp-express.sharp-express -- sourceBytes is an in-memory Buffer from a validated fetch.
