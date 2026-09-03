@@ -37,14 +37,14 @@ type ModerationMediaRow = {
     nsfw_height: number | null
     nsfw_byte_size: number | null
     sfw_preview_image_key?: string | null
-    sfw_preview_content_type?: string
+    sfw_preview_content_type: string
     sfw_preview_width?: number | null
     sfw_preview_height?: number | null
     sfw_preview_byte_size?: number | null
     nsfw_preview_image_key?: string | null
-    nsfw_preview_content_type?: string
+    nsfw_preview_content_type: string
     nsfw_blur_image_key?: string | null
-    nsfw_blur_content_type?: string
+    nsfw_blur_content_type: string
     nsfw_preview_width?: number | null
     nsfw_preview_height?: number | null
     nsfw_preview_byte_size?: number | null
@@ -76,11 +76,11 @@ type MediaCleanupRow = {
     sfw_content_type: string | null
     nsfw_content_type: string | null
     sfw_preview_image_key?: string | null
-    sfw_preview_content_type?: string
+    sfw_preview_content_type: string
     nsfw_preview_image_key?: string | null
-    nsfw_preview_content_type?: string
+    nsfw_preview_content_type: string
     nsfw_blur_image_key?: string | null
-    nsfw_blur_content_type?: string
+    nsfw_blur_content_type: string
 }
 
 const AdminJobActionResponseSchema = z.union([
@@ -444,7 +444,7 @@ function reportedPreviewObjectKey(media: ReportMediaRow, rating: 'sfw' | 'nsfw')
 }
 
 function mediaVariantPreviewContentType(media: ModerationMediaRow, rating: 'sfw' | 'nsfw'): string {
-    return rating === 'sfw' ? (media.sfw_preview_content_type ?? 'image/webp') : (media.nsfw_preview_content_type ?? 'image/webp')
+    return rating === 'sfw' ? media.sfw_preview_content_type : media.nsfw_preview_content_type
 }
 
 function reportedBlurObjectKey(media: ReportMediaRow, rating: 'sfw' | 'nsfw'): string | null {
@@ -606,9 +606,7 @@ function mediaPreviewObjectKeys(media: MediaCleanupRow, rating: 'sfw' | 'nsfw'):
     const imageKey = rating === 'sfw' ? media.sfw_preview_image_key : media.nsfw_preview_image_key
     const contentType = rating === 'sfw' ? media.sfw_preview_content_type : media.nsfw_preview_content_type
 
-    return imageKey
-        ? [characterMediaPreviewImageObjectKey(media.user_id, media.character_id, media.id, imageKey, rating, contentType ?? 'image/webp')]
-        : []
+    return imageKey ? [characterMediaPreviewImageObjectKey(media.user_id, media.character_id, media.id, imageKey, rating, contentType)] : []
 }
 
 async function respondToReportAction(

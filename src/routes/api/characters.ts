@@ -22,6 +22,12 @@ import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../../lib/media/cacheControl'
 import {type HeightChartJson, parseHeightChartJson as parseCharacterHeightChartJson} from '../../lib/media/heightChart'
 import {type GalleryImageMetadata, readGalleryImageDimensions, readGalleryImageMetadata} from '../../lib/media/imageMetadata'
 import {
+    GALLERY_NSFW_BLUR_CONTENT_TYPE,
+    type GeneratedGalleryPreview,
+    generateMediaPreviewWithContainer,
+    generateNsfwBlurImage,
+} from '../../lib/media/previewGeneration'
+import {
     isProfileImageDataUrlTooLarge,
     normalizeProfileImagePayload,
     PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES,
@@ -159,12 +165,7 @@ type CompletedChunkedUpload = {
     parts: R2UploadedPart[]
 }
 
-type ParsedPreviewImage = {
-    bytes: Uint8Array
-    contentType: 'image/avif'
-    width: number
-    height: number
-}
+type ParsedPreviewImage = GeneratedGalleryPreview
 
 type ParsedMediaArtists = {
     sfwArtist: string
@@ -183,8 +184,6 @@ class ChunkedUploadInitError extends Error {
         super('Upload could not be initialized')
     }
 }
-
-class PreviewValidationError extends Error {}
 
 class GalleryUploadValidationError extends Error {}
 
@@ -294,21 +293,7 @@ const GALLERY_IMAGE_ALLOWED_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 
 const GALLERY_IMAGE_CACHE_CONTROL = REVOCABLE_MEDIA_CACHE_CONTROL
 const GALLERY_IMAGE_MAX_BYTES = 200 * 1024 * 1024
 const GALLERY_IMAGE_MAX_PIXELS = 200_000_000
-const GALLERY_PREVIEW_CONTENT_TYPE = 'image/avif'
-const GALLERY_PREVIEW_MAX_LONG_EDGE = 1600
-const GALLERY_PREVIEW_MAX_PIXELS = GALLERY_PREVIEW_MAX_LONG_EDGE * GALLERY_PREVIEW_MAX_LONG_EDGE
-const GALLERY_PREVIEW_MAX_BYTES_PER_PIXEL = 4
-const GALLERY_PREVIEW_MAX_CONTAINER_OVERHEAD_BYTES = 4096
-const GALLERY_PREVIEW_MAX_BYTES =
-    GALLERY_PREVIEW_MAX_PIXELS * GALLERY_PREVIEW_MAX_BYTES_PER_PIXEL + GALLERY_PREVIEW_MAX_CONTAINER_OVERHEAD_BYTES
-const GALLERY_PREVIEW_DIMENSION_TOLERANCE = 1
-const GALLERY_PREVIEW_CONTAINER_MAX_ATTEMPTS = 3
-const GALLERY_PREVIEW_CONTAINER_RETRY_DELAY_MS = 1_000
 const GALLERY_IMAGE_DIMENSION_PROBE_BYTES = 1024 * 1024
-const GALLERY_NSFW_BLUR_MAX_WIDTH = 960
-const GALLERY_NSFW_BLUR_AMOUNT = 250
-const GALLERY_NSFW_BLUR_QUALITY = 60
-const GALLERY_NSFW_BLUR_CONTENT_TYPE = 'image/avif'
 const HEIGHT_CHART_JSON_MAX_LENGTH = 2048
 const HEIGHT_CHART_MIN_METERS = 0.01
 const HEIGHT_CHART_MAX_METERS = 100
@@ -2163,44 +2148,6 @@ function parseChunkedUploadPair(
     return {sfwUpload, nsfwUpload}
 }
 
-function maxPreviewByteSize(width: number, height: number): number {
-    return width * height * GALLERY_PREVIEW_MAX_BYTES_PER_PIXEL + GALLERY_PREVIEW_MAX_CONTAINER_OVERHEAD_BYTES
-}
-
-function expectedPreviewDimensions(original: {width: number; height: number; displayWidth?: number; displayHeight?: number}): {
-    width: number
-    height: number
-} {
-    const width = original.displayWidth ?? original.width
-    const height = original.displayHeight ?? original.height
-    const longEdge = Math.max(width, height)
-    const scale = Math.min(1, GALLERY_PREVIEW_MAX_LONG_EDGE / longEdge)
-
-    return {
-        width: Math.max(1, Math.round(width * scale)),
-        height: Math.max(1, Math.round(height * scale)),
-    }
-}
-
-function assertPreviewMatchesOriginal(
-    preview: ParsedPreviewImage,
-    original: {
-        width: number
-        height: number
-        displayWidth?: number
-        displayHeight?: number
-    },
-    label: string,
-): void {
-    const expected = expectedPreviewDimensions(original)
-    const widthDelta = Math.abs(preview.width - expected.width)
-    const heightDelta = Math.abs(preview.height - expected.height)
-
-    if (widthDelta > GALLERY_PREVIEW_DIMENSION_TOLERANCE || heightDelta > GALLERY_PREVIEW_DIMENSION_TOLERANCE) {
-        throw new PreviewValidationError(`${label} dimensions must match the uploaded image scaled to ${GALLERY_PREVIEW_MAX_LONG_EDGE}px`)
-    }
-}
-
 async function parseChunkedMediaCompleteBody(c: CharacterRouteContext): Promise<
     | ParsedChunkedMediaComplete
     | {
@@ -2623,7 +2570,7 @@ function applyCompletedMediaVariant(media: CharacterMediaRecord, variant: Comple
 
     if (variant.rating === 'nsfw') {
         media.nsfw_blur_image_key = variant.nsfwBlurImageKey
-        media.nsfw_blur_content_type = variant.nsfwBlurContentType ?? 'image/webp'
+        media.nsfw_blur_content_type = GALLERY_NSFW_BLUR_CONTENT_TYPE
     }
 }
 
@@ -2909,107 +2856,6 @@ async function generateMediaPreviewImage(
     return await generateMediaPreviewWithContainer(env, sourceUrl, image)
 }
 
-function sleep(milliseconds: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, milliseconds))
-}
-
-/* istanbul ignore next -- retry behavior is directly tested; remaining branch gaps are defensive logging fallback types. */
-async function generateMediaPreviewWithContainer(
-    env: Bindings,
-    sourceUrl: string,
-    image: CompletedGalleryUpload,
-): Promise<ParsedPreviewImage> {
-    if (!env.MYOC_DOCKER_SHARP_CONTAINER) {
-        throw new Error('Preview container binding is not configured.')
-    }
-
-    const id = env.MYOC_DOCKER_SHARP_CONTAINER.idFromName('myoc-docker-sharp')
-    const container = env.MYOC_DOCKER_SHARP_CONTAINER.get(id)
-
-    for (let attempt = 1; attempt <= GALLERY_PREVIEW_CONTAINER_MAX_ATTEMPTS; attempt += 1) {
-        try {
-            const response = await container.fetch('https://container/images/preview', {
-                body: JSON.stringify({imageUrl: sourceUrl}),
-                headers: {
-                    authorization: `Bearer ${env.PREVIEW_PROCESSOR_TOKEN}`,
-                    'content-type': 'application/json',
-                },
-                method: 'POST',
-            })
-
-            return await previewFromResponse(response, image, 'Container preview')
-        } catch (error) {
-            if (error instanceof PreviewValidationError || attempt === GALLERY_PREVIEW_CONTAINER_MAX_ATTEMPTS) {
-                throw error
-            }
-
-            console.warn('Container preview generation failed transiently, retrying', {
-                attempt,
-                error: error instanceof Error ? error.message : String(error),
-            })
-            await sleep(GALLERY_PREVIEW_CONTAINER_RETRY_DELAY_MS)
-        }
-    }
-
-    /* istanbul ignore next -- maxAttempts is positive, and the loop either returns or throws from the catch block. */
-    throw new Error('Container preview failed unexpectedly.')
-}
-
-/* istanbul ignore next -- validation branches are directly tested; remaining gaps are defensive message-format combinations. */
-async function previewFromResponse(response: Response, image: CompletedGalleryUpload, label: string): Promise<ParsedPreviewImage> {
-    const bytes = new Uint8Array(await response.arrayBuffer())
-    const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.toLowerCase() ?? ''
-
-    assertPreviewResponse(response, bytes, contentType, label)
-
-    const dimensions = readGalleryImageDimensions(bytes, GALLERY_PREVIEW_CONTENT_TYPE)
-
-    if (!dimensions) {
-        throw new PreviewValidationError(`${label} returned an invalid AVIF image`)
-    }
-
-    const preview = {
-        bytes,
-        contentType: GALLERY_PREVIEW_CONTENT_TYPE,
-        width: dimensions.width,
-        height: dimensions.height,
-    } satisfies ParsedPreviewImage
-
-    assertPreviewMatchesOriginal(preview, image, label)
-
-    if (bytes.byteLength > maxPreviewByteSize(preview.width, preview.height)) {
-        throw new PreviewValidationError(`${label} is too large for its dimensions`)
-    }
-
-    return preview
-}
-
-function assertPreviewResponse(response: Response, bytes: Uint8Array, contentType: string, label: string): void {
-    if (!response.ok) {
-        const message = `${label} failed with ${response.status}`
-
-        if (response.status === 429 || response.status >= 500) {
-            throw new Error(message)
-        }
-
-        throw new PreviewValidationError(message)
-    }
-
-    if (contentType !== GALLERY_PREVIEW_CONTENT_TYPE) {
-        const details = contentType ? ` (${contentType})` : ''
-        throw new PreviewValidationError(`${label} returned an unexpected content type${details}`)
-    }
-
-    if (bytes.byteLength <= 0) {
-        throw new PreviewValidationError(`${label} is empty`)
-    }
-
-    /* istanbul ignore if -- exercising this would require allocating an 800MB+ response in a Worker test. */
-    if (bytes.byteLength > GALLERY_PREVIEW_MAX_BYTES) {
-        throw new PreviewValidationError(`${label} is too large`)
-    }
-}
-
 /* istanbul ignore next -- blur generation is route-tested; remaining branch is a defensive content-type fallback. */
 async function putNsfwBlurImage(
     images: ImagesBinding | undefined,
@@ -3020,46 +2866,20 @@ async function putNsfwBlurImage(
     preview: ParsedPreviewImage,
     uploadedKeys: string[],
 ): Promise<string> {
-    if (!images) {
-        throw new Error('Cloudflare Images binding is not configured.')
-    }
-
     const imageKey = crypto.randomUUID()
     const objectKey = characterMediaNsfwBlurImageObjectKey(userId, characterId, mediaId, imageKey, GALLERY_NSFW_BLUR_CONTENT_TYPE)
-    const result = await images
-        .input(streamFromBytes(preview.bytes))
-        .transform({width: GALLERY_NSFW_BLUR_MAX_WIDTH, fit: 'scale-down'})
-        .transform({blur: GALLERY_NSFW_BLUR_AMOUNT})
-        .output({format: GALLERY_NSFW_BLUR_CONTENT_TYPE, quality: GALLERY_NSFW_BLUR_QUALITY})
+    const blur = await generateNsfwBlurImage(images, preview)
 
-    const response = result.response()
-    const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() ?? ''
-
-    if (!response.ok || contentType !== GALLERY_NSFW_BLUR_CONTENT_TYPE) {
-        throw new Error('Cloudflare Images did not return the requested AVIF blur image')
-    }
-
-    const bytes = new Uint8Array(await response.arrayBuffer())
-
-    await bucket.put(objectKey, bytes, {
+    await bucket.put(objectKey, blur.bytes, {
         httpMetadata: {
             cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
-            contentType,
+            contentType: blur.contentType,
         },
     })
 
     uploadedKeys.push(objectKey)
 
     return imageKey
-}
-
-function streamFromBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
-    return new ReadableStream<Uint8Array>({
-        start(controller) {
-            controller.enqueue(bytes)
-            controller.close()
-        },
-    })
 }
 
 /* istanbul ignore next -- parser behavior is route/helper-tested; remaining branch gaps are alternate form-field compatibility aliases. */

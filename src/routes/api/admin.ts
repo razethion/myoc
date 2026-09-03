@@ -48,14 +48,14 @@ type ModerationMediaRow = {
     nsfw_height: number | null
     nsfw_byte_size: number | null
     sfw_preview_image_key?: string | null
-    sfw_preview_content_type?: string
+    sfw_preview_content_type: string
     sfw_preview_width?: number | null
     sfw_preview_height?: number | null
     sfw_preview_byte_size?: number | null
     nsfw_preview_image_key?: string | null
-    nsfw_preview_content_type?: string
+    nsfw_preview_content_type: string
     nsfw_blur_image_key?: string | null
-    nsfw_blur_content_type?: string
+    nsfw_blur_content_type: string
     nsfw_preview_width?: number | null
     nsfw_preview_height?: number | null
     nsfw_preview_byte_size?: number | null
@@ -418,7 +418,7 @@ function createMediaReviewPlan(media: ModerationMediaRow): MediaReviewPlan {
         sfwReview: pendingReviewState(),
         nsfwReview: pendingReviewState(),
         nsfwBlurImageKey: media.nsfw_blur_image_key ?? null,
-        nsfwBlurContentType: media.nsfw_blur_content_type ?? 'image/webp',
+        nsfwBlurContentType: media.nsfw_blur_content_type,
         moves: [],
         blurGeneration: null,
         deletedObjectKeys: [],
@@ -436,7 +436,7 @@ function mediaVariantState(media: ModerationMediaRow, rating: 'sfw' | 'nsfw'): M
             height: media.sfw_height,
             byteSize: media.sfw_byte_size,
             previewImageKey: media.sfw_preview_image_key ?? null,
-            previewContentType: media.sfw_preview_content_type ?? 'image/webp',
+            previewContentType: media.sfw_preview_content_type,
             previewWidth: media.sfw_preview_width ?? null,
             previewHeight: media.sfw_preview_height ?? null,
             previewByteSize: media.sfw_preview_byte_size ?? null,
@@ -451,7 +451,7 @@ function mediaVariantState(media: ModerationMediaRow, rating: 'sfw' | 'nsfw'): M
         height: media.nsfw_height,
         byteSize: media.nsfw_byte_size,
         previewImageKey: media.nsfw_preview_image_key ?? null,
-        previewContentType: media.nsfw_preview_content_type ?? 'image/webp',
+        previewContentType: media.nsfw_preview_content_type,
         previewWidth: media.nsfw_preview_width ?? null,
         previewHeight: media.nsfw_preview_height ?? null,
         previewByteSize: media.nsfw_preview_byte_size ?? null,
@@ -739,7 +739,7 @@ function mediaVariantPreviewKey(media: ModerationMediaRow, rating: 'sfw' | 'nsfw
 }
 
 function mediaVariantPreviewContentType(media: ModerationMediaRow, rating: 'sfw' | 'nsfw'): string {
-    return rating === 'sfw' ? (media.sfw_preview_content_type ?? 'image/webp') : (media.nsfw_preview_content_type ?? 'image/webp')
+    return rating === 'sfw' ? media.sfw_preview_content_type : media.nsfw_preview_content_type
 }
 
 async function copyR2Object(bucket: R2Bucket, sourceObjectKey: string, targetObjectKey: string, contentType: string | null): Promise<void> {

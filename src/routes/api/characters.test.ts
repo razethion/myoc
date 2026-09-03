@@ -114,10 +114,12 @@ async function seedMediaRecord(record = createMediaRecord()): Promise<void> {
             sfwContentType: record.sfw_content_type,
             nsfwContentType: record.nsfw_content_type,
             sfwPreviewImageKey: record.sfw_preview_image_key,
+            sfwPreviewContentType: record.sfw_preview_content_type as 'image/webp' | 'image/avif',
             sfwPreviewWidth: record.sfw_preview_width,
             sfwPreviewHeight: record.sfw_preview_height,
             sfwPreviewByteSize: record.sfw_preview_byte_size,
             nsfwPreviewImageKey: record.nsfw_preview_image_key,
+            nsfwPreviewContentType: record.nsfw_preview_content_type as 'image/webp' | 'image/avif',
             nsfwPreviewWidth: record.nsfw_preview_width,
             nsfwPreviewHeight: record.nsfw_preview_height,
             nsfwPreviewByteSize: record.nsfw_preview_byte_size,
@@ -5805,6 +5807,87 @@ describe('character media uploads', () => {
         )
     })
 
+    it('removes the NSFW variant and resets its derived media content types', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const media = createMediaRecord({
+            character_id: character.id,
+            nsfw_image_key: 'nsfw-image-key',
+            nsfw_content_type: 'image/png',
+            nsfw_artist: 'NSFW Artist',
+            nsfw_width: 700,
+            nsfw_height: 500,
+            nsfw_byte_size: 2048,
+            nsfw_preview_image_key: 'nsfw-preview-key',
+            nsfw_preview_content_type: 'image/avif',
+            nsfw_blur_image_key: 'nsfw-blur-key',
+            nsfw_blur_content_type: 'image/avif',
+            nsfw_preview_width: 700,
+            nsfw_preview_height: 500,
+            nsfw_preview_byte_size: 512,
+        })
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        await seedMediaRecord(media)
+
+        const response = await completeExistingChunkedMedia(
+            character.id,
+            media.id,
+            {
+                removeNsfw: true,
+                sfwArtist: 'Kept Artist',
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toMatchObject({
+            media: {
+                sfwImageKey: 'sfw-image-key',
+                sfwArtist: 'Kept Artist',
+                nsfwImageKey: null,
+                nsfwPreviewImageKey: null,
+                nsfwBlurImageKey: null,
+            },
+        })
+        expect(
+            await queryOne<{
+                sfw_image_key: string
+                sfw_artist: string
+                nsfw_image_key: string | null
+                nsfw_preview_image_key: string | null
+                nsfw_preview_content_type: string
+                nsfw_blur_image_key: string | null
+                nsfw_blur_content_type: string
+            }>(
+                `SELECT sfw_image_key, sfw_artist, nsfw_image_key, nsfw_preview_image_key,
+                        nsfw_preview_content_type, nsfw_blur_image_key, nsfw_blur_content_type
+                 FROM character_media WHERE id = ?`,
+                [media.id],
+                db,
+            ),
+        ).toEqual({
+            sfw_image_key: 'sfw-image-key',
+            sfw_artist: 'Kept Artist',
+            nsfw_image_key: null,
+            nsfw_preview_image_key: null,
+            nsfw_preview_content_type: 'image/webp',
+            nsfw_blur_image_key: null,
+            nsfw_blur_content_type: 'image/webp',
+        })
+        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/current-user/character-id/media/media-id/nsfw/nsfw-image-key.png')
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            'characters/current-user/character-id/media/media-id/nsfw/preview/nsfw-preview-key.avif',
+        )
+        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/current-user/character-id/media/media-id/nsfw/blur/nsfw-blur-key.avif')
+    })
+
     it('replaces the SFW variant on existing media from a chunked upload', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
@@ -7424,10 +7507,12 @@ function createMediaRecord(
         nsfw_height: number | null
         nsfw_byte_size: number | null
         sfw_preview_image_key: string | null
+        sfw_preview_content_type: 'image/webp' | 'image/avif'
         sfw_preview_width: number | null
         sfw_preview_height: number | null
         sfw_preview_byte_size: number | null
         nsfw_preview_image_key: string | null
+        nsfw_preview_content_type: 'image/webp' | 'image/avif'
         nsfw_blur_image_key: string | null
         nsfw_blur_content_type: 'image/webp' | 'image/avif'
         nsfw_preview_width: number | null
@@ -7454,10 +7539,12 @@ function createMediaRecord(
         nsfw_height: null,
         nsfw_byte_size: null,
         sfw_preview_image_key: 'sfw-preview-key',
+        sfw_preview_content_type: 'image/webp',
         sfw_preview_width: 800,
         sfw_preview_height: 600,
         sfw_preview_byte_size: 512,
         nsfw_preview_image_key: null,
+        nsfw_preview_content_type: 'image/webp',
         nsfw_blur_image_key: null,
         nsfw_blur_content_type: 'image/webp',
         nsfw_preview_width: null,

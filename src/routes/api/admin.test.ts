@@ -31,7 +31,36 @@ const reportedCharacterMediaR2Keys = [
     'characters/owner-1/character-1/media/media-1/nsfw/blur/nsfw-blur-key.webp',
 ] as const
 
-function requestEnv(mediaBucket = createMockR2Bucket(), imagesBinding = createMockImagesBinding()) {
+function createMockWorkflowBinding(initialStatuses: Record<string, string> = {}) {
+    const statuses = new Map(Object.entries(initialStatuses))
+
+    return {
+        create: vi.fn(async ({id}: {id: string}) => {
+            statuses.set(id, 'running')
+            return {id}
+        }),
+        get: vi.fn(async (id: string) => {
+            if (statuses.get(id) === 'missing') {
+                throw new Error('Workflow instance does not exist')
+            }
+
+            if (statuses.get(id) === 'unavailable') {
+                throw new Error('Workflow service is temporarily unavailable')
+            }
+
+            return {
+                id,
+                status: vi.fn(async () => ({status: statuses.get(id) ?? 'unknown'})),
+            }
+        }),
+    }
+}
+
+function requestEnv(
+    mediaBucket = createMockR2Bucket(),
+    imagesBinding = createMockImagesBinding(),
+    previewWorkflow = createMockWorkflowBinding(),
+) {
     return {
         CACHE: createMockKVNamespace(),
         DB: db,
@@ -39,6 +68,7 @@ function requestEnv(mediaBucket = createMockR2Bucket(), imagesBinding = createMo
         MEDIA_BUCKET: mediaBucket,
         IMAGES: imagesBinding,
         MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+        REGENERATE_MEDIA_PREVIEWS_WORKFLOW: previewWorkflow,
     }
 }
 
@@ -47,6 +77,17 @@ function expectNsfwBlurTransform(imagesBinding: ImagesBinding): void {
     expect(imageTransformer.transform).toHaveBeenCalledWith({width: 960, fit: 'scale-down'})
     expect(imageTransformer.transform).toHaveBeenCalledWith({blur: 250})
     expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/avif', quality: 60})
+}
+
+function createImagesBindingWithResponse(response: Response): ImagesBinding {
+    const transformer = {
+        transform: vi.fn(() => transformer),
+        output: vi.fn(async () => ({response: () => response})),
+    }
+
+    return {
+        input: vi.fn(() => transformer),
+    } as unknown as ImagesBinding
 }
 
 function expectBucketDeletes(mediaBucket: R2Bucket, keys: readonly string[]): void {
@@ -146,6 +187,7 @@ async function postAdminJobRun(
     mediaBucket: R2Bucket,
     sessionToken = 'session-token',
     accept = 'application/json',
+    previewWorkflow = createMockWorkflowBinding(),
 ): Promise<Response> {
     return adminPageActionRoutes.request(
         `https://example.com/admin/admin-options/jobs/${jobName}/run`,
@@ -159,11 +201,52 @@ async function postAdminJobRun(
                 'x-csrf-token': await createCsrfToken(sessionToken),
             },
         },
-        requestEnv(mediaBucket),
+        requestEnv(mediaBucket, createMockImagesBinding(), previewWorkflow),
     )
 }
 
+async function seedPreviewRegenerationRun(id: string, startedAt: string, summaryJson: string | null): Promise<void> {
+    await db
+        .prepare(
+            `INSERT INTO admin_job_runs (
+                id, job_name, trigger_source, triggered_by_user_id, status, started_at, summary_json
+            ) VALUES (?, 'media-preview-regeneration', 'manual', ?, 'running', ?, ?)`,
+        )
+        .bind(id, currentUserId, startedAt, summaryJson)
+        .run()
+}
+
 describe('POST /admin/admin-options/jobs/:jobName/run', () => {
+    it('requires an authenticated admin user', async () => {
+        const unauthenticated = await postAdminJobRun('media-preview-regeneration', createMockR2Bucket(), 'missing-session')
+        expect(unauthenticated.status).toBe(401)
+        await expect(unauthenticated.json()).resolves.toEqual({error: 'Authentication required'})
+
+        await seedCurrentUser('user')
+        const unauthorized = await postAdminJobRun('media-preview-regeneration', createMockR2Bucket())
+        expect(unauthorized.status).toBe(403)
+        await expect(unauthorized.json()).resolves.toEqual({error: 'Admin access required'})
+    })
+
+    it('requires a valid CSRF token', async () => {
+        await seedCurrentUser()
+        const response = await adminPageActionRoutes.request(
+            'https://example.com/admin/admin-options/jobs/media-preview-regeneration/run',
+            {
+                method: 'POST',
+                body: JSON.stringify({}),
+                headers: {
+                    'content-type': 'application/json',
+                    cookie: 'myoc_session=session-token',
+                },
+            },
+            requestEnv(),
+        )
+
+        expect(response.status).toBe(403)
+        await expect(response.json()).resolves.toEqual({error: 'Invalid CSRF token'})
+    })
+
     it('rejects invalid job names', async () => {
         await seedCurrentUser()
         const response = await postAdminJobRun('unknown-job', createMockR2Bucket())
@@ -198,6 +281,355 @@ describe('POST /admin/admin-options/jobs/:jobName/run', () => {
         const response = await postAdminJobRun('r2-media-cleanup', createMockR2Bucket(), 'session-token', 'text/html')
         expect(response.status).toBe(303)
         expect(response.headers.get('location')).toBe('/admin/admin-options?status=success&job=r2-media-cleanup')
+    })
+
+    it('starts one preview regeneration workflow and reuses its active job run', async () => {
+        await seedCurrentUser()
+        const workflow = createMockWorkflowBinding()
+        const firstResponse = await postAdminJobRun(
+            'media-preview-regeneration',
+            createMockR2Bucket(),
+            'session-token',
+            'application/json',
+            workflow,
+        )
+        const firstBody = (await firstResponse.json()) as {ok: true; run: {runId: string; status: string}}
+        const secondResponse = await postAdminJobRun(
+            'media-preview-regeneration',
+            createMockR2Bucket(),
+            'session-token',
+            'application/json',
+            workflow,
+        )
+        const secondBody = (await secondResponse.json()) as {ok: true; run: {runId: string; status: string}}
+        const runs = await queryAll<{id: string; triggered_by_user_id: string | null; status: string}>(
+            `SELECT id, triggered_by_user_id, status
+             FROM admin_job_runs
+             WHERE job_name = 'media-preview-regeneration'`,
+        )
+
+        expect(firstResponse.status).toBe(200)
+        expect(secondResponse.status).toBe(200)
+        expect(firstBody.run.status).toBe('running')
+        expect(secondBody.run).toEqual(firstBody.run)
+        expect(workflow.create).toHaveBeenCalledOnce()
+        expect(workflow.create).toHaveBeenCalledWith({
+            id: firstBody.run.runId,
+            params: {runId: firstBody.run.runId},
+        })
+        expect(runs).toEqual([{id: firstBody.run.runId, triggered_by_user_id: currentUserId, status: 'running'}])
+    })
+
+    it('records a failed preview workflow start on the job run', async () => {
+        await seedCurrentUser()
+        const workflow = createMockWorkflowBinding()
+        workflow.create.mockRejectedValueOnce(new Error('Workflow could not start'))
+
+        const response = await postAdminJobRun(
+            'media-preview-regeneration',
+            createMockR2Bucket(),
+            'session-token',
+            'application/json',
+            workflow,
+        )
+        const run = await queryOne<{status: string; finished_at: string | null; error_message: string | null}>(
+            `SELECT status, finished_at, error_message
+             FROM admin_job_runs
+             WHERE job_name = 'media-preview-regeneration'`,
+        )
+
+        expect(response.status).toBe(500)
+        await expect(response.json()).resolves.toEqual({error: 'Workflow could not start'})
+        expect(run).toMatchObject({status: 'error', finished_at: expect.any(String), error_message: 'Workflow could not start'})
+    })
+
+    it('keeps a recently started preview job when its Workflow status is not available yet', async () => {
+        await seedCurrentUser()
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (
+                    id, job_name, trigger_source, triggered_by_user_id, status, started_at, summary_json
+                ) VALUES (?, 'media-preview-regeneration', 'manual', ?, 'running', datetime('now'), ?)`,
+            )
+            .bind(
+                'recent-workflow-run',
+                currentUserId,
+                JSON.stringify({
+                    totalVariants: 10,
+                    processedVariants: 2,
+                    regeneratedPreviews: 2,
+                    regeneratedBlurs: 0,
+                    skippedVariants: 0,
+                    failedVariants: 0,
+                    lastError: null,
+                }),
+            )
+            .run()
+        const workflow = createMockWorkflowBinding({'recent-workflow-run': 'unavailable'})
+
+        const response = await postAdminJobRun(
+            'media-preview-regeneration',
+            createMockR2Bucket(),
+            'session-token',
+            'application/json',
+            workflow,
+        )
+        const body = (await response.json()) as {ok: true; run: {runId: string; status: string}}
+        const run = await queryOne<{status: string; error_message: string | null}>(
+            'SELECT status, error_message FROM admin_job_runs WHERE id = ?',
+            ['recent-workflow-run'],
+        )
+
+        expect(response.status).toBe(200)
+        expect(body.run).toMatchObject({runId: 'recent-workflow-run', status: 'running'})
+        expect(run).toEqual({status: 'running', error_message: null})
+        expect(workflow.create).not.toHaveBeenCalled()
+    })
+
+    it.each([
+        ['malformed JSON', '{not json'],
+        ['an incomplete summary', JSON.stringify({totalVariants: 10})],
+        ['a missing summary', null],
+    ])('uses an empty summary when an active preview job has %s', async (_caseName, summaryJson) => {
+        await seedCurrentUser()
+        await seedPreviewRegenerationRun('invalid-summary-run', '2026-01-01 00:00:00', summaryJson)
+        const workflow = createMockWorkflowBinding({'invalid-summary-run': 'running'})
+
+        const response = await postAdminJobRun(
+            'media-preview-regeneration',
+            createMockR2Bucket(),
+            'session-token',
+            'application/json',
+            workflow,
+        )
+        const body = (await response.json()) as {ok: true; run: {runId: string; status: string; summary: unknown}}
+
+        expect(response.status).toBe(200)
+        expect(body.run).toEqual({
+            jobName: 'media-preview-regeneration',
+            runId: 'invalid-summary-run',
+            status: 'running',
+            summary: {
+                totalVariants: 0,
+                processedVariants: 0,
+                regeneratedPreviews: 0,
+                regeneratedBlurs: 0,
+                skippedVariants: 0,
+                failedVariants: 0,
+                lastError: null,
+            },
+        })
+        expect(workflow.create).not.toHaveBeenCalled()
+    })
+
+    it('reuses one replacement when two requests find the same stopped preview job', async () => {
+        await seedCurrentUser()
+        await seedPreviewRegenerationRun('stopped-concurrent-run', '2026-01-01 00:00:00', null)
+        const workflow = createMockWorkflowBinding()
+        let releaseStatusChecks = () => {}
+        const statusChecksReleased = new Promise<void>((resolve) => {
+            releaseStatusChecks = resolve
+        })
+        let markStatusChecksStarted = () => {}
+        const statusChecksStarted = new Promise<void>((resolve) => {
+            markStatusChecksStarted = resolve
+        })
+        let statusCheckCount = 0
+        workflow.get.mockImplementation(async (id: string) => {
+            statusCheckCount += 1
+            if (statusCheckCount === 2) markStatusChecksStarted()
+            await statusChecksReleased
+            return {
+                id,
+                status: vi.fn(async () => ({status: 'terminated'})),
+            }
+        })
+
+        const firstResponsePromise = postAdminJobRun(
+            'media-preview-regeneration',
+            createMockR2Bucket(),
+            'session-token',
+            'application/json',
+            workflow,
+        )
+        const secondResponsePromise = postAdminJobRun(
+            'media-preview-regeneration',
+            createMockR2Bucket(),
+            'session-token',
+            'application/json',
+            workflow,
+        )
+        await statusChecksStarted
+        releaseStatusChecks()
+        const [firstResponse, secondResponse] = await Promise.all([firstResponsePromise, secondResponsePromise])
+        const firstBody = (await firstResponse.json()) as {ok: true; run: {runId: string; status: string}}
+        const secondBody = (await secondResponse.json()) as {ok: true; run: {runId: string; status: string}}
+        const runs = await queryAll<{id: string; status: string}>(
+            `SELECT id, status
+             FROM admin_job_runs
+             WHERE job_name = 'media-preview-regeneration'
+             ORDER BY started_at`,
+        )
+
+        expect(firstResponse.status).toBe(200)
+        expect(secondResponse.status).toBe(200)
+        expect(secondBody.run).toEqual(firstBody.run)
+        expect(firstBody.run).toMatchObject({status: 'running'})
+        expect(runs).toEqual([
+            {id: 'stopped-concurrent-run', status: 'error'},
+            {id: firstBody.run.runId, status: 'running'},
+        ])
+        expect(workflow.create).toHaveBeenCalledOnce()
+    })
+
+    it('closes a terminated preview workflow and starts a replacement', async () => {
+        await seedCurrentUser()
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (
+                    id, job_name, trigger_source, triggered_by_user_id, status, started_at, summary_json
+                ) VALUES (?, 'media-preview-regeneration', 'manual', ?, 'running', ?, ?)`,
+            )
+            .bind(
+                'terminated-run',
+                currentUserId,
+                '2026-01-01 00:00:00',
+                JSON.stringify({
+                    totalVariants: 10,
+                    processedVariants: 3,
+                    regeneratedPreviews: 3,
+                    regeneratedBlurs: 1,
+                    skippedVariants: 0,
+                    failedVariants: 0,
+                    lastError: null,
+                }),
+            )
+            .run()
+        const workflow = createMockWorkflowBinding({'terminated-run': 'terminated'})
+
+        const response = await postAdminJobRun(
+            'media-preview-regeneration',
+            createMockR2Bucket(),
+            'session-token',
+            'application/json',
+            workflow,
+        )
+        const body = (await response.json()) as {ok: true; run: {runId: string; status: string}}
+        const runs = await queryAll<{id: string; status: string; error_message: string | null}>(
+            `SELECT id, status, error_message
+             FROM admin_job_runs
+             WHERE job_name = 'media-preview-regeneration'
+             ORDER BY started_at`,
+        )
+
+        expect(response.status).toBe(200)
+        expect(body.run).toMatchObject({status: 'running'})
+        expect(body.run.runId).not.toBe('terminated-run')
+        expect(runs).toEqual([
+            {
+                id: 'terminated-run',
+                status: 'error',
+                error_message: 'The preview regeneration Workflow stopped before the job record finished.',
+            },
+            {id: body.run.runId, status: 'running', error_message: null},
+        ])
+        expect(workflow.create).toHaveBeenCalledOnce()
+    })
+
+    it.each([
+        ['a missing-instance message', new Error('Workflow instance does not exist')],
+        ['a 404 error code', {code: 404}],
+        ['an alternate missing-instance message', new Error('No such workflow instance')],
+    ])('replaces an old job run when the Workflow reports %s', async (_caseName, workflowError) => {
+        await seedCurrentUser()
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (
+                    id, job_name, trigger_source, triggered_by_user_id, status, started_at, summary_json
+                ) VALUES (?, 'media-preview-regeneration', 'manual', ?, 'running', ?, ?)`,
+            )
+            .bind(
+                'missing-workflow-run',
+                currentUserId,
+                '2026-01-01 00:00:00',
+                JSON.stringify({
+                    totalVariants: 0,
+                    processedVariants: 0,
+                    regeneratedPreviews: 0,
+                    regeneratedBlurs: 0,
+                    skippedVariants: 0,
+                    failedVariants: 0,
+                    lastError: null,
+                }),
+            )
+            .run()
+        const workflow = createMockWorkflowBinding()
+        workflow.get.mockRejectedValueOnce(workflowError)
+
+        const response = await postAdminJobRun(
+            'media-preview-regeneration',
+            createMockR2Bucket(),
+            'session-token',
+            'application/json',
+            workflow,
+        )
+        const body = (await response.json()) as {ok: true; run: {runId: string; status: string}}
+        const oldRun = await queryOne<{status: string; error_message: string | null}>(
+            'SELECT status, error_message FROM admin_job_runs WHERE id = ?',
+            ['missing-workflow-run'],
+        )
+
+        expect(response.status).toBe(200)
+        expect(body.run).toMatchObject({status: 'running'})
+        expect(body.run.runId).not.toBe('missing-workflow-run')
+        expect(oldRun).toEqual({
+            status: 'error',
+            error_message: 'The preview regeneration Workflow stopped before the job record finished.',
+        })
+        expect(workflow.create).toHaveBeenCalledOnce()
+    })
+
+    it('does not replace an active job when Workflow status is temporarily unavailable', async () => {
+        await seedCurrentUser()
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (
+                    id, job_name, trigger_source, triggered_by_user_id, status, started_at, summary_json
+                ) VALUES (?, 'media-preview-regeneration', 'manual', ?, 'running', ?, ?)`,
+            )
+            .bind(
+                'unavailable-workflow-run',
+                currentUserId,
+                '2026-01-01 00:00:00',
+                JSON.stringify({
+                    totalVariants: 10,
+                    processedVariants: 5,
+                    regeneratedPreviews: 5,
+                    regeneratedBlurs: 2,
+                    skippedVariants: 0,
+                    failedVariants: 0,
+                    lastError: null,
+                }),
+            )
+            .run()
+        const workflow = createMockWorkflowBinding({'unavailable-workflow-run': 'unavailable'})
+
+        const response = await postAdminJobRun(
+            'media-preview-regeneration',
+            createMockR2Bucket(),
+            'session-token',
+            'application/json',
+            workflow,
+        )
+        const run = await queryOne<{status: string; error_message: string | null}>(
+            'SELECT status, error_message FROM admin_job_runs WHERE id = ?',
+            ['unavailable-workflow-run'],
+        )
+
+        expect(response.status).toBe(500)
+        await expect(response.json()).resolves.toEqual({error: 'Workflow service is temporarily unavailable'})
+        expect(run).toEqual({status: 'running', error_message: null})
+        expect(workflow.create).not.toHaveBeenCalled()
     })
 })
 
@@ -433,6 +865,40 @@ describe('POST /admin/image-approvals/:mediaId', () => {
             nsfw_preview_height: null,
             nsfw_preview_byte_size: null,
         })
+    })
+
+    it.each([
+        ['a failed response', new Response(null, {status: 500, headers: {'content-type': 'image/avif'}})],
+        ['a response without a content type', new Response(new Uint8Array([1, 2, 3]))],
+        ['a non-AVIF response', new Response(new Uint8Array([1, 2, 3]), {headers: {'content-type': 'image/webp'}})],
+    ])('keeps the SFW image in place when blur generation returns %s', async (_caseName, blurResponse) => {
+        await seedApprovalMedia()
+        const mediaBucket = createMockR2Bucket()
+        await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png', new Uint8Array([1, 2, 3]))
+        await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp', new Uint8Array([4, 5, 6]))
+        const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+        try {
+            const response = await postImageApproval(
+                mediaId,
+                {sfwAction: 'mark_nsfw'},
+                mediaBucket,
+                createImagesBindingWithResponse(blurResponse),
+            )
+            const media = await queryOne<{sfw_image_key: string | null; nsfw_image_key: string | null}>(
+                'SELECT sfw_image_key, nsfw_image_key FROM character_media WHERE id = ?',
+                [mediaId],
+            )
+
+            expect(response.status).toBe(500)
+            expect(media).toEqual({sfw_image_key: 'sfw-key', nsfw_image_key: null})
+            await expect(mediaBucket.get('characters/owner-1/character-1/media/media-1/nsfw/sfw-key.png')).resolves.toBeNull()
+            await expect(
+                mediaBucket.get('characters/owner-1/character-1/media/media-1/nsfw/preview/sfw-preview-key.webp'),
+            ).resolves.toBeNull()
+        } finally {
+            error.mockRestore()
+        }
     })
 
     it('moves an NSFW image to SFW and deletes the old blur image', async () => {

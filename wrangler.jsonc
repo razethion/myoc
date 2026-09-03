@@ -13,6 +13,9 @@
       "invocation_logs": true
     }
   },
+  "limits": {
+    "subrequests": 1000000
+  },
   "containers": [
     {
       "name": "myoc-docker-sharp",
@@ -31,6 +34,19 @@
       }
     ]
   },
+  "workflows": [
+    {
+      "name": "myoc-regenerate-media-previews",
+      "binding": "REGENERATE_MEDIA_PREVIEWS_WORKFLOW",
+      "class_name": "RegenerateMediaPreviewsWorkflow",
+      "limits": {
+        "steps": 25000
+      },
+      "concurrency": {
+        "limit": 1
+      }
+    }
+  ],
   "migrations": [
     {
       "tag": "v1",
