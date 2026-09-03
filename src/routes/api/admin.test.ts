@@ -46,7 +46,7 @@ function expectNsfwBlurTransform(imagesBinding: ImagesBinding): void {
     const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
     expect(imageTransformer.transform).toHaveBeenCalledWith({width: 960, fit: 'scale-down'})
     expect(imageTransformer.transform).toHaveBeenCalledWith({blur: 250})
-    expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 85})
+    expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/avif', quality: 60})
 }
 
 function expectBucketDeletes(mediaBucket: R2Bucket, keys: readonly string[]): void {
@@ -375,8 +375,10 @@ describe('POST /admin/image-approvals/:mediaId', () => {
             sfw_preview_content_type: string
             nsfw_preview_content_type: string
             nsfw_blur_image_key: string | null
+            nsfw_blur_content_type: string
         }>(
-            `SELECT sfw_image_key, nsfw_image_key, sfw_preview_content_type, nsfw_preview_content_type, nsfw_blur_image_key
+            `SELECT sfw_image_key, nsfw_image_key, sfw_preview_content_type, nsfw_preview_content_type,
+                    nsfw_blur_image_key, nsfw_blur_content_type
              FROM character_media WHERE id = ?`,
             [mediaId],
         )
@@ -393,6 +395,7 @@ describe('POST /admin/image-approvals/:mediaId', () => {
             nsfw_image_key: 'sfw-key',
             sfw_preview_content_type: 'image/webp',
             nsfw_preview_content_type: 'image/avif',
+            nsfw_blur_content_type: 'image/avif',
         })
         expect(media?.nsfw_blur_image_key).toEqual(expect.any(String))
     })

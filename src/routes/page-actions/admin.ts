@@ -44,6 +44,7 @@ type ModerationMediaRow = {
     nsfw_preview_image_key?: string | null
     nsfw_preview_content_type?: string
     nsfw_blur_image_key?: string | null
+    nsfw_blur_content_type?: string
     nsfw_preview_width?: number | null
     nsfw_preview_height?: number | null
     nsfw_preview_byte_size?: number | null
@@ -79,6 +80,7 @@ type MediaCleanupRow = {
     nsfw_preview_image_key?: string | null
     nsfw_preview_content_type?: string
     nsfw_blur_image_key?: string | null
+    nsfw_blur_content_type?: string
 }
 
 const AdminJobActionResponseSchema = z.union([
@@ -195,6 +197,7 @@ async function getReportMedia(db: D1Database, mediaId: string): Promise<ReportMe
                 character_media.nsfw_preview_image_key,
                 character_media.nsfw_preview_content_type,
                 character_media.nsfw_blur_image_key,
+                character_media.nsfw_blur_content_type,
                 character_media.nsfw_preview_width,
                 character_media.nsfw_preview_height,
                 character_media.nsfw_preview_byte_size,
@@ -288,6 +291,7 @@ async function deleteReportedImage(db: D1Database, bucket: R2Bucket, media: Repo
                      nsfw_preview_image_key = NULL,
                      nsfw_preview_content_type = 'image/webp',
                      nsfw_blur_image_key    = NULL,
+                     nsfw_blur_content_type = 'image/webp',
                      nsfw_preview_width     = NULL,
                      nsfw_preview_height = NULL,
                      nsfw_preview_byte_size = NULL,
@@ -445,7 +449,13 @@ function mediaVariantPreviewContentType(media: ModerationMediaRow, rating: 'sfw'
 
 function reportedBlurObjectKey(media: ReportMediaRow, rating: 'sfw' | 'nsfw'): string | null {
     return rating === 'nsfw' && media.nsfw_blur_image_key
-        ? characterMediaNsfwBlurImageObjectKey(media.user_id, media.character_id, media.id, media.nsfw_blur_image_key)
+        ? characterMediaNsfwBlurImageObjectKey(
+              media.user_id,
+              media.character_id,
+              media.id,
+              media.nsfw_blur_image_key,
+              media.nsfw_blur_content_type,
+          )
         : null
 }
 
@@ -480,6 +490,7 @@ async function getCharacterMediaForCleanup(db: D1Database, characterId: string):
                 sfw_preview_image_key,
                 sfw_preview_content_type,
                 nsfw_blur_image_key,
+                nsfw_blur_content_type,
                 nsfw_preview_image_key,
                 nsfw_preview_content_type
          FROM character_media
@@ -524,7 +535,8 @@ async function getUserMediaForCleanup(db: D1Database, userId: string): Promise<M
                 sfw_preview_content_type,
                 nsfw_preview_image_key,
                 nsfw_preview_content_type,
-                nsfw_blur_image_key
+                nsfw_blur_image_key,
+                nsfw_blur_content_type
          FROM character_media
          WHERE user_id = ?`,
         )
@@ -575,7 +587,15 @@ function characterObjectKeys(characters: CharacterCleanupRow[], mediaRows: Media
         objectKeys.push(...mediaPreviewObjectKeys(media, 'nsfw'))
 
         if (media.nsfw_blur_image_key) {
-            objectKeys.push(characterMediaNsfwBlurImageObjectKey(media.user_id, media.character_id, media.id, media.nsfw_blur_image_key))
+            objectKeys.push(
+                characterMediaNsfwBlurImageObjectKey(
+                    media.user_id,
+                    media.character_id,
+                    media.id,
+                    media.nsfw_blur_image_key,
+                    media.nsfw_blur_content_type,
+                ),
+            )
         }
     }
 

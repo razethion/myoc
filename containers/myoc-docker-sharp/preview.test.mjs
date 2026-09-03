@@ -5,7 +5,7 @@ import {createAvifPreview} from './preview.mjs'
 
 const previewOptions = {
     limitInputPixels: 200_000_000,
-    maxLongEdge: 1200,
+    maxLongEdge: 1600,
     quality: 60,
 }
 
@@ -24,12 +24,12 @@ test('creates a quality 60 AVIF within the preview size limit', async () => {
     const result = await createAvifPreview(source, previewOptions)
     const metadata = await sharp(result.bytes).metadata()
 
-    assert.equal(result.width, 1200)
-    assert.equal(result.height, 800)
+    assert.equal(result.width, 1600)
+    assert.equal(result.height, 1067)
     assert.equal(metadata.format, 'heif')
     assert.equal(metadata.compression, 'av1')
-    assert.equal(metadata.width, 1200)
-    assert.equal(metadata.height, 800)
+    assert.equal(metadata.width, 1600)
+    assert.equal(metadata.height, 1067)
     assert.equal(metadata.hasAlpha, true)
 })
 

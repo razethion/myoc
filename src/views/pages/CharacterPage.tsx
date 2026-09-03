@@ -33,6 +33,7 @@ export type CharacterPageMedia = {
     nsfwPreviewImageKey: string | null
     nsfwPreviewContentType: string
     nsfwBlurImageKey: string | null
+    nsfwBlurContentType: string
     sfwContentType: string | null
     nsfwContentType: string | null
     sfwArtist: string
@@ -353,7 +354,14 @@ function createSafeMediaDisplay(
 
     const hiddenNsfw = nsfw as DisplayMediaVariant
     const displayUrl = media.nsfwBlurImageKey
-        ? characterMediaNsfwBlurImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.nsfwBlurImageKey)
+        ? characterMediaNsfwBlurImageUrl(
+              mediaBaseUrl,
+              character.userId,
+              character.id,
+              media.id,
+              media.nsfwBlurImageKey,
+              media.nsfwBlurContentType,
+          )
         : hiddenNsfwPlaceholderUrl()
 
     return {

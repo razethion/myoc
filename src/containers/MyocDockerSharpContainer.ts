@@ -20,7 +20,7 @@ export class MyocDockerSharpContainer extends Container<MyocDockerSharpContainer
         this.envVars = {
             NODE_EXTRA_CA_CERTS: '/etc/cloudflare/certs/cloudflare-containers-ca.crt',
             PREVIEW_AVIF_QUALITY: '60',
-            PREVIEW_MAX_LONG_EDGE: '1200',
+            PREVIEW_MAX_LONG_EDGE: '1600',
             PREVIEW_PROCESSOR_TOKEN: env.PREVIEW_PROCESSOR_TOKEN,
             SOURCE_IMAGE_MAX_BYTES: String(256 * 1024 * 1024),
             SOURCE_LIMIT_INPUT_PIXELS: String(200_000_000),

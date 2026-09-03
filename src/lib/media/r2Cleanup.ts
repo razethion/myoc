@@ -64,6 +64,7 @@ type ManagedR2MediaKey =
           characterId: string
           mediaId: string
           imageKey: string
+          contentType: string
       }
     | {
           kind: 'characterHeightChart'
@@ -398,8 +399,9 @@ function parseCharacterMediaBlurKey(key: string, parts: string[]): ManagedR2Medi
     }
 
     const [imageKey, extension] = splitFileName(fileName)
-    return isSafeSegment(imageKey) && extension === 'webp'
-        ? {kind: 'characterMediaNsfwBlur', key, userId, characterId, mediaId, imageKey}
+    const contentType = contentTypeForExtension(extension)
+    return isSafeSegment(imageKey) && (contentType === 'image/webp' || contentType === 'image/avif')
+        ? {kind: 'characterMediaNsfwBlur', key, userId, characterId, mediaId, imageKey, contentType}
         : null
 }
 
@@ -515,9 +517,10 @@ async function isManagedR2MediaKeyReferenced(db: D1Database, parsed: ManagedR2Me
                    AND character_id = ?
                    AND id = ?
                    AND nsfw_blur_image_key = ?
+                   AND lower(coalesce(nsfw_blur_content_type, 'image/webp')) = ?
                  LIMIT 1`,
                 )
-                .bind(parsed.userId, parsed.characterId, parsed.mediaId, parsed.imageKey)
+                .bind(parsed.userId, parsed.characterId, parsed.mediaId, parsed.imageKey, parsed.contentType)
                 .first()
             return Boolean(row)
         }

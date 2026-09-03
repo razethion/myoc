@@ -174,12 +174,15 @@ async function seedMediaRow(value: unknown, fallbackUserId: string, fallbackChar
                 sfwContentType: (row.sfw_content_type as string | null | undefined) ?? undefined,
                 nsfwContentType: (row.nsfw_content_type as string | null | undefined) ?? undefined,
                 sfwPreviewImageKey: (row.sfw_preview_image_key as string | null | undefined) ?? null,
+                sfwPreviewContentType: (row.sfw_preview_content_type as 'image/webp' | 'image/avif' | undefined) ?? 'image/webp',
                 sfwPreviewWidth: (row.sfw_preview_width as number | null | undefined) ?? null,
                 sfwPreviewHeight: (row.sfw_preview_height as number | null | undefined) ?? null,
                 nsfwPreviewImageKey: (row.nsfw_preview_image_key as string | null | undefined) ?? null,
+                nsfwPreviewContentType: (row.nsfw_preview_content_type as 'image/webp' | 'image/avif' | undefined) ?? 'image/webp',
                 nsfwPreviewWidth: (row.nsfw_preview_width as number | null | undefined) ?? null,
                 nsfwPreviewHeight: (row.nsfw_preview_height as number | null | undefined) ?? null,
                 nsfwBlurImageKey: (row.nsfw_blur_image_key as string | null | undefined) ?? null,
+                nsfwBlurContentType: (row.nsfw_blur_content_type as 'image/webp' | 'image/avif' | undefined) ?? 'image/webp',
                 createdAt: String(row.created_at ?? '2026-01-01 00:00:00'),
                 updatedAt: String(row.updated_at ?? '2026-01-01 00:00:00'),
             },
@@ -3218,6 +3221,7 @@ describe('CharacterPage', () => {
                     id: 'empty-media',
                     nsfwArtist: '',
                     nsfwBlurImageKey: null,
+                    nsfwBlurContentType: 'image/webp',
                     nsfwContentType: null,
                     nsfwHeight: null,
                     nsfwImageKey: null,
@@ -3268,6 +3272,7 @@ describe('CharacterPage', () => {
                     id: 'nsfw-without-metadata',
                     nsfwArtist: '',
                     nsfwBlurImageKey: null,
+                    nsfwBlurContentType: 'image/webp',
                     nsfwContentType: 'image/png',
                     nsfwHeight: 0,
                     nsfwImageKey: 'nsfw-key',
@@ -4439,6 +4444,7 @@ describe('GET /u/:username', () => {
                         sfw_preview_image_key: null,
                         nsfw_preview_image_key: 'nsfw-only-preview-key',
                         nsfw_blur_image_key: 'nsfw-only-blur-key',
+                        nsfw_blur_content_type: 'image/avif',
                         sfw_artist: '',
                         nsfw_artist: 'NSFW Artist',
                         sfw_width: null,
@@ -4543,7 +4549,7 @@ describe('GET /u/:username', () => {
         expect(html).toContain('data-title="SFW Artist"')
         expect(html).toContain('data-title="Both SFW Artist"')
         expect(html).toContain(
-            'src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/blur/nsfw-only-blur-key.webp"',
+            'src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/blur/nsfw-only-blur-key.avif"',
         )
         expect(html).not.toContain(
             'data-original-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"',

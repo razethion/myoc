@@ -6,7 +6,7 @@ import timers from 'node:timers'
 import {createAvifPreview} from './preview.mjs'
 
 const port = Number.parseInt(process.env['PORT'] ?? '8080', 10)
-const previewLongEdge = parsePositiveInteger(process.env['PREVIEW_MAX_LONG_EDGE'], 1200)
+const previewLongEdge = parsePositiveInteger(process.env['PREVIEW_MAX_LONG_EDGE'], 1600)
 const previewQuality = clamp(parsePositiveInteger(process.env['PREVIEW_AVIF_QUALITY'], 60), 1, 100)
 const requestBodyMaxBytes = parsePositiveInteger(process.env['REQUEST_BODY_MAX_BYTES'], 4096)
 const sourceImageMaxBytes = parsePositiveInteger(process.env['SOURCE_IMAGE_MAX_BYTES'], 64 * 1024 * 1024)

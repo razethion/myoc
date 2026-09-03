@@ -44,7 +44,7 @@ describe('MyocDockerSharpContainer', () => {
         expect(container.envVars).toEqual({
             NODE_EXTRA_CA_CERTS: '/etc/cloudflare/certs/cloudflare-containers-ca.crt',
             PREVIEW_AVIF_QUALITY: '60',
-            PREVIEW_MAX_LONG_EDGE: '1200',
+            PREVIEW_MAX_LONG_EDGE: '1600',
             PREVIEW_PROCESSOR_TOKEN: 'preview-token',
             SOURCE_IMAGE_MAX_BYTES: String(256 * 1024 * 1024),
             SOURCE_LIMIT_INPUT_PIXELS: '200000000',

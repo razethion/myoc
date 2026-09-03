@@ -242,6 +242,7 @@ type CharacterMediaRecord = {
     nsfw_preview_image_key: string | null
     nsfw_preview_content_type: string
     nsfw_blur_image_key: string | null
+    nsfw_blur_content_type: string
     nsfw_preview_width: number | null
     nsfw_preview_height: number | null
     nsfw_preview_byte_size: number | null
@@ -294,7 +295,7 @@ const GALLERY_IMAGE_CACHE_CONTROL = REVOCABLE_MEDIA_CACHE_CONTROL
 const GALLERY_IMAGE_MAX_BYTES = 200 * 1024 * 1024
 const GALLERY_IMAGE_MAX_PIXELS = 200_000_000
 const GALLERY_PREVIEW_CONTENT_TYPE = 'image/avif'
-const GALLERY_PREVIEW_MAX_LONG_EDGE = 1200
+const GALLERY_PREVIEW_MAX_LONG_EDGE = 1600
 const GALLERY_PREVIEW_MAX_PIXELS = GALLERY_PREVIEW_MAX_LONG_EDGE * GALLERY_PREVIEW_MAX_LONG_EDGE
 const GALLERY_PREVIEW_MAX_BYTES_PER_PIXEL = 4
 const GALLERY_PREVIEW_MAX_CONTAINER_OVERHEAD_BYTES = 4096
@@ -306,8 +307,8 @@ const GALLERY_PREVIEW_CONTAINER_RETRY_DELAY_MS = 1_000
 const GALLERY_IMAGE_DIMENSION_PROBE_BYTES = 1024 * 1024
 const GALLERY_NSFW_BLUR_MAX_WIDTH = 960
 const GALLERY_NSFW_BLUR_AMOUNT = 250
-const GALLERY_NSFW_BLUR_QUALITY = 85
-const GALLERY_NSFW_BLUR_CONTENT_TYPE = 'image/webp'
+const GALLERY_NSFW_BLUR_QUALITY = 60
+const GALLERY_NSFW_BLUR_CONTENT_TYPE = 'image/avif'
 const HEIGHT_CHART_JSON_MAX_LENGTH = 2048
 const HEIGHT_CHART_MIN_METERS = 0.01
 const HEIGHT_CHART_MAX_METERS = 100
@@ -341,6 +342,7 @@ type CompletedMediaVariant = {
     image: CompletedGalleryUpload
     preview: CompletedGalleryPreview & {preview: ParsedPreviewImage}
     nsfwBlurImageKey: string | null
+    nsfwBlurContentType: 'image/avif' | null
 }
 
 type MediaCompletionContext = {
@@ -1878,7 +1880,14 @@ function toPublicMedia(baseUrl: string, media: CharacterMediaRecord) {
               )
             : null,
         nsfwBlurImageUrl: media.nsfw_blur_image_key
-            ? characterMediaNsfwBlurImageUrl(baseUrl, media.user_id, media.character_id, media.id, media.nsfw_blur_image_key)
+            ? characterMediaNsfwBlurImageUrl(
+                  baseUrl,
+                  media.user_id,
+                  media.character_id,
+                  media.id,
+                  media.nsfw_blur_image_key,
+                  media.nsfw_blur_content_type,
+              )
             : null,
         sfwArtist: media.sfw_artist,
         nsfwArtist: media.nsfw_artist,
@@ -1933,6 +1942,7 @@ async function updateCharacterMediaRecord(
              nsfw_preview_height    = ?,
              nsfw_preview_byte_size = ?,
              nsfw_blur_image_key   = ?,
+             nsfw_blur_content_type = ?,
              sfw_review_status     = CASE WHEN ? THEN 'pending' ELSE sfw_review_status END,
              sfw_reviewed_at       = CASE WHEN ? THEN NULL ELSE sfw_reviewed_at END,
              sfw_approved_at       = CASE WHEN ? THEN NULL ELSE sfw_approved_at END,
@@ -1969,6 +1979,7 @@ async function updateCharacterMediaRecord(
             media.nsfw_preview_height,
             media.nsfw_preview_byte_size,
             media.nsfw_blur_image_key,
+            media.nsfw_blur_content_type,
             options.sfwWasModified ? 1 : 0,
             options.sfwWasModified ? 1 : 0,
             options.sfwWasModified ? 1 : 0,
@@ -2486,7 +2497,9 @@ function queueExistingMediaVariantDelete(
     }
 
     if (rating === 'nsfw' && media.nsfw_blur_image_key) {
-        deletedKeys.push(characterMediaNsfwBlurImageObjectKey(userId, characterId, media.id, media.nsfw_blur_image_key))
+        deletedKeys.push(
+            characterMediaNsfwBlurImageObjectKey(userId, characterId, media.id, media.nsfw_blur_image_key, media.nsfw_blur_content_type),
+        )
     }
 }
 
@@ -2516,6 +2529,7 @@ function clearMediaVariant(nextMedia: CharacterMediaRecord, rating: MediaRating)
     nextMedia.nsfw_preview_height = null
     nextMedia.nsfw_preview_byte_size = null
     nextMedia.nsfw_blur_image_key = null
+    nextMedia.nsfw_blur_content_type = 'image/webp'
 }
 
 /* istanbul ignore next -- variant assignment combinations are covered through route replacement tests. */
@@ -2550,6 +2564,7 @@ function assignMediaVariant(
     nextMedia.nsfw_preview_height = preview?.height ?? null
     nextMedia.nsfw_preview_byte_size = preview?.byteSize ?? null
     nextMedia.nsfw_blur_image_key = null
+    nextMedia.nsfw_blur_content_type = 'image/webp'
 }
 
 async function completeMediaVariant(
@@ -2594,7 +2609,13 @@ async function completeMediaVariant(
               )
             : null
 
-    return {rating, image, preview, nsfwBlurImageKey}
+    return {
+        rating,
+        image,
+        preview,
+        nsfwBlurImageKey,
+        nsfwBlurContentType: nsfwBlurImageKey ? GALLERY_NSFW_BLUR_CONTENT_TYPE : null,
+    }
 }
 
 function applyCompletedMediaVariant(media: CharacterMediaRecord, variant: CompletedMediaVariant): void {
@@ -2602,6 +2623,7 @@ function applyCompletedMediaVariant(media: CharacterMediaRecord, variant: Comple
 
     if (variant.rating === 'nsfw') {
         media.nsfw_blur_image_key = variant.nsfwBlurImageKey
+        media.nsfw_blur_content_type = variant.nsfwBlurContentType ?? 'image/webp'
     }
 }
 
@@ -2637,6 +2659,7 @@ function createNewCharacterMediaRecord(input: {
         nsfw_preview_image_key: null,
         nsfw_preview_content_type: 'image/webp',
         nsfw_blur_image_key: null,
+        nsfw_blur_content_type: 'image/webp',
         nsfw_preview_width: null,
         nsfw_preview_height: null,
         nsfw_preview_byte_size: null,
@@ -2757,9 +2780,9 @@ function createCharacterMediaInsertStatement(db: D1Database, media: CharacterMed
                                           sfw_preview_width, sfw_preview_height, sfw_preview_byte_size,
                                           nsfw_width, nsfw_height, nsfw_byte_size, nsfw_preview_image_key, nsfw_preview_content_type,
                                           nsfw_preview_width, nsfw_preview_height, nsfw_preview_byte_size,
-                                          nsfw_blur_image_key,
+                                          nsfw_blur_image_key, nsfw_blur_content_type,
                                           created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
             media.id,
@@ -2788,6 +2811,7 @@ function createCharacterMediaInsertStatement(db: D1Database, media: CharacterMed
             media.nsfw_preview_height,
             media.nsfw_preview_byte_size,
             media.nsfw_blur_image_key,
+            media.nsfw_blur_content_type,
             media.created_at,
             media.updated_at,
         )
@@ -3001,7 +3025,7 @@ async function putNsfwBlurImage(
     }
 
     const imageKey = crypto.randomUUID()
-    const objectKey = characterMediaNsfwBlurImageObjectKey(userId, characterId, mediaId, imageKey)
+    const objectKey = characterMediaNsfwBlurImageObjectKey(userId, characterId, mediaId, imageKey, GALLERY_NSFW_BLUR_CONTENT_TYPE)
     const result = await images
         .input(streamFromBytes(preview.bytes))
         .transform({width: GALLERY_NSFW_BLUR_MAX_WIDTH, fit: 'scale-down'})
@@ -3009,8 +3033,13 @@ async function putNsfwBlurImage(
         .output({format: GALLERY_NSFW_BLUR_CONTENT_TYPE, quality: GALLERY_NSFW_BLUR_QUALITY})
 
     const response = result.response()
+    const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() ?? ''
+
+    if (!response.ok || contentType !== GALLERY_NSFW_BLUR_CONTENT_TYPE) {
+        throw new Error('Cloudflare Images did not return the requested AVIF blur image')
+    }
+
     const bytes = new Uint8Array(await response.arrayBuffer())
-    const contentType = response.headers.get('content-type') ?? GALLERY_NSFW_BLUR_CONTENT_TYPE
 
     await bucket.put(objectKey, bytes, {
         httpMetadata: {
@@ -3957,6 +3986,7 @@ async function getOwnedCharacterMedia(
                 nsfw_preview_image_key,
                 nsfw_preview_content_type,
                 nsfw_blur_image_key,
+                nsfw_blur_content_type,
                 nsfw_preview_width,
                 nsfw_preview_height,
                 nsfw_preview_byte_size,
@@ -4079,6 +4109,7 @@ async function getCharacterMedia(db: D1Database, userId: string, characterId: st
                     nsfw_preview_image_key,
                     nsfw_preview_content_type,
                     nsfw_blur_image_key,
+                    nsfw_blur_content_type,
                     nsfw_preview_width,
                     nsfw_preview_height,
                     nsfw_preview_byte_size,
@@ -4214,7 +4245,15 @@ async function deleteCharacterMediaObjects(bucket: R2Bucket, media: CharacterMed
     }
 
     if (media.nsfw_blur_image_key) {
-        objectKeys.push(characterMediaNsfwBlurImageObjectKey(media.user_id, media.character_id, media.id, media.nsfw_blur_image_key))
+        objectKeys.push(
+            characterMediaNsfwBlurImageObjectKey(
+                media.user_id,
+                media.character_id,
+                media.id,
+                media.nsfw_blur_image_key,
+                media.nsfw_blur_content_type,
+            ),
+        )
     }
 
     await deleteR2Objects(bucket, objectKeys)

@@ -122,6 +122,7 @@ async function seedMediaRecord(record = createMediaRecord()): Promise<void> {
             nsfwPreviewHeight: record.nsfw_preview_height,
             nsfwPreviewByteSize: record.nsfw_preview_byte_size,
             nsfwBlurImageKey: record.nsfw_blur_image_key,
+            nsfwBlurContentType: record.nsfw_blur_content_type as 'image/webp' | 'image/avif',
             createdAt: record.created_at,
             updatedAt: record.updated_at,
         },
@@ -3910,7 +3911,7 @@ describe('character media uploads', () => {
                     contentType: 'image/png',
                     parts: [emptyUploadedPart, uploadedPart],
                 },
-                sfwPreview: createPreviewPayload(1200, 1200),
+                sfwPreview: createPreviewPayload(1600, 1600),
             },
             db,
             {
@@ -3952,8 +3953,8 @@ describe('character media uploads', () => {
         expect(body.media.sfwPreviewImageUrl).toBe(
             `${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/sfw/preview/${body.media.sfwPreviewImageKey}.avif`,
         )
-        expect(body.media.sfwPreviewWidth).toBe(1200)
-        expect(body.media.sfwPreviewHeight).toBe(1200)
+        expect(body.media.sfwPreviewWidth).toBe(1600)
+        expect(body.media.sfwPreviewHeight).toBe(1600)
         expect(body.media.sfwPreviewByteSize).toBeGreaterThan(0)
         expect(body.media.sfwArtist).toBe('Chunk Artist')
         expect(mediaBucket.createMultipartUpload).toHaveBeenCalledTimes(1)
@@ -4005,8 +4006,8 @@ describe('character media uploads', () => {
             sfw_byte_size: pngFile.size,
             sfw_preview_image_key: body.media.sfwPreviewImageKey,
             sfw_preview_content_type: 'image/avif',
-            sfw_preview_width: 1200,
-            sfw_preview_height: 1200,
+            sfw_preview_width: 1600,
+            sfw_preview_height: 1600,
         })
         expect(
             await queryOne<{media_id: string}>('SELECT media_id FROM admin_image_review_queue WHERE media_id = ?', [body.media.id], db),
@@ -4063,7 +4064,7 @@ describe('character media uploads', () => {
                     contentType: 'image/jpeg',
                     parts: [uploadedPart],
                 },
-                sfwPreview: createPreviewPayload(900, 1200),
+                sfwPreview: createPreviewPayload(1200, 1600),
             },
             db,
             {
@@ -4085,13 +4086,13 @@ describe('character media uploads', () => {
         }
         expect(body.media.sfwWidth).toBe(4608)
         expect(body.media.sfwHeight).toBe(3456)
-        expect(body.media.sfwPreviewWidth).toBe(900)
-        expect(body.media.sfwPreviewHeight).toBe(1200)
+        expect(body.media.sfwPreviewWidth).toBe(1200)
+        expect(body.media.sfwPreviewHeight).toBe(1600)
         await expectStoredSfwMedia(initBody.mediaId, {
             sfw_width: 4608,
             sfw_height: 3456,
-            sfw_preview_width: 900,
-            sfw_preview_height: 1200,
+            sfw_preview_width: 1200,
+            sfw_preview_height: 1600,
         })
     })
 
@@ -4099,7 +4100,7 @@ describe('character media uploads', () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
         const previewContainer = createMockPreviewContainer(
-            new Response(createAvifBytes(900, 1200), {
+            new Response(createAvifBytes(1200, 1600), {
                 headers: {
                     'content-type': 'image/avif',
                 },
@@ -4152,7 +4153,7 @@ describe('character media uploads', () => {
                     contentType: 'image/jpeg',
                     parts: [uploadedPart],
                 },
-                sfwPreview: createPreviewPayload(900, 1200),
+                sfwPreview: createPreviewPayload(1200, 1600),
             },
             db,
             {
@@ -4175,8 +4176,8 @@ describe('character media uploads', () => {
         }
         expect(body.media.sfwWidth).toBe(4608)
         expect(body.media.sfwHeight).toBe(3456)
-        expect(body.media.sfwPreviewWidth).toBe(900)
-        expect(body.media.sfwPreviewHeight).toBe(1200)
+        expect(body.media.sfwPreviewWidth).toBe(1200)
+        expect(body.media.sfwPreviewHeight).toBe(1600)
         expect(previewContainer.fetch).toHaveBeenCalledTimes(1)
         expect(await vi.mocked(previewContainer.fetch).mock.calls[0]?.[1]?.body).toBe(
             JSON.stringify({
@@ -4186,8 +4187,8 @@ describe('character media uploads', () => {
         await expectStoredSfwMedia(initBody.mediaId, {
             sfw_width: 4608,
             sfw_height: 3456,
-            sfw_preview_width: 900,
-            sfw_preview_height: 1200,
+            sfw_preview_width: 1200,
+            sfw_preview_height: 1600,
         })
     })
 
@@ -4195,8 +4196,8 @@ describe('character media uploads', () => {
         const cases = [
             {
                 file: createBigEndianExifOrientationJpegFile(4608, 3456, 6),
-                preview: createPreviewPayload(900, 1200),
-                expectedPreview: {width: 900, height: 1200},
+                preview: createPreviewPayload(1200, 1600),
+                expectedPreview: {width: 1200, height: 1600},
             },
             {
                 file: createJpegFileWithExifWithoutOrientation(800, 600),
@@ -4801,22 +4802,22 @@ describe('character media uploads', () => {
         expect(body.media.nsfwBlurImageKey).toMatch(new RegExp(`^${uuidPattern}$`))
         const blurTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
         expect(imagesBinding.input).toHaveBeenCalledOnce()
-        expect(blurTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 85})
+        expect(blurTransformer.output).toHaveBeenCalledWith({format: 'image/avif', quality: 60})
         expect(body.media.nsfwBlurImageUrl).toBe(
-            `${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/nsfw/blur/${body.media.nsfwBlurImageKey}.webp`,
+            `${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/nsfw/blur/${body.media.nsfwBlurImageKey}.avif`,
         )
         expect(imagesBinding.input).toHaveBeenCalledTimes(1)
         const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
         expect(imageTransformer.transform).toHaveBeenNthCalledWith(1, {width: 960, fit: 'scale-down'})
         expect(imageTransformer.transform).toHaveBeenNthCalledWith(2, {blur: 250})
-        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 85})
+        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/avif', quality: 60})
         expect(mediaBucket.put).toHaveBeenCalledWith(
-            `characters/current-user/character-id/media/${initBody.mediaId}/nsfw/blur/${body.media.nsfwBlurImageKey}.webp`,
+            `characters/current-user/character-id/media/${initBody.mediaId}/nsfw/blur/${body.media.nsfwBlurImageKey}.avif`,
             expect.any(Uint8Array),
             {
                 httpMetadata: {
                     cacheControl: 'public, max-age=300, must-revalidate',
-                    contentType: 'image/webp',
+                    contentType: 'image/avif',
                 },
             },
         )
@@ -4829,9 +4830,10 @@ describe('character media uploads', () => {
                 nsfw_height: number
                 nsfw_preview_image_key: string
                 nsfw_blur_image_key: string
+                nsfw_blur_content_type: string
             }>(
                 `SELECT sfw_image_key, nsfw_image_key, nsfw_content_type, nsfw_width, nsfw_height,
-                        nsfw_preview_image_key, nsfw_blur_image_key
+                        nsfw_preview_image_key, nsfw_blur_image_key, nsfw_blur_content_type
                  FROM character_media WHERE id = ?`,
                 [initBody.mediaId],
                 db,
@@ -4844,6 +4846,7 @@ describe('character media uploads', () => {
             nsfw_height: 600,
             nsfw_preview_image_key: expect.any(String),
             nsfw_blur_image_key: body.media.nsfwBlurImageKey,
+            nsfw_blur_content_type: 'image/avif',
         })
     })
 
@@ -6021,7 +6024,8 @@ describe('character media uploads', () => {
                 nsfw_blur_image_key: string
             }>(
                 `SELECT sfw_image_key, nsfw_image_key, nsfw_artist, nsfw_width, nsfw_height,
-                        nsfw_preview_width, nsfw_preview_height, nsfw_preview_content_type, nsfw_blur_image_key
+                        nsfw_preview_width, nsfw_preview_height, nsfw_preview_content_type,
+                        nsfw_blur_image_key, nsfw_blur_content_type
                  FROM character_media WHERE id = ?`,
                 [media.id],
                 db,
@@ -6036,6 +6040,7 @@ describe('character media uploads', () => {
             nsfw_preview_height: 480,
             nsfw_preview_content_type: 'image/avif',
             nsfw_blur_image_key: body.media.nsfwBlurImageKey,
+            nsfw_blur_content_type: 'image/avif',
         })
     })
 
@@ -7424,6 +7429,7 @@ function createMediaRecord(
         sfw_preview_byte_size: number | null
         nsfw_preview_image_key: string | null
         nsfw_blur_image_key: string | null
+        nsfw_blur_content_type: 'image/webp' | 'image/avif'
         nsfw_preview_width: number | null
         nsfw_preview_height: number | null
         nsfw_preview_byte_size: number | null
@@ -7453,6 +7459,7 @@ function createMediaRecord(
         sfw_preview_byte_size: 512,
         nsfw_preview_image_key: null,
         nsfw_blur_image_key: null,
+        nsfw_blur_content_type: 'image/webp',
         nsfw_preview_width: null,
         nsfw_preview_height: null,
         nsfw_preview_byte_size: null,

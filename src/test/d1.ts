@@ -97,6 +97,7 @@ type MediaSeed = {
     nsfwPreviewHeight?: number | null
     nsfwPreviewByteSize?: number | null
     nsfwBlurImageKey?: string | null
+    nsfwBlurContentType?: 'image/webp' | 'image/avif'
     createdAt?: string
     updatedAt?: string
 }
@@ -398,6 +399,7 @@ export async function seedMedia(seed: MediaSeed, db: D1Database = testDb): Promi
         nsfwPreviewHeight = null,
         nsfwPreviewByteSize = null,
         nsfwBlurImageKey = null,
+        nsfwBlurContentType = 'image/webp',
         createdAt = DEFAULT_TIMESTAMP,
         updatedAt = DEFAULT_TIMESTAMP,
     } = seed
@@ -441,9 +443,10 @@ export async function seedMedia(seed: MediaSeed, db: D1Database = testDb): Promi
                 nsfw_preview_height,
                 nsfw_preview_byte_size,
                 nsfw_blur_image_key,
+                nsfw_blur_content_type,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
             id,
@@ -479,6 +482,7 @@ export async function seedMedia(seed: MediaSeed, db: D1Database = testDb): Promi
             nsfwPreviewHeight,
             nsfwPreviewByteSize,
             nsfwBlurImageKey,
+            nsfwBlurContentType,
             createdAt,
             updatedAt,
         )

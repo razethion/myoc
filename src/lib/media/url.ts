@@ -51,8 +51,14 @@ export function characterMediaPreviewImageObjectKey(
     return `characters/${userId}/${characterId}/media/${mediaId}/${rating}/preview/${imageKey}.${extensionForImageContentType(contentType)}`
 }
 
-export function characterMediaNsfwBlurImageObjectKey(userId: string, characterId: string, mediaId: string, imageKey: string): string {
-    return `characters/${userId}/${characterId}/media/${mediaId}/nsfw/blur/${imageKey}.webp`
+export function characterMediaNsfwBlurImageObjectKey(
+    userId: string,
+    characterId: string,
+    mediaId: string,
+    imageKey: string,
+    contentType: string | null | undefined = 'image/webp',
+): string {
+    return `characters/${userId}/${characterId}/media/${mediaId}/nsfw/blur/${imageKey}.${extensionForImageContentType(contentType)}`
 }
 
 export function characterHeightChartImageObjectKey(
@@ -104,8 +110,9 @@ export function characterMediaNsfwBlurImageUrl(
     characterId: string,
     mediaId: string,
     imageKey: string,
+    contentType: string | null | undefined = 'image/webp',
 ): string {
-    return mediaUrlForKey(baseUrl, characterMediaNsfwBlurImageObjectKey(userId, characterId, mediaId, imageKey))
+    return mediaUrlForKey(baseUrl, characterMediaNsfwBlurImageObjectKey(userId, characterId, mediaId, imageKey, contentType))
 }
 
 function extensionForImageContentType(contentType: string | null | undefined): string {
