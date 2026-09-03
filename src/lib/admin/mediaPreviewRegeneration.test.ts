@@ -184,7 +184,27 @@ describe('media preview regeneration', () => {
             nsfw_reviewed_at: string
             nsfw_approved_at: string
             updated_at: string
-        }>('SELECT * FROM character_media WHERE id = ?', [mediaId])
+        }>(
+            `SELECT sfw_preview_image_key,
+                    sfw_preview_content_type,
+                    sfw_preview_width,
+                    sfw_preview_height,
+                    sfw_review_status,
+                    sfw_reviewed_at,
+                    sfw_approved_at,
+                    sfw_homepage_allowed,
+                    nsfw_preview_image_key,
+                    nsfw_preview_content_type,
+                    nsfw_blur_image_key,
+                    nsfw_blur_content_type,
+                    nsfw_review_status,
+                    nsfw_reviewed_at,
+                    nsfw_approved_at,
+                    updated_at
+             FROM character_media
+             WHERE id = ?`,
+            [mediaId],
+        )
         expect(row).toMatchObject({
             sfw_preview_image_key: candidates[0]?.targetPreviewKey,
             sfw_preview_content_type: 'image/avif',
