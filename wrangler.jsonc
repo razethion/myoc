@@ -41,9 +41,6 @@
       "class_name": "RegenerateMediaPreviewsWorkflow",
       "limits": {
         "steps": 25000
-      },
-      "concurrency": {
-        "limit": 1
       }
     }
   ],
