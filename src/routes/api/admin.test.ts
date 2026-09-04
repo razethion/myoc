@@ -355,6 +355,57 @@ describe('POST /admin/admin-options/jobs/:jobName/run', () => {
         expect(workflow.create).not.toHaveBeenCalled()
     })
 
+    it('reuses a preview job while its continuation starts', async () => {
+        await seedCurrentUser()
+        await seedPreviewRegenerationRun(
+            'transitioning-run',
+            '2026-01-01 00:00:00',
+            JSON.stringify({
+                totalVariants: 251,
+                processedVariants: 250,
+                regeneratedPreviews: 250,
+                regeneratedBlurs: 0,
+                skippedVariants: 0,
+                failedVariants: 0,
+                lastError: null,
+            }),
+        )
+        let parentStatus = 'running'
+        let continuationStatus = 'missing'
+        const workflow = {
+            create: vi.fn(async ({id}: {id: string}) => ({id})),
+            get: vi.fn(async (id: string) => {
+                if (id === 'transitioning-run-segment-1') {
+                    const observedStatus = continuationStatus
+                    parentStatus = 'complete'
+                    continuationStatus = 'queued'
+
+                    if (observedStatus === 'missing') {
+                        throw new Error('Workflow instance does not exist')
+                    }
+                }
+
+                return {
+                    id,
+                    status: vi.fn(async () => ({status: id === 'transitioning-run' ? parentStatus : continuationStatus})),
+                }
+            }),
+        }
+
+        const response = await postAdminJobRun(
+            'media-preview-regeneration',
+            createMockR2Bucket(),
+            'session-token',
+            'application/json',
+            workflow,
+        )
+        const body = (await response.json()) as {ok: true; run: {runId: string; status: string}}
+
+        expect(response.status).toBe(200)
+        expect(body.run).toMatchObject({runId: 'transitioning-run', status: 'running'})
+        expect(workflow.create).not.toHaveBeenCalled()
+    })
+
     it('records a failed preview workflow start on the job run', async () => {
         await seedCurrentUser()
         const workflow = createMockWorkflowBinding()

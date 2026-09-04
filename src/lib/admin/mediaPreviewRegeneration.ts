@@ -47,7 +47,7 @@ export function activeMediaPreviewRegenerationWorkflowInstanceIds(runId: string,
         return [currentId]
     }
 
-    return [currentId, mediaPreviewRegenerationWorkflowInstanceId(runId, segment - 1)]
+    return [mediaPreviewRegenerationWorkflowInstanceId(runId, segment - 1), currentId]
 }
 
 export type MediaPreviewRegenerationCandidate = {
