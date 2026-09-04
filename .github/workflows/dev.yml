@@ -273,8 +273,6 @@ jobs:
               'container/Dockerfile',
               'container/package-lock.json',
               'container/package.json',
-              'container/preview.mjs',
-              'container/server.mjs',
               'manifest.sha256',
               'seeds/development.sql',
               'worker/index.js',
@@ -294,11 +292,11 @@ jobs:
               return '/'.join(parts)
 
           def is_allowed(name, is_directory):
-              if not name:
-                  return is_directory
-              if is_directory:
-                  return name in {'container', 'migrations', 'public', 'seeds', 'worker'} or name.startswith(('migrations/', 'public/'))
-              return name in required_files or name.startswith(('migrations/', 'public/'))
+            if not name:
+              return is_directory
+            if is_directory:
+              return name in {'container', 'migrations', 'public', 'seeds', 'worker'} or name.startswith(('container/', 'migrations/', 'public/'))
+            return name in required_files or name.startswith(('container/', 'migrations/', 'public/'))
 
           seen = set()
           total_size = 0
