@@ -34,6 +34,7 @@ type AdminJobTriggerSource = 'cron' | 'manual'
 type AdminJobRunStatus = 'running' | 'success' | 'error'
 const WORKFLOW_START_GRACE_PERIOD_MS = 5 * 60 * 1_000
 const ACTIVE_WORKFLOW_STATUSES = new Set<InstanceStatus['status']>(['paused', 'queued', 'running', 'unknown', 'waiting', 'waitingForPause'])
+type MediaPreviewWorkflowInstanceState = 'active' | 'complete' | 'inactive' | 'missing'
 export type AdminJobSummary = D1BackupSummary | R2CleanupSummary | LeaderboardRefreshSummary | MediaPreviewRegenerationSummary
 
 type AdminJobEnv = Pick<
@@ -320,15 +321,22 @@ async function isMediaPreviewWorkflowActive(
     const startedAtMs = Date.parse(`${startedAt.replace(' ', 'T')}Z`)
     const recentlyStarted = Number.isFinite(startedAtMs) && Date.now() - startedAtMs < WORKFLOW_START_GRACE_PERIOD_MS
     const statusErrors: Error[] = []
+    const states: MediaPreviewWorkflowInstanceState[] = []
 
     for (const instanceId of activeMediaPreviewRegenerationWorkflowInstanceIds(runId, summary.processedVariants)) {
         try {
-            if (await isMediaPreviewWorkflowInstanceActive(workflow, instanceId, recentlyStarted)) {
+            const state = await getMediaPreviewWorkflowInstanceState(workflow, instanceId, recentlyStarted)
+            if (state === 'active') {
                 return true
             }
+            states.push(state)
         } catch (error) {
             statusErrors.push(error instanceof Error ? error : new Error(errorMessage(error)))
         }
+    }
+
+    if (states.length === 2 && states[0] === 'complete' && states[1] === 'missing') {
+        return true
     }
 
     const [statusError] = statusErrors
@@ -339,22 +347,27 @@ async function isMediaPreviewWorkflowActive(
     return false
 }
 
-async function isMediaPreviewWorkflowInstanceActive(
+async function getMediaPreviewWorkflowInstanceState(
     workflow: Bindings['REGENERATE_MEDIA_PREVIEWS_WORKFLOW'],
     instanceId: string,
     recentlyStarted: boolean,
-): Promise<boolean> {
+): Promise<MediaPreviewWorkflowInstanceState> {
     try {
         const instance = await workflow.get(instanceId)
         const status = (await instance.status()).status
-        return ACTIVE_WORKFLOW_STATUSES.has(status)
+
+        if (ACTIVE_WORKFLOW_STATUSES.has(status)) {
+            return 'active'
+        }
+
+        return status === 'complete' ? 'complete' : 'inactive'
     } catch (error) {
         if (recentlyStarted) {
-            return true
+            return 'active'
         }
 
         if (isMissingWorkflowInstanceError(error)) {
-            return false
+            return 'missing'
         }
 
         throw error
