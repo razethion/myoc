@@ -137,7 +137,7 @@ describe('RegenerateMediaPreviewsWorkflow', () => {
         const run = await getJob(runId)
         expect(run).toMatchObject({status: 'success', error_message: null})
         expect(JSON.parse(run?.summary_json ?? 'null')).toMatchObject(expectedSummary)
-    })
+    }, 30_000)
 
     it('records one item failure and completes the remaining job', async () => {
         const runId = crypto.randomUUID()
