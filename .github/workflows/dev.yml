@@ -1,5 +1,5 @@
 name: Dev Preview
-run-name: "Dev preview for ${{ github.event.workflow_run.head_branch || format('PR #{0}', inputs.pull_request) }}"
+run-name: "Dev preview for ${{ github.event.workflow_run.head_branch }}"
 
 on:
   workflow_run:
@@ -7,12 +7,6 @@ on:
       - Checks and Deploy
     types:
       - completed
-  workflow_dispatch:
-    inputs:
-      pull_request:
-        description: Pull request number to clean up.
-        required: true
-        type: string
 
 permissions:
   actions: read
@@ -21,8 +15,8 @@ permissions:
 
 jobs:
   validate:
-    name: Validate request
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) }}
+    name: Prepare deployment
+    if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository }}
     permissions:
       actions: read
       contents: read
@@ -47,19 +41,8 @@ jobs:
             exit 1
           fi
 
-      - name: Validate pull request number
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        env:
-          PR_NUMBER: ${{ inputs.pull_request }}
-        run: |
-          if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
-            echo "::error::Pull request number must be a positive integer."
-            exit 1
-          fi
-
       - name: Resolve immutable pull request commit
         id: pull-request
-        if: ${{ github.event_name == 'workflow_run' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         with:
           script: |
@@ -127,7 +110,6 @@ jobs:
 
       - name: Create pending PR deployment
         id: github-deployment
-        if: ${{ github.event_name == 'workflow_run' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
           HEAD_SHA: ${{ steps.pull-request.outputs.head_sha }}
@@ -162,7 +144,6 @@ jobs:
 
   deploy:
     name: Approve PR #${{ needs.validate.outputs.pull_request }} at ${{ needs.validate.outputs.head_sha }} from checks run ${{ needs.validate.outputs.artifact_run_id }}
-    if: ${{ github.event_name == 'workflow_run' && needs.validate.result == 'success' }}
     needs:
       - validate
     concurrency:
@@ -180,7 +161,7 @@ jobs:
       deployment: false
 
     steps:
-      - name: Confirm approved pull request commit
+      - name: Revalidate pull request after approval
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
           HEAD_SHA: ${{ needs.validate.outputs.head_sha }}
@@ -193,7 +174,12 @@ jobs:
               pull_number: pullNumber,
             })
 
-            if (pullRequest.state !== 'open' || pullRequest.head.sha !== process.env.HEAD_SHA) {
+            if (
+              pullRequest.state !== 'open' ||
+              pullRequest.base.ref !== 'master' ||
+              pullRequest.head.sha !== process.env.HEAD_SHA ||
+              pullRequest.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}`
+            ) {
               core.setFailed('The approved pull request commit is no longer current.')
             }
 
@@ -287,7 +273,6 @@ jobs:
               'container/Dockerfile',
               'container/package-lock.json',
               'container/package.json',
-              'container/server.mjs',
               'manifest.sha256',
               'seeds/development.sql',
               'worker/index.js',
@@ -307,11 +292,11 @@ jobs:
               return '/'.join(parts)
 
           def is_allowed(name, is_directory):
-              if not name:
-                  return is_directory
-              if is_directory:
-                  return name in {'container', 'migrations', 'public', 'seeds', 'worker'} or name.startswith(('migrations/', 'public/'))
-              return name in required_files or name.startswith(('migrations/', 'public/'))
+            if not name:
+              return is_directory
+            if is_directory:
+              return name in {'container', 'migrations', 'public', 'seeds', 'worker'} or name.startswith(('container/', 'migrations/', 'public/'))
+            return name in required_files or name.startswith(('container/', 'migrations/', 'public/'))
 
           seen = set()
           total_size = 0
@@ -627,7 +612,7 @@ jobs:
         working-directory: ${{ runner.temp }}/myoc-dev-control
         run: '"$WRANGLER" d1 execute "$DB_NAME" --config wrangler.preview.jsonc --remote --file artifact/seeds/development.sql'
 
-      - name: Confirm pull request is still current
+      - name: Revalidate pull request before deploy
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
           HEAD_SHA: ${{ needs.validate.outputs.head_sha }}
@@ -640,7 +625,12 @@ jobs:
               pull_number: pullNumber,
             })
 
-            if (pullRequest.state !== 'open' || pullRequest.head.sha !== process.env.HEAD_SHA) {
+            if (
+              pullRequest.state !== 'open' ||
+              pullRequest.base.ref !== 'master' ||
+              pullRequest.head.sha !== process.env.HEAD_SHA ||
+              pullRequest.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}`
+            ) {
               core.setFailed('The approved pull request commit is no longer current.')
             }
 
@@ -750,262 +740,3 @@ jobs:
               environment: 'development',
               auto_inactive: false,
             })
-
-  cleanup:
-    name: Approve cleanup for PR #${{ inputs.pull_request }}
-    if: ${{ github.event_name == 'workflow_dispatch' && needs.validate.result == 'success' }}
-    needs: validate
-    concurrency:
-      group: dev-preview-${{ inputs.pull_request }}
-      cancel-in-progress: false
-    permissions:
-      actions: read
-      contents: read
-      deployments: write
-      pull-requests: read
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment:
-      name: development
-      deployment: false
-
-    steps:
-      - name: Validate development credentials
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "::error::Configure the development environment Cloudflare credentials."
-            exit 1
-          fi
-
-      - name: Setup Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
-        with:
-          node-version: 24
-          package-manager-cache: false
-
-      - name: Install trusted Wrangler
-        id: wrangler
-        working-directory: ${{ runner.temp }}
-        run: |
-          npm install --prefix "$RUNNER_TEMP/myoc-dev-wrangler" --no-save wrangler@4.125.0
-          mkdir -p "$RUNNER_TEMP/myoc-dev-cleanup"
-          echo "path=$RUNNER_TEMP/myoc-dev-wrangler/node_modules/.bin/wrangler" >> "$GITHUB_OUTPUT"
-
-      - name: Clean isolated dev resources
-        env:
-          BACKUP_BUCKET: myoc-pr-${{ inputs.pull_request }}-backups
-          CACHE_NAME: myoc-pr-${{ inputs.pull_request }}-cache
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CONTAINER_NAME: myoc-docker-sharp-pr-${{ inputs.pull_request }}
-          DB_NAME: myoc-pr-${{ inputs.pull_request }}
-          MEDIA_BUCKET: myoc-pr-${{ inputs.pull_request }}-media
-          PR_NUMBER: ${{ inputs.pull_request }}
-          WORKER_NAME: myoc-pr-${{ inputs.pull_request }}
-          WRANGLER: ${{ steps.wrangler.outputs.path }}
-        working-directory: ${{ runner.temp }}/myoc-dev-cleanup
-        run: |
-          set -euo pipefail
-
-          failures=()
-
-          record_failure() {
-            failures+=("$1")
-            echo "::warning::$1"
-          }
-
-          if ! worker_output=$("$WRANGLER" delete "$WORKER_NAME" --force 2>&1); then
-            if ! grep -Eqi 'not found|does not exist' <<< "$worker_output"; then
-              record_failure "Worker deletion failed: $worker_output"
-            fi
-          fi
-
-          if "$WRANGLER" d1 list --json > d1-list.json; then
-            if node -e "
-              const fs = require('node:fs');
-              const databases = JSON.parse(fs.readFileSync('d1-list.json', 'utf8'));
-              process.exit(databases.some((entry) => entry.name === process.env.DB_NAME) ? 0 : 1);
-            "; then
-              if ! "$WRANGLER" d1 delete "$DB_NAME" --skip-confirmation; then
-                record_failure "D1 database deletion failed for $DB_NAME."
-              fi
-            fi
-          else
-            record_failure "D1 database listing failed."
-          fi
-
-          if "$WRANGLER" kv namespace list > kv-list.json; then
-            cache_id="$(node -e "
-              const fs = require('node:fs');
-              const namespaces = JSON.parse(fs.readFileSync('kv-list.json', 'utf8'));
-              const namespace = namespaces.find((entry) => entry.title === process.env.CACHE_NAME);
-              process.stdout.write(namespace?.id || '');
-            ")"
-            if [ -n "$cache_id" ]; then
-              if ! "$WRANGLER" kv namespace delete --namespace-id "$cache_id" --skip-confirmation; then
-                record_failure "KV namespace deletion failed for $CACHE_NAME."
-              fi
-            fi
-          else
-            record_failure "KV namespace listing failed."
-          fi
-
-          for bucket in "$MEDIA_BUCKET" "$BACKUP_BUCKET"; do
-            if ! bucket_output=$("$WRANGLER" r2 bucket info "$bucket" 2>&1); then
-              if ! grep -Eqi 'not found|does not exist' <<< "$bucket_output"; then
-                record_failure "R2 bucket lookup failed for $bucket: $bucket_output"
-              fi
-              continue
-            fi
-
-            if [ "$bucket" = "$MEDIA_BUCKET" ] && ! "$WRANGLER" r2 bucket dev-url disable "$bucket" --force; then
-              record_failure "The public development URL could not be disabled for $bucket."
-            fi
-
-            "$WRANGLER" r2 bucket lifecycle remove "$bucket" --name preview-expiry || true
-            if ! "$WRANGLER" r2 bucket lifecycle add "$bucket" preview-expiry --expire-days 1 --abort-multipart-days 1 --force; then
-              record_failure "The one-day cleanup lifecycle could not be set for $bucket."
-            fi
-
-            if ! "$WRANGLER" r2 bucket delete "$bucket"; then
-              record_failure "$bucket is private but not empty. Its one-day lifecycle will remove remaining objects. Run cleanup again later."
-            fi
-          done
-
-          container_id=""
-          page_token=""
-
-          while [ -z "$container_id" ]; do
-            container_url="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/containers/dash/applications"
-            curl_args=(
-              --fail-with-body
-              --silent
-              --show-error
-              --get
-              --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
-              --data-urlencode "per_page=100"
-              "$container_url"
-            )
-
-            if [ -n "$page_token" ]; then
-              curl_args+=(--data-urlencode "page_token=$page_token")
-            fi
-
-            if ! curl "${curl_args[@]}" > containers-list.json; then
-              record_failure "Container listing failed."
-              break
-            fi
-
-            if ! container_id="$(node -e "
-              const fs = require('node:fs');
-              const payload = JSON.parse(fs.readFileSync('containers-list.json', 'utf8'));
-              if (payload.success === false) process.exit(1);
-              const containers = Array.isArray(payload) ? payload : payload.result || payload.data || [];
-              const container = containers.find((entry) => entry.name === process.env.CONTAINER_NAME);
-              process.stdout.write(container?.id || '');
-            ")"; then
-              record_failure "The container list response was invalid."
-              break
-            fi
-
-            if [ -n "$container_id" ]; then
-              break
-            fi
-
-            if ! page_token="$(node -e "
-              const fs = require('node:fs');
-              const payload = JSON.parse(fs.readFileSync('containers-list.json', 'utf8'));
-              process.stdout.write(payload.result_info?.next_page_token || payload.resultInfo?.next_page_token || '');
-            ")"; then
-              record_failure "The container page token was invalid."
-              break
-            fi
-
-            if [ -z "$page_token" ]; then
-              break
-            fi
-          done
-
-          if [ -n "$container_id" ]; then
-            if ! printf 'y\n' | "$WRANGLER" containers delete "$container_id"; then
-              record_failure "Container deletion failed for $CONTAINER_NAME."
-            fi
-          fi
-
-          if ! image_output=$("$WRANGLER" containers images delete "$CONTAINER_NAME:worker" --skip-confirmation 2>&1); then
-            if ! grep -Eqi 'not found|does not exist' <<< "$image_output"; then
-              record_failure "Container image deletion failed: $image_output"
-            fi
-          fi
-
-          {
-            echo "### Dev preview cleanup"
-            echo
-            if [ "${#failures[@]}" -eq 0 ]; then
-              echo "Cleanup finished for pull request #${PR_NUMBER}."
-            else
-              echo "Cleanup is partial for pull request #${PR_NUMBER}."
-              echo
-              for failure in "${failures[@]}"; do
-                echo "- $failure"
-              done
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          if [ "${#failures[@]}" -ne 0 ]; then
-            exit 1
-          fi
-
-      - name: Mark PR deployments inactive
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
-        env:
-          PR_NUMBER: ${{ inputs.pull_request }}
-        with:
-          script: |
-            const pullNumber = Number.parseInt(process.env.PR_NUMBER, 10)
-            const deployments = await github.paginate(github.rest.repos.listDeployments, {
-              ...context.repo,
-              environment: 'development',
-              per_page: 100,
-            })
-
-            const matchesPullRequest = (deployment) => {
-              if (typeof deployment.payload === 'object' && deployment.payload !== null) {
-                return deployment.payload.pull_request === pullNumber
-              }
-
-              if (typeof deployment.payload !== 'string' || deployment.payload === '') {
-                return false
-              }
-
-              try {
-                return JSON.parse(deployment.payload).pull_request === pullNumber
-              } catch {
-                return false
-              }
-            }
-
-            const matchingDeployments = deployments.filter(matchesPullRequest)
-            for (const deployment of matchingDeployments) {
-              const { data: statuses } = await github.rest.repos.listDeploymentStatuses({
-                ...context.repo,
-                deployment_id: deployment.id,
-                per_page: 1,
-              })
-
-              if (statuses[0]?.state === 'inactive') {
-                continue
-              }
-
-              await github.rest.repos.createDeploymentStatus({
-                ...context.repo,
-                deployment_id: deployment.id,
-                state: 'inactive',
-                description: 'The dev preview was removed.',
-                environment: 'development',
-                auto_inactive: false,
-              })
-            }

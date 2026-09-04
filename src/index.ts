@@ -11,6 +11,7 @@ import {pageRoutes, renderNotFoundPage} from './routes/pages'
 import type {Bindings} from './types/bindings'
 
 export {MyocDockerSharpContainer} from './containers/MyocDockerSharpContainer'
+export {RegenerateMediaPreviewsWorkflow} from './workflows/RegenerateMediaPreviewsWorkflow'
 
 const D1_BACKUP_CRON = '0 8 * * *'
 const R2_MEDIA_CLEANUP_CRON = '0 9 * * *'

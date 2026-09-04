@@ -15,12 +15,11 @@ permissions:
 
 concurrency:
   group: deploy-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   quality:
     name: Quality gate
-    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -40,6 +39,7 @@ jobs:
         run: npm run ci
 
       - name: Upload coverage to Codecov
+        if: ${{ github.event_name == 'pull_request' }}
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
 
       - name: Build preview processor container
@@ -68,11 +68,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build assets
+      - name: Build dev preview assets
         run: npm run build
-
-      - name: Build processor container
-        run: docker build --tag myoc-docker-sharp-dev-check containers/myoc-docker-sharp
 
       - name: Build immutable deployment artifact
         env:
@@ -115,6 +112,7 @@ jobs:
           cp containers/myoc-docker-sharp/Dockerfile "$artifact_root/container/Dockerfile"
           cp containers/myoc-docker-sharp/package.json "$artifact_root/container/package.json"
           cp containers/myoc-docker-sharp/package-lock.json "$artifact_root/container/package-lock.json"
+          cp containers/myoc-docker-sharp/preview.mjs "$artifact_root/container/preview.mjs"
           cp containers/myoc-docker-sharp/server.mjs "$artifact_root/container/server.mjs"
           printf '%s\n' "$HEAD_SHA" > "$artifact_root/commit.txt"
 
@@ -135,6 +133,7 @@ jobs:
   deploy-production:
     name: Deploy production
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+    needs: quality
     runs-on: ubuntu-latest
     environment:
       name: production

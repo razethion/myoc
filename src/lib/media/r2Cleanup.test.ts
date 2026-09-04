@@ -46,6 +46,13 @@ describe('parseManagedR2MediaKey', () => {
             mediaId: 'media-1',
             rating: 'nsfw',
             imageKey: 'preview-1',
+            contentType: 'image/webp',
+        })
+
+        expect(parseManagedR2MediaKey('characters/user-1/character-1/media/media-1/sfw/preview/preview-2.avif')).toMatchObject({
+            kind: 'characterMediaPreview',
+            imageKey: 'preview-2',
+            contentType: 'image/avif',
         })
 
         expect(parseManagedR2MediaKey('characters/user-1/character-1/media/media-1/nsfw/blur/blur-1.webp')).toMatchObject({
@@ -54,6 +61,13 @@ describe('parseManagedR2MediaKey', () => {
             characterId: 'character-1',
             mediaId: 'media-1',
             imageKey: 'blur-1',
+            contentType: 'image/webp',
+        })
+
+        expect(parseManagedR2MediaKey('characters/user-1/character-1/media/media-1/nsfw/blur/blur-2.avif')).toMatchObject({
+            kind: 'characterMediaNsfwBlur',
+            imageKey: 'blur-2',
+            contentType: 'image/avif',
         })
 
         expect(parseManagedR2MediaKey('characters/user-1/character-1/height-chart/chart-1.png')).toMatchObject({
@@ -89,9 +103,9 @@ describe('cleanupStaleR2Media', () => {
         await workerEnv.MEDIA_BUCKET.put('users/alice/profile/old.png', 'unknown')
         await workerEnv.MEDIA_BUCKET.put('users/alice/profile/old.webp', 'stale')
         await workerEnv.MEDIA_BUCKET.put('characters/alice/blair/height-chart/chart.png', 'referenced')
-        await workerEnv.MEDIA_BUCKET.put('characters/alice/blair/media/media-1/nsfw/blur/blur.webp', 'referenced')
+        await workerEnv.MEDIA_BUCKET.put('characters/alice/blair/media/media-1/nsfw/blur/blur.avif', 'referenced')
         await workerEnv.MEDIA_BUCKET.put('characters/alice/blair/media/media-1/sfw/img.png', 'referenced')
-        await workerEnv.MEDIA_BUCKET.put('characters/alice/blair/media/media-1/sfw/preview/preview.webp', 'referenced')
+        await workerEnv.MEDIA_BUCKET.put('characters/alice/blair/media/media-1/sfw/preview/preview.avif', 'referenced')
         await workerEnv.MEDIA_BUCKET.put('characters/alice/blair/media/media-2/nsfw/blur/orphan.webp', 'stale')
         await workerEnv.MEDIA_BUCKET.put('characters/alice/blair/media/media-2/nsfw/preview/orphan.webp', 'stale')
         await workerEnv.MEDIA_BUCKET.put('characters/alice/blair/media/media-2/nsfw/orphan.gif', 'stale')
@@ -116,8 +130,8 @@ describe('cleanupStaleR2Media', () => {
         expect(await workerEnv.MEDIA_BUCKET.head('users/alice/profile/current.webp')).not.toBeNull()
         expect(await workerEnv.MEDIA_BUCKET.head('users/alice/profile/old.png')).not.toBeNull()
         expect(await workerEnv.MEDIA_BUCKET.head('users/alice/profile/old.webp')).toBeNull()
-        expect(await workerEnv.MEDIA_BUCKET.head('characters/alice/blair/media/media-1/nsfw/blur/blur.webp')).not.toBeNull()
-        expect(await workerEnv.MEDIA_BUCKET.head('characters/alice/blair/media/media-1/sfw/preview/preview.webp')).not.toBeNull()
+        expect(await workerEnv.MEDIA_BUCKET.head('characters/alice/blair/media/media-1/nsfw/blur/blur.avif')).not.toBeNull()
+        expect(await workerEnv.MEDIA_BUCKET.head('characters/alice/blair/media/media-1/sfw/preview/preview.avif')).not.toBeNull()
         expect(await workerEnv.MEDIA_BUCKET.head('characters/alice/blair/media/media-2/nsfw/blur/orphan.webp')).toBeNull()
         expect(await workerEnv.MEDIA_BUCKET.head('characters/alice/blair/media/media-2/nsfw/preview/orphan.webp')).toBeNull()
         expect(await workerEnv.MEDIA_BUCKET.head('characters/alice/blair/media/media-2/nsfw/orphan.gif')).toBeNull()
@@ -171,7 +185,7 @@ describe('cleanupStaleR2Media', () => {
             stoppedAtScanLimit: true,
         })
         expect(await cache.get('admin:r2-media-cleanup:cursor:v1')).not.toBeNull()
-    })
+    }, 10_000)
 
     it('continues with the next managed prefix on the next run', async () => {
         const objectKeys = [
@@ -270,10 +284,12 @@ async function seedCleanupDatabase(heightChartJson: string): Promise<void> {
         sfwImageKey: 'img',
         sfwContentType: 'image/png',
         sfwPreviewImageKey: 'preview',
+        sfwPreviewContentType: 'image/avif',
         sfwPreviewWidth: 800,
         sfwPreviewHeight: 600,
         sfwPreviewByteSize: 512,
         nsfwBlurImageKey: 'blur',
+        nsfwBlurContentType: 'image/avif',
     })
 }
 

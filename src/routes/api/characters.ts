@@ -22,6 +22,12 @@ import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../../lib/media/cacheControl'
 import {type HeightChartJson, parseHeightChartJson as parseCharacterHeightChartJson} from '../../lib/media/heightChart'
 import {type GalleryImageMetadata, readGalleryImageDimensions, readGalleryImageMetadata} from '../../lib/media/imageMetadata'
 import {
+    GALLERY_NSFW_BLUR_CONTENT_TYPE,
+    type GeneratedGalleryPreview,
+    generateMediaPreviewWithContainer,
+    generateNsfwBlurImage,
+} from '../../lib/media/previewGeneration'
+import {
     isProfileImageDataUrlTooLarge,
     normalizeProfileImagePayload,
     PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES,
@@ -42,7 +48,6 @@ import {
     characterProfileImageObjectKey,
     characterProfileImageUrl,
 } from '../../lib/media/url'
-import {getWebpDimensions} from '../../lib/media/webp'
 import type {Bindings} from '../../types/bindings'
 
 type CharacterRouteContext = Context<{Bindings: Bindings}>
@@ -160,12 +165,7 @@ type CompletedChunkedUpload = {
     parts: R2UploadedPart[]
 }
 
-type ParsedPreviewImage = {
-    bytes: Uint8Array
-    contentType: 'image/webp'
-    width: number
-    height: number
-}
+type ParsedPreviewImage = GeneratedGalleryPreview
 
 type ParsedMediaArtists = {
     sfwArtist: string
@@ -184,8 +184,6 @@ class ChunkedUploadInitError extends Error {
         super('Upload could not be initialized')
     }
 }
-
-class PreviewValidationError extends Error {}
 
 class GalleryUploadValidationError extends Error {}
 
@@ -236,11 +234,14 @@ type CharacterMediaRecord = {
     nsfw_height: number | null
     nsfw_byte_size: number | null
     sfw_preview_image_key: string | null
+    sfw_preview_content_type: string
     sfw_preview_width: number | null
     sfw_preview_height: number | null
     sfw_preview_byte_size: number | null
     nsfw_preview_image_key: string | null
+    nsfw_preview_content_type: string
     nsfw_blur_image_key: string | null
+    nsfw_blur_content_type: string
     nsfw_preview_width: number | null
     nsfw_preview_height: number | null
     nsfw_preview_byte_size: number | null
@@ -292,23 +293,7 @@ const GALLERY_IMAGE_ALLOWED_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 
 const GALLERY_IMAGE_CACHE_CONTROL = REVOCABLE_MEDIA_CACHE_CONTROL
 const GALLERY_IMAGE_MAX_BYTES = 200 * 1024 * 1024
 const GALLERY_IMAGE_MAX_PIXELS = 200_000_000
-const GALLERY_PREVIEW_CONTENT_TYPE = 'image/webp'
-const GALLERY_PREVIEW_MAX_LONG_EDGE = 1600
-const GALLERY_PREVIEW_QUALITY = 90
-const GALLERY_PREVIEW_MAX_PIXELS = GALLERY_PREVIEW_MAX_LONG_EDGE * GALLERY_PREVIEW_MAX_LONG_EDGE
-const GALLERY_PREVIEW_MAX_BYTES_PER_PIXEL = 4
-const GALLERY_PREVIEW_MAX_CONTAINER_OVERHEAD_BYTES = 4096
-const GALLERY_PREVIEW_MAX_BYTES =
-    GALLERY_PREVIEW_MAX_PIXELS * GALLERY_PREVIEW_MAX_BYTES_PER_PIXEL + GALLERY_PREVIEW_MAX_CONTAINER_OVERHEAD_BYTES
-const GALLERY_PREVIEW_DIMENSION_TOLERANCE = 1
-const GALLERY_PREVIEW_CLOUDFLARE_IMAGES_MAX_ATTEMPTS = 6
-const GALLERY_PREVIEW_CLOUDFLARE_IMAGES_RETRY_DELAY_MS = 1_000
-const GALLERY_PREVIEW_CONTAINER_MAX_ATTEMPTS = 3
-const GALLERY_PREVIEW_CONTAINER_RETRY_DELAY_MS = 1_000
 const GALLERY_IMAGE_DIMENSION_PROBE_BYTES = 1024 * 1024
-const GALLERY_NSFW_BLUR_MAX_WIDTH = 960
-const GALLERY_NSFW_BLUR_AMOUNT = 250
-const GALLERY_NSFW_BLUR_QUALITY = 85
 const HEIGHT_CHART_JSON_MAX_LENGTH = 2048
 const HEIGHT_CHART_MIN_METERS = 0.01
 const HEIGHT_CHART_MAX_METERS = 100
@@ -327,11 +312,11 @@ type CompletedGalleryUpload = {
     displayWidth: number
     displayHeight: number
     byteSize: number
-    exifOrientation: number | null
 }
 
 type CompletedGalleryPreview = {
     imageKey: string
+    contentType: 'image/avif'
     width: number
     height: number
     byteSize: number
@@ -342,6 +327,7 @@ type CompletedMediaVariant = {
     image: CompletedGalleryUpload
     preview: CompletedGalleryPreview & {preview: ParsedPreviewImage}
     nsfwBlurImageKey: string | null
+    nsfwBlurContentType: 'image/avif' | null
 }
 
 type MediaCompletionContext = {
@@ -1097,7 +1083,6 @@ characterRoutes.put('/:id/height-chart', async (c) => {
             displayWidth: imageResult.width,
             displayHeight: imageResult.height,
             byteSize: imageResult.bytes.byteLength,
-            exifOrientation: null,
         }
         uploadedObjectKey = characterHeightChartImageObjectKey(currentUser.id, character.id, imageKey, imageResult.contentType)
 
@@ -1858,13 +1843,36 @@ function toPublicMedia(baseUrl: string, media: CharacterMediaRecord) {
         nsfwPreviewImageKey: media.nsfw_preview_image_key,
         nsfwBlurImageKey: media.nsfw_blur_image_key,
         sfwPreviewImageUrl: media.sfw_preview_image_key
-            ? characterMediaPreviewImageUrl(baseUrl, media.user_id, media.character_id, media.id, media.sfw_preview_image_key, 'sfw')
+            ? characterMediaPreviewImageUrl(
+                  baseUrl,
+                  media.user_id,
+                  media.character_id,
+                  media.id,
+                  media.sfw_preview_image_key,
+                  'sfw',
+                  media.sfw_preview_content_type,
+              )
             : null,
         nsfwPreviewImageUrl: media.nsfw_preview_image_key
-            ? characterMediaPreviewImageUrl(baseUrl, media.user_id, media.character_id, media.id, media.nsfw_preview_image_key, 'nsfw')
+            ? characterMediaPreviewImageUrl(
+                  baseUrl,
+                  media.user_id,
+                  media.character_id,
+                  media.id,
+                  media.nsfw_preview_image_key,
+                  'nsfw',
+                  media.nsfw_preview_content_type,
+              )
             : null,
         nsfwBlurImageUrl: media.nsfw_blur_image_key
-            ? characterMediaNsfwBlurImageUrl(baseUrl, media.user_id, media.character_id, media.id, media.nsfw_blur_image_key)
+            ? characterMediaNsfwBlurImageUrl(
+                  baseUrl,
+                  media.user_id,
+                  media.character_id,
+                  media.id,
+                  media.nsfw_blur_image_key,
+                  media.nsfw_blur_content_type,
+              )
             : null,
         sfwArtist: media.sfw_artist,
         nsfwArtist: media.nsfw_artist,
@@ -1905,18 +1913,21 @@ async function updateCharacterMediaRecord(
              sfw_width             = ?,
              sfw_height            = ?,
              sfw_byte_size         = ?,
-             sfw_preview_image_key = ?,
-             sfw_preview_width     = ?,
+              sfw_preview_image_key = ?,
+              sfw_preview_content_type = ?,
+              sfw_preview_width     = ?,
              sfw_preview_height    = ?,
              sfw_preview_byte_size = ?,
              nsfw_width            = ?,
              nsfw_height           = ?,
              nsfw_byte_size        = ?,
-             nsfw_preview_image_key = ?,
-             nsfw_preview_width     = ?,
+              nsfw_preview_image_key = ?,
+              nsfw_preview_content_type = ?,
+              nsfw_preview_width     = ?,
              nsfw_preview_height    = ?,
              nsfw_preview_byte_size = ?,
              nsfw_blur_image_key   = ?,
+             nsfw_blur_content_type = ?,
              sfw_review_status     = CASE WHEN ? THEN 'pending' ELSE sfw_review_status END,
              sfw_reviewed_at       = CASE WHEN ? THEN NULL ELSE sfw_reviewed_at END,
              sfw_approved_at       = CASE WHEN ? THEN NULL ELSE sfw_approved_at END,
@@ -1940,6 +1951,7 @@ async function updateCharacterMediaRecord(
             media.sfw_height,
             media.sfw_byte_size,
             media.sfw_preview_image_key,
+            media.sfw_preview_content_type,
             media.sfw_preview_width,
             media.sfw_preview_height,
             media.sfw_preview_byte_size,
@@ -1947,10 +1959,12 @@ async function updateCharacterMediaRecord(
             media.nsfw_height,
             media.nsfw_byte_size,
             media.nsfw_preview_image_key,
+            media.nsfw_preview_content_type,
             media.nsfw_preview_width,
             media.nsfw_preview_height,
             media.nsfw_preview_byte_size,
             media.nsfw_blur_image_key,
+            media.nsfw_blur_content_type,
             options.sfwWasModified ? 1 : 0,
             options.sfwWasModified ? 1 : 0,
             options.sfwWasModified ? 1 : 0,
@@ -2132,44 +2146,6 @@ function parseChunkedUploadPair(
     }
 
     return {sfwUpload, nsfwUpload}
-}
-
-function maxPreviewByteSize(width: number, height: number): number {
-    return width * height * GALLERY_PREVIEW_MAX_BYTES_PER_PIXEL + GALLERY_PREVIEW_MAX_CONTAINER_OVERHEAD_BYTES
-}
-
-function expectedPreviewDimensions(original: {width: number; height: number; displayWidth?: number; displayHeight?: number}): {
-    width: number
-    height: number
-} {
-    const width = original.displayWidth ?? original.width
-    const height = original.displayHeight ?? original.height
-    const longEdge = Math.max(width, height)
-    const scale = Math.min(1, GALLERY_PREVIEW_MAX_LONG_EDGE / longEdge)
-
-    return {
-        width: Math.max(1, Math.round(width * scale)),
-        height: Math.max(1, Math.round(height * scale)),
-    }
-}
-
-function assertPreviewMatchesOriginal(
-    preview: ParsedPreviewImage,
-    original: {
-        width: number
-        height: number
-        displayWidth?: number
-        displayHeight?: number
-    },
-    label: string,
-): void {
-    const expected = expectedPreviewDimensions(original)
-    const widthDelta = Math.abs(preview.width - expected.width)
-    const heightDelta = Math.abs(preview.height - expected.height)
-
-    if (widthDelta > GALLERY_PREVIEW_DIMENSION_TOLERANCE || heightDelta > GALLERY_PREVIEW_DIMENSION_TOLERANCE) {
-        throw new PreviewValidationError(`${label} dimensions must match the uploaded image scaled to ${GALLERY_PREVIEW_MAX_LONG_EDGE}px`)
-    }
 }
 
 async function parseChunkedMediaCompleteBody(c: CharacterRouteContext): Promise<
@@ -2432,6 +2408,10 @@ function existingMediaPreviewKey(media: CharacterMediaRecord, rating: MediaRatin
     return rating === 'sfw' ? media.sfw_preview_image_key : media.nsfw_preview_image_key
 }
 
+function existingMediaPreviewContentType(media: CharacterMediaRecord, rating: MediaRating): string {
+    return rating === 'sfw' ? media.sfw_preview_content_type : media.nsfw_preview_content_type
+}
+
 /* istanbul ignore next -- deletion-key combinations are covered through higher-level replacement/delete tests. */
 function queueExistingMediaVariantDelete(
     userId: string,
@@ -2451,11 +2431,22 @@ function queueExistingMediaVariantDelete(
     const previewImageKey = existingMediaPreviewKey(media, rating)
 
     if (previewImageKey) {
-        deletedKeys.push(characterMediaPreviewImageObjectKey(userId, characterId, media.id, previewImageKey, rating))
+        deletedKeys.push(
+            characterMediaPreviewImageObjectKey(
+                userId,
+                characterId,
+                media.id,
+                previewImageKey,
+                rating,
+                existingMediaPreviewContentType(media, rating),
+            ),
+        )
     }
 
     if (rating === 'nsfw' && media.nsfw_blur_image_key) {
-        deletedKeys.push(characterMediaNsfwBlurImageObjectKey(userId, characterId, media.id, media.nsfw_blur_image_key))
+        deletedKeys.push(
+            characterMediaNsfwBlurImageObjectKey(userId, characterId, media.id, media.nsfw_blur_image_key, media.nsfw_blur_content_type),
+        )
     }
 }
 
@@ -2467,6 +2458,7 @@ function clearMediaVariant(nextMedia: CharacterMediaRecord, rating: MediaRating)
         nextMedia.sfw_height = null
         nextMedia.sfw_byte_size = null
         nextMedia.sfw_preview_image_key = null
+        nextMedia.sfw_preview_content_type = 'image/webp'
         nextMedia.sfw_preview_width = null
         nextMedia.sfw_preview_height = null
         nextMedia.sfw_preview_byte_size = null
@@ -2479,10 +2471,12 @@ function clearMediaVariant(nextMedia: CharacterMediaRecord, rating: MediaRating)
     nextMedia.nsfw_height = null
     nextMedia.nsfw_byte_size = null
     nextMedia.nsfw_preview_image_key = null
+    nextMedia.nsfw_preview_content_type = 'image/webp'
     nextMedia.nsfw_preview_width = null
     nextMedia.nsfw_preview_height = null
     nextMedia.nsfw_preview_byte_size = null
     nextMedia.nsfw_blur_image_key = null
+    nextMedia.nsfw_blur_content_type = 'image/webp'
 }
 
 /* istanbul ignore next -- variant assignment combinations are covered through route replacement tests. */
@@ -2499,6 +2493,7 @@ function assignMediaVariant(
         nextMedia.sfw_height = image.height
         nextMedia.sfw_byte_size = image.byteSize
         nextMedia.sfw_preview_image_key = preview?.imageKey ?? null
+        nextMedia.sfw_preview_content_type = preview?.contentType ?? 'image/webp'
         nextMedia.sfw_preview_width = preview?.width ?? null
         nextMedia.sfw_preview_height = preview?.height ?? null
         nextMedia.sfw_preview_byte_size = preview?.byteSize ?? null
@@ -2511,10 +2506,12 @@ function assignMediaVariant(
     nextMedia.nsfw_height = image.height
     nextMedia.nsfw_byte_size = image.byteSize
     nextMedia.nsfw_preview_image_key = preview?.imageKey ?? null
+    nextMedia.nsfw_preview_content_type = preview?.contentType ?? 'image/webp'
     nextMedia.nsfw_preview_width = preview?.width ?? null
     nextMedia.nsfw_preview_height = preview?.height ?? null
     nextMedia.nsfw_preview_byte_size = preview?.byteSize ?? null
     nextMedia.nsfw_blur_image_key = null
+    nextMedia.nsfw_blur_content_type = 'image/webp'
 }
 
 async function completeMediaVariant(
@@ -2559,7 +2556,13 @@ async function completeMediaVariant(
               )
             : null
 
-    return {rating, image, preview, nsfwBlurImageKey}
+    return {
+        rating,
+        image,
+        preview,
+        nsfwBlurImageKey,
+        nsfwBlurContentType: nsfwBlurImageKey ? GALLERY_NSFW_BLUR_CONTENT_TYPE : null,
+    }
 }
 
 function applyCompletedMediaVariant(media: CharacterMediaRecord, variant: CompletedMediaVariant): void {
@@ -2567,6 +2570,7 @@ function applyCompletedMediaVariant(media: CharacterMediaRecord, variant: Comple
 
     if (variant.rating === 'nsfw') {
         media.nsfw_blur_image_key = variant.nsfwBlurImageKey
+        media.nsfw_blur_content_type = GALLERY_NSFW_BLUR_CONTENT_TYPE
     }
 }
 
@@ -2595,11 +2599,14 @@ function createNewCharacterMediaRecord(input: {
         nsfw_height: null,
         nsfw_byte_size: null,
         sfw_preview_image_key: null,
+        sfw_preview_content_type: 'image/webp',
         sfw_preview_width: null,
         sfw_preview_height: null,
         sfw_preview_byte_size: null,
         nsfw_preview_image_key: null,
+        nsfw_preview_content_type: 'image/webp',
         nsfw_blur_image_key: null,
+        nsfw_blur_content_type: 'image/webp',
         nsfw_preview_width: null,
         nsfw_preview_height: null,
         nsfw_preview_byte_size: null,
@@ -2716,13 +2723,13 @@ function createCharacterMediaInsertStatement(db: D1Database, media: CharacterMed
             `INSERT INTO character_media (id, user_id, character_id,
                                           sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type,
                                           sfw_artist, nsfw_artist,
-                                          sfw_width, sfw_height, sfw_byte_size, sfw_preview_image_key,
+                                          sfw_width, sfw_height, sfw_byte_size, sfw_preview_image_key, sfw_preview_content_type,
                                           sfw_preview_width, sfw_preview_height, sfw_preview_byte_size,
-                                          nsfw_width, nsfw_height, nsfw_byte_size, nsfw_preview_image_key,
+                                          nsfw_width, nsfw_height, nsfw_byte_size, nsfw_preview_image_key, nsfw_preview_content_type,
                                           nsfw_preview_width, nsfw_preview_height, nsfw_preview_byte_size,
-                                          nsfw_blur_image_key,
+                                          nsfw_blur_image_key, nsfw_blur_content_type,
                                           created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
             media.id,
@@ -2738,6 +2745,7 @@ function createCharacterMediaInsertStatement(db: D1Database, media: CharacterMed
             media.sfw_height,
             media.sfw_byte_size,
             media.sfw_preview_image_key,
+            media.sfw_preview_content_type,
             media.sfw_preview_width,
             media.sfw_preview_height,
             media.sfw_preview_byte_size,
@@ -2745,10 +2753,12 @@ function createCharacterMediaInsertStatement(db: D1Database, media: CharacterMed
             media.nsfw_height,
             media.nsfw_byte_size,
             media.nsfw_preview_image_key,
+            media.nsfw_preview_content_type,
             media.nsfw_preview_width,
             media.nsfw_preview_height,
             media.nsfw_preview_byte_size,
             media.nsfw_blur_image_key,
+            media.nsfw_blur_content_type,
             media.created_at,
             media.updated_at,
         )
@@ -2792,7 +2802,7 @@ async function putMediaPreviewImage(
     uploadedKeys: string[],
 ): Promise<CompletedGalleryPreview> {
     const imageKey = crypto.randomUUID()
-    const objectKey = characterMediaPreviewImageObjectKey(userId, characterId, mediaId, imageKey, rating)
+    const objectKey = characterMediaPreviewImageObjectKey(userId, characterId, mediaId, imageKey, rating, preview.contentType)
 
     await bucket.put(objectKey, preview.bytes, {
         httpMetadata: {
@@ -2805,6 +2815,7 @@ async function putMediaPreviewImage(
 
     return {
         imageKey,
+        contentType: preview.contentType,
         width: preview.width,
         height: preview.height,
         byteSize: preview.bytes.byteLength,
@@ -2841,188 +2852,8 @@ async function generateMediaPreviewImage(
     image: CompletedGalleryUpload,
     rating: MediaRating,
 ): Promise<ParsedPreviewImage> {
-    const sourceObjectKey = characterMediaImageObjectKey(userId, characterId, mediaId, image.imageKey, rating, image.contentType)
     const sourceUrl = characterMediaImageUrl(mediaPublicBaseUrl, userId, characterId, mediaId, image.imageKey, rating, image.contentType)
-
-    try {
-        return await generateMediaPreviewWithCloudflareImages(sourceUrl, image)
-    } catch (error) {
-        /* istanbul ignore next -- logging-only fallback for non-Error throw values. */
-        const previewErrorMessage = error instanceof Error ? error.message : String(error)
-
-        console.warn('Cloudflare Images preview generation failed, falling back to container', {
-            error: previewErrorMessage,
-            exifOrientation: image.exifOrientation,
-            sourceObjectKey,
-        })
-    }
-
     return await generateMediaPreviewWithContainer(env, sourceUrl, image)
-}
-
-async function generateMediaPreviewWithCloudflareImages(sourceUrl: string, image: CompletedGalleryUpload): Promise<ParsedPreviewImage> {
-    for (let attempt = 1; attempt <= GALLERY_PREVIEW_CLOUDFLARE_IMAGES_MAX_ATTEMPTS; attempt += 1) {
-        const previewUrl = cacheBustedUrl(sourceUrl)
-
-        try {
-            const response = await fetch(previewUrl, {
-                cf: {
-                    cacheTtlByStatus: {'404': 0, '500-599': 0},
-                    image: {
-                        anim: false,
-                        fit: 'scale-down',
-                        format: 'webp',
-                        height: GALLERY_PREVIEW_MAX_LONG_EDGE,
-                        quality: GALLERY_PREVIEW_QUALITY,
-                        ...cloudflareExifOrientationTransform(image.exifOrientation),
-                        width: GALLERY_PREVIEW_MAX_LONG_EDGE,
-                    },
-                },
-                headers: {
-                    accept: 'image/webp,image/*,*/*;q=0.8',
-                    'cache-control': 'no-cache',
-                },
-            })
-
-            return await previewFromResponse(response, image, 'Cloudflare Images preview')
-        } catch (error) {
-            if (error instanceof PreviewValidationError) {
-                throw error
-            }
-
-            if (attempt === GALLERY_PREVIEW_CLOUDFLARE_IMAGES_MAX_ATTEMPTS) {
-                throw error
-            }
-
-            await sleep(GALLERY_PREVIEW_CLOUDFLARE_IMAGES_RETRY_DELAY_MS)
-        }
-    }
-
-    /* istanbul ignore next -- maxAttempts is positive, and the loop either returns or throws from the catch block. */
-    throw new Error('Cloudflare Images preview failed unexpectedly.')
-}
-
-function cacheBustedUrl(sourceUrl: string): string {
-    const url = new URL(sourceUrl)
-    url.searchParams.set('preview_cache_bust', crypto.randomUUID())
-
-    return url.toString()
-}
-
-function sleep(milliseconds: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, milliseconds))
-}
-
-function cloudflareExifOrientationTransform(orientation: number | null): {flip?: 'h' | 'v' | 'hv'; rotate?: 90 | 180 | 270} {
-    switch (orientation) {
-        case 2:
-            return {flip: 'h'}
-        case 3:
-            return {rotate: 180}
-        case 4:
-            return {flip: 'v'}
-        case 5:
-            return {flip: 'h', rotate: 270}
-        case 6:
-            return {rotate: 90}
-        case 7:
-            return {flip: 'h', rotate: 90}
-        case 8:
-            return {rotate: 270}
-        default:
-            return {}
-    }
-}
-
-/* istanbul ignore next -- retry behavior is directly tested; remaining branch gaps are defensive logging fallback types. */
-async function generateMediaPreviewWithContainer(
-    env: Bindings,
-    sourceUrl: string,
-    image: CompletedGalleryUpload,
-): Promise<ParsedPreviewImage> {
-    if (!env.MYOC_DOCKER_SHARP_CONTAINER) {
-        throw new Error('Preview container binding is not configured.')
-    }
-
-    const id = env.MYOC_DOCKER_SHARP_CONTAINER.idFromName('myoc-docker-sharp')
-    const container = env.MYOC_DOCKER_SHARP_CONTAINER.get(id)
-
-    for (let attempt = 1; attempt <= GALLERY_PREVIEW_CONTAINER_MAX_ATTEMPTS; attempt += 1) {
-        try {
-            const response = await container.fetch('https://container/images/preview', {
-                body: JSON.stringify({imageUrl: sourceUrl}),
-                headers: {
-                    authorization: `Bearer ${env.PREVIEW_PROCESSOR_TOKEN}`,
-                    'content-type': 'application/json',
-                },
-                method: 'POST',
-            })
-
-            return await previewFromResponse(response, image, 'Container preview')
-        } catch (error) {
-            if (error instanceof PreviewValidationError || attempt === GALLERY_PREVIEW_CONTAINER_MAX_ATTEMPTS) {
-                throw error
-            }
-
-            console.warn('Container preview generation failed transiently, retrying', {
-                attempt,
-                error: error instanceof Error ? error.message : String(error),
-            })
-            await sleep(GALLERY_PREVIEW_CONTAINER_RETRY_DELAY_MS)
-        }
-    }
-
-    /* istanbul ignore next -- maxAttempts is positive, and the loop either returns or throws from the catch block. */
-    throw new Error('Container preview failed unexpectedly.')
-}
-
-/* istanbul ignore next -- validation branches are directly tested; remaining gaps are defensive message-format combinations. */
-async function previewFromResponse(response: Response, image: CompletedGalleryUpload, label: string): Promise<ParsedPreviewImage> {
-    const bytes = new Uint8Array(await response.arrayBuffer())
-    const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.toLowerCase() ?? ''
-
-    assertPreviewResponse(response, bytes, contentType, label)
-
-    const dimensions = getWebpDimensions(bytes)
-
-    if (!dimensions) {
-        throw new Error(`${label} returned an invalid WebP image`)
-    }
-
-    const preview = {
-        bytes,
-        contentType: GALLERY_PREVIEW_CONTENT_TYPE,
-        width: dimensions.width,
-        height: dimensions.height,
-    } satisfies ParsedPreviewImage
-
-    assertPreviewMatchesOriginal(preview, image, label)
-
-    if (bytes.byteLength > maxPreviewByteSize(preview.width, preview.height)) {
-        throw new Error(`${label} is too large for its dimensions`)
-    }
-
-    return preview
-}
-
-function assertPreviewResponse(response: Response, bytes: Uint8Array, contentType: string, label: string): void {
-    if (!response.ok) {
-        throw new Error(`${label} failed with ${response.status}`)
-    }
-
-    if (contentType !== GALLERY_PREVIEW_CONTENT_TYPE) {
-        const details = contentType ? ` (${contentType})` : ''
-        throw new PreviewValidationError(`${label} returned an unexpected content type${details}`)
-    }
-
-    if (bytes.byteLength <= 0) {
-        throw new Error(`${label} is empty`)
-    }
-
-    /* istanbul ignore if -- exercising this would require allocating an 800MB+ response in a Worker test. */
-    if (bytes.byteLength > GALLERY_PREVIEW_MAX_BYTES) {
-        throw new Error(`${label} is too large`)
-    }
 }
 
 /* istanbul ignore next -- blur generation is route-tested; remaining branch is a defensive content-type fallback. */
@@ -3035,41 +2866,20 @@ async function putNsfwBlurImage(
     preview: ParsedPreviewImage,
     uploadedKeys: string[],
 ): Promise<string> {
-    if (!images) {
-        throw new Error('Cloudflare Images binding is not configured.')
-    }
-
     const imageKey = crypto.randomUUID()
-    const objectKey = characterMediaNsfwBlurImageObjectKey(userId, characterId, mediaId, imageKey)
-    const result = await images
-        .input(streamFromBytes(preview.bytes))
-        .transform({width: GALLERY_NSFW_BLUR_MAX_WIDTH, fit: 'scale-down'})
-        .transform({blur: GALLERY_NSFW_BLUR_AMOUNT})
-        .output({format: 'image/webp', quality: GALLERY_NSFW_BLUR_QUALITY})
+    const objectKey = characterMediaNsfwBlurImageObjectKey(userId, characterId, mediaId, imageKey, GALLERY_NSFW_BLUR_CONTENT_TYPE)
+    const blur = await generateNsfwBlurImage(images, preview)
 
-    const response = result.response()
-    const bytes = new Uint8Array(await response.arrayBuffer())
-    const contentType = response.headers.get('content-type') ?? GALLERY_PREVIEW_CONTENT_TYPE
-
-    await bucket.put(objectKey, bytes, {
+    await bucket.put(objectKey, blur.bytes, {
         httpMetadata: {
             cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
-            contentType,
+            contentType: blur.contentType,
         },
     })
 
     uploadedKeys.push(objectKey)
 
     return imageKey
-}
-
-function streamFromBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
-    return new ReadableStream<Uint8Array>({
-        start(controller) {
-            controller.enqueue(bytes)
-            controller.close()
-        },
-    })
 }
 
 /* istanbul ignore next -- parser behavior is route/helper-tested; remaining branch gaps are alternate form-field compatibility aliases. */
@@ -3989,11 +3799,14 @@ async function getOwnedCharacterMedia(
                 nsfw_height,
                 nsfw_byte_size,
                 sfw_preview_image_key,
+                sfw_preview_content_type,
                 sfw_preview_width,
                 sfw_preview_height,
                 sfw_preview_byte_size,
                 nsfw_preview_image_key,
+                nsfw_preview_content_type,
                 nsfw_blur_image_key,
+                nsfw_blur_content_type,
                 nsfw_preview_width,
                 nsfw_preview_height,
                 nsfw_preview_byte_size,
@@ -4109,11 +3922,14 @@ async function getCharacterMedia(db: D1Database, userId: string, characterId: st
                     nsfw_height,
                     nsfw_byte_size,
                     sfw_preview_image_key,
+                    sfw_preview_content_type,
                     sfw_preview_width,
                     sfw_preview_height,
                     sfw_preview_byte_size,
                     nsfw_preview_image_key,
+                    nsfw_preview_content_type,
                     nsfw_blur_image_key,
+                    nsfw_blur_content_type,
                     nsfw_preview_width,
                     nsfw_preview_height,
                     nsfw_preview_byte_size,
@@ -4211,7 +4027,14 @@ async function deleteCharacterMediaObjects(bucket: R2Bucket, media: CharacterMed
 
     if (media.sfw_preview_image_key) {
         objectKeys.push(
-            characterMediaPreviewImageObjectKey(media.user_id, media.character_id, media.id, media.sfw_preview_image_key, 'sfw'),
+            characterMediaPreviewImageObjectKey(
+                media.user_id,
+                media.character_id,
+                media.id,
+                media.sfw_preview_image_key,
+                'sfw',
+                media.sfw_preview_content_type,
+            ),
         )
     }
 
@@ -4230,12 +4053,27 @@ async function deleteCharacterMediaObjects(bucket: R2Bucket, media: CharacterMed
 
     if (media.nsfw_preview_image_key) {
         objectKeys.push(
-            characterMediaPreviewImageObjectKey(media.user_id, media.character_id, media.id, media.nsfw_preview_image_key, 'nsfw'),
+            characterMediaPreviewImageObjectKey(
+                media.user_id,
+                media.character_id,
+                media.id,
+                media.nsfw_preview_image_key,
+                'nsfw',
+                media.nsfw_preview_content_type,
+            ),
         )
     }
 
     if (media.nsfw_blur_image_key) {
-        objectKeys.push(characterMediaNsfwBlurImageObjectKey(media.user_id, media.character_id, media.id, media.nsfw_blur_image_key))
+        objectKeys.push(
+            characterMediaNsfwBlurImageObjectKey(
+                media.user_id,
+                media.character_id,
+                media.id,
+                media.nsfw_blur_image_key,
+                media.nsfw_blur_content_type,
+            ),
+        )
     }
 
     await deleteR2Objects(bucket, objectKeys)
@@ -4549,7 +4387,6 @@ async function completeChunkedGalleryUpload(
         displayWidth: metadata.displayWidth,
         displayHeight: metadata.displayHeight,
         byteSize: completedObject.size,
-        exifOrientation: metadata.exifOrientation,
     }
 }
 

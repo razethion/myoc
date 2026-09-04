@@ -1974,7 +1974,8 @@ async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCh
             `WITH approved_sfw_media AS (SELECT id,
                                             character_id,
                                             sfw_image_key,
-                                            sfw_preview_image_key,
+                                             sfw_preview_image_key,
+                                             sfw_preview_content_type,
                                             sfw_content_type,
                                             sfw_artist,
                                             sfw_homepage_allowed
@@ -2025,6 +2026,7 @@ async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCh
                 preview_media.id                    AS preview_media_id,
                 preview_media.sfw_image_key         AS preview_image_key,
                 preview_media.sfw_preview_image_key AS preview_thumbnail_image_key,
+                preview_media.sfw_preview_content_type AS preview_thumbnail_content_type,
                 preview_media.sfw_content_type      AS preview_content_type,
                 preview_media.sfw_artist            AS preview_artist
          FROM eligible_characters
@@ -2046,6 +2048,7 @@ async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCh
             preview_media_id: string
             preview_image_key: string
             preview_thumbnail_image_key: string | null
+            preview_thumbnail_content_type: string
             preview_content_type: string | null
             preview_artist: string | null
         }>()
@@ -2059,6 +2062,7 @@ async function getDiscoverCharacters(db: D1Database): Promise<HomePageDiscoverCh
         previewMediaId: character.preview_media_id,
         previewImageKey: character.preview_image_key,
         previewThumbnailImageKey: character.preview_thumbnail_image_key ?? null,
+        previewThumbnailContentType: character.preview_thumbnail_content_type,
         previewContentType: character.preview_content_type ?? 'image/png',
         previewArtist: character.preview_artist ?? '',
         imageCount: Number(character.image_count) || 0,
@@ -2073,6 +2077,7 @@ async function getHomePageGalleryImages(db: D1Database, mediaBaseUrl: string): P
                 character_media.character_id,
                 character_media.sfw_image_key,
                 character_media.sfw_preview_image_key,
+                character_media.sfw_preview_content_type,
                 character_media.sfw_content_type,
                 character_media.sfw_width,
                 character_media.sfw_height,
@@ -2096,6 +2101,7 @@ async function getHomePageGalleryImages(db: D1Database, mediaBaseUrl: string): P
             character_id: string
             sfw_image_key: string | null
             sfw_preview_image_key: string | null
+            sfw_preview_content_type: string
             sfw_content_type: string | null
             sfw_width: number | null
             sfw_height: number | null
@@ -2144,6 +2150,7 @@ async function getHomePageGalleryImages(db: D1Database, mediaBaseUrl: string): P
                     image.id,
                     image.sfw_preview_image_key,
                     'sfw',
+                    image.sfw_preview_content_type,
                 ),
                 width,
             }
@@ -2862,7 +2869,10 @@ async function getCharacterSettingsMedia(db: D1Database, userId: string, charact
                 nsfw_image_key,
                 sfw_preview_image_key,
                 nsfw_preview_image_key,
+                sfw_preview_content_type,
+                nsfw_preview_content_type,
                 nsfw_blur_image_key,
+                nsfw_blur_content_type,
                 sfw_content_type,
                 nsfw_content_type,
                 sfw_artist,
@@ -2887,7 +2897,10 @@ async function getCharacterSettingsMedia(db: D1Database, userId: string, charact
             nsfw_image_key: string | null
             sfw_preview_image_key: string | null
             nsfw_preview_image_key: string | null
+            sfw_preview_content_type: string
+            nsfw_preview_content_type: string
             nsfw_blur_image_key: string | null
+            nsfw_blur_content_type: string
             sfw_content_type: string | null
             nsfw_content_type: string | null
             sfw_artist: string
@@ -2908,7 +2921,10 @@ async function getCharacterSettingsMedia(db: D1Database, userId: string, charact
         nsfwImageKey: media.nsfw_image_key,
         sfwPreviewImageKey: media.sfw_preview_image_key ?? null,
         nsfwPreviewImageKey: media.nsfw_preview_image_key ?? null,
+        sfwPreviewContentType: media.sfw_preview_content_type,
+        nsfwPreviewContentType: media.nsfw_preview_content_type,
         nsfwBlurImageKey: media.nsfw_blur_image_key ?? null,
+        nsfwBlurContentType: media.nsfw_blur_content_type,
         sfwContentType: media.sfw_content_type ?? (media.sfw_image_key ? 'image/png' : null),
         nsfwContentType: media.nsfw_content_type ?? (media.nsfw_image_key ? 'image/png' : null),
         sfwArtist: media.sfw_artist,

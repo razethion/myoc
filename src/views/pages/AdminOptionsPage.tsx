@@ -29,6 +29,10 @@ export function AdminOptionsPage({csrfToken, data, feedback}: AdminOptionsPagePr
             {feedback ? <AdminJobFeedback feedback={feedback} /> : null}
 
             <section class="rounded border border-base-300 bg-base-200 p-4">
+                <p class="mb-3 text-sm text-base-content/70">
+                    Media preview regeneration runs as a durable background job. Starting it again while it runs does not create a duplicate
+                    job.
+                </p>
                 <div class="flex flex-wrap gap-3">
                     {data.jobs.map((job, index) => (
                         <form action={`/admin/admin-options/jobs/${job.name}/run`} method="post">
@@ -124,6 +128,10 @@ function RunSummary({run}: {run: AdminJobRun}) {
         return <LeaderboardRefreshSummary summary={run.summary} />
     }
 
+    if (run.jobName === 'media-preview-regeneration') {
+        return <MediaPreviewRegenerationSummary summary={run.summary} />
+    }
+
     return <R2CleanupSummary summary={run.summary} />
 }
 
@@ -177,6 +185,30 @@ function LeaderboardRefreshSummary({summary}: {summary: AdminJobSummary}) {
             <span>{formatCurrency(summary.totalMonthlyStorageCostUsd)}/mo</span>
             <span>{summary.rankedTopUsers} users ranked</span>
             <span>{summary.rankedCharactersByData} characters ranked</span>
+        </div>
+    )
+}
+
+function MediaPreviewRegenerationSummary({summary}: {summary: AdminJobSummary}) {
+    if (!('totalVariants' in summary) || !('processedVariants' in summary)) {
+        return <JsonSummary summary={summary} />
+    }
+
+    const progressMaximum = Math.max(1, summary.totalVariants)
+
+    return (
+        <div class="grid gap-2 text-xs">
+            <progress class="progress" max={progressMaximum} value={Math.min(summary.processedVariants, progressMaximum)} />
+            <div class="flex flex-wrap gap-x-3 gap-y-1">
+                <span>
+                    {summary.processedVariants} of {summary.totalVariants} variants processed
+                </span>
+                <span>{summary.regeneratedPreviews} previews</span>
+                <span>{summary.regeneratedBlurs} blurs</span>
+                <span>{summary.skippedVariants} skipped</span>
+                {summary.failedVariants > 0 ? <span class="text-error">{summary.failedVariants} failed</span> : null}
+            </div>
+            {summary.lastError ? <p class="max-w-xl whitespace-pre-wrap break-words text-error">Last error: {summary.lastError}</p> : null}
         </div>
     )
 }

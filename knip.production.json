@@ -12,5 +12,5 @@
   },
   "tags": ["-@internal"],
   "ignoreBinaries": ["py"],
-  "ignoreDependencies": ["@simplewebauthn/browser", "cropperjs"]
+  "ignoreDependencies": ["@simplewebauthn/browser", "cloudflare", "cropperjs"]
 }

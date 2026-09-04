@@ -308,15 +308,7 @@ describe('recent feed cleanup', () => {
     it.each(invalidRetainedGraphCases)('does not sweep objects when $name', async ({mutate}) => {
         const graph = retainedObjectGraph()
         mutate(graph)
-        await seedGeneration('r1-valid', graph.rootKey, '2026-06-10T12:00:00.000Z')
-        const bucket = createMockR2Bucket()
-
-        for (const [key, value] of graph.objects) {
-            await bucket.put(key, JSON.stringify(value))
-        }
-
-        const orphanRoot = 'generations/v1/roots/r-orphan.json'
-        await bucket.put(orphanRoot, '{}')
+        const {bucket, orphanRoot} = await seedRetainedObjectGraph(graph)
 
         const summary = await cleanupRecentFeed(enabledEnvironment(bucket), new Date('2026-06-13T12:00:00.000Z'))
 
@@ -330,15 +322,7 @@ describe('recent feed cleanup', () => {
         const reference = firstFixtureItem(variant.years, 'year reference')
         variant.itemCount = 2
         variant.years.push({...reference})
-        await seedGeneration('r1-valid', graph.rootKey, '2026-06-10T12:00:00.000Z')
-        const bucket = createMockR2Bucket()
-
-        for (const [key, value] of graph.objects) {
-            await bucket.put(key, JSON.stringify(value))
-        }
-
-        const orphanRoot = 'generations/v1/roots/r-orphan.json'
-        await bucket.put(orphanRoot, '{}')
+        const {bucket, orphanRoot} = await seedRetainedObjectGraph(graph)
 
         const summary = await cleanupRecentFeed(enabledEnvironment(bucket), new Date('2026-06-13T12:00:00.000Z'))
 
@@ -381,6 +365,19 @@ async function seedGeneration(generation: string, rootKey: string, publishedAt: 
         )
         .bind(generation, rootKey, publishedAt)
         .run()
+}
+
+async function seedRetainedObjectGraph(graph: ReturnType<typeof retainedObjectGraph>): Promise<{bucket: R2Bucket; orphanRoot: string}> {
+    await seedGeneration('r1-valid', graph.rootKey, '2026-06-10T12:00:00.000Z')
+    const bucket = createMockR2Bucket()
+
+    for (const [key, value] of graph.objects) {
+        await bucket.put(key, JSON.stringify(value))
+    }
+
+    const orphanRoot = 'generations/v1/roots/r-orphan.json'
+    await bucket.put(orphanRoot, '{}')
+    return {bucket, orphanRoot}
 }
 
 function retainedObjectGraph(): {

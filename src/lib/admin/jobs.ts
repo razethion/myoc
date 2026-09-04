@@ -1,8 +1,14 @@
 import type {Bindings} from '../../types/bindings'
+import type {RegenerateMediaPreviewsWorkflowParams} from '../../workflows/RegenerateMediaPreviewsWorkflow'
 import {toSqlTimestamp} from '../auth/session'
 import {backupD1Database, type D1BackupSummary} from '../db/backup'
 import {type LeaderboardRefreshSummary, refreshLeaderboard} from '../leaderboard'
 import {cleanupStaleR2Media, type R2CleanupSummary} from '../media/r2Cleanup'
+import {
+    activeMediaPreviewRegenerationWorkflowInstanceIds,
+    emptyMediaPreviewRegenerationSummary,
+    type MediaPreviewRegenerationSummary,
+} from './mediaPreviewRegeneration'
 
 const ADMIN_JOBS = [
     {
@@ -17,16 +23,30 @@ const ADMIN_JOBS = [
         name: 'leaderboard-refresh',
         label: 'Leaderboard Refresh',
     },
+    {
+        name: 'media-preview-regeneration',
+        label: 'Media Preview Regeneration',
+    },
 ] as const
 
 export type AdminJobName = (typeof ADMIN_JOBS)[number]['name']
 type AdminJobTriggerSource = 'cron' | 'manual'
 type AdminJobRunStatus = 'running' | 'success' | 'error'
-export type AdminJobSummary = D1BackupSummary | R2CleanupSummary | LeaderboardRefreshSummary
+const WORKFLOW_START_GRACE_PERIOD_MS = 5 * 60 * 1_000
+const ACTIVE_WORKFLOW_STATUSES = new Set<InstanceStatus['status']>(['paused', 'queued', 'running', 'unknown', 'waiting', 'waitingForPause'])
+type MediaPreviewWorkflowInstanceState = 'active' | 'complete' | 'inactive' | 'missing'
+export type AdminJobSummary = D1BackupSummary | R2CleanupSummary | LeaderboardRefreshSummary | MediaPreviewRegenerationSummary
 
 type AdminJobEnv = Pick<
     Bindings,
-    'CLOUDFLARE_ACCOUNT_ID' | 'D1_DATABASE_ID' | 'D1_REST_API_TOKEN' | 'DB' | 'DB_BACKUP_BUCKET' | 'MEDIA_BUCKET' | 'CACHE'
+    | 'CLOUDFLARE_ACCOUNT_ID'
+    | 'D1_DATABASE_ID'
+    | 'D1_REST_API_TOKEN'
+    | 'DB'
+    | 'DB_BACKUP_BUCKET'
+    | 'MEDIA_BUCKET'
+    | 'CACHE'
+    | 'REGENERATE_MEDIA_PREVIEWS_WORKFLOW'
 >
 
 type AdminJobRunOptions = {
@@ -125,6 +145,10 @@ export function getAdminJobLabel(jobName: AdminJobName): string {
 }
 
 export async function runAdminJob(env: AdminJobEnv, jobName: AdminJobName, options: AdminJobRunOptions): Promise<AdminJobRunResult> {
+    if (jobName === 'media-preview-regeneration') {
+        return await startMediaPreviewRegenerationJob(env, options)
+    }
+
     return await recordAdminJobRun(env.DB, jobName, options, async () => runAdminJobTask(env, jobName))
 }
 
@@ -141,7 +165,7 @@ export async function recordAdminJobRun<TSummary extends AdminJobSummary>(
 
     try {
         const summary = await run()
-        await tryFinishAdminJobRun(db, started.runId, 'success', started.startedAtMs, summary, null)
+        await tryFinishAdminJobRun(db, started.runId, 'success', summary, null)
 
         return {
             jobName,
@@ -150,20 +174,15 @@ export async function recordAdminJobRun<TSummary extends AdminJobSummary>(
             summary,
         }
     } catch (error) {
-        await tryFinishAdminJobRun(db, started.runId, 'error', started.startedAtMs, null, errorMessage(error))
+        await tryFinishAdminJobRun(db, started.runId, 'error', null, errorMessage(error))
 
         throw error
     }
 }
 
-async function startAdminJobRun(
-    db: D1Database,
-    jobName: AdminJobName,
-    options: AdminJobRunOptions,
-): Promise<{runId: string; startedAtMs: number}> {
+async function startAdminJobRun(db: D1Database, jobName: AdminJobName, options: AdminJobRunOptions): Promise<{runId: string}> {
     const runId = crypto.randomUUID()
     const startedAt = toSqlTimestamp(options.now ?? new Date())
-    const startedAtMs = Date.now()
 
     await db
         .prepare(
@@ -188,7 +207,180 @@ async function startAdminJobRun(
         )
         .run()
 
-    return {runId, startedAtMs}
+    return {runId}
+}
+
+async function startMediaPreviewRegenerationJob(
+    env: AdminJobEnv,
+    options: AdminJobRunOptions,
+): Promise<AdminJobRunResult<MediaPreviewRegenerationSummary>> {
+    const summary = emptyMediaPreviewRegenerationSummary()
+    let started = await startExclusiveAdminJobRun(env.DB, 'media-preview-regeneration', options, summary)
+
+    if (!started.created) {
+        const active = await isMediaPreviewWorkflowActive(
+            env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW,
+            started.runId,
+            started.startedAt,
+            started.summary,
+        )
+
+        if (active) {
+            return {
+                jobName: 'media-preview-regeneration',
+                runId: started.runId,
+                status: 'running',
+                summary: started.summary,
+            }
+        }
+
+        await failAdminJobRun(env.DB, started.runId, 'The preview regeneration Workflow stopped before the job record finished.')
+        started = await startExclusiveAdminJobRun(env.DB, 'media-preview-regeneration', options, summary)
+
+        if (!started.created) {
+            return {
+                jobName: 'media-preview-regeneration',
+                runId: started.runId,
+                status: 'running',
+                summary: started.summary,
+            }
+        }
+    }
+
+    try {
+        await env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW.create({
+            id: started.runId,
+            params: {runId: started.runId} satisfies RegenerateMediaPreviewsWorkflowParams,
+        })
+    } catch (error) {
+        await tryFinishAdminJobRun(env.DB, started.runId, 'error', null, errorMessage(error))
+        throw error
+    }
+
+    return {
+        jobName: 'media-preview-regeneration',
+        runId: started.runId,
+        status: 'running',
+        summary,
+    }
+}
+
+async function startExclusiveAdminJobRun(
+    db: D1Database,
+    jobName: AdminJobName,
+    options: AdminJobRunOptions,
+    summary: MediaPreviewRegenerationSummary,
+): Promise<{created: boolean; runId: string; startedAt: string; summary: MediaPreviewRegenerationSummary}> {
+    const runId = crypto.randomUUID()
+    const startedAt = toSqlTimestamp(options.now ?? new Date())
+    const summaryJson = JSON.stringify(summary)
+    const [insertResult, activeResult] = (await db.batch([
+        db
+            .prepare(
+                `INSERT INTO admin_job_runs (
+                id, job_name, trigger_source, triggered_by_user_id, cron, status, started_at,
+                finished_at, duration_ms, summary_json, error_message
+            )
+            SELECT ?, ?, ?, ?, ?, 'running', ?, NULL, NULL, ?, NULL
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM admin_job_runs
+                WHERE job_name = ?
+                  AND status = 'running'
+            )`,
+            )
+            .bind(runId, jobName, options.triggerSource, options.triggeredByUserId, options.cron ?? null, startedAt, summaryJson, jobName),
+        db
+            .prepare(
+                `SELECT id, started_at, summary_json
+             FROM admin_job_runs
+             WHERE job_name = ?
+               AND status = 'running'
+             ORDER BY started_at DESC
+             LIMIT 1`,
+            )
+            .bind(jobName),
+    ])) as [D1Result, D1Result<{id: string; started_at: string; summary_json: string | null}>]
+    const active = activeResult.results[0] as {id: string; started_at: string; summary_json: string | null}
+    const created = Number(insertResult.meta.changes) > 0
+
+    return {
+        created,
+        runId: active.id,
+        startedAt: active.started_at,
+        summary: created ? summary : (parseMediaPreviewRegenerationSummary(active.summary_json) ?? summary),
+    }
+}
+
+async function isMediaPreviewWorkflowActive(
+    workflow: Bindings['REGENERATE_MEDIA_PREVIEWS_WORKFLOW'],
+    runId: string,
+    startedAt: string,
+    summary: MediaPreviewRegenerationSummary,
+): Promise<boolean> {
+    const startedAtMs = Date.parse(`${startedAt.replace(' ', 'T')}Z`)
+    const recentlyStarted = Number.isFinite(startedAtMs) && Date.now() - startedAtMs < WORKFLOW_START_GRACE_PERIOD_MS
+    const statusErrors: Error[] = []
+    const states: MediaPreviewWorkflowInstanceState[] = []
+
+    for (const instanceId of activeMediaPreviewRegenerationWorkflowInstanceIds(runId, summary.processedVariants)) {
+        try {
+            const state = await getMediaPreviewWorkflowInstanceState(workflow, instanceId, recentlyStarted)
+            if (state === 'active') {
+                return true
+            }
+            states.push(state)
+        } catch (error) {
+            statusErrors.push(error instanceof Error ? error : new Error(errorMessage(error)))
+        }
+    }
+
+    if (states.length === 2 && states[0] === 'complete' && states[1] === 'missing') {
+        return true
+    }
+
+    const [statusError] = statusErrors
+    if (statusError) {
+        throw statusError
+    }
+
+    return false
+}
+
+async function getMediaPreviewWorkflowInstanceState(
+    workflow: Bindings['REGENERATE_MEDIA_PREVIEWS_WORKFLOW'],
+    instanceId: string,
+    recentlyStarted: boolean,
+): Promise<MediaPreviewWorkflowInstanceState> {
+    try {
+        const instance = await workflow.get(instanceId)
+        const status = (await instance.status()).status
+
+        if (ACTIVE_WORKFLOW_STATUSES.has(status)) {
+            return 'active'
+        }
+
+        return status === 'complete' ? 'complete' : 'inactive'
+    } catch (error) {
+        if (recentlyStarted) {
+            return 'active'
+        }
+
+        if (isMissingWorkflowInstanceError(error)) {
+            return 'missing'
+        }
+
+        throw error
+    }
+}
+
+function isMissingWorkflowInstanceError(error: unknown): boolean {
+    if (typeof error === 'object' && error && 'code' in error && error.code === 404) {
+        return true
+    }
+
+    const message = errorMessage(error).toLowerCase()
+    return message.includes('not found') || message.includes('does not exist') || message.includes('no such workflow instance')
 }
 
 async function runAdminJobTask(env: AdminJobEnv, jobName: AdminJobName): Promise<AdminJobSummary> {
@@ -207,12 +399,11 @@ async function tryFinishAdminJobRun(
     db: D1Database,
     runId: string,
     status: Exclude<AdminJobRunStatus, 'running'>,
-    startedAtMs: number,
     summary: AdminJobSummary | null,
     message: string | null,
 ): Promise<void> {
     try {
-        await finishAdminJobRun(db, runId, status, startedAtMs, summary, message)
+        await finishAdminJobRun(db, runId, status, summary, message)
     } catch (error) {
         console.warn('Unable to record admin job finish', {
             runId,
@@ -226,29 +417,44 @@ async function finishAdminJobRun(
     db: D1Database,
     runId: string,
     status: Exclude<AdminJobRunStatus, 'running'>,
-    startedAtMs: number,
     summary: AdminJobSummary | null,
     message: string | null,
 ): Promise<void> {
+    const finishedAt = toSqlTimestamp(new Date())
+
     await db
         .prepare(
             `UPDATE admin_job_runs
              SET status = ?,
                  finished_at = ?,
-                 duration_ms = ?,
+                 duration_ms = MAX(0, CAST((julianday(?) - julianday(started_at)) * 86400000 AS INTEGER)),
                  summary_json = ?,
                  error_message = ?
-             WHERE id = ?`,
+             WHERE id = ?
+               AND status = 'running'`,
         )
-        .bind(
-            status,
-            toSqlTimestamp(new Date()),
-            Math.max(0, Date.now() - startedAtMs),
-            summary ? JSON.stringify(summary) : null,
-            message,
-            runId,
-        )
+        .bind(status, finishedAt, finishedAt, summary ? JSON.stringify(summary) : null, message, runId)
         .run()
+}
+
+export async function updateAdminJobRunSummary(db: D1Database, runId: string, summary: AdminJobSummary): Promise<void> {
+    await db
+        .prepare(
+            `UPDATE admin_job_runs
+             SET summary_json = ?
+             WHERE id = ?
+               AND status = 'running'`,
+        )
+        .bind(JSON.stringify(summary), runId)
+        .run()
+}
+
+export async function completeAdminJobRun(db: D1Database, runId: string, summary: AdminJobSummary): Promise<void> {
+    await finishAdminJobRun(db, runId, 'success', summary, null)
+}
+
+export async function failAdminJobRun(db: D1Database, runId: string, message: string): Promise<void> {
+    await finishAdminJobRun(db, runId, 'error', null, message)
 }
 
 function toAdminJobRun(row: AdminJobRunRow): AdminJobRun[] {
@@ -287,6 +493,12 @@ function parseSummary(value: string | null): AdminJobSummary | null {
     } catch {
         return null
     }
+}
+
+function parseMediaPreviewRegenerationSummary(value: string | null): MediaPreviewRegenerationSummary | null {
+    const parsed = parseSummary(value)
+
+    return parsed && 'totalVariants' in parsed && 'processedVariants' in parsed ? parsed : null
 }
 
 function errorMessage(error: unknown): string {

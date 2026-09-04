@@ -55,6 +55,7 @@ type ManagedR2MediaKey =
           mediaId: string
           rating: 'sfw' | 'nsfw'
           imageKey: string
+          contentType: string
       }
     | {
           kind: 'characterMediaNsfwBlur'
@@ -63,6 +64,7 @@ type ManagedR2MediaKey =
           characterId: string
           mediaId: string
           imageKey: string
+          contentType: string
       }
     | {
           kind: 'characterHeightChart'
@@ -373,8 +375,9 @@ function parseCharacterMediaPreviewKey(key: string, parts: string[]): ManagedR2M
     }
 
     const [imageKey, extension] = splitFileName(fileName)
-    return isSafeSegment(imageKey) && extension === 'webp'
-        ? {kind: 'characterMediaPreview', key, userId, characterId, mediaId, rating, imageKey}
+    const contentType = contentTypeForExtension(extension)
+    return isSafeSegment(imageKey) && (contentType === 'image/webp' || contentType === 'image/avif')
+        ? {kind: 'characterMediaPreview', key, userId, characterId, mediaId, rating, imageKey, contentType}
         : null
 }
 
@@ -396,8 +399,9 @@ function parseCharacterMediaBlurKey(key: string, parts: string[]): ManagedR2Medi
     }
 
     const [imageKey, extension] = splitFileName(fileName)
-    return isSafeSegment(imageKey) && extension === 'webp'
-        ? {kind: 'characterMediaNsfwBlur', key, userId, characterId, mediaId, imageKey}
+    const contentType = contentTypeForExtension(extension)
+    return isSafeSegment(imageKey) && (contentType === 'image/webp' || contentType === 'image/avif')
+        ? {kind: 'characterMediaNsfwBlur', key, userId, characterId, mediaId, imageKey, contentType}
         : null
 }
 
@@ -487,6 +491,7 @@ async function isManagedR2MediaKeyReferenced(db: D1Database, parsed: ManagedR2Me
 
         case 'characterMediaPreview': {
             const imageKeyColumn = parsed.rating === 'sfw' ? 'sfw_preview_image_key' : 'nsfw_preview_image_key'
+            const contentTypeColumn = parsed.rating === 'sfw' ? 'sfw_preview_content_type' : 'nsfw_preview_content_type'
             const row = await db
                 .prepare(
                     `SELECT 1
@@ -495,9 +500,10 @@ async function isManagedR2MediaKeyReferenced(db: D1Database, parsed: ManagedR2Me
                    AND character_id = ?
                    AND id = ?
                    AND ${imageKeyColumn} = ?
+                   AND lower(coalesce(${contentTypeColumn}, 'image/webp')) = ?
                  LIMIT 1`,
                 )
-                .bind(parsed.userId, parsed.characterId, parsed.mediaId, parsed.imageKey)
+                .bind(parsed.userId, parsed.characterId, parsed.mediaId, parsed.imageKey, parsed.contentType)
                 .first()
             return Boolean(row)
         }
@@ -511,9 +517,10 @@ async function isManagedR2MediaKeyReferenced(db: D1Database, parsed: ManagedR2Me
                    AND character_id = ?
                    AND id = ?
                    AND nsfw_blur_image_key = ?
+                   AND lower(coalesce(nsfw_blur_content_type, 'image/webp')) = ?
                  LIMIT 1`,
                 )
-                .bind(parsed.userId, parsed.characterId, parsed.mediaId, parsed.imageKey)
+                .bind(parsed.userId, parsed.characterId, parsed.mediaId, parsed.imageKey, parsed.contentType)
                 .first()
             return Boolean(row)
         }

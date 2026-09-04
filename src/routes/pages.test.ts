@@ -1,5 +1,6 @@
 import {afterEach, describe, expect, it, vi} from 'vitest'
 import app from '../index'
+import {createCsrfToken} from '../lib/auth/session'
 import type {LeaderboardSnapshot} from '../lib/leaderboard'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import {expectSecurityHeaders} from '../test/assertions'
@@ -174,12 +175,15 @@ async function seedMediaRow(value: unknown, fallbackUserId: string, fallbackChar
                 sfwContentType: (row.sfw_content_type as string | null | undefined) ?? undefined,
                 nsfwContentType: (row.nsfw_content_type as string | null | undefined) ?? undefined,
                 sfwPreviewImageKey: (row.sfw_preview_image_key as string | null | undefined) ?? null,
+                sfwPreviewContentType: (row.sfw_preview_content_type as 'image/webp' | 'image/avif' | undefined) ?? 'image/webp',
                 sfwPreviewWidth: (row.sfw_preview_width as number | null | undefined) ?? null,
                 sfwPreviewHeight: (row.sfw_preview_height as number | null | undefined) ?? null,
                 nsfwPreviewImageKey: (row.nsfw_preview_image_key as string | null | undefined) ?? null,
+                nsfwPreviewContentType: (row.nsfw_preview_content_type as 'image/webp' | 'image/avif' | undefined) ?? 'image/webp',
                 nsfwPreviewWidth: (row.nsfw_preview_width as number | null | undefined) ?? null,
                 nsfwPreviewHeight: (row.nsfw_preview_height as number | null | undefined) ?? null,
                 nsfwBlurImageKey: (row.nsfw_blur_image_key as string | null | undefined) ?? null,
+                nsfwBlurContentType: (row.nsfw_blur_content_type as 'image/webp' | 'image/avif' | undefined) ?? 'image/webp',
                 createdAt: String(row.created_at ?? '2026-01-01 00:00:00'),
                 updatedAt: String(row.updated_at ?? '2026-01-01 00:00:00'),
             },
@@ -650,6 +654,31 @@ async function getAppPath(path: string, database = db, headers: Record<string, s
             DB: database,
             DB_BACKUP_BUCKET: workerEnv.DB_BACKUP_BUCKET,
             MEDIA_BUCKET: workerEnv.MEDIA_BUCKET,
+            MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+        },
+    )
+}
+
+async function postPageAction(path: string, database: D1Database, mediaBucket: R2Bucket): Promise<Response> {
+    const sessionToken = 'session-token'
+
+    return pageRoutes.request(
+        `https://example.com${path}`,
+        {
+            body: JSON.stringify({}),
+            headers: {
+                accept: 'text/html',
+                'content-type': 'application/json',
+                cookie: `myoc_session=${sessionToken}`,
+                'x-csrf-token': await createCsrfToken(sessionToken),
+            },
+            method: 'POST',
+        },
+        {
+            CACHE: createMockKVNamespace(),
+            DB: database,
+            DB_BACKUP_BUCKET: workerEnv.DB_BACKUP_BUCKET,
+            MEDIA_BUCKET: mediaBucket,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         },
     )
@@ -1886,9 +1915,12 @@ describe('GET /migrate', () => {
         expect(fetchMock).not.toHaveBeenCalled()
     })
 
+    // noinspection HttpUrlsUsage -- This test requires an insecure URL.
+    const insecureToyhouseImageUrl = 'http://f2.toyhou.se/file/image.png'
+
     it.each([
         ['a malformed URL', 'not a URL'],
-        ['a non-HTTPS URL', 'http://f2.toyhou.se/file/image.png'],
+        ['a non-HTTPS URL', insecureToyhouseImageUrl],
         ['a username', 'https://user@f2.toyhou.se/file/image.png'],
         ['a password', 'https://:secret@f2.toyhou.se/file/image.png'],
         ['a wildcard Toyhou.se host', 'https://cdn.toyhou.se/file/image.png'],
@@ -3218,11 +3250,13 @@ describe('CharacterPage', () => {
                     id: 'empty-media',
                     nsfwArtist: '',
                     nsfwBlurImageKey: null,
+                    nsfwBlurContentType: 'image/webp',
                     nsfwContentType: null,
                     nsfwHeight: null,
                     nsfwImageKey: null,
                     nsfwPreviewHeight: null,
                     nsfwPreviewImageKey: null,
+                    nsfwPreviewContentType: 'image/webp',
                     nsfwPreviewWidth: null,
                     nsfwWidth: null,
                     sfwArtist: '',
@@ -3231,6 +3265,7 @@ describe('CharacterPage', () => {
                     sfwImageKey: null,
                     sfwPreviewHeight: null,
                     sfwPreviewImageKey: null,
+                    sfwPreviewContentType: 'image/webp',
                     sfwPreviewWidth: null,
                     sfwWidth: null,
                 },
@@ -3266,11 +3301,13 @@ describe('CharacterPage', () => {
                     id: 'nsfw-without-metadata',
                     nsfwArtist: '',
                     nsfwBlurImageKey: null,
+                    nsfwBlurContentType: 'image/webp',
                     nsfwContentType: 'image/png',
                     nsfwHeight: 0,
                     nsfwImageKey: 'nsfw-key',
                     nsfwPreviewHeight: 0,
                     nsfwPreviewImageKey: null,
+                    nsfwPreviewContentType: 'image/webp',
                     nsfwPreviewWidth: 0,
                     nsfwWidth: 0,
                     sfwArtist: '',
@@ -3279,6 +3316,7 @@ describe('CharacterPage', () => {
                     sfwImageKey: null,
                     sfwPreviewHeight: null,
                     sfwPreviewImageKey: null,
+                    sfwPreviewContentType: 'image/webp',
                     sfwPreviewWidth: null,
                     sfwWidth: null,
                 },
@@ -4104,6 +4142,8 @@ describe('GET /admin', () => {
         expect(html).toContain('Run R2 Media Cleanup')
         expect(html).toContain('action="/admin/admin-options/jobs/leaderboard-refresh/run"')
         expect(html).toContain('Run Leaderboard Refresh')
+        expect(html).toContain('action="/admin/admin-options/jobs/media-preview-regeneration/run"')
+        expect(html).toContain('Run Media Preview Regeneration')
         expect(html).toContain('Job History')
         expect(html).toContain('Cron 0 8 * * *')
         expect(html).toContain('d1/myoc-db/2026/07/11/myoc-db.sql.gz')
@@ -4157,6 +4197,64 @@ describe('GET /admin', () => {
                     role: 'admin',
                 },
                 adminJobRuns: [
+                    {
+                        id: 'run-preview-regeneration',
+                        job_name: 'media-preview-regeneration',
+                        trigger_source: 'manual',
+                        triggered_by_user_id: 'admin-user',
+                        triggered_by_username: 'admin_user',
+                        cron: null,
+                        status: 'running',
+                        started_at: '2026-07-11 08:59:00',
+                        finished_at: null,
+                        duration_ms: null,
+                        summary_json: JSON.stringify({
+                            totalVariants: 20,
+                            processedVariants: 10,
+                            regeneratedPreviews: 8,
+                            regeneratedBlurs: 3,
+                            skippedVariants: 1,
+                            failedVariants: 1,
+                            lastError: 'source image is missing',
+                        }),
+                        error_message: null,
+                    },
+                    {
+                        id: 'run-preview-regeneration-empty',
+                        job_name: 'media-preview-regeneration',
+                        trigger_source: 'manual',
+                        triggered_by_user_id: 'admin-user',
+                        triggered_by_username: 'admin_user',
+                        cron: null,
+                        status: 'running',
+                        started_at: '2026-07-11 08:58:00',
+                        finished_at: null,
+                        duration_ms: null,
+                        summary_json: JSON.stringify({note: 'waiting for preview work'}),
+                        error_message: null,
+                    },
+                    {
+                        id: 'run-preview-regeneration-complete',
+                        job_name: 'media-preview-regeneration',
+                        trigger_source: 'manual',
+                        triggered_by_user_id: 'admin-user',
+                        triggered_by_username: 'admin_user',
+                        cron: null,
+                        status: 'success',
+                        started_at: '2026-07-11 08:57:00',
+                        finished_at: '2026-07-11 08:57:01',
+                        duration_ms: 1000,
+                        summary_json: JSON.stringify({
+                            totalVariants: 0,
+                            processedVariants: 0,
+                            regeneratedPreviews: 0,
+                            regeneratedBlurs: 0,
+                            skippedVariants: 0,
+                            failedVariants: 0,
+                            lastError: null,
+                        }),
+                        error_message: null,
+                    },
                     {
                         id: 'run-running',
                         job_name: 'r2-media-cleanup',
@@ -4318,6 +4416,121 @@ describe('GET /admin', () => {
         expect(html).toContain('3 users ranked')
         expect(html).toContain('3 characters ranked')
         expect(html).toContain('custom summary')
+        expect(html).toContain('10 of 20 variants processed')
+        expect(html).toContain('8 previews')
+        expect(html).toContain('3 blurs')
+        expect(html).toContain('1 skipped')
+        expect(html).toContain('1 failed')
+        expect(html).toContain('Last error: source image is missing')
+        expect(html).toContain('waiting for preview work')
+        expect(html).toContain('0 of 0 variants processed')
+        expect(html).not.toContain('0 failed')
+    })
+
+    it('deletes a reported NSFW image and its preview from the admin page action', async () => {
+        const database = await seedPageDatabase({
+            currentUser: {
+                ...createCurrentUserRecord('admin_user'),
+                role: 'admin',
+            },
+            characters: [{id: 'character-1', name: 'Quartz'}],
+            characterMedia: [
+                {
+                    id: 'media-1',
+                    character_id: 'character-1',
+                    sfw_image_key: 'sfw-key',
+                    nsfw_image_key: 'nsfw-key',
+                    nsfw_preview_image_key: 'nsfw-preview-key',
+                    nsfw_preview_content_type: 'image/avif',
+                    sfw_review_status: 'approved',
+                    nsfw_review_status: 'reported',
+                },
+            ],
+        })
+        const mediaBucket = createMockR2Bucket()
+
+        const response = await postPageAction('/admin/reports/images/media-1/nsfw/delete-image', database, mediaBucket)
+        const media = await queryOne<{nsfw_image_key: string | null}>(
+            'SELECT nsfw_image_key FROM character_media WHERE id = ?',
+            ['media-1'],
+            database,
+        )
+
+        expect(response.status).toBe(303)
+        expect(response.headers.get('location')).toBe('/admin/reports')
+        expect(media).toEqual({nsfw_image_key: null})
+        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/current-user/character-1/media/media-1/nsfw/nsfw-key.png')
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            'characters/current-user/character-1/media/media-1/nsfw/preview/nsfw-preview-key.avif',
+        )
+    })
+
+    it('deletes a reported image that has no preview object', async () => {
+        const database = await seedPageDatabase({
+            currentUser: {
+                ...createCurrentUserRecord('admin_user'),
+                role: 'admin',
+            },
+            characters: [{id: 'character-1', name: 'Quartz'}],
+            characterMedia: [
+                {
+                    id: 'media-1',
+                    character_id: 'character-1',
+                    sfw_image_key: 'sfw-key',
+                    sfw_preview_image_key: null,
+                    sfw_review_status: 'reported',
+                },
+            ],
+        })
+        const mediaBucket = createMockR2Bucket()
+
+        const response = await postPageAction('/admin/reports/images/media-1/sfw/delete-image', database, mediaBucket)
+
+        expect(response.status).toBe(303)
+        await expect(queryOne('SELECT id FROM character_media WHERE id = ?', ['media-1'], database)).resolves.toBeNull()
+        expect(mediaBucket.delete).toHaveBeenCalledWith('characters/current-user/character-1/media/media-1/sfw/sfw-key.png')
+    })
+
+    it('deletes all preview objects when an admin deletes a reported character', async () => {
+        const database = await seedPageDatabase({
+            currentUser: {
+                ...createCurrentUserRecord('admin_user'),
+                role: 'admin',
+            },
+            characters: [{id: 'character-1', name: 'Quartz'}],
+            characterMedia: [
+                {
+                    id: 'media-1',
+                    character_id: 'character-1',
+                    sfw_image_key: 'sfw-key',
+                    sfw_preview_image_key: 'sfw-preview-key',
+                    sfw_preview_content_type: 'image/avif',
+                    nsfw_image_key: 'nsfw-key',
+                    nsfw_preview_image_key: 'nsfw-preview-key',
+                    nsfw_preview_content_type: 'image/webp',
+                    nsfw_review_status: 'reported',
+                },
+                {
+                    id: 'media-2',
+                    character_id: 'character-1',
+                    sfw_image_key: 'second-sfw-key',
+                    nsfw_image_key: null,
+                },
+            ],
+        })
+        const mediaBucket = createMockR2Bucket()
+
+        const response = await postPageAction('/admin/reports/images/media-1/nsfw/delete-character', database, mediaBucket)
+
+        expect(response.status).toBe(303)
+        expect(response.headers.get('location')).toBe('/admin/reports')
+        await expect(queryOne('SELECT id FROM characters WHERE id = ?', ['character-1'], database)).resolves.toBeNull()
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            'characters/current-user/character-1/media/media-1/sfw/preview/sfw-preview-key.avif',
+        )
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            'characters/current-user/character-1/media/media-1/nsfw/preview/nsfw-preview-key.webp',
+        )
     })
 
     it('returns not found for unknown admin sections', async () => {
@@ -4435,6 +4648,7 @@ describe('GET /u/:username', () => {
                         sfw_preview_image_key: null,
                         nsfw_preview_image_key: 'nsfw-only-preview-key',
                         nsfw_blur_image_key: 'nsfw-only-blur-key',
+                        nsfw_blur_content_type: 'image/avif',
                         sfw_artist: '',
                         nsfw_artist: 'NSFW Artist',
                         sfw_width: null,
@@ -4539,7 +4753,7 @@ describe('GET /u/:username', () => {
         expect(html).toContain('data-title="SFW Artist"')
         expect(html).toContain('data-title="Both SFW Artist"')
         expect(html).toContain(
-            'src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/blur/nsfw-only-blur-key.webp"',
+            'src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/blur/nsfw-only-blur-key.avif"',
         )
         expect(html).not.toContain(
             'data-original-url="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-media/nsfw/nsfw-only-key.png"',

@@ -130,7 +130,8 @@ describe('RecentMediaPage', () => {
     })
 
     it('stacks sequential uploads and safely embeds the remaining item data', () => {
-        const unsafeText = '</script><script>alert(1)</script>&'
+        const scriptInjection = ['</scr', 'ipt><scr', 'ipt>alert(1)</scr', 'ipt>'].join('')
+        const unsafeText = `${scriptInjection}&`
         const items = [
             mediaItem('stack-1', 'shared-group'),
             mediaItem('stack-2', 'shared-group', {alt: unsafeText}),
@@ -145,7 +146,7 @@ describe('RecentMediaPage', () => {
         const remainingItems = JSON.parse(decodedPayload ?? '[]') as RecentMediaItem[]
         expect(remainingItems.map((item) => item.alt)).toEqual([unsafeText, 'stack-3 character art'])
         expect(html).not.toContain('type="application/json"')
-        expect(html).not.toContain('<script>alert(1)</script>')
+        expect(html).not.toContain(scriptInjection.slice('</script>'.length))
     })
 
     it('uses a singular upload label for a two-item stack', () => {

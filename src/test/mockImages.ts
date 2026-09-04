@@ -1,5 +1,5 @@
 import {vi} from 'vitest'
-import {createWebpBytes} from './imageFixtures'
+import {createAvifBytes, createWebpBytes} from './imageFixtures'
 
 const transformedImageBytes = createWebpBytes(512, 512)
 
@@ -24,16 +24,21 @@ function createMockImageTransformer(): ImageTransformer {
     const transformer = {
         transform: vi.fn(() => transformer),
         draw: vi.fn(() => transformer),
-        output: vi.fn(async () => ({
-            response: () =>
-                new Response(transformedImageBytes, {
-                    headers: {
-                        'content-type': 'image/webp',
-                    },
-                }),
-            contentType: () => 'image/webp',
-            image: () => streamFromBytes(transformedImageBytes),
-        })),
+        output: vi.fn(async (options?: {format?: string}) => {
+            const contentType = options?.format === 'image/avif' ? 'image/avif' : 'image/webp'
+            const bytes = contentType === 'image/avif' ? createAvifBytes(512, 512) : transformedImageBytes
+
+            return {
+                response: () =>
+                    new Response(bytes, {
+                        headers: {
+                            'content-type': contentType,
+                        },
+                    }),
+                contentType: () => contentType,
+                image: () => streamFromBytes(bytes),
+            }
+        }),
     }
 
     return transformer as unknown as ImageTransformer

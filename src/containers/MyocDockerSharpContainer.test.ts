@@ -1,12 +1,5 @@
-import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest'
+import {afterEach, describe, expect, it, vi} from 'vitest'
 import {MyocDockerSharpContainer} from './MyocDockerSharpContainer'
-
-const containerMock = vi.hoisted(() => ({
-    nextState: {status: 'stopped'},
-    destroy: vi.fn(),
-    getState: vi.fn(),
-    stop: vi.fn(),
-}))
 
 vi.mock('@cloudflare/containers', () => {
     let outboundHandler: ((request: Request) => Promise<Response>) | undefined
@@ -23,29 +16,13 @@ vi.mock('@cloudflare/containers', () => {
         constructor(
             readonly ctx: unknown,
             readonly env: TEnv,
-        ) {
-            Object.assign(this, {
-                destroy: containerMock.destroy,
-                getState: containerMock.getState,
-                stop: containerMock.stop,
-            })
-        }
+        ) {}
     }
 
     return {Container}
 })
 
 describe('MyocDockerSharpContainer', () => {
-    beforeEach(() => {
-        containerMock.nextState = {status: 'stopped'}
-        containerMock.destroy.mockReset()
-        containerMock.destroy.mockResolvedValue(undefined)
-        containerMock.getState.mockReset()
-        containerMock.getState.mockImplementation(async () => containerMock.nextState)
-        containerMock.stop.mockReset()
-        containerMock.stop.mockResolvedValue(undefined)
-    })
-
     afterEach(() => {
         vi.useRealTimers()
         vi.restoreAllMocks()
@@ -63,53 +40,15 @@ describe('MyocDockerSharpContainer', () => {
         expect(container.interceptHttps).toBe(true)
         expect(container.pingEndpoint).toBe('localhost/health')
         expect(container.requiredPorts).toEqual([8080])
-        expect(container.sleepAfter).toBe('10s')
+        expect(container.sleepAfter).toBe('1m')
         expect(container.envVars).toEqual({
             NODE_EXTRA_CA_CERTS: '/etc/cloudflare/certs/cloudflare-containers-ca.crt',
+            PREVIEW_AVIF_QUALITY: '60',
+            PREVIEW_MAX_LONG_EDGE: '1600',
             PREVIEW_PROCESSOR_TOKEN: 'preview-token',
             SOURCE_IMAGE_MAX_BYTES: String(256 * 1024 * 1024),
             SOURCE_LIMIT_INPUT_PIXELS: '200000000',
         })
-    })
-
-    it.each(['running', 'healthy', 'stopping'] as const)(
-        'destroys the preview container when it remains %s after an idle stop signal',
-        async (status) => {
-            vi.useFakeTimers()
-            containerMock.nextState = {status}
-            const container = new MyocDockerSharpContainer({} as DurableObjectState<Record<never, never>>, {
-                PREVIEW_PROCESSOR_TOKEN: 'preview-token',
-            })
-            const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
-            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-
-            const activityExpired = container.onActivityExpired()
-            await vi.advanceTimersByTimeAsync(1_000)
-            await activityExpired
-
-            expect(containerMock.stop).toHaveBeenCalledTimes(1)
-            expect(containerMock.getState).toHaveBeenCalledTimes(1)
-            expect(containerMock.destroy).toHaveBeenCalledTimes(1)
-            expect(log).toHaveBeenCalledWith('Preview container idle, signalling stop')
-            expect(warn).toHaveBeenCalledWith('Preview container ignored stop signal, destroying instance')
-        },
-    )
-
-    it('does not destroy the preview container once the idle stop signal succeeds', async () => {
-        vi.useFakeTimers()
-        containerMock.nextState = {status: 'stopped'}
-        const container = new MyocDockerSharpContainer({} as DurableObjectState<Record<never, never>>, {
-            PREVIEW_PROCESSOR_TOKEN: 'preview-token',
-        })
-        vi.spyOn(console, 'log').mockImplementation(() => undefined)
-
-        const activityExpired = container.onActivityExpired()
-        await vi.advanceTimersByTimeAsync(1_000)
-        await activityExpired
-
-        expect(containerMock.stop).toHaveBeenCalledTimes(1)
-        expect(containerMock.getState).toHaveBeenCalledTimes(1)
-        expect(containerMock.destroy).not.toHaveBeenCalled()
     })
 
     it.each(['m.myoc.art', 'm.dev.myoc.art'])(

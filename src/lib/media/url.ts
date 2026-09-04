@@ -46,12 +46,19 @@ export function characterMediaPreviewImageObjectKey(
     mediaId: string,
     imageKey: string,
     rating: 'sfw' | 'nsfw',
+    contentType: string | null | undefined = 'image/webp',
 ): string {
-    return `characters/${userId}/${characterId}/media/${mediaId}/${rating}/preview/${imageKey}.webp`
+    return `characters/${userId}/${characterId}/media/${mediaId}/${rating}/preview/${imageKey}.${extensionForImageContentType(contentType)}`
 }
 
-export function characterMediaNsfwBlurImageObjectKey(userId: string, characterId: string, mediaId: string, imageKey: string): string {
-    return `characters/${userId}/${characterId}/media/${mediaId}/nsfw/blur/${imageKey}.webp`
+export function characterMediaNsfwBlurImageObjectKey(
+    userId: string,
+    characterId: string,
+    mediaId: string,
+    imageKey: string,
+    contentType: string | null | undefined = 'image/webp',
+): string {
+    return `characters/${userId}/${characterId}/media/${mediaId}/nsfw/blur/${imageKey}.${extensionForImageContentType(contentType)}`
 }
 
 export function characterHeightChartImageObjectKey(
@@ -92,8 +99,9 @@ export function characterMediaPreviewImageUrl(
     mediaId: string,
     imageKey: string,
     rating: 'sfw' | 'nsfw',
+    contentType: string | null | undefined = 'image/webp',
 ): string {
-    return mediaUrlForKey(baseUrl, characterMediaPreviewImageObjectKey(userId, characterId, mediaId, imageKey, rating))
+    return mediaUrlForKey(baseUrl, characterMediaPreviewImageObjectKey(userId, characterId, mediaId, imageKey, rating, contentType))
 }
 
 export function characterMediaNsfwBlurImageUrl(
@@ -102,8 +110,9 @@ export function characterMediaNsfwBlurImageUrl(
     characterId: string,
     mediaId: string,
     imageKey: string,
+    contentType: string | null | undefined = 'image/webp',
 ): string {
-    return mediaUrlForKey(baseUrl, characterMediaNsfwBlurImageObjectKey(userId, characterId, mediaId, imageKey))
+    return mediaUrlForKey(baseUrl, characterMediaNsfwBlurImageObjectKey(userId, characterId, mediaId, imageKey, contentType))
 }
 
 function extensionForImageContentType(contentType: string | null | undefined): string {

@@ -22,7 +22,7 @@ const RecentMediaExpiredResponseSchema = responseSchema({
 const RecentMediaStateResponseSchema = responseSchema({
     generation: z.string().nullable(),
     publishedAt: z.string().nullable(),
-    publicRootUrl: z.string().url().nullable(),
+    publicRootUrl: z.url().nullable(),
     unsafePending: z.boolean(),
 })
 

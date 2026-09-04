@@ -6,7 +6,7 @@ WORKDIR /app
 COPY --chown=node:node package*.json ./
 RUN npm ci --omit=dev
 
-COPY --chown=node:node server.mjs .
+COPY --chown=node:node server.mjs preview.mjs ./
 
 EXPOSE 8080
 USER node

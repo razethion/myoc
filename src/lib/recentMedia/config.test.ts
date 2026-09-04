@@ -59,6 +59,7 @@ describe('recent feed configuration', () => {
     })
 
     it('rejects unsafe public origins and object keys', () => {
+        // noinspection HttpUrlsUsage -- This test requires an insecure URL.
         expect(getRecentFeedConfig({RECENT_FEED_PUBLIC_BASE_URL: 'http://feed-data.myoc.art'}).publicBaseUrl).toBeNull()
         expect(getRecentFeedConfig({RECENT_FEED_PUBLIC_BASE_URL: 'https://user:pass@feed-data.myoc.art'}).publicBaseUrl).toBeNull()
         expect(recentFeedPublicObjectUrl('https://feed-data.myoc.art', '../private.json')).toBeNull()

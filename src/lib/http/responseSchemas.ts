@@ -274,11 +274,28 @@ const LeaderboardRefreshSummarySchema = z
     })
     .strict()
 
-const AdminJobSummarySchema = z.union([D1BackupSummarySchema, R2CleanupSummarySchema, LeaderboardRefreshSummarySchema])
+const MediaPreviewRegenerationSummarySchema = z
+    .object({
+        totalVariants: PositiveIntegerSchema,
+        processedVariants: PositiveIntegerSchema,
+        regeneratedPreviews: PositiveIntegerSchema,
+        regeneratedBlurs: PositiveIntegerSchema,
+        skippedVariants: PositiveIntegerSchema,
+        failedVariants: PositiveIntegerSchema,
+        lastError: NullableStringSchema,
+    })
+    .strict()
+
+const AdminJobSummarySchema = z.union([
+    D1BackupSummarySchema,
+    R2CleanupSummarySchema,
+    LeaderboardRefreshSummarySchema,
+    MediaPreviewRegenerationSummarySchema,
+])
 
 export const AdminJobRunResultSchema = z
     .object({
-        jobName: z.enum(['d1-backup', 'r2-media-cleanup', 'leaderboard-refresh']),
+        jobName: z.enum(['d1-backup', 'r2-media-cleanup', 'leaderboard-refresh', 'media-preview-regeneration']),
         runId: z.string(),
         status: AdminJobStatusSchema,
         summary: AdminJobSummarySchema.optional(),
