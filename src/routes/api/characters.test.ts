@@ -34,7 +34,6 @@ import {createRequestHeaders, type TestRequestOptions} from '../../test/request'
 import {apiRoutes} from '../api'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
-const objectStorageEncryptionKey = '0123456789abcdef'.repeat(4)
 const uuidPattern = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
 const currentUserRecord = {
     id: 'current-user',
@@ -275,7 +274,6 @@ function requestEnv(db: D1Database, mediaBucket?: R2Bucket, previewContainer?: D
         MEDIA_BUCKET: mediaBucket ?? createMockR2Bucket(),
         MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         MYOC_DOCKER_SHARP_CONTAINER: previewContainer ?? defaultContainer,
-        OBJECT_STORAGE_ENCRYPTION_KEY: objectStorageEncryptionKey,
         PREVIEW_PROCESSOR_TOKEN: 'preview-token',
     }
 }
@@ -2906,7 +2904,6 @@ describe('POST /characters/:id/profile-image', () => {
                     cacheControl: 'private, no-store',
                     contentType: 'image/webp',
                 },
-                ssecKey: objectStorageEncryptionKey,
             },
         )
         expect(mediaBucket.delete).toHaveBeenCalledWith(
@@ -3610,14 +3607,12 @@ describe('character media uploads', () => {
                 cacheControl: 'private, no-store',
                 contentType: 'image/png',
             },
-            ssecKey: objectStorageEncryptionKey,
         })
         expect(mediaBucket.resumeMultipartUpload).toHaveBeenCalledWith(sourceObjectKey, init.uploads.sfw.uploadId)
         const partUpload = vi.mocked(mediaBucket.resumeMultipartUpload).mock.results[0]?.value
-        expect(partUpload?.uploadPart).toHaveBeenCalledWith(1, expect.any(ReadableStream), {ssecKey: objectStorageEncryptionKey})
+        expect(partUpload?.uploadPart).toHaveBeenCalledWith(1, expect.any(ReadableStream))
         expect(mediaBucket.get).toHaveBeenCalledWith(sourceObjectKey, {
             range: {offset: 0, length: 1024 * 1024},
-            ssecKey: objectStorageEncryptionKey,
         })
         expect(await queryOne<{object_key: string}>('SELECT object_key FROM image_upload_sources', [], db)).toEqual({
             object_key: sourceObjectKey,

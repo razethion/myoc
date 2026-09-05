@@ -68,8 +68,8 @@ Targets:
   R2: remote ${config.prodR2Bucket} -> remote ${config.devR2Bucket}
 
 R2 prefers server-side S3 CopyObject when R2 S3 credentials are available. Otherwise it falls
-back to a temporary local Worker with remote R2 bindings. The clone excludes encrypted image
-sources, thumbnail originals, and D1 backups because development uses a different encryption key.
+back to a temporary local Worker with remote R2 bindings. The clone excludes upload staging
+sources, thumbnail originals, and any legacy D1 backup keys. It does not access the backup bucket.
 Existing public R2 keys are skipped, except height-chart objects are refreshed to avoid stale dev
 images after the production D1 import.
 

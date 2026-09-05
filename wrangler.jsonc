@@ -100,7 +100,7 @@
     "RECENT_FEED_RETENTION_DAYS": "30"
   },
   "secrets": {
-    "required": ["D1_REST_API_TOKEN", "OBJECT_STORAGE_ENCRYPTION_KEY", "PREVIEW_PROCESSOR_TOKEN", "RECENT_FEED_CURSOR_SECRET"]
+    "required": ["D1_REST_API_TOKEN", "PREVIEW_PROCESSOR_TOKEN", "RECENT_FEED_CURSOR_SECRET"]
   },
   "d1_databases": [
     {
@@ -154,6 +154,11 @@
       "binding": "MEDIA_BUCKET",
       "bucket_name": "myoc",
       "preview_bucket_name": "myoc-dev",
+      "remote": true
+    },
+    {
+      "binding": "DB_BACKUP_BUCKET",
+      "bucket_name": "myoc-db-bak",
       "remote": true
     }
   ]

@@ -19,7 +19,6 @@ function createEnv(): Bindings {
         IMAGE_PROCESSING_QUEUE: createQueue(),
         MEDIA_BUCKET: createMockR2Bucket(),
         MEDIA_PUBLIC_BASE_URL: 'https://m.myoc.art',
-        OBJECT_STORAGE_ENCRYPTION_KEY: '11'.repeat(32),
     } as unknown as Bindings
 }
 

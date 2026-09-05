@@ -24,7 +24,6 @@ import {authPageActionRoutes} from '../page-actions/auth'
 import {settingsPageActionRoutes} from '../page-actions/settings'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
-const objectStorageEncryptionKey = '0123456789abcdef'.repeat(4)
 const profilePhotoKeyPattern = /^avif-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
 function createSquareImageContainer(
@@ -222,7 +221,6 @@ async function postProfilePhoto(
             PREVIEW_PROCESSOR_TOKEN: 'preview-token',
             MEDIA_BUCKET: mediaBucket,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
-            OBJECT_STORAGE_ENCRYPTION_KEY: objectStorageEncryptionKey,
         },
     )
 }
@@ -1088,7 +1086,6 @@ describe('POST /users/me/profile-photo', () => {
                     cacheControl: 'private, no-store',
                     contentType: 'image/webp',
                 },
-                ssecKey: objectStorageEncryptionKey,
             },
         )
         expect(mediaBucket.delete).toHaveBeenCalledWith(thumbnailOriginalObjectKey('users/current-user/profile/old-profile-photo-key.webp'))

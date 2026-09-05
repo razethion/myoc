@@ -10,7 +10,6 @@ export default defineConfig({
             main: './src/index.ts',
             miniflare: {
                 bindings: {
-                    OBJECT_STORAGE_ENCRYPTION_KEY: '0123456789abcdef'.repeat(4),
                     TEST_MIGRATIONS: await readD1Migrations('./migrations'),
                 },
             },

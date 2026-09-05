@@ -23,7 +23,6 @@ const db = useTestDatabase()
 const userId = 'thumbnail-owner'
 const characterId = 'thumbnail-character'
 const folderId = 'thumbnail-folder'
-const objectStorageEncryptionKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 
 function createThumbnailBucket(onPut?: (key: string) => Promise<void> | void): R2Bucket {
     const bucket = createMockR2Bucket()
@@ -85,7 +84,6 @@ function regenerationEnv(mediaBucket: R2Bucket, sourceBucket: R2Bucket, containe
         DB: db,
         MEDIA_BUCKET: combinedThumbnailBucket(mediaBucket, sourceBucket),
         MYOC_DOCKER_SHARP_CONTAINER: container,
-        OBJECT_STORAGE_ENCRYPTION_KEY: objectStorageEncryptionKey,
         PREVIEW_PROCESSOR_TOKEN: 'thumbnail-test-token',
     })
 }
@@ -133,7 +131,6 @@ async function createQueuedThumbnail(options: {container?: Bindings['MYOC_DOCKER
         IMAGE_PROCESSING_QUEUE: processingQueue.queue,
         MEDIA_BUCKET: combinedThumbnailBucket(mediaBucket, sourceBucket),
         MYOC_DOCKER_SHARP_CONTAINER: options.container ?? createSquareContainer(),
-        OBJECT_STORAGE_ENCRYPTION_KEY: objectStorageEncryptionKey,
         PREVIEW_PROCESSOR_TOKEN: 'thumbnail-test-token',
     })
 

@@ -638,7 +638,6 @@ async function getProfilePath(path: string, db: D1Database): Promise<Response> {
         {
             CACHE: workerEnv.CACHE,
             DB: db,
-            OBJECT_STORAGE_ENCRYPTION_KEY: workerEnv.OBJECT_STORAGE_ENCRYPTION_KEY,
             MEDIA_BUCKET: workerEnv.MEDIA_BUCKET,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         },
@@ -652,7 +651,6 @@ async function getAppPath(path: string, database = db, headers: Record<string, s
         {
             CACHE: cache,
             DB: database,
-            OBJECT_STORAGE_ENCRYPTION_KEY: workerEnv.OBJECT_STORAGE_ENCRYPTION_KEY,
             MEDIA_BUCKET: workerEnv.MEDIA_BUCKET,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         },
@@ -677,7 +675,6 @@ async function postPageAction(path: string, database: D1Database, mediaBucket: R
         {
             CACHE: createMockKVNamespace(),
             DB: database,
-            OBJECT_STORAGE_ENCRYPTION_KEY: workerEnv.OBJECT_STORAGE_ENCRYPTION_KEY,
             MEDIA_BUCKET: mediaBucket,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         },

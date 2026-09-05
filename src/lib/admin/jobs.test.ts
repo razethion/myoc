@@ -1,5 +1,6 @@
 import {describe, expect, it, vi} from 'vitest'
 import {queryOne, seedUser, useTestDatabase} from '../../test/d1'
+import {createMockR2Bucket} from '../../test/mockR2'
 import {type AdminJobSummary, getAdminOptionsData, recordAdminJobRun, runAdminJob} from './jobs'
 
 const db = useTestDatabase()
@@ -146,6 +147,35 @@ describe('recordAdminJobRun', () => {
         )
         expect(storedRun?.finished_at).not.toBeNull()
         expect(storedRun?.duration_ms).toBeGreaterThanOrEqual(0)
+    })
+})
+
+describe('D1 backup jobs', () => {
+    it('records an error without starting an export when the backup bucket is not configured', async () => {
+        const fetcher = vi.fn()
+        const mediaBucket = createMockR2Bucket()
+        vi.stubGlobal('fetch', fetcher)
+
+        try {
+            await expect(
+                runAdminJob({DB: db, MEDIA_BUCKET: mediaBucket} as unknown as Parameters<typeof runAdminJob>[0], 'd1-backup', {
+                    triggerSource: 'manual',
+                }),
+            ).rejects.toThrow('DB_BACKUP_BUCKET is not configured')
+
+            expect(fetcher).not.toHaveBeenCalled()
+            expect(mediaBucket.createMultipartUpload).not.toHaveBeenCalled()
+            expect(mediaBucket.put).not.toHaveBeenCalled()
+            expect(
+                await queryOne<{error_message: string | null; status: string}>(
+                    `SELECT status, error_message
+                     FROM admin_job_runs
+                     WHERE job_name = 'd1-backup'`,
+                ),
+            ).toEqual({status: 'error', error_message: 'DB_BACKUP_BUCKET is not configured'})
+        } finally {
+            vi.unstubAllGlobals()
+        }
     })
 })
 

@@ -80,7 +80,6 @@ function createEnv(
         MEDIA_BUCKET: mediaBucket,
         MEDIA_PUBLIC_BASE_URL: 'https://m.myoc.art',
         MYOC_DOCKER_SHARP_CONTAINER: container.namespace,
-        OBJECT_STORAGE_ENCRYPTION_KEY: '11'.repeat(32),
         PREVIEW_PROCESSOR_TOKEN: 'processor-token',
     } as unknown as Bindings
 

@@ -49,8 +49,8 @@ type AdminJobEnv = Pick<
     | 'D1_DATABASE_ID'
     | 'D1_REST_API_TOKEN'
     | 'DB'
+    | 'DB_BACKUP_BUCKET'
     | 'MEDIA_BUCKET'
-    | 'OBJECT_STORAGE_ENCRYPTION_KEY'
     | 'CACHE'
     | 'REGENERATE_MEDIA_PREVIEWS_WORKFLOW'
 >

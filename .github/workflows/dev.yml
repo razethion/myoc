@@ -586,7 +586,7 @@ jobs:
               RECENT_FEED_RETENTION_DAYS: '30',
             },
             secrets: {
-              required: ['OBJECT_STORAGE_ENCRYPTION_KEY', 'PREVIEW_PROCESSOR_TOKEN', 'RECENT_FEED_CURSOR_SECRET'],
+              required: ['PREVIEW_PROCESSOR_TOKEN', 'RECENT_FEED_CURSOR_SECRET'],
             },
             d1_databases: [
               {
@@ -689,7 +689,7 @@ jobs:
         working-directory: ${{ runner.temp }}/myoc-dev-control
         run: |
           set -euo pipefail
-          trap 'rm -f processor-token.txt cursor-secret.txt object-storage-key.txt worker-secrets.json worker-secrets-error.txt preview-secrets.json' EXIT
+          trap 'rm -f processor-token.txt cursor-secret.txt preview-secrets.json' EXIT
 
           openssl rand -hex 32 > processor-token.txt
           openssl rand -hex 32 > cursor-secret.txt
@@ -697,47 +697,6 @@ jobs:
           cursor_secret="$(tr -d '\n' < cursor-secret.txt)"
           echo "::add-mask::$processor_token"
           echo "::add-mask::$cursor_secret"
-
-          storage_key_state="missing"
-          if "$WRANGLER" secret list --config wrangler.preview.jsonc > worker-secrets.json 2> worker-secrets-error.txt; then
-            if node -e "
-              const fs = require('node:fs');
-              let secrets;
-              try {
-                secrets = JSON.parse(fs.readFileSync('worker-secrets.json', 'utf8'));
-              } catch (error) {
-                console.error(error instanceof Error ? error.message : String(error));
-                process.exit(2);
-              }
-              if (!Array.isArray(secrets)) {
-                console.error('The Worker secret list is not an array.');
-                process.exit(2);
-              }
-              if (!secrets.every((secret) => typeof secret === 'object' && secret !== null && typeof secret.name === 'string')) {
-                console.error('The Worker secret list has an invalid item.');
-                process.exit(2);
-              }
-              process.exit(secrets.some((secret) => secret.name === 'OBJECT_STORAGE_ENCRYPTION_KEY') ? 0 : 1);
-            "; then
-              storage_key_state="present"
-            else
-              secret_status="$?"
-              if [ "$secret_status" -ne 1 ]; then
-                echo "::error::The preview Worker secret list was invalid."
-                exit 1
-              fi
-            fi
-          elif ! grep -Eqi 'does not exist yet' worker-secrets-error.txt; then
-            cat worker-secrets-error.txt >&2
-            echo "::error::The preview Worker secrets could not be checked."
-            exit 1
-          fi
-
-          if [ "$storage_key_state" = "missing" ]; then
-            node -e "require('node:fs').writeFileSync('object-storage-key.txt', require('node:crypto').randomBytes(32).toString('hex'))"
-            object_storage_key="$(tr -d '\n' < object-storage-key.txt)"
-            echo "::add-mask::$object_storage_key"
-          fi
 
           node -e "
             const fs = require('node:fs');
@@ -747,9 +706,6 @@ jobs:
               PREVIEW_PROCESSOR_TOKEN: token,
               RECENT_FEED_CURSOR_SECRET: cursorSecret,
             };
-            if (fs.existsSync('object-storage-key.txt')) {
-              secrets.OBJECT_STORAGE_ENCRYPTION_KEY = fs.readFileSync('object-storage-key.txt', 'utf8').trim();
-            }
             fs.writeFileSync('preview-secrets.json', JSON.stringify(secrets));
           "
 

@@ -110,26 +110,24 @@ curl "http://localhost:8787/api/search?type=characters&q=raz"
 Admins can start thumbnail regeneration from `/admin/admin-options`. This job replaces user profile, folder, and
 character profile thumbnails with AVIF images. It runs separately from character media preview regeneration.
 It uses the saved cropped image before compression. If that source is missing, it first saves the current thumbnail
-in private storage and uses those bytes for this run and later runs. A new image upload supplies a new cropped source.
+under a retained-original key and uses those bytes for this run and later runs. A new image upload supplies a new cropped source.
 The current thumbnail stays available until its replacement is ready. A concurrent user upload takes precedence.
 
 All image jobs use `IMAGE_PROCESSING_QUEUE` and `IMAGE_PROCESSING_DLQ`. Queue messages identify the job type;
 they do not select a container. Uploads and both regeneration jobs share the container pool.
 
-Each environment uses one `MEDIA_BUCKET`. Public media keeps its existing keys. Feed objects use `recent-feed/`.
-Private upload sources use `image-staging/` or `image-sources/`. Retained thumbnail originals use `thumbnail-originals/`.
-Database backups keep their `d1/` prefix. Private objects use
-[R2 customer-key encryption](https://developers.cloudflare.com/r2/examples/ssec/).
+Each environment uses one public `MEDIA_BUCKET`. Media keeps its existing keys. Feed objects use `recent-feed/`.
+Upload sources use `image-staging/` or `image-sources/`. Retained thumbnail originals use `thumbnail-originals/`.
+Media does not use customer-key encryption.
 
-Set `OBJECT_STORAGE_ENCRYPTION_KEY` to a stable 64-character hexadecimal key before you run the app.
-Generate a key with `openssl rand -hex 32`. Store the local key in `.dev.vars`.
-Set the deployed secret with `npx wrangler secret put OBJECT_STORAGE_ENCRYPTION_KEY`.
-Keep a secure copy of this key for backup recovery. Changing it requires re-encrypting existing private objects.
-Preview deployments create the key once and preserve it on later deployments.
+Database backups go only to the private `myoc-db-bak` bucket through `DB_BACKUP_BUCKET`.
+They keep their `d1/` prefix and do not use customer-key encryption.
+No backup job writes to the media bucket or copies other data to a backup destination.
+PR previews have no backup bucket binding or backup schedule. A backup request without that binding fails before export.
 
 If an earlier deployment used separate buckets or queues, finish its image jobs before switching configurations.
-Copy retained sources and backups into the media bucket with customer-key encryption before removing their old bindings.
-Preserve their object keys. Rebuild the recent feed under `recent-feed/` with the existing backfill command.
+Keep database backups in `myoc-db-bak`. Do not copy backups into the media bucket.
+Preserve media object keys. Rebuild the recent feed under `recent-feed/` with the existing backfill command.
 Verify the copies and the new jobs before retiring old remote resources. This refactor does not delete remote resources.
 
 Common commands:

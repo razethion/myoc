@@ -64,7 +64,6 @@ function requestEnv(
     return {
         CACHE: createMockKVNamespace(),
         DB: db,
-        OBJECT_STORAGE_ENCRYPTION_KEY: '0123456789abcdef'.repeat(4),
         MEDIA_BUCKET: mediaBucket,
         MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         MYOC_DOCKER_SHARP_CONTAINER: previewContainer.namespace,

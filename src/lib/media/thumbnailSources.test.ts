@@ -5,7 +5,6 @@ import {createMockR2Bucket} from '../../test/mockR2'
 import {readThumbnailOriginal, retainThumbnailOriginal, type ThumbnailSourceTarget, thumbnailOriginalObjectKey} from './thumbnailSources'
 
 const db = useTestDatabase()
-const encryptionKey = 'a5'.repeat(32)
 const target: ThumbnailSourceTarget = {
     kind: 'user-profile',
     userId: 'user-1',
@@ -20,12 +19,7 @@ describe('thumbnail sources', () => {
         const sourceBucket = createMockR2Bucket()
         const bytes = await pngBytes()
 
-        await retainThumbnailOriginal(
-            {MEDIA_BUCKET: sourceBucket, OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey},
-            target.objectKey,
-            bytes,
-            'IMAGE/PNG',
-        )
+        await retainThumbnailOriginal({MEDIA_BUCKET: sourceBucket}, target.objectKey, bytes, 'IMAGE/PNG')
 
         expect(sourceBucket.put).toHaveBeenCalledWith(thumbnailOriginalObjectKey(target.objectKey), bytes, {
             onlyIf: expect.any(Headers),
@@ -33,7 +27,6 @@ describe('thumbnail sources', () => {
                 cacheControl: 'private, no-store',
                 contentType: 'image/png',
             },
-            ssecKey: encryptionKey,
         })
         const options = vi.mocked(sourceBucket.put).mock.calls[0]?.[2]
         expect(options?.onlyIf).toBeInstanceOf(Headers)
@@ -46,14 +39,12 @@ describe('thumbnail sources', () => {
         const retainedKey = thumbnailOriginalObjectKey(target.objectKey)
         vi.mocked(sourceBucket.get).mockResolvedValueOnce(r2Object(retainedKey, bytes, 'image/png'))
 
-        await expect(
-            readThumbnailOriginal({DB: db, MEDIA_BUCKET: sourceBucket, OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey}, target),
-        ).resolves.toEqual({
+        await expect(readThumbnailOriginal({DB: db, MEDIA_BUCKET: sourceBucket}, target)).resolves.toEqual({
             bytes,
             contentType: 'image/png',
         })
         expect(sourceBucket.get).toHaveBeenCalledTimes(1)
-        expect(sourceBucket.get).toHaveBeenCalledWith(retainedKey, {ssecKey: encryptionKey})
+        expect(sourceBucket.get).toHaveBeenCalledWith(retainedKey)
     })
 
     it('uses only a ready upload source whose result key matches the current image', async () => {
@@ -69,13 +60,11 @@ describe('thumbnail sources', () => {
                 key === 'source/matching.png' ? r2Object(key, matchingBytes, 'image/png') : r2Object(key, unrelatedBytes, 'image/png'),
             )
 
-        await expect(
-            readThumbnailOriginal({DB: db, MEDIA_BUCKET: sourceBucket, OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey}, target),
-        ).resolves.toEqual({
+        await expect(readThumbnailOriginal({DB: db, MEDIA_BUCKET: sourceBucket}, target)).resolves.toEqual({
             bytes: matchingBytes,
             contentType: 'image/png',
         })
-        expect(sourceBucket.get).toHaveBeenLastCalledWith('source/matching.png', {ssecKey: encryptionKey})
+        expect(sourceBucket.get).toHaveBeenLastCalledWith('source/matching.png')
     })
 
     it.each([
@@ -94,9 +83,10 @@ describe('thumbnail sources', () => {
             .mockResolvedValueOnce(null)
             .mockResolvedValueOnce(r2Object('source/ready.png', bytes, 'image/png'))
 
-        await expect(
-            readThumbnailOriginal({DB: db, MEDIA_BUCKET: sourceBucket, OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey}, sourceTarget),
-        ).resolves.toEqual({bytes, contentType: 'image/png'})
+        await expect(readThumbnailOriginal({DB: db, MEDIA_BUCKET: sourceBucket}, sourceTarget)).resolves.toEqual({
+            bytes,
+            contentType: 'image/png',
+        })
     })
 
     it('uses the current thumbnail when a ready upload source object is missing', async () => {
@@ -109,9 +99,10 @@ describe('thumbnail sources', () => {
             .mockResolvedValueOnce(null)
             .mockResolvedValueOnce(r2Object(target.objectKey, bytes))
 
-        await expect(
-            readThumbnailOriginal({DB: db, MEDIA_BUCKET: sourceBucket, OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey}, target),
-        ).resolves.toEqual({bytes, contentType: target.contentType})
+        await expect(readThumbnailOriginal({DB: db, MEDIA_BUCKET: sourceBucket}, target)).resolves.toEqual({
+            bytes,
+            contentType: target.contentType,
+        })
         expect(sourceBucket.put).toHaveBeenCalledWith(
             thumbnailOriginalObjectKey(target.objectKey),
             bytes,
@@ -126,9 +117,7 @@ describe('thumbnail sources', () => {
             .mockResolvedValueOnce(null)
             .mockResolvedValueOnce(r2Object(target.objectKey, bytes, 'image/avif'))
 
-        await expect(
-            readThumbnailOriginal({DB: db, MEDIA_BUCKET: mediaBucket, OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey}, target),
-        ).resolves.toEqual({
+        await expect(readThumbnailOriginal({DB: db, MEDIA_BUCKET: mediaBucket}, target)).resolves.toEqual({
             bytes,
             contentType: 'image/avif',
         })
@@ -138,7 +127,6 @@ describe('thumbnail sources', () => {
                 cacheControl: 'private, no-store',
                 contentType: 'image/avif',
             },
-            ssecKey: encryptionKey,
         })
     })
 
@@ -146,7 +134,7 @@ describe('thumbnail sources', () => {
         const sourceBucket = createMockR2Bucket()
         vi.mocked(sourceBucket.get).mockResolvedValueOnce(r2Object(target.objectKey, new Uint8Array(3 * 1024 * 1024 + 1), 'image/png'))
 
-        const env = {DB: db, MEDIA_BUCKET: sourceBucket, OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey}
+        const env = {DB: db, MEDIA_BUCKET: sourceBucket}
         await expect(readThumbnailOriginal(env, target)).rejects.toThrow('The thumbnail source is too large')
 
         vi.mocked(sourceBucket.get).mockResolvedValueOnce(r2Object(target.objectKey, new Uint8Array([1]), 'image/gif'))
@@ -159,7 +147,7 @@ describe('thumbnail sources', () => {
     it('rejects missing, empty, and oversized sources', async () => {
         const mediaBucket = createMockR2Bucket()
 
-        const env = {DB: db, MEDIA_BUCKET: mediaBucket, OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey}
+        const env = {DB: db, MEDIA_BUCKET: mediaBucket}
         await expect(readThumbnailOriginal(env, target)).rejects.toThrow('The thumbnail source is not available')
         await expect(retainThumbnailOriginal(env, target.objectKey, new Uint8Array(), 'image/png')).rejects.toThrow(
             'The thumbnail source is empty',

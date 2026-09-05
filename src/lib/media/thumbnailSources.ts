@@ -1,5 +1,4 @@
 import type {Bindings} from '../../types/bindings'
-import {objectStorageEncryptionKey} from '../storage/ssec'
 
 const THUMBNAIL_SOURCE_MAX_BYTES = 3 * 1024 * 1024
 const THUMBNAIL_SOURCE_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/avif'])
@@ -25,7 +24,7 @@ export function thumbnailOriginalObjectKey(thumbnailObjectKey: string): string {
 }
 
 export async function retainThumbnailOriginal(
-    env: Pick<Bindings, 'MEDIA_BUCKET' | 'OBJECT_STORAGE_ENCRYPTION_KEY'>,
+    env: Pick<Bindings, 'MEDIA_BUCKET'>,
     thumbnailObjectKey: string,
     bytes: Uint8Array,
     contentType: string,
@@ -38,17 +37,15 @@ export async function retainThumbnailOriginal(
             cacheControl: 'private, no-store',
             contentType: normalizedContentType,
         },
-        ssecKey: objectStorageEncryptionKey(env),
     })
 }
 
 export async function readThumbnailOriginal(
-    env: Pick<Bindings, 'DB' | 'MEDIA_BUCKET' | 'OBJECT_STORAGE_ENCRYPTION_KEY'>,
+    env: Pick<Bindings, 'DB' | 'MEDIA_BUCKET'>,
     target: ThumbnailSourceTarget,
 ): Promise<{bytes: Uint8Array; contentType: ThumbnailContentType}> {
     const retainedKey = thumbnailOriginalObjectKey(target.objectKey)
-    const ssecKey = objectStorageEncryptionKey(env)
-    const retained = await env.MEDIA_BUCKET.get(retainedKey, {ssecKey})
+    const retained = await env.MEDIA_BUCKET.get(retainedKey)
 
     if (retained) {
         return await readBoundedObject(retained, retained.httpMetadata?.contentType)
@@ -57,7 +54,7 @@ export async function readThumbnailOriginal(
     const source = await findReadyUploadSource(env.DB, target)
 
     if (source) {
-        const sourceObject = await env.MEDIA_BUCKET.get(source.object_key, {ssecKey})
+        const sourceObject = await env.MEDIA_BUCKET.get(source.object_key)
 
         if (sourceObject) {
             return await readBoundedObject(sourceObject, source.content_type)

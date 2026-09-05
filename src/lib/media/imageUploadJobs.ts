@@ -3,7 +3,6 @@ import type {Bindings} from '../../types/bindings'
 import type {ImageProcessingFailureMessage, ImageUploadProcessingMessage} from '../../types/imageProcessing'
 import {recordAdminErrorLog} from '../admin/errorLog'
 import {toSqlTimestamp} from '../auth/session'
-import {objectStorageEncryptionKey} from '../storage/ssec'
 import {REVOCABLE_MEDIA_CACHE_CONTROL} from './cacheControl'
 import {readGalleryImageDimensions} from './imageMetadata'
 import {
@@ -283,7 +282,6 @@ export async function createSquareImageUploadJob(env: Bindings, input: CreateSqu
             cacheControl: 'private, no-store',
             contentType: 'image/png',
         },
-        ssecKey: objectStorageEncryptionKey(env),
     })
 
     try {
@@ -711,7 +709,7 @@ async function processImageTask(
 
     if (task?.lease_id !== leaseId) return 'ack'
 
-    const source = await env.MEDIA_BUCKET.get(task.source_key, {ssecKey: objectStorageEncryptionKey(env)})
+    const source = await env.MEDIA_BUCKET.get(task.source_key)
 
     if (!source || (!task.recipe.startsWith('gallery-') && source.size > SQUARE_SOURCE_MAX_BYTES)) {
         await failTask(env.DB, task, leaseId, 'source_unavailable', 'The uploaded source is not available.', now)
@@ -795,7 +793,7 @@ async function processGalleryTask(
         generated = await generateGalleryOutputsWithContainer(
             env,
             async () => {
-                const source = await env.MEDIA_BUCKET.get(task.source_key, {ssecKey: objectStorageEncryptionKey(env)})
+                const source = await env.MEDIA_BUCKET.get(task.source_key)
                 if (!source) throw new PreviewValidationError('Gallery source is not available')
                 return source.body
             },
@@ -822,7 +820,7 @@ async function processGalleryTask(
     const blurObjectKey = blurKey
         ? characterMediaNsfwBlurImageObjectKey(task.user_id, task.target_id, galleryMediaId(task), blurKey, GALLERY_NSFW_BLUR_CONTENT_TYPE)
         : null
-    const source = await env.MEDIA_BUCKET.get(task.source_key, {ssecKey: objectStorageEncryptionKey(env)})
+    const source = await env.MEDIA_BUCKET.get(task.source_key)
 
     if (!source) {
         await failTask(env.DB, task, leaseId, 'source_unavailable', 'The uploaded source is not available.', now)
