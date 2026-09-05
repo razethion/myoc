@@ -157,6 +157,120 @@ async function createSingleGalleryJob(setup: ReturnType<typeof createEnv>, ratin
 }
 
 describe('image upload jobs', () => {
+    it.each(['square', 'gallery'] as const)('rejects a %s job deleted during queue dispatch', async (kind) => {
+        await seedUser({id: 'user-1'})
+        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        const setup = createEnv()
+        vi.spyOn(setup.env.IMAGE_PROCESSING_QUEUE, 'send').mockImplementation(async () => {
+            await db.prepare('DELETE FROM image_upload_jobs WHERE user_id = ?').bind('user-1').run()
+            return {metadata: {metrics: {backlogCount: 0, backlogBytes: 0}}}
+        })
+        const create = async () =>
+            kind === 'gallery'
+                ? await createSingleGalleryJob(setup)
+                : await createSquareImageUploadJob(setup.env, {
+                      userId: 'user-1',
+                      kind: 'user-profile',
+                      targetId: 'user-1',
+                      idempotencyKey: 'deleted-on-dispatch',
+                      bytes: await pngBytes(),
+                      now,
+                  })
+        await expect(create()).rejects.toThrow('Image upload job was not created')
+        expect(await getImageUploadBatchStatus(db, 'user-1', 'missing')).toEqual([])
+    })
+
+    it.each(['uploading', 'publishing'] as const)('reports the %s job state', async (state) => {
+        await seedUser({id: 'user-1'})
+        const setup = createEnv()
+        const job = await createSquareImageUploadJob(setup.env, {
+            userId: 'user-1',
+            kind: 'user-profile',
+            targetId: 'user-1',
+            idempotencyKey: 'status',
+            bytes: await pngBytes(),
+            now,
+        })
+        await db.prepare('UPDATE image_upload_jobs SET state = ? WHERE id = ?').bind(state, job.id).run()
+        expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({state: state === 'publishing' ? 'processing' : state})
+    })
+
+    it('uses the current time to reconcile expired jobs', async () => {
+        await seedUser({id: 'user-1'})
+        const setup = createEnv()
+        const job = await createSquareImageUploadJob(setup.env, {
+            userId: 'user-1',
+            kind: 'user-profile',
+            targetId: 'user-1',
+            idempotencyKey: 'expired-now',
+            bytes: await pngBytes(),
+            now,
+        })
+        await db.prepare("UPDATE image_upload_jobs SET deadline_at = '2000-01-01 00:00:00' WHERE id = ?").bind(job.id).run()
+        await reconcileImageUploads(setup.env)
+        expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({state: 'failed', error: {code: 'deadline_exceeded'}})
+    })
+
+    it('does not process a task whose lease is revoked during its claim', async () => {
+        await seedUser({id: 'user-1'})
+        const setup = createEnv()
+        const job = await createSquareImageUploadJob(setup.env, {
+            userId: 'user-1',
+            kind: 'user-profile',
+            targetId: 'user-1',
+            idempotencyKey: 'claim-race',
+            bytes: await pngBytes(),
+            now,
+        })
+        await db
+            .prepare(`CREATE TRIGGER revoke_image_claim AFTER UPDATE OF lease_id ON image_processing_tasks
+            WHEN NEW.lease_id IS NOT NULL
+            BEGIN UPDATE image_processing_tasks SET state = 'queued', lease_id = NULL WHERE id = NEW.id; END`)
+            .run()
+        try {
+            const delivery = await consumeQueued(setup.env, firstQueuedMessage(setup.lanes))
+            expect(delivery.ack).toHaveBeenCalledOnce()
+            expect(setup.container.fetch).not.toHaveBeenCalled()
+            expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({state: 'waiting'})
+        } finally {
+            await db.prepare('DROP TRIGGER revoke_image_claim').run()
+        }
+    })
+
+    it('fails a gallery whose source is deleted before the processor reads it', async () => {
+        await seedUser({id: 'user-1'})
+        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        const setup = createEnv()
+        const created = await createSingleGalleryJob(setup)
+        const get = setup.mediaBucket.get.bind(setup.mediaBucket)
+        vi.spyOn(setup.mediaBucket, 'get').mockImplementationOnce(async (key) => {
+            const source = await get(key)
+            await setup.mediaBucket.delete(key)
+            return source
+        })
+        await consumeQueued(setup.env, created.queued)
+        expect(await getImageUploadStatus(db, 'user-1', created.job.id)).toMatchObject({state: 'failed'})
+        expect(setup.container.fetch).not.toHaveBeenCalled()
+    })
+
+    it('replaces an existing folder image and schedules its old objects for cleanup', async () => {
+        await seedUser({id: 'user-1'})
+        await seedFolder({id: 'folder-1', userId: 'user-1', folderImageKey: 'old-folder'})
+        const setup = createEnv()
+        const job = await createSquareImageUploadJob(setup.env, {
+            userId: 'user-1',
+            kind: 'folder-image',
+            targetId: 'folder-1',
+            idempotencyKey: 'folder-replacement',
+            bytes: await pngBytes(),
+            now,
+        })
+        await consumeQueued(setup.env, firstQueuedMessage(setup.lanes))
+        expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({state: 'ready'})
+        const cleanup = await queryAll<{object_key: string}>('SELECT object_key FROM image_cleanup_tasks WHERE job_id = ?', [job.id], db)
+        expect(cleanup.filter((row) => row.object_key.includes('old-folder'))).toHaveLength(2)
+    })
+
     it('publishes a user profile AVIF and keeps the source for a later recipe', async () => {
         await seedUser({id: 'user-1', profilePhotoKey: 'old-photo'})
         const setup = createEnv()
@@ -863,15 +977,16 @@ describe('image upload jobs', () => {
         expect(await queryAll<{object_key: string}>('SELECT object_key FROM image_cleanup_tasks', [], db)).toHaveLength(3)
     })
 
-    it('publishes a one-sided gallery and returns null fields for the absent rating', async () => {
+    it.each(['sfw', 'nsfw'] as const)('publishes a %s-only gallery and returns null fields for the absent rating', async (rating) => {
         await seedUser({id: 'user-1'})
         await seedCharacter({id: 'character-1', userId: 'user-1'})
         const setup = createEnv()
-        const created = await createSingleGalleryJob(setup)
+        const created = await createSingleGalleryJob(setup, rating)
 
         await consumeQueued(setup.env, created.queued)
         const status = await getImageUploadStatus(db, 'user-1', created.job.id)
-        expect(status).toMatchObject({state: 'ready', result: {media: {nsfwImageKey: null, nsfwImageUrl: null}}})
+        const absent = rating === 'sfw' ? 'nsfw' : 'sfw'
+        expect(status).toMatchObject({state: 'ready', result: {media: {[`${absent}ImageKey`]: null, [`${absent}ImageUrl`]: null}}})
     })
 
     it('acknowledges a missing task without starting Sharp', async () => {
@@ -1044,7 +1159,7 @@ describe('image upload jobs', () => {
         )
     })
 
-    it('queues a previous unpublished output for cleanup during retry', async () => {
+    it.each([true, false])('retries a failed task with a stored output key: %s', async (hasOutputKey) => {
         await seedUser({id: 'user-1'})
         const setup = createEnv()
         const job = await createSquareImageUploadJob(setup.env, {
@@ -1057,8 +1172,8 @@ describe('image upload jobs', () => {
         })
         await db.prepare(`UPDATE image_upload_jobs SET state = 'failed' WHERE id = ?`).bind(job.id).run()
         await db
-            .prepare(`UPDATE image_processing_tasks SET state = 'failed', output_json = '{"objectKey":"old-output.avif"}' WHERE job_id = ?`)
-            .bind(job.id)
+            .prepare(`UPDATE image_processing_tasks SET state = 'failed', output_json = ? WHERE job_id = ?`)
+            .bind(JSON.stringify(hasOutputKey ? {objectKey: 'old-output.avif'} : {}), job.id)
             .run()
 
         await retryImageUploadJob(setup.env, 'user-1', job.id, 'retry-output-key', now)
@@ -1069,10 +1184,14 @@ describe('image upload jobs', () => {
                 [],
                 db,
             ),
-        ).toEqual([
-            {bucket: 'media', object_key: 'old-output.avif'},
-            {bucket: 'source', object_key: thumbnailOriginalObjectKey('old-output.avif')},
-        ])
+        ).toEqual(
+            hasOutputKey
+                ? [
+                      {bucket: 'media', object_key: 'old-output.avif'},
+                      {bucket: 'source', object_key: thumbnailOriginalObjectKey('old-output.avif')},
+                  ]
+                : [],
+        )
     })
 
     it('restarts every unfinished task in a failed gallery pair', async () => {

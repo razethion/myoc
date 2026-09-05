@@ -297,7 +297,7 @@ export async function countThumbnailCandidates(db: D1Database): Promise<number> 
         )
         .first<number>('candidate_count')
 
-    return Math.max(0, Number(count ?? 0))
+    return Number(count)
 }
 
 export async function getThumbnailCandidates(
@@ -487,8 +487,8 @@ async function publishThumbnail(db: D1Database, candidate: ThumbnailCandidate): 
         ...cancelNewThumbnailCleanupStatements(db, candidate),
         ...previousThumbnailCleanupStatements(db, candidate),
     ]
-    const results = await db.batch(statements)
-    return (results[0]?.meta.changes ?? 0) > 0
+    const [updateResult] = (await db.batch(statements)) as [D1Result, ...D1Result[]]
+    return updateResult.meta.changes > 0
 }
 
 function updateThumbnailReference(db: D1Database, candidate: ThumbnailCandidate): D1PreparedStatement {

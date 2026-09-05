@@ -267,6 +267,14 @@ describe('container image recipes', () => {
         ).rejects.toThrow('Container square image must be a 512x512 AVIF image')
     })
 
+    it('rejects a square container output without a content type', async () => {
+        const response = new Response(createAvifBytes(512, 512))
+
+        await expect(generateSquareImageWithContainer(previewEnvironment([response]), new Uint8Array([1]), 'square')).rejects.toThrow(
+            'Container square image returned an unexpected content type',
+        )
+    })
+
     it.each(['image/jpeg', 'image/png', 'image/webp', 'image/avif'] as const)(
         'forwards %s to the square recipe',
         async (sourceContentType) => {

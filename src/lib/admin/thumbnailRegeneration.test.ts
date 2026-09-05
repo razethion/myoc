@@ -396,6 +396,22 @@ describe('thumbnail regeneration', () => {
         expect(delivery.retry).toHaveBeenCalledWith({delaySeconds: 119})
     })
 
+    it('retries a processing thumbnail without a lease after one second', async () => {
+        const {body, env} = await createQueuedThumbnail({complete: false})
+        await db
+            .prepare(
+                `UPDATE media_preview_regeneration_items SET status = 'processing', lease_id = NULL, lease_expires_at = NULL WHERE task_id = ?`,
+            )
+            .bind(body.taskId)
+            .run()
+        const delivery = createMessage(body, 2)
+
+        await consumeThumbnailRegenerationMessage(delivery.message, body, env, () => new Date('2026-09-04T12:00:00Z'))
+
+        expect(delivery.ack).not.toHaveBeenCalled()
+        expect(delivery.retry).toHaveBeenCalledWith({delaySeconds: 1})
+    })
+
     it('acknowledges a stale thumbnail delivery and retries a storage failure', async () => {
         const {body, env} = await createQueuedThumbnail()
         const first = createMessage(body)

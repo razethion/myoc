@@ -130,6 +130,17 @@ describe('image upload API', () => {
         expect((await canceledResponse.json()) as {job: {state: string}}).toHaveProperty('job.state', 'canceled')
     })
 
+    it('creates an upload job without a batch ID', async () => {
+        await seedAuthenticatedUser({id: 'user-1'}, sessionToken)
+        const form = validForm()
+        form.delete('batchId')
+
+        const response = await postUpload(createEnv(), {form, idempotencyKey: 'upload-without-batch'})
+
+        expect(response.status).toBe(202)
+        expect((await response.json()) as {job: {batchId: string | null}}).toHaveProperty('job.batchId', null)
+    })
+
     it.each([
         ['missing idempotency key', validForm(), '', 400],
         ['invalid fields', new FormData(), 'valid-key', 400],

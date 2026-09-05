@@ -260,4 +260,32 @@ describe('dead-letter queue consumers', () => {
         expect(image.retry).toHaveBeenCalledWith({delaySeconds: 60})
         expect(second.retry).toHaveBeenCalledWith({delaySeconds: 60})
     })
+
+    it('logs a non-Error database failure before it retries the delivery', async () => {
+        const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        const delivery = createDelivery({version: 2}, 1, 'non-error-failure')
+        const unavailable = {
+            DB: {
+                prepare: () => {
+                    throw 'D1 is unavailable'
+                },
+            },
+            IMAGE_PROCESSING_QUEUE: imageProcessingQueue,
+        } as unknown as Pick<Bindings, 'DB' | 'IMAGE_PROCESSING_QUEUE'>
+
+        try {
+            await consumeImageProcessingDeadLetterQueue(batch(delivery.message), unavailable, () => now)
+
+            expect(error).toHaveBeenCalledWith(
+                JSON.stringify({
+                    event: 'processing_dlq_consume_failed',
+                    messageId: delivery.id,
+                    error: 'D1 is unavailable',
+                }),
+            )
+            expect(delivery.retry).toHaveBeenCalledWith({delaySeconds: 2})
+        } finally {
+            error.mockRestore()
+        }
+    })
 })

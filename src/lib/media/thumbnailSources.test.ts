@@ -78,6 +78,47 @@ describe('thumbnail sources', () => {
         expect(sourceBucket.get).toHaveBeenLastCalledWith('source/matching.png', {ssecKey: encryptionKey})
     })
 
+    it.each([
+        ['character-profile', 'character_profile'],
+        ['folder-image', 'folder_image'],
+    ] as const)('uses a ready upload source for a %s target', async (kind, targetType) => {
+        await seedUser({id: target.userId})
+        const sourceBucket = createMockR2Bucket()
+        const bytes = await pngBytes()
+        const sourceTarget = {...target, kind, targetId: `${kind}-1`}
+        await insertReadySource('job-ready', 'source-ready', 'source/ready.png', sourceTarget.imageKey, '2026-09-05 12:00:00', {
+            targetId: sourceTarget.targetId,
+            targetType,
+        })
+        vi.mocked(sourceBucket.get)
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce(r2Object('source/ready.png', bytes, 'image/png'))
+
+        await expect(
+            readThumbnailOriginal({DB: db, MEDIA_BUCKET: sourceBucket, OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey}, sourceTarget),
+        ).resolves.toEqual({bytes, contentType: 'image/png'})
+    })
+
+    it('uses the current thumbnail when a ready upload source object is missing', async () => {
+        await seedUser({id: target.userId})
+        await insertReadySource('job-missing', 'source-missing', 'source/missing.png', target.imageKey, '2026-09-05 12:00:00')
+        const sourceBucket = createMockR2Bucket()
+        const bytes = createAvifBytes(512, 512)
+        vi.mocked(sourceBucket.get)
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce(r2Object(target.objectKey, bytes))
+
+        await expect(
+            readThumbnailOriginal({DB: db, MEDIA_BUCKET: sourceBucket, OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey}, target),
+        ).resolves.toEqual({bytes, contentType: target.contentType})
+        expect(sourceBucket.put).toHaveBeenCalledWith(
+            thumbnailOriginalObjectKey(target.objectKey),
+            bytes,
+            expect.objectContaining({httpMetadata: expect.objectContaining({contentType: target.contentType})}),
+        )
+    })
+
     it('retains the current thumbnail when no original source exists', async () => {
         const mediaBucket = createMockR2Bucket()
         const bytes = createAvifBytes(512, 512)
@@ -110,6 +151,9 @@ describe('thumbnail sources', () => {
 
         vi.mocked(sourceBucket.get).mockResolvedValueOnce(r2Object(target.objectKey, new Uint8Array([1]), 'image/gif'))
         await expect(readThumbnailOriginal(env, target)).rejects.toThrow('The thumbnail source type is not supported')
+
+        vi.mocked(sourceBucket.get).mockResolvedValueOnce(r2Object(target.objectKey, new Uint8Array([1])))
+        await expect(readThumbnailOriginal(env, target)).rejects.toThrow('The thumbnail source type is not supported')
     })
 
     it('rejects missing, empty, and oversized sources', async () => {
@@ -126,19 +170,27 @@ describe('thumbnail sources', () => {
     })
 })
 
-async function insertReadySource(jobId: string, sourceId: string, sourceKey: string, resultKey: string, updatedAt: string): Promise<void> {
+async function insertReadySource(
+    jobId: string,
+    sourceId: string,
+    sourceKey: string,
+    resultKey: string,
+    updatedAt: string,
+    options: {targetId?: string; targetType?: string} = {},
+): Promise<void> {
     await db.batch([
         db
             .prepare(
                 `INSERT INTO image_upload_jobs (
                      id, user_id, target_type, target_id, state, idempotency_key, request_json,
                      result_json, deadline_at, created_at, updated_at
-                 ) VALUES (?, ?, 'user_profile', ?, 'ready', ?, '{}', ?, ?, ?, ?)`,
+                 ) VALUES (?, ?, ?, ?, 'ready', ?, '{}', ?, ?, ?, ?)`,
             )
             .bind(
                 jobId,
                 target.userId,
-                target.targetId,
+                options.targetType ?? 'user_profile',
+                options.targetId ?? target.targetId,
                 jobId,
                 JSON.stringify({key: resultKey}),
                 '2026-09-10 12:00:00',
@@ -159,11 +211,11 @@ async function pngBytes(): Promise<Uint8Array> {
     return new Uint8Array(await createPngFile(512, 512).arrayBuffer())
 }
 
-function r2Object(key: string, bytes: Uint8Array, contentType: string): R2ObjectBody {
+function r2Object(key: string, bytes: Uint8Array, contentType?: string): R2ObjectBody {
     return {
         key,
         size: bytes.byteLength,
-        httpMetadata: {contentType},
+        httpMetadata: contentType ? {contentType} : undefined,
         arrayBuffer: vi.fn(async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)),
     } as unknown as R2ObjectBody
 }

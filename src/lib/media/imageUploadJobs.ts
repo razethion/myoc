@@ -393,7 +393,7 @@ export async function cancelImageUploadJob(db: D1Database, userId: string, jobId
             )
             .bind(notBefore, nowText, nowText, jobId, userId),
     ])
-    return (results[0]?.meta.changes ?? 0) > 0
+    return (results as [D1Result, ...D1Result[]])[0].meta.changes > 0
 }
 
 export async function retryImageUploadJob(
@@ -489,7 +489,7 @@ export async function retryImageUploadJob(
 
     const results = await env.DB.batch(statements)
 
-    if ((results[0]?.meta.changes ?? 0) === 0) {
+    if ((results as [D1Result, ...D1Result[]])[0].meta.changes === 0) {
         return await concurrentRetryStatus(env.DB, userId, jobId, idempotencyKey)
     }
 
@@ -542,7 +542,7 @@ export async function consumeImageUploadProcessingMessage(
     }
 }
 
-async function dispatchImageUploadOutbox(env: Bindings, now = new Date()): Promise<number> {
+async function dispatchImageUploadOutbox(env: Bindings, now: Date): Promise<number> {
     const rows = await env.DB.prepare(
         `SELECT id, task_id
          FROM image_queue_outbox
@@ -885,7 +885,7 @@ async function processGalleryTask(
         ).bind(attemptNumber, JSON.stringify(output), toSqlTimestamp(now), task.id, leaseId),
     ])
 
-    if ((results[1]?.meta.changes ?? 0) === 0) {
+    if ((results as [D1Result, D1Result])[1].meta.changes === 0) {
         await env.MEDIA_BUCKET.delete([imageObjectKey, previewObjectKey])
         if (blurObjectKey) await env.MEDIA_BUCKET.delete(blurObjectKey)
         return 'ack'
@@ -925,6 +925,7 @@ async function writeGalleryOutputs(
     blurObjectKey: string | null,
     generated: Awaited<ReturnType<typeof generateGalleryOutputsWithContainer>>,
 ): Promise<void> {
+    const blur = generated.blur
     await Promise.all([
         Promise.resolve().then(() =>
             bucket.put(imageObjectKey, source, {
@@ -936,10 +937,10 @@ async function writeGalleryOutputs(
                 httpMetadata: {cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL, contentType: GALLERY_PREVIEW_CONTENT_TYPE},
             }),
         ),
-        ...(blurObjectKey && generated.blur
+        ...(blurObjectKey && blur
             ? [
                   Promise.resolve().then(() =>
-                      bucket.put(blurObjectKey, generated.blur?.bytes ?? new Uint8Array(), {
+                      bucket.put(blurObjectKey, blur.bytes, {
                           httpMetadata: {cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL, contentType: GALLERY_NSFW_BLUR_CONTENT_TYPE},
                       }),
                   ),
@@ -1069,7 +1070,8 @@ async function publishGalleryJobIfReady(env: Bindings, jobId: string, now: Date)
         ).bind(JSON.stringify({media}), nowText, job.id, job.generation),
         successfulSourceCleanupStatement(env.DB, job.id, job.generation, now),
     ])
-    return (results[0]?.meta.changes ?? 0) > 0 && (results[2]?.meta.changes ?? 0) > 0
+    const [mediaResult, , jobResult] = results as [D1Result, D1Result, D1Result, ...D1Result[]]
+    return mediaResult.meta.changes > 0 && jobResult.meta.changes > 0
 }
 
 type GalleryInsertVariant = {
@@ -1204,12 +1206,12 @@ async function queueGalleryOutputCleanup(db: D1Database, jobId: string, output: 
 }
 
 function galleryMediaId(task: TaskRow): string {
-    const request = JSON.parse(task.request_json) as {mediaId?: unknown}
-    return typeof request.mediaId === 'string' && request.mediaId ? request.mediaId : task.job_id
+    const request = JSON.parse(task.request_json) as {mediaId: string}
+    return request.mediaId
 }
 
 function fileStem(key: string): string {
-    const file = key.split('/').at(-1) ?? ''
+    const file = key.slice(key.lastIndexOf('/') + 1)
     return file.replace(/\.[^.]+$/, '')
 }
 
@@ -1238,11 +1240,7 @@ async function publishSquareOutput(
     now: Date,
     durationMs: number,
 ): Promise<boolean> {
-    const key =
-        outputKey
-            .split('/')
-            .at(-1)
-            ?.replace(/\.avif$/, '') ?? ''
+    const key = fileStem(outputKey)
     const old = await currentTargetImage(db, task)
     const targetUpdate = targetUpdateStatement(db, task, leaseId, key, now)
     const attemptNumber = task.sharp_attempts + 1
@@ -1341,9 +1339,9 @@ async function publishSquareOutput(
         )
     }
 
-    const jobUpdateIndex = 3
     const results = await db.batch(statements)
-    return (results[0]?.meta.changes ?? 0) > 0 && (results[jobUpdateIndex]?.meta.changes ?? 0) > 0
+    const [targetResult, , , jobResult] = results as [D1Result, D1Result, D1Result, D1Result, ...D1Result[]]
+    return targetResult.meta.changes > 0 && jobResult.meta.changes > 0
 }
 
 function targetUpdateStatement(db: D1Database, task: TaskRow, leaseId: string, key: string, now: Date): D1PreparedStatement {

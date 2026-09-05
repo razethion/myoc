@@ -298,6 +298,20 @@ describe('RegenerateMediaPreviewsWorkflow', () => {
         expect(await getJob(runId)).toMatchObject({status: 'error'})
     })
 
+    it('stops a stale thumbnail continuation before it loads a candidate', async () => {
+        const runId = crypto.randomUUID()
+        await seedJob(runId, 'thumbnail-regeneration', 'error')
+
+        const output = await runWorkflow({
+            kind: 'thumbnails',
+            runId,
+            continuation: {cursor: {kind: 'user-profile', targetId: 'previous'}, segment: 1},
+        })
+
+        expect(output.output).toEqual(summary())
+        expect(output.queue.bodies).toEqual([])
+    })
+
     it('stops when a thumbnail job closes after initialization', async () => {
         const runId = crypto.randomUUID()
         await seedJob(runId, 'thumbnail-regeneration')
