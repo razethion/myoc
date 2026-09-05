@@ -183,9 +183,10 @@ async function postAdminJobRun(
     sessionToken = 'session-token',
     accept = 'application/json',
     previewWorkflow = createMockWorkflowBinding(),
+    query = '',
 ): Promise<Response> {
     return adminPageActionRoutes.request(
-        `https://example.com/admin/admin-options/jobs/${jobName}/run`,
+        `https://example.com/admin/admin-options/jobs/${jobName}/run${query}`,
         {
             method: 'POST',
             body: JSON.stringify({}),
@@ -212,6 +213,44 @@ async function seedPreviewRegenerationRun(id: string, startedAt: string, summary
 }
 
 describe('POST /admin/admin-options/jobs/:jobName/run', () => {
+    it.each(['true', 'false'])('starts preview regeneration with onlyInvalid=%s', async (value) => {
+        await seedCurrentUser()
+        const workflow = createMockWorkflowBinding()
+        const response = await postAdminJobRun(
+            'media-preview-regeneration',
+            createMockR2Bucket(),
+            'session-token',
+            'application/json',
+            workflow,
+            `?onlyInvalid=${value}`,
+        )
+
+        expect(response.status).toBe(200)
+        expect(workflow.create).toHaveBeenCalledWith(
+            expect.objectContaining({params: expect.objectContaining({onlyInvalid: value === 'true'})}),
+        )
+    })
+
+    it.each([
+        ['media-preview-regeneration', 'invalid'],
+        ['thumbnail-regeneration', 'true'],
+    ])('rejects an invalid repair option for %s', async (job, value) => {
+        await seedCurrentUser()
+        const workflow = createMockWorkflowBinding()
+        const response = await postAdminJobRun(
+            job,
+            createMockR2Bucket(),
+            'session-token',
+            'application/json',
+            workflow,
+            `?onlyInvalid=${value}`,
+        )
+
+        expect(response.status).toBe(400)
+        await expect(response.json()).resolves.toEqual({error: 'Preview regeneration option is invalid'})
+        expect(workflow.create).not.toHaveBeenCalled()
+    })
+
     it('requires an authenticated admin user', async () => {
         const unauthenticated = await postAdminJobRun('recent-feed-regeneration', createMockR2Bucket(), 'missing-session')
         expect(unauthenticated.status).toBe(401)
@@ -347,7 +386,7 @@ describe('POST /admin/admin-options/jobs/:jobName/run', () => {
         expect(workflow.create).toHaveBeenCalledOnce()
         expect(workflow.create).toHaveBeenCalledWith({
             id: firstBody.run.runId,
-            params: {runId: firstBody.run.runId},
+            params: {runId: firstBody.run.runId, onlyInvalid: false},
         })
         expect(runs).toEqual([{id: firstBody.run.runId, triggered_by_user_id: currentUserId, status: 'running'}])
     })

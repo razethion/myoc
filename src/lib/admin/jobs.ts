@@ -66,6 +66,7 @@ type AdminJobEnv = Pick<
 >
 
 type AdminJobRunOptions = {
+    onlyInvalid?: boolean
     cron?: string | null
     now?: Date
     triggeredByUserId?: string | null
@@ -351,7 +352,7 @@ async function startRegenerationWorkflowJob(
             params:
                 kind === 'thumbnails'
                     ? ({kind, runId: started.runId} satisfies RegenerateMediaPreviewsWorkflowParams)
-                    : ({runId: started.runId} satisfies RegenerateMediaPreviewsWorkflowParams),
+                    : ({runId: started.runId, onlyInvalid: options.onlyInvalid} satisfies RegenerateMediaPreviewsWorkflowParams),
         })
     } catch (error) {
         await tryFinishAdminJobRun(env.DB, started.runId, 'error', null, errorMessage(error))

@@ -112,10 +112,16 @@ adminPageActionRoutes.post('/admin/admin-options/jobs/:jobName/run', async (c) =
         return respondToJobAction(c, null, {error: 'Admin job is invalid'}, 400)
     }
 
+    const onlyInvalid = c.req.query('onlyInvalid')
+    if (onlyInvalid !== undefined && (jobName !== 'media-preview-regeneration' || !['true', 'false'].includes(onlyInvalid))) {
+        return respondToJobAction(c, jobName, {error: 'Preview regeneration option is invalid'}, 400)
+    }
+
     try {
         const run = await runAdminJob(c.env, jobName, {
             triggeredByUserId: authorization.currentUser.id,
             triggerSource: 'manual',
+            onlyInvalid: onlyInvalid === 'true',
         })
 
         return respondToJobAction(c, jobName, {

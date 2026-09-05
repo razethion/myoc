@@ -186,6 +186,42 @@ describe('RegenerateMediaPreviewsWorkflow', () => {
         ).toEqual({dispatch_complete: 1, enqueued_items: 201})
     })
 
+    it('keeps repair filtering and counts across workflow continuations', async () => {
+        const runId = crypto.randomUUID()
+        await seedJob(runId)
+        await seedSfwMedia(202)
+        await db
+            .prepare(
+                "UPDATE character_media SET sfw_preview_image_key = 'valid-preview', sfw_preview_content_type = 'image/avif' WHERE id = 'workflow-media-0001'",
+            )
+            .run()
+
+        const first = await runWorkflow({runId, onlyInvalid: true})
+        expect(first.queue.bodies).toHaveLength(200)
+        expect(first.createBatch).toHaveBeenCalledWith([
+            {
+                id: `${runId}-segment-1`,
+                params: {
+                    runId,
+                    onlyInvalid: true,
+                    continuation: {cursor: {mediaId: 'workflow-media-0201', ratingOrder: 0}, queuedVariants: 200, segment: 1},
+                },
+            },
+        ])
+        expect(JSON.parse((await getJob(runId))?.summary_json ?? '{}')).toMatchObject({totalVariants: 201})
+
+        const continuation = await runWorkflow({
+            runId,
+            onlyInvalid: true,
+            continuation: {cursor: {mediaId: 'workflow-media-0201', ratingOrder: 0}, queuedVariants: 200, segment: 1},
+        })
+        expect(continuation.queue.bodies).toHaveLength(1)
+        expect(continuation.output).toEqual({queuedVariants: 201})
+        const tasks = await queryAll<{media_id: string}>('SELECT media_id FROM media_preview_regeneration_items WHERE run_id = ?', [runId])
+        expect(tasks).toHaveLength(201)
+        expect(tasks.map((task) => task.media_id)).not.toContain('workflow-media-0001')
+    })
+
     it('records a job-level dispatch failure', async () => {
         const runId = crypto.randomUUID()
         const failureMessage = 'x'.repeat(2_001)

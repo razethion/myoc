@@ -4162,6 +4162,8 @@ describe('GET /admin', () => {
         expect(html).toContain('Run Recent Page Regeneration')
         expect(html).toContain('action="/admin/admin-options/jobs/media-preview-regeneration/run"')
         expect(html).toContain('Run Media Preview Regeneration')
+        expect(html).toContain('formaction="/admin/admin-options/jobs/media-preview-regeneration/run?onlyInvalid=true"')
+        expect(html).toContain('Repair missing or non-AVIF previews and blurs')
         expect(html).toContain('Job History')
         expect(html).toContain('Cron 0 8 * * *')
         expect(html).toContain('d1/myoc-db/2026/07/11/myoc-db.sql.gz')

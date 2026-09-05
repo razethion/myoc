@@ -43,11 +43,20 @@ export function AdminOptionsPage({csrfToken, data, feedback}: AdminOptionsPagePr
                 </p>
                 <div class="flex flex-wrap gap-3">
                     {data.jobs.map((job, index) => (
-                        <form action={`/admin/admin-options/jobs/${job.name}/run`} method="post">
+                        <form action={`/admin/admin-options/jobs/${job.name}/run`} class="flex flex-wrap items-center gap-2" method="post">
                             <input name="csrfToken" type="hidden" value={csrfToken} />
                             <button class={`btn ${index === 0 ? 'btn-primary' : 'btn-outline'}`} type="submit">
                                 Run {job.label}
                             </button>
+                            {job.name === 'media-preview-regeneration' ? (
+                                <button
+                                    class="btn btn-outline"
+                                    formaction={`/admin/admin-options/jobs/${job.name}/run?onlyInvalid=true`}
+                                    type="submit"
+                                >
+                                    Repair missing or non-AVIF previews and blurs
+                                </button>
+                            ) : null}
                         </form>
                     ))}
                 </div>
