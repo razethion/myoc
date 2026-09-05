@@ -491,6 +491,26 @@ describe('image upload jobs', () => {
         expect(await queryAll<{bucket: string}>('SELECT bucket FROM image_cleanup_tasks', [], db)).toEqual([{bucket: 'source'}])
     })
 
+    it('does not cancel another user upload task', async () => {
+        await seedUser({id: 'user-1'})
+        await seedUser({id: 'user-2'})
+        const setup = createEnv()
+        const job = await createSquareImageUploadJob(setup.env, {
+            userId: 'user-1',
+            kind: 'user-profile',
+            targetId: 'user-1',
+            idempotencyKey: 'cross-account-cancel',
+            bytes: await pngBytes(),
+            now,
+        })
+
+        await expect(cancelImageUploadJob(db, 'user-2', job.id, now)).resolves.toBe(false)
+        await consumeQueued(setup.env, firstQueuedMessage(setup.lanes))
+
+        expect(setup.container.fetch).toHaveBeenCalledOnce()
+        expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({state: 'ready'})
+    })
+
     it('does not use a Sharp attempt when all containers are busy', async () => {
         await seedUser({id: 'user-1'})
         const setup = createEnv(() => new Response('busy', {status: 429}))

@@ -373,9 +373,16 @@ export async function cancelImageUploadJob(db: D1Database, userId: string, jobId
                 `UPDATE image_processing_tasks
                  SET state = 'canceled', lease_id = NULL, lease_expires_at = NULL, updated_at = ?
                  WHERE job_id = ?
-                   AND state IN ('queued', 'processing')`,
+                   AND state IN ('queued', 'processing')
+                   AND EXISTS (
+                       SELECT 1
+                       FROM image_upload_jobs AS jobs
+                       WHERE jobs.id = image_processing_tasks.job_id
+                         AND jobs.user_id = ?
+                         AND jobs.state = 'canceled'
+                   )`,
             )
-            .bind(nowText, jobId),
+            .bind(nowText, jobId, userId),
         db
             .prepare(
                 `INSERT OR IGNORE INTO image_cleanup_tasks (
