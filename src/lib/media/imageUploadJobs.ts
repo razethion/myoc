@@ -1067,6 +1067,7 @@ async function publishGalleryJobIfReady(env: Bindings, jobId: string, now: Date)
              SET state = 'ready', result_json = ?, error_code = NULL, error_message = NULL, updated_at = ?
              WHERE id = ? AND generation = ? AND state IN ('queued', 'processing', 'waiting_for_sources')`,
         ).bind(JSON.stringify({media}), nowText, job.id, job.generation),
+        successfulSourceCleanupStatement(env.DB, job.id, job.generation, now),
     ])
     return (results[0]?.meta.changes ?? 0) > 0 && (results[2]?.meta.changes ?? 0) > 0
 }
@@ -1212,6 +1213,22 @@ function fileStem(key: string): string {
     return file.replace(/\.[^.]+$/, '')
 }
 
+function successfulSourceCleanupStatement(db: D1Database, jobId: string, generation: number, now: Date): D1PreparedStatement {
+    const nowText = toSqlTimestamp(now)
+    return db
+        .prepare(
+            `INSERT OR IGNORE INTO image_cleanup_tasks (
+                 id, job_id, bucket, object_key, state, not_before, created_at, updated_at
+             )
+             SELECT lower(hex(randomblob(16))), sources.job_id, 'source', sources.object_key,
+                    'pending', ?, ?, ?
+             FROM image_upload_sources AS sources
+             JOIN image_upload_jobs AS jobs ON jobs.id = sources.job_id
+             WHERE jobs.id = ? AND jobs.generation = ? AND jobs.state = 'ready'`,
+        )
+        .bind(toSqlTimestamp(new Date(now.getTime() + IMAGE_CLEANUP_GRACE_MS)), nowText, nowText, jobId, generation)
+}
+
 async function publishSquareOutput(
     db: D1Database,
     task: TaskRow,
@@ -1274,6 +1291,7 @@ async function publishSquareOutput(
                )`,
             )
             .bind(resultJson, toSqlTimestamp(now), task.job_id, task.generation, task.id, resultJson),
+        successfulSourceCleanupStatement(db, task.job_id, task.generation, now),
     ]
 
     if (old) {

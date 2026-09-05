@@ -193,6 +193,16 @@ describe('image upload jobs', () => {
         if (!retained) throw new Error('Expected a retained thumbnail source')
         expect(new Uint8Array(await retained.arrayBuffer())).toEqual(await pngBytes())
         expect(await getImageUploadBatchStatus(db, 'user-1', 'batch-1')).toHaveLength(1)
+
+        await reconcileImageUploads(setup.env, new Date(now.getTime() + 61 * 60 * 1_000))
+
+        expect((await setup.mediaBucket.list()).objects.map((object) => object.key).sort()).toEqual(
+            [outputKey, thumbnailOriginalObjectKey(outputKey)].sort(),
+        )
+        const original = await setup.mediaBucket.get(thumbnailOriginalObjectKey(outputKey))
+        if (!original) throw new Error('Expected the permanent thumbnail original')
+        expect(new Uint8Array(await original.arrayBuffer())).toEqual(await pngBytes())
+        expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({state: 'ready'})
     })
 
     it.each([
@@ -677,6 +687,10 @@ describe('image upload jobs', () => {
         expect(await queryAll<{id: string}>('SELECT id FROM character_media', [], db)).toEqual([])
         expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({state: 'waiting'})
 
+        await reconcileImageUploads(setup.env, new Date(now.getTime() + 1_000))
+        expect(await queryAll('SELECT id FROM image_cleanup_tasks WHERE job_id = ?', [job.id], db)).toEqual([])
+        for (const source of sources) expect(await setup.mediaBucket.get(source.objectKey)).not.toBeNull()
+
         await consumeQueued(setup.env, second)
         expect(
             await queryOne<{sfw_preview_content_type: string; nsfw_blur_content_type: string}>(
@@ -687,6 +701,20 @@ describe('image upload jobs', () => {
         ).toEqual({sfw_preview_content_type: 'image/avif', nsfw_blur_content_type: 'image/avif'})
         expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({state: 'ready', kind: 'gallery'})
         expect(await queryAll<{media_id: string}>('SELECT media_id FROM admin_image_review_queue', [], db)).toEqual([{media_id: 'media-1'}])
+
+        const stagingKeys = sources.map((source) => source.objectKey)
+        const permanentKeys = (await setup.mediaBucket.list()).objects
+            .map((object) => object.key)
+            .filter((key) => !stagingKeys.includes(key))
+        expect(permanentKeys).toHaveLength(5)
+        await reconcileImageUploads(setup.env, new Date(now.getTime() + 61 * 60 * 1_000))
+        expect((await setup.mediaBucket.list()).objects.map((object) => object.key).sort()).toEqual(permanentKeys.sort())
+        for (const source of sources) {
+            const original = await setup.mediaBucket.get(source.objectKey.replace(/^image-staging\//, ''))
+            if (!original) throw new Error('Expected the permanent gallery original')
+            expect(new Uint8Array(await original.arrayBuffer())).toEqual(await pngBytes(100, 80))
+        }
+        expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({state: 'ready'})
     })
 
     it('rejects invalid gallery source sets and foreign targets', async () => {
