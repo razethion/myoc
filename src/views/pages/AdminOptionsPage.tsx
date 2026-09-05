@@ -17,6 +17,13 @@ const statusBadgeClasses: Record<AdminJobRun['status'], string> = {
     success: 'badge-success',
 }
 
+const recentFeedVariantLabels: Record<string, string> = {
+    'n0-u0': 'Approved SFW',
+    'n0-u1': 'All SFW',
+    'n1-u0': 'Approved including NSFW',
+    'n1-u1': 'All including NSFW',
+}
+
 export function AdminOptionsPage({csrfToken, data, feedback}: AdminOptionsPageProps) {
     return (
         <div class="p-4 sm:p-6">
@@ -30,9 +37,9 @@ export function AdminOptionsPage({csrfToken, data, feedback}: AdminOptionsPagePr
 
             <section class="rounded border border-base-300 bg-base-200 p-4">
                 <p class="mb-3 text-sm text-base-content/70">
-                    Thumbnail regeneration and character media preview regeneration run as separate background jobs. Thumbnails use saved
-                    originals. If an original is missing, the job saves the current thumbnail as its source. Starting a running job again
-                    does not create a duplicate.
+                    Recent page regeneration rebuilds /recent in the background. Thumbnail regeneration and character media preview
+                    regeneration run as separate background jobs. Thumbnails use saved originals. If an original is missing, the job saves
+                    the current thumbnail as its source. Starting a running job again does not create a duplicate.
                 </p>
                 <div class="flex flex-wrap gap-3">
                     {data.jobs.map((job, index) => (
@@ -176,6 +183,10 @@ function RunSummary({run}: {run: AdminJobRun}) {
         return <MediaPreviewRegenerationSummary summary={run.summary} thumbnails={run.jobName === 'thumbnail-regeneration'} />
     }
 
+    if (run.jobName === 'recent-feed-regeneration') {
+        return <RecentFeedRegenerationSummary summary={run.summary} />
+    }
+
     return <R2CleanupSummary summary={run.summary} />
 }
 
@@ -259,8 +270,35 @@ function MediaPreviewRegenerationSummary({summary, thumbnails}: {summary: AdminJ
     )
 }
 
+function RecentFeedRegenerationSummary({summary}: {summary: AdminJobSummary}) {
+    if (!('status' in summary)) {
+        return <JsonSummary summary={summary} />
+    }
+
+    return (
+        <div class="grid gap-1 text-xs">
+            <span>Status: {formatRecentFeedStatus(summary.status)}</span>
+            {summary.bootstrapRows === undefined ? null : <span>{summary.bootstrapRows} items processed</span>}
+            {summary.objectsWritten === undefined ? null : <span>{summary.objectsWritten} feed objects written</span>}
+            {summary.itemCounts ? (
+                <div class="flex flex-wrap gap-x-3 gap-y-1">
+                    {Object.entries(summary.itemCounts).map(([variant, count]) => (
+                        <span>
+                            {recentFeedVariantLabels[variant] ?? 'Unknown feed'}: {count} items
+                        </span>
+                    ))}
+                </div>
+            ) : null}
+        </div>
+    )
+}
+
 function JsonSummary({summary}: {summary: AdminJobSummary}) {
     return <pre class="max-w-xl whitespace-pre-wrap break-words text-xs">{JSON.stringify(summary, null, 2)}</pre>
+}
+
+function formatRecentFeedStatus(status: string): string {
+    return `${status.slice(0, 1).toUpperCase()}${status.slice(1)}`
 }
 
 function formatCurrency(value: number): string {

@@ -4,6 +4,7 @@ import {toSqlTimestamp} from '../auth/session'
 import {backupD1Database, type D1BackupSummary} from '../db/backup'
 import {type LeaderboardRefreshSummary, refreshLeaderboard} from '../leaderboard'
 import {cleanupStaleR2Media, type R2CleanupSummary} from '../media/r2Cleanup'
+import type {RecentFeedPublishSummary} from '../recentMedia/publisher'
 import {type AdminErrorLogEntry, getAdminErrorLogs} from './errorLog'
 import {
     activeMediaPreviewRegenerationWorkflowInstanceIds,
@@ -26,6 +27,10 @@ const ADMIN_JOBS = [
         label: 'Leaderboard Refresh',
     },
     {
+        name: 'recent-feed-regeneration',
+        label: 'Recent Page Regeneration',
+    },
+    {
         name: 'media-preview-regeneration',
         label: 'Media Preview Regeneration',
     },
@@ -41,7 +46,12 @@ type AdminJobRunStatus = 'running' | 'success' | 'error'
 const WORKFLOW_START_GRACE_PERIOD_MS = 5 * 60 * 1_000
 const ACTIVE_WORKFLOW_STATUSES = new Set<InstanceStatus['status']>(['paused', 'queued', 'running', 'unknown', 'waiting', 'waitingForPause'])
 type MediaPreviewWorkflowInstanceState = 'active' | 'complete' | 'inactive' | 'missing'
-export type AdminJobSummary = D1BackupSummary | R2CleanupSummary | LeaderboardRefreshSummary | MediaPreviewRegenerationSummary
+export type AdminJobSummary =
+    | D1BackupSummary
+    | R2CleanupSummary
+    | LeaderboardRefreshSummary
+    | MediaPreviewRegenerationSummary
+    | RecentFeedPublishSummary
 
 type AdminJobEnv = Pick<
     Bindings,
@@ -163,6 +173,10 @@ export async function runAdminJob(env: AdminJobEnv, jobName: AdminJobName, optio
         return await startThumbnailRegenerationJob(env, options)
     }
 
+    if (jobName === 'recent-feed-regeneration') {
+        return await startRecentFeedRegenerationJob(env, options)
+    }
+
     return await recordAdminJobRun(env.DB, jobName, options, async () => runAdminJobTask(env, jobName))
 }
 
@@ -238,6 +252,57 @@ async function startMediaPreviewRegenerationJob(
     return await startRegenerationWorkflowJob(env, 'media-preview-regeneration', options, 'media-previews')
 }
 
+async function startRecentFeedRegenerationJob(
+    env: AdminJobEnv,
+    options: AdminJobRunOptions,
+): Promise<AdminJobRunResult<RecentFeedPublishSummary>> {
+    const jobName = 'recent-feed-regeneration'
+    const summary: RecentFeedPublishSummary = {status: 'building'}
+    let started = await startExclusiveAdminJobRun(env.DB, jobName, options, summary, parseRecentFeedPublishSummary)
+
+    if (!started.created) {
+        const active = await isWorkflowInstanceActive(env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW, started.runId, started.startedAt)
+
+        if (active) {
+            return {
+                jobName,
+                runId: started.runId,
+                status: 'running',
+                summary: started.summary,
+            }
+        }
+
+        await failAdminJobRun(env.DB, started.runId, 'The recent page regeneration Workflow stopped before the job record finished.')
+        started = await startExclusiveAdminJobRun(env.DB, jobName, options, summary, parseRecentFeedPublishSummary)
+
+        if (!started.created) {
+            return {
+                jobName,
+                runId: started.runId,
+                status: 'running',
+                summary: started.summary,
+            }
+        }
+    }
+
+    try {
+        await env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW.create({
+            id: started.runId,
+            params: {kind: 'recent-feed', runId: started.runId} satisfies RegenerateMediaPreviewsWorkflowParams,
+        })
+    } catch (error) {
+        await tryFinishAdminJobRun(env.DB, started.runId, 'error', null, errorMessage(error))
+        throw error
+    }
+
+    return {
+        jobName,
+        runId: started.runId,
+        status: 'running',
+        summary,
+    }
+}
+
 async function startRegenerationWorkflowJob(
     env: AdminJobEnv,
     jobName: 'media-preview-regeneration' | 'thumbnail-regeneration',
@@ -245,7 +310,7 @@ async function startRegenerationWorkflowJob(
     kind: 'media-previews' | 'thumbnails',
 ): Promise<AdminJobRunResult<MediaPreviewRegenerationSummary>> {
     const summary = emptyMediaPreviewRegenerationSummary()
-    let started = await startExclusiveAdminJobRun(env.DB, jobName, options, summary)
+    let started = await startExclusiveAdminJobRun(env.DB, jobName, options, summary, parseMediaPreviewRegenerationSummary)
 
     if (!started.created) {
         const active = await isMediaPreviewWorkflowActive(
@@ -268,7 +333,7 @@ async function startRegenerationWorkflowJob(
 
         const label = kind === 'thumbnails' ? 'thumbnail regeneration' : 'preview regeneration'
         await failAdminJobRun(env.DB, started.runId, `The ${label} Workflow stopped before the job record finished.`)
-        started = await startExclusiveAdminJobRun(env.DB, jobName, options, summary)
+        started = await startExclusiveAdminJobRun(env.DB, jobName, options, summary, parseMediaPreviewRegenerationSummary)
 
         if (!started.created) {
             return {
@@ -301,12 +366,13 @@ async function startRegenerationWorkflowJob(
     }
 }
 
-async function startExclusiveAdminJobRun(
+async function startExclusiveAdminJobRun<TSummary extends AdminJobSummary>(
     db: D1Database,
     jobName: AdminJobName,
     options: AdminJobRunOptions,
-    summary: MediaPreviewRegenerationSummary,
-): Promise<{created: boolean; runId: string; startedAt: string; summary: MediaPreviewRegenerationSummary}> {
+    summary: TSummary,
+    parseStoredSummary: (value: string | null) => TSummary | null,
+): Promise<{created: boolean; runId: string; startedAt: string; summary: TSummary}> {
     const runId = crypto.randomUUID()
     const startedAt = toSqlTimestamp(options.now ?? new Date())
     const summaryJson = JSON.stringify(summary)
@@ -353,8 +419,17 @@ async function startExclusiveAdminJobRun(
         created,
         runId: active.id,
         startedAt: active.started_at,
-        summary: created ? summary : (parseMediaPreviewRegenerationSummary(active.summary_json) ?? summary),
+        summary: created ? summary : (parseStoredSummary(active.summary_json) ?? summary),
     }
+}
+
+async function isWorkflowInstanceActive(
+    workflow: Bindings['REGENERATE_MEDIA_PREVIEWS_WORKFLOW'],
+    runId: string,
+    startedAt: string,
+): Promise<boolean> {
+    const recentlyStarted = wasWorkflowRecentlyStarted(startedAt)
+    return (await getWorkflowInstanceState(workflow, runId, recentlyStarted)) === 'active'
 }
 
 async function isMediaPreviewWorkflowActive(
@@ -369,15 +444,13 @@ async function isMediaPreviewWorkflowActive(
         return true
     }
 
-    const startedAtMs = Date.parse(`${startedAt.replace(' ', 'T')}Z`)
-    const workflowAgeMs = Date.now() - startedAtMs
-    const recentlyStarted = Number.isFinite(startedAtMs) && workflowAgeMs >= 0 && workflowAgeMs < WORKFLOW_START_GRACE_PERIOD_MS
+    const recentlyStarted = wasWorkflowRecentlyStarted(startedAt)
     const statusErrors: Error[] = []
     const states: MediaPreviewWorkflowInstanceState[] = []
 
     for (const instanceId of activeMediaPreviewRegenerationWorkflowInstanceIds(runId, summary.processedVariants, jobName)) {
         try {
-            const state = await getMediaPreviewWorkflowInstanceState(workflow, instanceId, recentlyStarted)
+            const state = await getWorkflowInstanceState(workflow, instanceId, recentlyStarted)
             if (state === 'active') {
                 return true
             }
@@ -404,7 +477,13 @@ async function isMediaPreviewWorkflowActive(
     return false
 }
 
-async function getMediaPreviewWorkflowInstanceState(
+function wasWorkflowRecentlyStarted(startedAt: string): boolean {
+    const startedAtMs = Date.parse(`${startedAt.replace(' ', 'T')}Z`)
+    const workflowAgeMs = Date.now() - startedAtMs
+    return Number.isFinite(startedAtMs) && workflowAgeMs >= 0 && workflowAgeMs < WORKFLOW_START_GRACE_PERIOD_MS
+}
+
+async function getWorkflowInstanceState(
     workflow: Bindings['REGENERATE_MEDIA_PREVIEWS_WORKFLOW'],
     instanceId: string,
     recentlyStarted: boolean,
@@ -498,6 +577,10 @@ export async function failAdminJobRun(db: D1Database, runId: string, message: st
     await finishAdminJobRun(db, runId, 'error', null, message)
 }
 
+export async function completeAdminJobRun(db: D1Database, runId: string, summary: AdminJobSummary): Promise<void> {
+    await finishAdminJobRun(db, runId, 'success', summary, null)
+}
+
 function toAdminJobRun(row: AdminJobRunRow): AdminJobRun[] {
     const jobName = parseAdminJobName(row.job_name)
 
@@ -540,6 +623,16 @@ function parseMediaPreviewRegenerationSummary(value: string | null): MediaPrevie
     const parsed = parseSummary(value)
 
     return parsed && 'totalVariants' in parsed && 'processedVariants' in parsed ? parsed : null
+}
+
+function parseRecentFeedPublishSummary(value: string | null): RecentFeedPublishSummary | null {
+    const parsed = parseSummary(value)
+
+    return parsed && 'status' in parsed && isRecentFeedPublishStatus(parsed.status) ? (parsed as RecentFeedPublishSummary) : null
+}
+
+function isRecentFeedPublishStatus(value: unknown): value is RecentFeedPublishSummary['status'] {
+    return value === 'disabled' || value === 'current' || value === 'busy' || value === 'building' || value === 'published'
 }
 
 function errorMessage(error: unknown): string {

@@ -116,6 +116,11 @@ The current thumbnail stays available until its replacement is ready. A concurre
 All image jobs use `IMAGE_PROCESSING_QUEUE` and `IMAGE_PROCESSING_DLQ`. Queue messages identify the job type;
 they do not select a container. Uploads and both regeneration jobs share the container pool.
 
+To rebuild `/recent`, open Admin Options and select **Run Recent Page Regeneration**.
+The job starts a background workflow and reports its status in Job History. Starting it again reuses an active run.
+The rebuild repairs missing or corrupt feed objects. While it runs, `/recent` shows a limited first page from the database
+with the same approval and NSFW rules. Pagination resumes when the generated feed is ready.
+
 Each environment uses one public `MEDIA_BUCKET`. Media keeps its existing keys. Feed objects use `recent-feed/`.
 Upload sources use `image-staging/` or `image-sources/`. Retained thumbnail originals use `thumbnail-originals/`.
 Media does not use customer-key encryption.

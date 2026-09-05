@@ -1,9 +1,15 @@
 import {describe, expect, it, vi} from 'vitest'
-import {queryAll, queryOne, seedCharacter, seedMedia, seedUser, useTestDatabase} from '../../test/d1'
+import {queryAll, queryOne, seedCharacter, seedMedia, seedUser, sha256Hex, useTestDatabase} from '../../test/d1'
 import {createMockR2Bucket} from '../../test/mockR2'
 import type {RecentMediaRow} from '../recentMedia'
-import {RecentFeedDayManifestSchema, RecentFeedMonthManifestSchema, RecentFeedRootSchema, RecentFeedYearManifestSchema} from './model'
-import {buildRecentFeedVariantTree, getRecentFeedPointer, publishRecentFeed} from './publisher'
+import {
+    RecentFeedBlockSchema,
+    RecentFeedDayManifestSchema,
+    RecentFeedMonthManifestSchema,
+    RecentFeedRootSchema,
+    RecentFeedYearManifestSchema,
+} from './model'
+import {buildRecentFeedVariantTree, getRecentFeedPointer, publishRecentFeed, requestRecentFeedRegeneration} from './publisher'
 
 const db = useTestDatabase()
 
@@ -71,6 +77,240 @@ describe('recent feed publisher', () => {
         })
     })
 
+    it('requests a full rebuild once and reports an active publisher as busy', async () => {
+        const bucket = createMockR2Bucket()
+        const env = publisherEnv(bucket)
+        await insertRecentFeedRegenerationJob('run-1')
+        await db
+            .prepare(
+                `UPDATE recent_feed_state
+                 SET lease_owner = 'other-publisher', lease_expires_at = '2099-01-01 00:00:00'
+                 WHERE singleton = 1`,
+            )
+            .run()
+
+        await expect(requestRecentFeedRegeneration(env, 'run-1')).resolves.toEqual({status: 'busy'})
+        expect(await readFeedState()).toMatchObject({requested_revision: 1, root_key: null})
+
+        await db
+            .prepare(
+                `UPDATE recent_feed_state
+                 SET lease_owner = NULL, lease_expires_at = NULL
+                 WHERE singleton = 1`,
+            )
+            .run()
+        await expect(requestRecentFeedRegeneration(env, 'run-1')).resolves.toEqual({status: 'requested'})
+        await expect(requestRecentFeedRegeneration(env, 'run-1')).resolves.toEqual({status: 'requested'})
+
+        const state = await readFeedState()
+        const dirty = await queryOne<{revision: number; reason: string; urgent: number}>(
+            `SELECT revision, reason, urgent
+             FROM recent_feed_dirty_hours
+             WHERE dirty_hour = '*'`,
+        )
+        const job = await queryOne<{summary_json: string}>('SELECT summary_json FROM admin_job_runs WHERE id = ?', ['run-1'])
+
+        expect(state).toMatchObject({requested_revision: 2, published_revision: 0, root_key: null, bootstrap_revision: null})
+        expect(dirty).toEqual({revision: 2, reason: 'admin-regeneration:run-1', urgent: 1})
+        expect(JSON.parse(job?.summary_json ?? '{}')).toMatchObject({
+            regenerationRequested: true,
+            regenerationRequestedRevision: 2,
+            retainedField: 'keep-me',
+        })
+    })
+
+    it('rebuilds a feed with missing or corrupt objects and keeps the old generation record', async () => {
+        await seedUser({id: 'user-1', username: 'demo'})
+        await seedCharacter({id: 'character-1', userId: 'user-1', name: 'Quartz Dragon'})
+        await seedMedia({
+            id: 'media-1',
+            userId: 'user-1',
+            characterId: 'character-1',
+            sfwReviewStatus: 'approved',
+            sfwApprovedAt: '2026-08-25 12:30:00',
+            sfwPreviewImageKey: 'media-1-preview',
+            sfwPreviewWidth: 600,
+            sfwPreviewHeight: 800,
+            createdAt: '2026-08-25 12:30:00',
+        })
+        const bucket = createMockR2Bucket()
+        const env = publisherEnv(bucket)
+        const initial = await publishRecentFeed(env, {force: true, now: new Date('2026-08-25T13:00:00.000Z')})
+        const initialPointer = await getRecentFeedPointer(db)
+        if (!initialPointer) throw new Error('The initial feed pointer is missing')
+        const initialRoot = await readJson(bucket, initialPointer.rootKey, RecentFeedRootSchema)
+        const initialBlockYear = await readJson(bucket, initialRoot.variants['n0-u0'].years[0]?.key, RecentFeedYearManifestSchema)
+        const initialMonth = await readJson(bucket, initialBlockYear.months[0]?.key, RecentFeedMonthManifestSchema)
+        const initialDay = await readJson(bucket, initialMonth.days[0]?.key, RecentFeedDayManifestSchema)
+        const corruptYearKey = initialRoot.variants['n0-u1'].years[0]?.key
+        const corruptBlockKey = initialDay.hours[0]?.blocks[0]?.key
+        if (!corruptYearKey || !corruptBlockKey) throw new Error('The initial feed branch is missing')
+        const initialYearObject = await bucket.get(corruptYearKey)
+        const initialBlockObject = await bucket.get(corruptBlockKey)
+        if (!initialYearObject || !initialBlockObject) throw new Error('The initial feed objects are missing')
+        const corruptYearJson = `!${(await initialYearObject.text()).slice(1)}`
+        const corruptBlockJson = `!${(await initialBlockObject.text()).slice(1)}`
+        await bucket.put(corruptYearKey, corruptYearJson)
+        await bucket.put(corruptBlockKey, corruptBlockJson)
+        await bucket.delete(initialPointer.rootKey)
+        await insertRecentFeedRegenerationJob('run-recovery')
+
+        await expect(requestRecentFeedRegeneration(env, 'run-recovery')).resolves.toEqual({status: 'requested'})
+        await expect(getRecentFeedPointer(db)).resolves.toBeNull()
+        const rebuilt = await publishRecentFeed(env, {force: true, now: new Date('2026-08-25T13:01:00.000Z')})
+
+        expect(rebuilt).toMatchObject({
+            status: 'published',
+            revision: (initial.revision ?? 0) + 1,
+            itemCounts: {'n0-u0': 1, 'n0-u1': 1, 'n1-u0': 1, 'n1-u1': 1},
+        })
+        expect(rebuilt.generation).not.toBe(initial.generation)
+        const rebuiltPointer = await getRecentFeedPointer(db)
+        if (!rebuiltPointer) throw new Error('The rebuilt feed pointer is missing')
+        const rebuiltRoot = await readJson(bucket, rebuiltPointer.rootKey, RecentFeedRootSchema)
+        const rebuiltYearKey = rebuiltRoot.variants['n0-u1'].years[0]?.key
+        const rebuiltBlockYear = await readJson(bucket, rebuiltRoot.variants['n0-u0'].years[0]?.key, RecentFeedYearManifestSchema)
+        const rebuiltMonth = await readJson(bucket, rebuiltBlockYear.months[0]?.key, RecentFeedMonthManifestSchema)
+        const rebuiltDay = await readJson(bucket, rebuiltMonth.days[0]?.key, RecentFeedDayManifestSchema)
+        const rebuiltBlockKey = rebuiltDay.hours[0]?.blocks[0]?.key
+        const rebuiltBlock = await readJson(bucket, rebuiltBlockKey, RecentFeedBlockSchema)
+
+        expect(rebuiltYearKey).not.toBe(corruptYearKey)
+        expect(rebuiltBlockKey).not.toBe(corruptBlockKey)
+        expect(rebuiltBlock.items).toMatchObject([{id: 'media-1'}])
+        await expect(bucket.get(corruptYearKey).then((object) => object?.text())).resolves.toBe(corruptYearJson)
+        await expect(bucket.get(corruptBlockKey).then((object) => object?.text())).resolves.toBe(corruptBlockJson)
+        await expectContentAddressMatches(bucket, rebuiltYearKey)
+        await expectContentAddressMatches(bucket, rebuiltBlockKey)
+        expect(
+            await queryOne<{generation: string}>('SELECT generation FROM recent_feed_generations WHERE generation = ?', [
+                initial.generation,
+            ]),
+        ).toEqual({generation: initial.generation})
+
+        await db.prepare("UPDATE admin_job_runs SET status = 'success' WHERE id = 'run-recovery'").run()
+        await insertRecentFeedRegenerationJob('run-recovery-repeat')
+        await expect(requestRecentFeedRegeneration(env, 'run-recovery-repeat')).resolves.toEqual({status: 'requested'})
+        await expect(publishRecentFeed(env, {force: true, now: new Date('2026-08-25T13:02:00.000Z')})).resolves.toMatchObject({
+            status: 'published',
+        })
+        const repeatedPointer = await getRecentFeedPointer(db)
+        if (!repeatedPointer) throw new Error('The repeated feed pointer is missing')
+        const repeatedRoot = await readJson(bucket, repeatedPointer.rootKey, RecentFeedRootSchema)
+        const repeatedBlockYear = await readJson(bucket, repeatedRoot.variants['n0-u0'].years[0]?.key, RecentFeedYearManifestSchema)
+        const repeatedMonth = await readJson(bucket, repeatedBlockYear.months[0]?.key, RecentFeedMonthManifestSchema)
+        const repeatedDay = await readJson(bucket, repeatedMonth.days[0]?.key, RecentFeedDayManifestSchema)
+
+        expect(repeatedRoot.variants['n0-u1'].years[0]?.key).toBe(rebuiltYearKey)
+        expect(repeatedDay.hours[0]?.blocks[0]?.key).toBe(rebuiltBlockKey)
+        await expect(bucket.get(corruptBlockKey).then((object) => object?.text())).resolves.toBe(corruptBlockJson)
+    })
+
+    it('does not reset the feed for a closed regeneration job', async () => {
+        const bucket = createMockR2Bucket()
+        await insertRecentFeedRegenerationJob('run-closed', 'success')
+
+        await expect(requestRecentFeedRegeneration(publisherEnv(bucket), 'run-closed')).resolves.toEqual({status: 'closed'})
+        expect(await readFeedState()).toMatchObject({requested_revision: 1, root_key: null})
+    })
+
+    it('rejects an invalid regeneration run ID', async () => {
+        await expect(requestRecentFeedRegeneration(publisherEnv(createMockR2Bucket()), 'invalid run ID')).rejects.toThrow(
+            'Recent feed regeneration run ID is invalid',
+        )
+    })
+
+    it('reports a missing regeneration job as closed', async () => {
+        await expect(requestRecentFeedRegeneration(publisherEnv(createMockR2Bucket()), 'missing-run')).resolves.toEqual({status: 'closed'})
+    })
+
+    it.each([null, 'not-json'])('replaces an unusable regeneration summary before it marks the request: %s', async (summaryJson) => {
+        const runId = summaryJson === null ? 'run-null-summary' : 'run-invalid-summary'
+        await insertRecentFeedRegenerationJob(runId)
+        await db.prepare('UPDATE admin_job_runs SET summary_json = ? WHERE id = ?').bind(summaryJson, runId).run()
+
+        await expect(requestRecentFeedRegeneration(publisherEnv(createMockR2Bucket()), runId)).resolves.toEqual({status: 'requested'})
+        const job = await queryOne<{summary_json: string}>('SELECT summary_json FROM admin_job_runs WHERE id = ?', [runId])
+        expect(JSON.parse(job?.summary_json ?? '{}')).toMatchObject({
+            regenerationRequested: true,
+            regenerationRequestedRevision: 2,
+        })
+    })
+
+    it('reports a job that closes immediately after its rebuild request', async () => {
+        await insertRecentFeedRegenerationJob('run-closes-after-request')
+        await db
+            .prepare(
+                `CREATE TRIGGER test_close_recent_feed_job_after_request
+                 AFTER UPDATE OF summary_json ON admin_job_runs
+                 WHEN NEW.id = 'run-closes-after-request'
+                  AND json_extract(NEW.summary_json, '$.regenerationRequested') = 1
+                 BEGIN
+                     UPDATE admin_job_runs
+                     SET status = 'error', summary_json = '{}'
+                     WHERE id = NEW.id;
+                 END`,
+            )
+            .run()
+
+        try {
+            await expect(requestRecentFeedRegeneration(publisherEnv(createMockR2Bucket()), 'run-closes-after-request')).resolves.toEqual({
+                status: 'closed',
+            })
+        } finally {
+            await db.prepare('DROP TRIGGER test_close_recent_feed_job_after_request').run()
+        }
+    })
+
+    it('reports a lost lease after another writer replaces the request marker', async () => {
+        await insertRecentFeedRegenerationJob('run-loses-lease')
+        await db
+            .prepare(
+                `CREATE TRIGGER test_lose_recent_feed_lease_after_request
+                 AFTER UPDATE OF summary_json ON admin_job_runs
+                 WHEN NEW.id = 'run-loses-lease'
+                  AND json_extract(NEW.summary_json, '$.regenerationRequested') = 1
+                 BEGIN
+                     UPDATE admin_job_runs SET summary_json = '{}' WHERE id = NEW.id;
+                     UPDATE recent_feed_state
+                     SET lease_owner = 'replacement-publisher', lease_expires_at = '2099-01-01 00:00:00'
+                     WHERE singleton = 1;
+                 END`,
+            )
+            .run()
+
+        try {
+            await expect(requestRecentFeedRegeneration(publisherEnv(createMockR2Bucket()), 'run-loses-lease')).resolves.toEqual({
+                status: 'busy',
+            })
+        } finally {
+            await db.prepare('DROP TRIGGER test_lose_recent_feed_lease_after_request').run()
+        }
+    })
+
+    it('rejects a rebuild request if another writer removes only its marker', async () => {
+        await insertRecentFeedRegenerationJob('run-marker-removed')
+        await db
+            .prepare(
+                `CREATE TRIGGER test_remove_recent_feed_request_marker
+                 AFTER UPDATE OF summary_json ON admin_job_runs
+                 WHEN NEW.id = 'run-marker-removed'
+                  AND json_extract(NEW.summary_json, '$.regenerationRequested') = 1
+                 BEGIN
+                     UPDATE admin_job_runs SET summary_json = '{}' WHERE id = NEW.id;
+                 END`,
+            )
+            .run()
+
+        try {
+            await expect(requestRecentFeedRegeneration(publisherEnv(createMockR2Bucket()), 'run-marker-removed')).rejects.toThrow(
+                'Recent feed regeneration request was rejected',
+            )
+        } finally {
+            await db.prepare('DROP TRIGGER test_remove_recent_feed_request_marker').run()
+        }
+    })
+
     it('rebuilds a legacy feed into the shared media namespace', async () => {
         const bucket = createMockR2Bucket()
         const env = {...publisherEnv(bucket), RECENT_FEED_PUBLISH_ENABLED: 'true'}
@@ -130,6 +370,28 @@ describe('recent feed publisher', () => {
 
         expect(repeatedRoot).toEqual(root)
         expect(repeatedMetrics).toEqual({objectsWritten: 0, bytesWritten: 0})
+    })
+
+    it('fails after bounded content address collisions', async () => {
+        const bucket = createMockR2Bucket()
+        await bucket.put('corrupt-object', 'x')
+        const getObject = vi.mocked(bucket.get).getMockImplementation()
+        if (!getObject) throw new Error('The R2 test bucket does not implement object reads')
+        vi.mocked(bucket.get).mockImplementation(async () => await getObject('corrupt-object'))
+
+        await expect(
+            buildRecentFeedVariantTree(
+                bucket,
+                'n0-u1',
+                {itemCount: 0, years: []},
+                new Map([['2026-08-25T12', [recentRow('media-1')]]]),
+                true,
+                'https://m.myoc.art',
+                96,
+                'immutable',
+                {objectsWritten: 0, bytesWritten: 0},
+            ),
+        ).rejects.toThrow('Recent feed content address attempts were exhausted')
     })
 
     it('rewrites only the dirty time branch and keeps unchanged day references', async () => {
@@ -676,6 +938,16 @@ function publisherEnv(bucket: R2Bucket) {
     }
 }
 
+async function insertRecentFeedRegenerationJob(runId: string, status = 'running'): Promise<void> {
+    await db
+        .prepare(
+            `INSERT INTO admin_job_runs (id, job_name, trigger_source, status, started_at, summary_json)
+             VALUES (?, 'recent-feed-regeneration', 'manual', ?, CURRENT_TIMESTAMP, ?)`,
+        )
+        .bind(runId, status, JSON.stringify({retainedField: 'keep-me'}))
+        .run()
+}
+
 async function seedSourceRows(count: number): Promise<void> {
     await seedUser({id: 'user-1', username: 'demo'})
     await seedCharacter({id: 'character-1', userId: 'user-1', name: 'Quartz Dragon', profileImageKey: 'profile'})
@@ -741,6 +1013,16 @@ async function readJson<T>(bucket: R2Bucket, key: string | undefined, schema: {p
     const object = await bucket.get(key ?? '')
     expect(object).not.toBeNull()
     return schema.parse(await object?.json<unknown>())
+}
+
+async function expectContentAddressMatches(bucket: R2Bucket, key: string | undefined): Promise<void> {
+    expect(key).toBeTruthy()
+    const object = await bucket.get(key ?? '')
+    expect(object).not.toBeNull()
+    const json = await object?.text()
+    expect(json).toBeDefined()
+    const digest = await sha256Hex(json ?? '')
+    expect(key).toMatch(new RegExp(`/${digest}\\.json$`))
 }
 
 function recentRow(id: string): RecentMediaRow {

@@ -4139,6 +4139,8 @@ describe('GET /admin', () => {
         expect(html).toContain('Run R2 Media Cleanup')
         expect(html).toContain('action="/admin/admin-options/jobs/leaderboard-refresh/run"')
         expect(html).toContain('Run Leaderboard Refresh')
+        expect(html).toContain('action="/admin/admin-options/jobs/recent-feed-regeneration/run"')
+        expect(html).toContain('Run Recent Page Regeneration')
         expect(html).toContain('action="/admin/admin-options/jobs/media-preview-regeneration/run"')
         expect(html).toContain('Run Media Preview Regeneration')
         expect(html).toContain('Job History')

@@ -1,7 +1,7 @@
 import {describe, expect, it, vi} from 'vitest'
 import {queryOne, seedUser, useTestDatabase} from '../../test/d1'
 import {createMockR2Bucket} from '../../test/mockR2'
-import {type AdminJobSummary, getAdminOptionsData, recordAdminJobRun, runAdminJob} from './jobs'
+import {type AdminJobSummary, completeAdminJobRun, getAdminOptionsData, recordAdminJobRun, runAdminJob} from './jobs'
 
 const db = useTestDatabase()
 
@@ -37,6 +37,10 @@ function createMockWorkflowBinding(initialStatuses: Record<string, string> = {})
 }
 
 function thumbnailJobEnv(workflow: ReturnType<typeof createMockWorkflowBinding>): Parameters<typeof runAdminJob>[0] {
+    return {DB: db, REGENERATE_MEDIA_PREVIEWS_WORKFLOW: workflow} as unknown as Parameters<typeof runAdminJob>[0]
+}
+
+function recentFeedJobEnv(workflow: ReturnType<typeof createMockWorkflowBinding>): Parameters<typeof runAdminJob>[0] {
     return {DB: db, REGENERATE_MEDIA_PREVIEWS_WORKFLOW: workflow} as unknown as Parameters<typeof runAdminJob>[0]
 }
 
@@ -225,6 +229,182 @@ describe('getAdminOptionsData', () => {
         const data = await getAdminOptionsData(db)
 
         expect(data.jobs).toContainEqual({name: 'thumbnail-regeneration', label: 'Thumbnail Regeneration'})
+    })
+
+    it('includes the recent page regeneration job', async () => {
+        const data = await getAdminOptionsData(db)
+
+        expect(data.jobs).toContainEqual({name: 'recent-feed-regeneration', label: 'Recent Page Regeneration'})
+    })
+})
+
+describe('recent page regeneration jobs', () => {
+    it('starts one workflow and reuses its active run', async () => {
+        const workflow = createMockWorkflowBinding()
+        const env = recentFeedJobEnv(workflow)
+
+        const first = await runAdminJob(env, 'recent-feed-regeneration', {triggerSource: 'manual'})
+        const second = await runAdminJob(env, 'recent-feed-regeneration', {triggerSource: 'manual'})
+
+        expect(second).toEqual(first)
+        expect(first).toMatchObject({
+            jobName: 'recent-feed-regeneration',
+            status: 'running',
+            summary: {status: 'building'},
+        })
+        expect(workflow.create).toHaveBeenCalledOnce()
+        expect(workflow.create).toHaveBeenCalledWith({
+            id: first.runId,
+            params: {kind: 'recent-feed', runId: first.runId},
+        })
+    })
+
+    it('returns saved publication progress for an active run', async () => {
+        const summary = {status: 'building', bootstrapRows: 250, objectsWritten: 12}
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (
+                    id, job_name, trigger_source, status, started_at, summary_json
+                ) VALUES (?, 'recent-feed-regeneration', 'manual', 'running', ?, ?)`,
+            )
+            .bind('active-recent-run', '2026-01-01 00:00:00', JSON.stringify(summary))
+            .run()
+        const workflow = createMockWorkflowBinding({'active-recent-run': 'running'})
+
+        const result = await runAdminJob(recentFeedJobEnv(workflow), 'recent-feed-regeneration', {triggerSource: 'manual'})
+
+        expect(result).toMatchObject({runId: 'active-recent-run', status: 'running', summary})
+        expect(workflow.create).not.toHaveBeenCalled()
+    })
+
+    it('closes a stopped workflow before it starts a replacement', async () => {
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (
+                    id, job_name, trigger_source, status, started_at, summary_json
+                ) VALUES (?, 'recent-feed-regeneration', 'manual', 'running', ?, ?)`,
+            )
+            .bind('stopped-recent-run', '2026-01-01 00:00:00', JSON.stringify({status: 'building'}))
+            .run()
+        const workflow = createMockWorkflowBinding({'stopped-recent-run': 'errored'})
+
+        const result = await runAdminJob(recentFeedJobEnv(workflow), 'recent-feed-regeneration', {triggerSource: 'manual'})
+        const stopped = await queryOne<{status: string; error_message: string | null}>(
+            'SELECT status, error_message FROM admin_job_runs WHERE id = ?',
+            ['stopped-recent-run'],
+        )
+
+        expect(result).toMatchObject({jobName: 'recent-feed-regeneration', status: 'running'})
+        expect(result.runId).not.toBe('stopped-recent-run')
+        expect(stopped).toEqual({
+            status: 'error',
+            error_message: 'The recent page regeneration Workflow stopped before the job record finished.',
+        })
+        expect(workflow.create).toHaveBeenCalledOnce()
+    })
+
+    it('shares one replacement when concurrent requests find a stopped workflow', async () => {
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (
+                    id, job_name, trigger_source, status, started_at, summary_json
+                ) VALUES (?, 'recent-feed-regeneration', 'manual', 'running', ?, ?)`,
+            )
+            .bind('concurrent-stopped-run', '2026-01-01 00:00:00', JSON.stringify({status: 'building'}))
+            .run()
+        const workflow = createMockWorkflowBinding({'concurrent-stopped-run': 'errored'})
+        const env = recentFeedJobEnv(workflow)
+
+        const [first, second] = await Promise.all([
+            runAdminJob(env, 'recent-feed-regeneration', {triggerSource: 'manual'}),
+            runAdminJob(env, 'recent-feed-regeneration', {triggerSource: 'manual'}),
+        ])
+
+        expect(second).toEqual(first)
+        expect(first.runId).not.toBe('concurrent-stopped-run')
+        expect(workflow.create).toHaveBeenCalledOnce()
+        expect(
+            await db
+                .prepare("SELECT COUNT(*) AS count FROM admin_job_runs WHERE job_name = 'recent-feed-regeneration' AND status = 'running'")
+                .first<{count: number}>(),
+        ).toEqual({count: 1})
+    })
+
+    it('uses the initial summary when an active run has an unrelated summary', async () => {
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (
+                    id, job_name, trigger_source, status, started_at, summary_json
+                ) VALUES (?, 'recent-feed-regeneration', 'manual', 'running', ?, ?)`,
+            )
+            .bind('invalid-summary-run', '2026-01-01 00:00:00', JSON.stringify({note: 'old summary'}))
+            .run()
+        const workflow = createMockWorkflowBinding({'invalid-summary-run': 'running'})
+
+        const result = await runAdminJob(recentFeedJobEnv(workflow), 'recent-feed-regeneration', {triggerSource: 'manual'})
+
+        expect(result).toMatchObject({runId: 'invalid-summary-run', summary: {status: 'building'}})
+        expect(workflow.create).not.toHaveBeenCalled()
+    })
+
+    it('returns a saved published summary while its workflow is still active', async () => {
+        const summary = {
+            status: 'published',
+            generation: 'r8-active',
+            itemCounts: {'n0-u0': 4, 'n0-u1': 3, 'n1-u0': 2, 'n1-u1': 1},
+        }
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (
+                    id, job_name, trigger_source, status, started_at, summary_json
+                ) VALUES (?, 'recent-feed-regeneration', 'manual', 'running', ?, ?)`,
+            )
+            .bind('published-summary-run', '2026-01-01 00:00:00', JSON.stringify(summary))
+            .run()
+        const workflow = createMockWorkflowBinding({'published-summary-run': 'running'})
+
+        const result = await runAdminJob(recentFeedJobEnv(workflow), 'recent-feed-regeneration', {triggerSource: 'manual'})
+
+        expect(result).toMatchObject({runId: 'published-summary-run', summary})
+        expect(workflow.create).not.toHaveBeenCalled()
+    })
+
+    it('records a workflow start failure', async () => {
+        const workflow = createMockWorkflowBinding()
+        workflow.create.mockRejectedValueOnce(new Error('Workflow could not start'))
+
+        await expect(runAdminJob(recentFeedJobEnv(workflow), 'recent-feed-regeneration', {triggerSource: 'manual'})).rejects.toThrow(
+            'Workflow could not start',
+        )
+
+        expect(
+            await queryOne<{status: string; error_message: string | null}>(
+                `SELECT status, error_message
+                 FROM admin_job_runs
+                 WHERE job_name = 'recent-feed-regeneration'`,
+            ),
+        ).toEqual({status: 'error', error_message: 'Workflow could not start'})
+    })
+
+    it('completes a running job once with the publication summary', async () => {
+        const workflow = createMockWorkflowBinding()
+        const started = await runAdminJob(recentFeedJobEnv(workflow), 'recent-feed-regeneration', {triggerSource: 'manual'})
+        const summary = {
+            status: 'published',
+            generation: 'r7-demo',
+            itemCounts: {'n0-u0': 42, 'n0-u1': 40, 'n1-u0': 38, 'n1-u1': 36},
+        } as const
+
+        await completeAdminJobRun(db, started.runId, summary)
+        await completeAdminJobRun(db, started.runId, {status: 'current'})
+
+        const stored = await queryOne<{status: string; summary_json: string | null; finished_at: string | null}>(
+            'SELECT status, summary_json, finished_at FROM admin_job_runs WHERE id = ?',
+            [started.runId],
+        )
+        expect(stored).toMatchObject({status: 'success'})
+        expect(stored?.finished_at).not.toBeNull()
+        expect(JSON.parse(stored?.summary_json ?? 'null')).toEqual(summary)
     })
 })
 

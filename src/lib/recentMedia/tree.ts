@@ -16,7 +16,7 @@ import {
     type RecentFeedYearReference,
 } from './model'
 
-class RecentFeedTreeError extends Error {}
+export class RecentFeedTreeError extends Error {}
 
 export async function readRecentFeedTreeItems(
     bucket: R2Bucket,

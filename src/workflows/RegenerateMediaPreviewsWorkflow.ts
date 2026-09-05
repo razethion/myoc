@@ -12,6 +12,7 @@ import {
     mediaPreviewRegenerationWorkflowInstanceId,
 } from '../lib/admin/mediaPreviewRegeneration'
 import type {Bindings} from '../types/bindings'
+import {type RecentFeedRegenerationWorkflowParams, runRecentFeedRegenerationWorkflow} from './recentFeedRegeneration'
 import {runThumbnailRegenerationWorkflow, type ThumbnailRegenerationWorkflowParams} from './thumbnailRegeneration'
 
 type MediaPreviewRegenerationWorkflowParams = {
@@ -24,7 +25,10 @@ type MediaPreviewRegenerationWorkflowParams = {
     }
 }
 
-export type RegenerateMediaPreviewsWorkflowParams = MediaPreviewRegenerationWorkflowParams | ThumbnailRegenerationWorkflowParams
+export type RegenerateMediaPreviewsWorkflowParams =
+    | MediaPreviewRegenerationWorkflowParams
+    | ThumbnailRegenerationWorkflowParams
+    | RecentFeedRegenerationWorkflowParams
 
 const D1_STEP_CONFIG = {
     retries: {
@@ -38,6 +42,9 @@ const D1_STEP_CONFIG = {
 export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings, RegenerateMediaPreviewsWorkflowParams> {
     override async run(event: Readonly<WorkflowEvent<RegenerateMediaPreviewsWorkflowParams>>, step: WorkflowStep) {
         try {
+            if (event.payload.kind === 'recent-feed') {
+                return await runRecentFeedRegenerationWorkflow(this.env, event.payload, step)
+            }
             if (event.payload.kind === 'thumbnails') {
                 return await runThumbnailRegenerationWorkflow(this.env, event.payload, step)
             }
@@ -48,7 +55,9 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
 
             await step.do('record job failure', D1_STEP_CONFIG, async () => {
                 await failAdminJobRun(this.env.DB, event.payload.runId, message)
-                await deleteFinishedMediaPreviewRegenerationItems(this.env.DB, event.payload.runId)
+                if (event.payload.kind !== 'recent-feed') {
+                    await deleteFinishedMediaPreviewRegenerationItems(this.env.DB, event.payload.runId)
+                }
                 return {recorded: true}
             })
 

@@ -213,12 +213,12 @@ async function seedPreviewRegenerationRun(id: string, startedAt: string, summary
 
 describe('POST /admin/admin-options/jobs/:jobName/run', () => {
     it('requires an authenticated admin user', async () => {
-        const unauthenticated = await postAdminJobRun('media-preview-regeneration', createMockR2Bucket(), 'missing-session')
+        const unauthenticated = await postAdminJobRun('recent-feed-regeneration', createMockR2Bucket(), 'missing-session')
         expect(unauthenticated.status).toBe(401)
         await expect(unauthenticated.json()).resolves.toEqual({error: 'Authentication required'})
 
         await seedCurrentUser('user')
-        const unauthorized = await postAdminJobRun('media-preview-regeneration', createMockR2Bucket())
+        const unauthorized = await postAdminJobRun('recent-feed-regeneration', createMockR2Bucket())
         expect(unauthorized.status).toBe(403)
         await expect(unauthorized.json()).resolves.toEqual({error: 'Admin access required'})
     })
@@ -226,7 +226,7 @@ describe('POST /admin/admin-options/jobs/:jobName/run', () => {
     it('requires a valid CSRF token', async () => {
         await seedCurrentUser()
         const response = await adminPageActionRoutes.request(
-            'https://example.com/admin/admin-options/jobs/media-preview-regeneration/run',
+            'https://example.com/admin/admin-options/jobs/recent-feed-regeneration/run',
             {
                 method: 'POST',
                 body: JSON.stringify({}),
@@ -269,6 +269,43 @@ describe('POST /admin/admin-options/jobs/:jobName/run', () => {
             status: 'success',
         })
         expect(JSON.parse(run?.summary_json ?? '{}')).toMatchObject({scanned: 0, deleted: 0})
+    })
+
+    it('starts recent page regeneration in the background', async () => {
+        await seedCurrentUser()
+        const workflow = createMockWorkflowBinding()
+        const response = await postAdminJobRun(
+            'recent-feed-regeneration',
+            createMockR2Bucket(),
+            'session-token',
+            'application/json',
+            workflow,
+        )
+        const body = (await response.json()) as {
+            ok: true
+            run: {runId: string; jobName: string; status: string; summary: unknown}
+        }
+        const run = await queryOne<{job_name: string; status: string; summary_json: string | null; triggered_by_user_id: string | null}>(
+            'SELECT job_name, status, summary_json, triggered_by_user_id FROM admin_job_runs WHERE id = ?',
+            [body.run.runId],
+        )
+
+        expect(response.status).toBe(200)
+        expect(body.run).toMatchObject({
+            jobName: 'recent-feed-regeneration',
+            status: 'running',
+            summary: {status: 'building'},
+        })
+        expect(workflow.create).toHaveBeenCalledWith({
+            id: body.run.runId,
+            params: {kind: 'recent-feed', runId: body.run.runId},
+        })
+        expect(run).toEqual({
+            job_name: 'recent-feed-regeneration',
+            status: 'running',
+            summary_json: JSON.stringify({status: 'building'}),
+            triggered_by_user_id: currentUserId,
+        })
     })
 
     it('redirects HTML job run requests back to admin options', async () => {
