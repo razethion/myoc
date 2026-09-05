@@ -2,6 +2,7 @@ import {afterEach, describe, expect, it, vi} from 'vitest'
 import app from '../index'
 import {createCsrfToken} from '../lib/auth/session'
 import type {LeaderboardSnapshot} from '../lib/leaderboard'
+import {getGeneratedRecentMediaPage} from '../lib/recentMedia/reader'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import {expectSecurityHeaders} from '../test/assertions'
 import {queryOne, seedCharacter, seedFolder, seedMedia, seedPasskey, seedSession, seedUser, useResetTestDatabase} from '../test/d1'
@@ -905,6 +906,24 @@ describe('public page redirects', () => {
         expect(html).toContain('data-recent-feed')
         expect(html).toContain('data-persist-unapproved="false"')
         expect(html).toContain('Show unapproved')
+    })
+
+    it.each([false, true])('shows a generic unavailable page when the recent gallery cannot load (signed in: %s)', async (signedIn) => {
+        vi.mocked(getGeneratedRecentMediaPage).mockRejectedValueOnce(new Error('R2 internal error with private diagnostic details'))
+
+        const database = await seedPageDatabase({currentUser: signedIn ? createCurrentUserRecord('demo') : undefined})
+        const response = await getAppPath('/recent', database, signedIn ? {cookie: 'myoc_session=session-token'} : {})
+        const html = await response.text()
+
+        expect(response.status).toBe(503)
+        expect(response.headers.get('cache-control')).toBe('no-store')
+        expect(html).toContain('<title>Recently uploaded media | MyOC</title>')
+        expect(html).toContain('Gallery is currently unavailable')
+        expect(html).toContain('role="alert"')
+        expect(html).not.toContain('Internal Server Error')
+        expect(html).not.toContain('private diagnostic details')
+        expect(html).not.toContain('data-recent-feed')
+        expect(html).not.toContain('No uploads found')
     })
 
     it('renders the latest leaderboard snapshot from KV', async () => {

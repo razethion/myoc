@@ -60,7 +60,7 @@ import {NotFoundPage} from '../views/pages/NotFoundPage'
 import {PasskeyPromptPage} from '../views/pages/PasskeyPromptPage'
 import {ProductVisionPage} from '../views/pages/ProductVisionPage'
 import {ProfilePage, type ProfilePageUser} from '../views/pages/ProfilePage'
-import {RecentMediaPage} from '../views/pages/RecentMediaPage'
+import {RecentMediaPage, RecentMediaUnavailablePage} from '../views/pages/RecentMediaPage'
 import {SearchPage} from '../views/pages/SearchPage'
 import {SitePoliciesPage} from '../views/pages/SitePoliciesPage'
 import {SizeChartViewerPage} from '../views/pages/SizeChartViewerPage'
@@ -680,7 +680,22 @@ pageRoutes.get('/recent', async (c) => {
     const page = await getGeneratedRecentMediaPage(c.env, {
         showNsfw,
         showUnapproved,
+    }).catch((error: unknown) => {
+        console.error('Unable to load the recent gallery', {error})
+        return null
     })
+
+    if (!page) {
+        c.header('Cache-Control', 'no-store')
+        return c.html(
+            <RecentMediaUnavailablePage
+                currentUser={currentUser}
+                guestInitial={currentUser?.username.charAt(0).toUpperCase() ?? getRandomLetter()}
+                mediaBaseUrl={c.env.MEDIA_PUBLIC_BASE_URL}
+            />,
+            503,
+        )
+    }
 
     return c.html(
         <RecentMediaPage
