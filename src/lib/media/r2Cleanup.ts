@@ -308,7 +308,7 @@ function parseCharacterProfileKey(key: string, parts: string[]): ManagedR2MediaK
     }
 
     const [profileImageKey, extension] = splitFileName(fileName)
-    return isSafeSegment(profileImageKey) && extension === 'webp'
+    return isSafeSegment(profileImageKey) && (extension === 'webp' || extension === 'avif')
         ? {kind: 'characterProfile', key, userId, characterId, profileImageKey}
         : null
 }
@@ -329,7 +329,7 @@ function parseCharacterFolderImageKey(key: string, parts: string[]): ManagedR2Me
     }
 
     const [folderImageKey, extension] = splitFileName(fileName)
-    return isSafeSegment(folderImageKey) && extension === 'webp'
+    return isSafeSegment(folderImageKey) && (extension === 'webp' || extension === 'avif')
         ? {kind: 'characterFolderImage', key, userId, folderId, folderImageKey}
         : null
 }
@@ -517,7 +517,7 @@ async function isManagedR2MediaKeyReferenced(db: D1Database, parsed: ManagedR2Me
                    AND character_id = ?
                    AND id = ?
                    AND nsfw_blur_image_key = ?
-                   AND lower(coalesce(nsfw_blur_content_type, 'image/webp')) = ?
+                   AND lower(nsfw_blur_content_type) = ?
                  LIMIT 1`,
                 )
                 .bind(parsed.userId, parsed.characterId, parsed.mediaId, parsed.imageKey, parsed.contentType)

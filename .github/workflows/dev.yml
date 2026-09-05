@@ -273,6 +273,8 @@ jobs:
               'container/Dockerfile',
               'container/package-lock.json',
               'container/package.json',
+              'container/preview.mjs',
+              'container/server.mjs',
               'manifest.sha256',
               'seeds/development.sql',
               'worker/index.js',
@@ -381,17 +383,20 @@ jobs:
           echo "database=myoc-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "cache=myoc-pr-${PR_NUMBER}-cache" >> "$GITHUB_OUTPUT"
           echo "media_bucket=myoc-pr-${PR_NUMBER}-media" >> "$GITHUB_OUTPUT"
-          echo "backup_bucket=myoc-pr-${PR_NUMBER}-backups" >> "$GITHUB_OUTPUT"
+          echo "preview_workflow=myoc-regenerate-media-previews-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "image_queue=myoc-pr-${PR_NUMBER}-image-processing" >> "$GITHUB_OUTPUT"
+          echo "image_dlq=myoc-pr-${PR_NUMBER}-image-processing-dlq" >> "$GITHUB_OUTPUT"
 
       - name: Provision isolated dev storage
         id: resources
         env:
-          BACKUP_BUCKET: ${{ steps.names.outputs.backup_bucket }}
           CACHE_NAME: ${{ steps.names.outputs.cache }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           DB_NAME: ${{ steps.names.outputs.database }}
           MEDIA_BUCKET: ${{ steps.names.outputs.media_bucket }}
+          IMAGE_QUEUE: ${{ steps.names.outputs.image_queue }}
+          IMAGE_DLQ: ${{ steps.names.outputs.image_dlq }}
           WRANGLER: ${{ steps.wrangler.outputs.path }}
         working-directory: ${{ runner.temp }}/myoc-dev-control
         run: |
@@ -448,14 +453,12 @@ jobs:
             exit 1
           fi
 
-          for bucket in "$MEDIA_BUCKET" "$BACKUP_BUCKET"; do
-            if ! "$WRANGLER" r2 bucket info "$bucket" > /dev/null 2>&1; then
-              "$WRANGLER" r2 bucket create "$bucket" --location enam
-            fi
+          if ! "$WRANGLER" r2 bucket info "$MEDIA_BUCKET" > /dev/null 2>&1; then
+            "$WRANGLER" r2 bucket create "$MEDIA_BUCKET" --location enam
+          fi
 
-            "$WRANGLER" r2 bucket lifecycle remove "$bucket" --name preview-expiry || true
-            "$WRANGLER" r2 bucket lifecycle add "$bucket" preview-expiry --expire-days 30 --abort-multipart-days 1 --force
-          done
+          "$WRANGLER" r2 bucket lifecycle remove "$MEDIA_BUCKET" --name preview-expiry || true
+          "$WRANGLER" r2 bucket lifecycle add "$MEDIA_BUCKET" preview-expiry --expire-days 30 --abort-multipart-days 1 --force
 
           "$WRANGLER" r2 bucket dev-url enable "$MEDIA_BUCKET" --force
           "$WRANGLER" r2 bucket dev-url get "$MEDIA_BUCKET" > r2-dev-url.txt
@@ -472,6 +475,10 @@ jobs:
             exit 1
           fi
 
+          for queue in "$IMAGE_QUEUE" "$IMAGE_DLQ"; do
+            "$WRANGLER" queues info "$queue" > /dev/null 2>&1 || "$WRANGLER" queues create "$queue"
+          done
+
           echo "db_id=$db_id" >> "$GITHUB_OUTPUT"
           echo "cache_id=$cache_id" >> "$GITHUB_OUTPUT"
           echo "media_base_url=$media_base_url" >> "$GITHUB_OUTPUT"
@@ -479,13 +486,15 @@ jobs:
       - name: Write trusted Wrangler config
         env:
           ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          BACKUP_BUCKET: ${{ steps.names.outputs.backup_bucket }}
           CACHE_ID: ${{ steps.resources.outputs.cache_id }}
           CONTAINER_NAME: ${{ steps.names.outputs.container }}
           DB_ID: ${{ steps.resources.outputs.db_id }}
           DB_NAME: ${{ steps.names.outputs.database }}
           MEDIA_BASE_URL: ${{ steps.resources.outputs.media_base_url }}
           MEDIA_BUCKET: ${{ steps.names.outputs.media_bucket }}
+          PREVIEW_WORKFLOW: ${{ steps.names.outputs.preview_workflow }}
+          IMAGE_QUEUE: ${{ steps.names.outputs.image_queue }}
+          IMAGE_DLQ: ${{ steps.names.outputs.image_dlq }}
           PR_NUMBER: ${{ needs.validate.outputs.pull_request }}
           WORKER_NAME: ${{ steps.names.outputs.worker }}
         working-directory: ${{ runner.temp }}/myoc-dev-control
@@ -510,8 +519,8 @@ jobs:
                 class_name: 'MyocDockerSharpContainer',
                 image: './artifact/container/Dockerfile',
                 image_build_context: './artifact/container',
-                instance_type: 'standard-1',
-                max_instances: 1,
+                instance_type: 'standard-4',
+                max_instances: 8,
               },
             ],
             durable_objects: {
@@ -519,6 +528,39 @@ jobs:
                 {
                   name: 'MYOC_DOCKER_SHARP_CONTAINER',
                   class_name: 'MyocDockerSharpContainer',
+                },
+              ],
+            },
+            workflows: [
+              {
+                name: process.env.PREVIEW_WORKFLOW,
+                binding: 'REGENERATE_MEDIA_PREVIEWS_WORKFLOW',
+                class_name: 'RegenerateMediaPreviewsWorkflow',
+                limits: { steps: 25000 },
+              },
+            ],
+            queues: {
+              producers: [
+                { binding: 'IMAGE_PROCESSING_QUEUE', queue: process.env.IMAGE_QUEUE },
+                { binding: 'IMAGE_PROCESSING_DLQ', queue: process.env.IMAGE_DLQ },
+              ],
+              consumers: [
+                {
+                  queue: process.env.IMAGE_QUEUE,
+                  max_batch_size: 1,
+                  max_batch_timeout: 0,
+                  max_retries: 10,
+                  dead_letter_queue: process.env.IMAGE_DLQ,
+                  max_concurrency: 8,
+                  retry_delay: 1,
+                },
+                {
+                  queue: process.env.IMAGE_DLQ,
+                  max_batch_size: 10,
+                  max_batch_timeout: 5,
+                  max_retries: 10,
+                  max_concurrency: 1,
+                  retry_delay: 1,
                 },
               ],
             },
@@ -531,17 +573,20 @@ jobs:
             assets: {
               directory: './artifact/public',
             },
-            images: {
-              binding: 'IMAGES',
-              remote: true,
-            },
             vars: {
               CLOUDFLARE_ACCOUNT_ID: process.env.ACCOUNT_ID,
               D1_DATABASE_ID: process.env.DB_ID,
+              IMAGE_PROCESSING_DLQ_NAME: process.env.IMAGE_DLQ,
+              IMAGE_UPLOAD_ASYNC_ENABLED: 'true',
               MEDIA_PUBLIC_BASE_URL: process.env.MEDIA_BASE_URL,
+              RECENT_FEED_CLEANUP_ENABLED: 'true',
+              RECENT_FEED_BLOCK_ITEMS: '96',
+              RECENT_FEED_PUBLISH_ENABLED: 'true',
+              RECENT_FEED_PUBLIC_BASE_URL: process.env.MEDIA_BASE_URL,
+              RECENT_FEED_RETENTION_DAYS: '30',
             },
             secrets: {
-              required: ['PREVIEW_PROCESSOR_TOKEN'],
+              required: ['OBJECT_STORAGE_ENCRYPTION_KEY', 'PREVIEW_PROCESSOR_TOKEN', 'RECENT_FEED_CURSOR_SECRET'],
             },
             d1_databases: [
               {
@@ -584,11 +629,10 @@ jobs:
                 binding: 'MEDIA_BUCKET',
                 bucket_name: process.env.MEDIA_BUCKET,
               },
-              {
-                binding: 'DB_BACKUP_BUCKET',
-                bucket_name: process.env.BACKUP_BUCKET,
-              },
             ],
+            triggers: {
+              crons: ['* * * * *'],
+            },
           }
 
           fs.writeFileSync('wrangler.preview.jsonc', `${JSON.stringify(config, null, 2)}\n`)
@@ -645,16 +689,68 @@ jobs:
         working-directory: ${{ runner.temp }}/myoc-dev-control
         run: |
           set -euo pipefail
-          trap 'rm -f processor-token.txt preview-secrets.json' EXIT
+          trap 'rm -f processor-token.txt cursor-secret.txt object-storage-key.txt worker-secrets.json worker-secrets-error.txt preview-secrets.json' EXIT
 
           openssl rand -hex 32 > processor-token.txt
+          openssl rand -hex 32 > cursor-secret.txt
           processor_token="$(tr -d '\n' < processor-token.txt)"
+          cursor_secret="$(tr -d '\n' < cursor-secret.txt)"
           echo "::add-mask::$processor_token"
+          echo "::add-mask::$cursor_secret"
+
+          storage_key_state="missing"
+          if "$WRANGLER" secret list --config wrangler.preview.jsonc > worker-secrets.json 2> worker-secrets-error.txt; then
+            if node -e "
+              const fs = require('node:fs');
+              let secrets;
+              try {
+                secrets = JSON.parse(fs.readFileSync('worker-secrets.json', 'utf8'));
+              } catch (error) {
+                console.error(error instanceof Error ? error.message : String(error));
+                process.exit(2);
+              }
+              if (!Array.isArray(secrets)) {
+                console.error('The Worker secret list is not an array.');
+                process.exit(2);
+              }
+              if (!secrets.every((secret) => typeof secret === 'object' && secret !== null && typeof secret.name === 'string')) {
+                console.error('The Worker secret list has an invalid item.');
+                process.exit(2);
+              }
+              process.exit(secrets.some((secret) => secret.name === 'OBJECT_STORAGE_ENCRYPTION_KEY') ? 0 : 1);
+            "; then
+              storage_key_state="present"
+            else
+              secret_status="$?"
+              if [ "$secret_status" -ne 1 ]; then
+                echo "::error::The preview Worker secret list was invalid."
+                exit 1
+              fi
+            fi
+          elif ! grep -Eqi 'does not exist yet' worker-secrets-error.txt; then
+            cat worker-secrets-error.txt >&2
+            echo "::error::The preview Worker secrets could not be checked."
+            exit 1
+          fi
+
+          if [ "$storage_key_state" = "missing" ]; then
+            node -e "require('node:fs').writeFileSync('object-storage-key.txt', require('node:crypto').randomBytes(32).toString('hex'))"
+            object_storage_key="$(tr -d '\n' < object-storage-key.txt)"
+            echo "::add-mask::$object_storage_key"
+          fi
 
           node -e "
             const fs = require('node:fs');
             const token = fs.readFileSync('processor-token.txt', 'utf8').trim();
-            fs.writeFileSync('preview-secrets.json', JSON.stringify({ PREVIEW_PROCESSOR_TOKEN: token }));
+            const cursorSecret = fs.readFileSync('cursor-secret.txt', 'utf8').trim();
+            const secrets = {
+              PREVIEW_PROCESSOR_TOKEN: token,
+              RECENT_FEED_CURSOR_SECRET: cursorSecret,
+            };
+            if (fs.existsSync('object-storage-key.txt')) {
+              secrets.OBJECT_STORAGE_ENCRYPTION_KEY = fs.readFileSync('object-storage-key.txt', 'utf8').trim();
+            }
+            fs.writeFileSync('preview-secrets.json', JSON.stringify(secrets));
           "
 
           "$WRANGLER" deploy --config wrangler.preview.jsonc --secrets-file preview-secrets.json --no-bundle --message "Approved dev preview $HEAD_SHA" 2>&1 | tee wrangler-preview.log

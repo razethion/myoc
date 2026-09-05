@@ -1,7 +1,13 @@
 import {afterEach, describe, expect, it, vi} from 'vitest'
 import {createAvifBytes} from '../../test/imageFixtures'
 import type {Bindings} from '../../types/bindings'
-import {generateMediaPreviewWithContainer, generateNsfwBlurImage} from './previewGeneration'
+import {
+    generateGalleryOutputsWithContainer,
+    generateMediaPreviewWithContainer,
+    generateNsfwBlurImage,
+    generateSquareImageWithContainer,
+    mediaPreviewContainerIndex,
+} from './previewGeneration'
 
 const sourceUrl = 'https://media.example.test/original.png'
 
@@ -89,14 +95,75 @@ describe('generateMediaPreviewWithContainer', () => {
 
     it('returns the final transient container failure after all attempts', async () => {
         vi.useFakeTimers()
-        const fetch = vi.fn(async () => new Response(null, {status: 429}))
+        const fetch = vi.fn(async () => new Response(null, {status: 503}))
         const generation = generateMediaPreviewWithContainer(previewEnvironment([], fetch), sourceUrl, {width: 100, height: 80})
-        const expectation = expect(generation).rejects.toThrow('Container preview failed with 429')
+        const expectation = expect(generation).rejects.toThrow('Container preview failed with 503')
 
         await vi.runAllTimersAsync()
 
         await expectation
         expect(fetch).toHaveBeenCalledTimes(3)
+    })
+
+    it.each(['interactive', 'background'] as const)('finds free capacity for %s work', async (priority) => {
+        const requestedContainers: string[] = []
+        const env = routedPreviewEnvironment(async (containerName) => {
+            requestedContainers.push(containerName)
+            return requestedContainers.length <= 3 ? new Response(null, {status: 429}) : avifResponse(100, 80)
+        })
+
+        await expect(
+            generateMediaPreviewWithContainer(env, sourceUrl, {width: 100, height: 80}, {priority, maxAttempts: 1}),
+        ).resolves.toMatchObject({
+            width: 100,
+            height: 80,
+        })
+
+        expect(requestedContainers).toHaveLength(4)
+        expect(new Set(requestedContainers).size).toBe(4)
+    })
+
+    it('reports busy after all background capacity is in use', async () => {
+        const requestedContainers: string[] = []
+        const env = routedPreviewEnvironment(async (containerName) => {
+            requestedContainers.push(containerName)
+            return new Response(null, {status: 429})
+        })
+
+        await expect(generateMediaPreviewWithContainer(env, sourceUrl, {width: 100, height: 80}, {priority: 'background'})).rejects.toThrow(
+            'Container preview failed with 429',
+        )
+
+        expect(new Set(requestedContainers)).toEqual(new Set(Array.from({length: 8}, (_, index) => `myoc-docker-sharp-${index}`)))
+    })
+
+    it('reports busy after all interactive capacity is in use', async () => {
+        const requestedContainers: string[] = []
+        const env = routedPreviewEnvironment(async (containerName) => {
+            requestedContainers.push(containerName)
+            return new Response(null, {status: 429})
+        })
+
+        await expect(generateMediaPreviewWithContainer(env, sourceUrl, {width: 100, height: 80})).rejects.toThrow(
+            'Container preview failed with 429',
+        )
+
+        expect(new Set(requestedContainers)).toEqual(new Set(Array.from({length: 8}, (_, index) => `myoc-docker-sharp-${index}`)))
+    })
+
+    it('uses the whole pool when a caller supplies a starting container', async () => {
+        const requestedContainers: string[] = []
+        const env = routedPreviewEnvironment(async (containerName) => {
+            requestedContainers.push(containerName)
+            return new Response(null, {status: 429})
+        })
+
+        await expect(generateMediaPreviewWithContainer(env, sourceUrl, {width: 100, height: 80}, {containerIndex: 7})).rejects.toThrow(
+            'Container preview failed with 429',
+        )
+
+        expect(requestedContainers[0]).toBe('myoc-docker-sharp-7')
+        expect(new Set(requestedContainers).size).toBe(8)
     })
 
     it('retries a non-Error container failure', async () => {
@@ -119,19 +186,24 @@ describe('generateMediaPreviewWithContainer', () => {
 describe('generateNsfwBlurImage', () => {
     const preview = {bytes: createAvifBytes(100, 80), contentType: 'image/avif' as const, width: 100, height: 80}
 
-    it('returns the AVIF blur image from Cloudflare Images', async () => {
+    it('returns the AVIF blur image from the container', async () => {
         const bytes = createAvifBytes(100, 80)
 
         await expect(
-            generateNsfwBlurImage(imagesBinding(new Response(bytes, {headers: {'content-type': 'IMAGE/AVIF; charset=binary'}})), preview),
+            generateNsfwBlurImage(
+                previewEnvironment([new Response(bytes, {headers: {'content-type': 'IMAGE/AVIF; charset=binary'}})]),
+                preview,
+            ),
         ).resolves.toEqual({
             bytes,
             contentType: 'image/avif',
         })
     })
 
-    it('rejects use without a Cloudflare Images binding', async () => {
-        await expect(generateNsfwBlurImage(undefined, preview)).rejects.toThrow('Cloudflare Images binding is not configured.')
+    it('rejects use without a preview container binding', async () => {
+        const env = {PREVIEW_PROCESSOR_TOKEN: 'test-token'} as Pick<Bindings, 'MYOC_DOCKER_SHARP_CONTAINER' | 'PREVIEW_PROCESSOR_TOKEN'>
+
+        await expect(generateNsfwBlurImage(env, preview)).rejects.toThrow('Preview container binding is not configured.')
     })
 
     it.each([
@@ -139,9 +211,107 @@ describe('generateNsfwBlurImage', () => {
         ['a non-AVIF response', new Response(createAvifBytes(100, 80), {headers: {'content-type': 'image/webp'}})],
         ['a response without a content type', new Response(createAvifBytes(100, 80))],
     ])('rejects %s', async (_caseName, response) => {
-        await expect(generateNsfwBlurImage(imagesBinding(response), preview)).rejects.toThrow(
-            'Cloudflare Images did not return the requested AVIF blur image',
+        await expect(generateNsfwBlurImage(previewEnvironment([response]), preview, {maxAttempts: 1})).rejects.toThrow('Container blur')
+    })
+
+    it('rejects a blur with dimensions that do not match the preview', async () => {
+        await expect(generateNsfwBlurImage(previewEnvironment([avifResponse(98, 80)]), preview)).rejects.toThrow(
+            'Container blur dimensions must match the preview scaled to 960px wide',
         )
+    })
+
+    it.each([
+        [
+            'invalid AVIF bytes',
+            new Response(new Uint8Array([1, 2, 3]), {headers: {'content-type': 'image/avif'}}),
+            'Container blur returned an invalid AVIF image',
+        ],
+        [
+            'too many bytes for its dimensions',
+            new Response(paddedAvifBytes(1, 1, 5_000), {headers: {'content-type': 'image/avif'}}),
+            'Container blur is too large for its dimensions',
+        ],
+    ])('rejects a blur with %s', async (_caseName, response, message) => {
+        const onePixelPreview = {bytes: createAvifBytes(1, 1), contentType: 'image/avif' as const, width: 1, height: 1}
+        await expect(generateNsfwBlurImage(previewEnvironment([response]), onePixelPreview)).rejects.toThrow(message)
+    })
+})
+
+describe('mediaPreviewContainerIndex', () => {
+    it('maps the same key to one stable configured container', () => {
+        const first = mediaPreviewContainerIndex('media-1:sfw')
+
+        expect(first).toBeGreaterThanOrEqual(0)
+        expect(first).toBeLessThan(8)
+        expect(mediaPreviewContainerIndex('media-1:sfw')).toBe(first)
+    })
+})
+
+describe('container image recipes', () => {
+    const source = () => Promise.resolve(new Blob([new Uint8Array([1])]).stream())
+
+    it('requires a container binding for square and gallery recipes', async () => {
+        const env = {PREVIEW_PROCESSOR_TOKEN: 'test-token'} as Pick<Bindings, 'MYOC_DOCKER_SHARP_CONTAINER' | 'PREVIEW_PROCESSOR_TOKEN'>
+
+        await expect(generateSquareImageWithContainer(env, new Uint8Array([1]), 'square')).rejects.toThrow(
+            'Image container binding is not configured.',
+        )
+        await expect(generateGalleryOutputsWithContainer(env, source, {width: 100, height: 80}, false, 'gallery')).rejects.toThrow(
+            'Image container binding is not configured.',
+        )
+    })
+
+    it('rejects a square container output with the wrong dimensions', async () => {
+        await expect(
+            generateSquareImageWithContainer(previewEnvironment([avifResponse(511, 512)]), new Uint8Array([1]), 'square'),
+        ).rejects.toThrow('Container square image must be a 512x512 AVIF image')
+    })
+
+    it('rejects a square container output without a content type', async () => {
+        const response = new Response(createAvifBytes(512, 512))
+
+        await expect(generateSquareImageWithContainer(previewEnvironment([response]), new Uint8Array([1]), 'square')).rejects.toThrow(
+            'Container square image returned an unexpected content type',
+        )
+    })
+
+    it.each(['image/jpeg', 'image/png', 'image/webp', 'image/avif'] as const)(
+        'forwards %s to the square recipe',
+        async (sourceContentType) => {
+            const fetch = vi.fn(async (_input?: RequestInfo | URL, init?: RequestInit) => {
+                expect(new Headers(init?.headers).get('content-type')).toBe(sourceContentType)
+                return avifResponse(512, 512)
+            })
+
+            await expect(
+                generateSquareImageWithContainer(previewEnvironment([], fetch), new Uint8Array([1]), 'square', {
+                    sourceContentType,
+                }),
+            ).resolves.toMatchObject({contentType: 'image/avif'})
+        },
+    )
+
+    it.each([
+        ['a failed response', new Response('failed', {status: 503}), false, 'Container gallery image failed with 503'],
+        ['no preview length', new Response(createAvifBytes(100, 80)), false, 'Container gallery response is missing x-preview-length'],
+        [
+            'incorrect output lengths',
+            new Response(createAvifBytes(100, 80), {headers: {'x-preview-length': '47'}}),
+            false,
+            'Container gallery output lengths are invalid',
+        ],
+        [
+            'incorrect blur dimensions',
+            combinedGalleryResponse(createAvifBytes(100, 80), createAvifBytes(99, 80)),
+            true,
+            'Container blur dimensions are invalid',
+        ],
+    ])('rejects gallery output with %s', async (_label, response, includeBlur, message) => {
+        await expect(
+            generateGalleryOutputsWithContainer(previewEnvironment([response]), source, {width: 100, height: 80}, includeBlur, 'gallery', {
+                maxAttempts: 1,
+            }),
+        ).rejects.toThrow(message)
     })
 })
 
@@ -153,6 +323,15 @@ function paddedAvifBytes(width: number, height: number, byteLength: number): Uin
     const bytes = new Uint8Array(byteLength)
     bytes.set(createAvifBytes(width, height))
     return bytes
+}
+
+function combinedGalleryResponse(preview: Uint8Array, blur: Uint8Array): Response {
+    const bytes = new Uint8Array(preview.byteLength + blur.byteLength)
+    bytes.set(preview)
+    bytes.set(blur, preview.byteLength)
+    return new Response(bytes, {
+        headers: {'x-preview-length': String(preview.byteLength), 'x-blur-length': String(blur.byteLength)},
+    })
 }
 
 function previewEnvironment(
@@ -176,13 +355,14 @@ function previewEnvironment(
     }
 }
 
-function imagesBinding(response: Response): ImagesBinding {
-    const transformer = {
-        transform: vi.fn(() => transformer),
-        output: vi.fn(async () => ({response: () => response})),
-    }
-
+function routedPreviewEnvironment(
+    fetch: (containerName: string) => Promise<Response>,
+): Pick<Bindings, 'MYOC_DOCKER_SHARP_CONTAINER' | 'PREVIEW_PROCESSOR_TOKEN'> {
     return {
-        input: vi.fn(() => transformer),
-    } as unknown as ImagesBinding
+        MYOC_DOCKER_SHARP_CONTAINER: {
+            idFromName: vi.fn((name: string) => name),
+            get: vi.fn((id: string) => ({fetch: async () => await fetch(id)})),
+        } as unknown as Bindings['MYOC_DOCKER_SHARP_CONTAINER'],
+        PREVIEW_PROCESSOR_TOKEN: 'test-token',
+    }
 }

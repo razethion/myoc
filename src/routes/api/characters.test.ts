@@ -2,6 +2,7 @@ import {env} from 'cloudflare:workers'
 import {describe, expect, it, vi} from 'vitest'
 import {createCsrfToken} from '../../lib/auth/session'
 import {PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/profileImage'
+import {thumbnailOriginalObjectKey} from '../../lib/media/thumbnailSources'
 import {
     queryAll,
     queryOne,
@@ -28,12 +29,12 @@ import {
     createWebpDataUrl,
     createWebpFile,
 } from '../../test/imageFixtures'
-import {createMockImagesBinding} from '../../test/mockImages'
 import {createMockR2Bucket} from '../../test/mockR2'
 import {createRequestHeaders, type TestRequestOptions} from '../../test/request'
 import {apiRoutes} from '../api'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
+const objectStorageEncryptionKey = '0123456789abcdef'.repeat(4)
 const uuidPattern = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
 const currentUserRecord = {
     id: 'current-user',
@@ -251,7 +252,6 @@ type FolderResponse = {
 
 type CharacterRequestOptions = TestRequestOptions & {
     mediaBucket?: R2Bucket
-    imagesBinding?: ImagesBinding
     previewContainer?: DurableObjectNamespace
 }
 
@@ -266,18 +266,16 @@ type ChunkedSfwInitBody = {
     }
 }
 
-function requestEnv(
-    db: D1Database,
-    mediaBucket?: R2Bucket,
-    imagesBinding = createMockImagesBinding(),
-    previewContainer?: DurableObjectNamespace,
-) {
+function requestEnv(db: D1Database, mediaBucket?: R2Bucket, previewContainer?: DurableObjectNamespace) {
+    const defaultContainer = createMockPreviewContainer(
+        new Response(createAvifBytes(512, 512), {headers: {'content-type': 'image/avif'}}),
+    ).namespace
     return {
         DB: db,
         MEDIA_BUCKET: mediaBucket ?? createMockR2Bucket(),
-        IMAGES: imagesBinding,
         MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
-        MYOC_DOCKER_SHARP_CONTAINER: previewContainer,
+        MYOC_DOCKER_SHARP_CONTAINER: previewContainer ?? defaultContainer,
+        OBJECT_STORAGE_ENCRYPTION_KEY: objectStorageEncryptionKey,
         PREVIEW_PROCESSOR_TOKEN: 'preview-token',
     }
 }
@@ -311,34 +309,34 @@ function createMockPreviewContainer(responses: Response | Array<Response | Error
 }
 
 function expectStoredCharacterProfileImage(mediaBucket: R2Bucket, character: CharacterResponse['character']): void {
-    expect(character.profileImageKey).toMatch(new RegExp(`^${uuidPattern}$`))
+    expect(character.profileImageKey).toMatch(new RegExp(`^avif-${uuidPattern}$`))
     expect(character.profileImageUrl).toBe(
-        `${mediaPublicBaseUrl}/characters/current-user/${character.id}/profile/${character.profileImageKey}.webp`,
+        `${mediaPublicBaseUrl}/characters/current-user/${character.id}/profile/${character.profileImageKey}.avif`,
     )
     expect(mediaBucket.put).toHaveBeenCalledWith(
-        `characters/current-user/${character.id}/profile/${character.profileImageKey}.webp`,
+        `characters/current-user/${character.id}/profile/${character.profileImageKey}.avif`,
         expect.any(Uint8Array),
         {
             httpMetadata: {
                 cacheControl: 'public, max-age=300, must-revalidate',
-                contentType: 'image/webp',
+                contentType: 'image/avif',
             },
         },
     )
 }
 
 function expectStoredFolderImage(mediaBucket: R2Bucket, folder: FolderResponse['folder']): void {
-    expect(folder.folderImageKey).toMatch(new RegExp(`^${uuidPattern}$`))
+    expect(folder.folderImageKey).toMatch(new RegExp(`^avif-${uuidPattern}$`))
     expect(folder.folderImageUrl).toBe(
-        `${mediaPublicBaseUrl}/characters/current-user/folders/${folder.id}/image/${folder.folderImageKey}.webp`,
+        `${mediaPublicBaseUrl}/characters/current-user/folders/${folder.id}/image/${folder.folderImageKey}.avif`,
     )
     expect(mediaBucket.put).toHaveBeenCalledWith(
-        `characters/current-user/folders/${folder.id}/image/${folder.folderImageKey}.webp`,
+        `characters/current-user/folders/${folder.id}/image/${folder.folderImageKey}.avif`,
         expect.any(Uint8Array),
         {
             httpMetadata: {
                 cacheControl: 'public, max-age=300, must-revalidate',
-                contentType: 'image/webp',
+                contentType: 'image/avif',
             },
         },
     )
@@ -393,7 +391,7 @@ async function postCharacter(body: unknown, db: D1Database, options: CharacterRe
             body: body instanceof FormData || typeof body === 'string' ? body : JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -405,7 +403,7 @@ async function postFolder(body: unknown, db: D1Database, options: CharacterReque
             body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -417,7 +415,7 @@ async function postFolderImage(folderId: string, body: BodyInit, db: D1Database,
             body,
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -428,7 +426,7 @@ async function deleteFolderImage(folderId: string, db: D1Database, options: Char
             method: 'DELETE',
             headers: createRequestHeaders(undefined, options, false),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -440,7 +438,7 @@ async function postFolderTree(body: unknown, db: D1Database, options: CharacterR
             body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -452,7 +450,7 @@ async function postCharacterOrder(body: unknown, db: D1Database, options: Charac
             body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -469,7 +467,7 @@ async function putFolderPlacements(
             body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -486,7 +484,7 @@ async function initChunkedMedia(
             body: JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -509,7 +507,7 @@ async function putChunkedMediaPart(
             body,
             headers: createRequestHeaders(body, options, false),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -529,7 +527,7 @@ async function deleteChunkedMediaUpload(
             method: 'DELETE',
             headers: createRequestHeaders(undefined, options, false),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -548,7 +546,7 @@ async function completeChunkedMedia(
             body: JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding, previewContainer),
+        requestEnv(db, options.mediaBucket, previewContainer),
     )
 }
 
@@ -604,7 +602,7 @@ async function initExistingChunkedMedia(
             body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -622,7 +620,7 @@ async function completeExistingChunkedMedia(
             body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding, previewContainerForRequest(body, options.previewContainer)),
+        requestEnv(db, options.mediaBucket, previewContainerForRequest(body, options.previewContainer)),
     )
 }
 
@@ -633,7 +631,7 @@ async function deleteCharacterMedia(characterId: string, mediaId: string, db: D1
             method: 'DELETE',
             headers: createRequestHeaders(undefined, options, false),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -650,7 +648,7 @@ async function completeToyhouseImportItem(
             body: JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding, previewContainerForRequest(body, options.previewContainer)),
+        requestEnv(db, options.mediaBucket, previewContainerForRequest(body, options.previewContainer)),
     )
 }
 
@@ -667,7 +665,7 @@ async function failToyhouseImportItem(
             body: JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -684,7 +682,7 @@ async function postProfileImage(
             body,
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -701,7 +699,7 @@ async function putHeightChart(
             body,
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -713,7 +711,7 @@ async function patchFolder(folderId: string, body: unknown, db: D1Database, opti
             body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -730,7 +728,7 @@ async function patchCharacter(
             body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -742,7 +740,7 @@ async function putGallery(characterId: string, body: unknown, db: D1Database, op
             body: JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -759,7 +757,7 @@ async function deleteCharacter(
             body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -770,7 +768,7 @@ async function deleteFolder(folderId: string, db: D1Database, options: Character
             method: 'DELETE',
             headers: createRequestHeaders(undefined, options, false),
         },
-        requestEnv(db, options.mediaBucket, options.imagesBinding),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -1514,7 +1512,6 @@ describe('POST /characters/folders', () => {
     it('creates a folder by converting a PNG cropped image data URL to WebP', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const imagesBinding = createMockImagesBinding()
         await seedCurrentUser(sessionToken)
 
         const response = await postFolder(
@@ -1525,7 +1522,6 @@ describe('POST /characters/folders', () => {
             },
             db,
             {
-                imagesBinding,
                 mediaBucket,
                 sessionToken,
                 csrfToken: await createCsrfToken(sessionToken),
@@ -1536,15 +1532,11 @@ describe('POST /characters/folders', () => {
 
         const body = (await response.json()) as FolderResponse
         expectStoredFolderImage(mediaBucket, body.folder)
-        expect(imagesBinding.input).toHaveBeenCalledTimes(1)
-        const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
-        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 90})
     })
 
-    it('allows base64-expanded folder image JSON bodies to reach image validation', async () => {
+    it('rejects a malformed base64-expanded folder image', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const imagesBinding = createMockImagesBinding()
         await seedCurrentUser(sessionToken)
 
         const response = await postFolder(
@@ -1555,16 +1547,14 @@ describe('POST /characters/folders', () => {
             },
             db,
             {
-                imagesBinding,
                 mediaBucket,
                 sessionToken,
                 csrfToken: await createCsrfToken(sessionToken),
             },
         )
 
-        expect(response.status).toBe(201)
-        expect(imagesBinding.input).toHaveBeenCalledOnce()
-        expect(mediaBucket.put).toHaveBeenCalledOnce()
+        expect(response.status).toBe(400)
+        expect(mediaBucket.put).not.toHaveBeenCalled()
     })
 
     it('creates a nested folder', async () => {
@@ -1854,17 +1844,17 @@ describe('POST /characters/folders/:id/image', () => {
             folderImageUrl: string
         }
 
-        expect(body.folderImageKey).toMatch(new RegExp(`^${uuidPattern}$`))
+        expect(body.folderImageKey).toMatch(new RegExp(`^avif-${uuidPattern}$`))
         expect(body.folderImageUrl).toBe(
-            `${mediaPublicBaseUrl}/characters/current-user/folders/folder-id/image/${body.folderImageKey}.webp`,
+            `${mediaPublicBaseUrl}/characters/current-user/folders/folder-id/image/${body.folderImageKey}.avif`,
         )
         expect(mediaBucket.put).toHaveBeenCalledWith(
-            `characters/current-user/folders/folder-id/image/${body.folderImageKey}.webp`,
+            `characters/current-user/folders/folder-id/image/${body.folderImageKey}.avif`,
             expect.any(Uint8Array),
             {
                 httpMetadata: {
                     cacheControl: 'public, max-age=300, must-revalidate',
-                    contentType: 'image/webp',
+                    contentType: 'image/avif',
                 },
             },
         )
@@ -1903,8 +1893,8 @@ describe('POST /characters/folders/:id/image', () => {
             )
 
             expect(response.status).toBe(500)
-            const uploadedKey = vi.mocked(mediaBucket.put).mock.calls[0]?.[0]
-            expect(uploadedKey).toMatch(new RegExp(`^characters/current-user/folders/folder-id/image/${uuidPattern}\\.webp$`))
+            const uploadedKey = vi.mocked(mediaBucket.put).mock.calls.find(([key]) => !key.startsWith('thumbnail-originals/'))?.[0]
+            expect(uploadedKey).toMatch(new RegExp(`^characters/current-user/folders/folder-id/image/avif-${uuidPattern}\\.avif$`))
             expect(mediaBucket.delete).toHaveBeenCalledWith(uploadedKey)
             expect(
                 await queryOne<{folder_image_key: string | null}>(
@@ -2372,7 +2362,6 @@ describe('POST /characters', () => {
     it('creates a character by converting a PNG cropped profile image to WebP', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const imagesBinding = createMockImagesBinding()
         const form = new FormData()
         await seedCurrentUser(sessionToken)
         form.set('csrfToken', await createCsrfToken(sessionToken))
@@ -2380,7 +2369,6 @@ describe('POST /characters', () => {
         form.set('new-character-profile-image', createPngFile(512, 512, 'image/png', 'profile.png'))
 
         const response = await postCharacter(form, db, {
-            imagesBinding,
             mediaBucket,
             sessionToken,
         })
@@ -2388,9 +2376,6 @@ describe('POST /characters', () => {
         expect(response.status).toBe(201)
         const body = (await response.json()) as CharacterResponse
         expectStoredCharacterProfileImage(mediaBucket, body.character)
-        expect(imagesBinding.input).toHaveBeenCalledTimes(1)
-        const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
-        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 90})
     })
 
     it('rejects profile images that are not exactly 512x512', async () => {
@@ -2497,10 +2482,9 @@ describe('POST /characters', () => {
         expect(mediaBucket.put).not.toHaveBeenCalled()
     })
 
-    it('allows base64-expanded JSON profile image bodies to reach image validation', async () => {
+    it('rejects a malformed base64-expanded profile image', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const imagesBinding = createMockImagesBinding()
         await seedCurrentUser(sessionToken)
 
         const response = await postCharacter(
@@ -2511,16 +2495,14 @@ describe('POST /characters', () => {
             },
             db,
             {
-                imagesBinding,
                 mediaBucket,
                 sessionToken,
                 csrfToken: await createCsrfToken(sessionToken),
             },
         )
 
-        expect(response.status).toBe(201)
-        expect(imagesBinding.input).toHaveBeenCalledOnce()
-        expect(mediaBucket.put).toHaveBeenCalledOnce()
+        expect(response.status).toBe(400)
+        expect(mediaBucket.put).not.toHaveBeenCalled()
     })
 
     it('returns 409 when the character name already exists for the current user', async () => {
@@ -2564,8 +2546,8 @@ describe('POST /characters', () => {
             )
 
             expect(response.status).toBe(500)
-            const uploadedKey = vi.mocked(mediaBucket.put).mock.calls[0]?.[0]
-            expect(uploadedKey).toMatch(new RegExp(`^characters/current-user/${uuidPattern}/profile/${uuidPattern}\\.webp$`))
+            const uploadedKey = vi.mocked(mediaBucket.put).mock.calls.find(([key]) => !key.startsWith('thumbnail-originals/'))?.[0]
+            expect(uploadedKey).toMatch(new RegExp(`^characters/current-user/${uuidPattern}/profile/avif-${uuidPattern}\\.avif$`))
             expect(mediaBucket.delete).toHaveBeenCalledWith(uploadedKey)
             expect(await queryAll<{id: string}>('SELECT id FROM characters', [], db)).toEqual([])
         } finally {
@@ -2873,13 +2855,14 @@ describe('POST /characters/:id/profile-image', () => {
     it('replaces the character profile image and deletes the old object', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
+        const file = createWebpFile()
         const character = createCharacterRecord({
             profile_image_key: 'old-profile-image',
         })
         await seedCurrentUser(sessionToken)
         await seedCharacterRecord(character)
         const form = new FormData()
-        form.set('profileImage', createWebpFile())
+        form.set('profileImage', file)
 
         const response = await postProfileImage(character.id, form, db, {
             mediaBucket,
@@ -2894,22 +2877,41 @@ describe('POST /characters/:id/profile-image', () => {
             profileImageUrl: string
         }
 
-        expect(body.profileImageKey).toMatch(new RegExp(`^${uuidPattern}$`))
-        expect(body.profileImageUrl).toBe(`${mediaPublicBaseUrl}/characters/current-user/character-id/profile/${body.profileImageKey}.webp`)
+        expect(body.profileImageKey).toMatch(new RegExp(`^avif-${uuidPattern}$`))
+        expect(body.profileImageUrl).toBe(`${mediaPublicBaseUrl}/characters/current-user/character-id/profile/${body.profileImageKey}.avif`)
         expect(mediaBucket.put).toHaveBeenCalledWith(
-            `characters/current-user/character-id/profile/${body.profileImageKey}.webp`,
+            `characters/current-user/character-id/profile/${body.profileImageKey}.avif`,
             expect.any(Uint8Array),
             {
                 httpMetadata: {
                     cacheControl: 'public, max-age=300, must-revalidate',
-                    contentType: 'image/webp',
+                    contentType: 'image/avif',
                 },
             },
         )
         expect(
-            await queryOne<{profile_image_key: string}>('SELECT profile_image_key FROM characters WHERE id = ?', [character.id], db),
-        ).toEqual({profile_image_key: body.profileImageKey})
+            await queryOne<{profile_image_key: string; profile_image_content_type: string}>(
+                'SELECT profile_image_key, profile_image_content_type FROM characters WHERE id = ?',
+                [character.id],
+                db,
+            ),
+        ).toEqual({profile_image_key: body.profileImageKey, profile_image_content_type: 'image/avif'})
         expect(mediaBucket.delete).toHaveBeenCalledWith('characters/current-user/character-id/profile/old-profile-image.webp')
+        expect(mediaBucket.put).toHaveBeenCalledWith(
+            thumbnailOriginalObjectKey(`characters/current-user/character-id/profile/${body.profileImageKey}.avif`),
+            new Uint8Array(await file.arrayBuffer()),
+            {
+                onlyIf: expect.any(Headers),
+                httpMetadata: {
+                    cacheControl: 'private, no-store',
+                    contentType: 'image/webp',
+                },
+                ssecKey: objectStorageEncryptionKey,
+            },
+        )
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            thumbnailOriginalObjectKey('characters/current-user/character-id/profile/old-profile-image.webp'),
+        )
     })
 
     it('deletes the uploaded profile image when the D1 update fails', async () => {
@@ -2936,8 +2938,8 @@ describe('POST /characters/:id/profile-image', () => {
             )
 
             expect(response.status).toBe(500)
-            const uploadedKey = vi.mocked(mediaBucket.put).mock.calls[0]?.[0]
-            expect(uploadedKey).toMatch(new RegExp(`^characters/current-user/character-id/profile/${uuidPattern}\\.webp$`))
+            const uploadedKey = vi.mocked(mediaBucket.put).mock.calls.find(([key]) => !key.startsWith('thumbnail-originals/'))?.[0]
+            expect(uploadedKey).toMatch(new RegExp(`^characters/current-user/character-id/profile/avif-${uuidPattern}\\.avif$`))
             expect(mediaBucket.delete).toHaveBeenCalledWith(uploadedKey)
             expect(
                 await queryOne<{profile_image_key: string}>('SELECT profile_image_key FROM characters WHERE id = ?', [character.id], db),
@@ -2978,10 +2980,9 @@ describe('POST /characters/:id/profile-image', () => {
         }
     })
 
-    it('converts PNG character profile images to WebP before storing', async () => {
+    it('converts PNG character profile images to AVIF before storing', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const imagesBinding = createMockImagesBinding()
         const character = createCharacterRecord()
         await seedCurrentUser(sessionToken)
         await seedCharacterRecord(character)
@@ -2989,7 +2990,6 @@ describe('POST /characters/:id/profile-image', () => {
         form.set('profileImage', createPngFile(512, 512))
 
         const response = await postProfileImage(character.id, form, db, {
-            imagesBinding,
             mediaBucket,
             sessionToken,
             csrfToken: await createCsrfToken(sessionToken),
@@ -3001,24 +3001,20 @@ describe('POST /characters/:id/profile-image', () => {
             await queryOne<{profile_image_key: string}>('SELECT profile_image_key FROM characters WHERE id = ?', [character.id], db),
         ).toEqual({profile_image_key: body.profileImageKey})
         expect(mediaBucket.put).toHaveBeenCalledWith(
-            `characters/current-user/character-id/profile/${body.profileImageKey}.webp`,
+            `characters/current-user/character-id/profile/${body.profileImageKey}.avif`,
             expect.any(Uint8Array),
             {
                 httpMetadata: {
                     cacheControl: 'public, max-age=300, must-revalidate',
-                    contentType: 'image/webp',
+                    contentType: 'image/avif',
                 },
             },
         )
-        expect(imagesBinding.input).toHaveBeenCalledTimes(1)
-        const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
-        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 90})
     })
 
-    it('converts JPEG folder images to WebP before storing', async () => {
+    it('converts JPEG folder images to AVIF before storing', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const imagesBinding = createMockImagesBinding()
         const folder = createFolderRecord()
         await seedCurrentUser(sessionToken)
         await seedFolderRecord(folder)
@@ -3026,7 +3022,6 @@ describe('POST /characters/:id/profile-image', () => {
         form.set('folderImage', createJpegFile(512, 512, 'folder.jpg'))
 
         const response = await postFolderImage(folder.id, form, db, {
-            imagesBinding,
             mediaBucket,
             sessionToken,
             csrfToken: await createCsrfToken(sessionToken),
@@ -3035,21 +3030,22 @@ describe('POST /characters/:id/profile-image', () => {
         expect(response.status).toBe(200)
         const body = (await response.json()) as {folderImageKey: string}
         expect(
-            await queryOne<{folder_image_key: string}>('SELECT folder_image_key FROM character_folders WHERE id = ?', [folder.id], db),
-        ).toEqual({folder_image_key: body.folderImageKey})
+            await queryOne<{folder_image_key: string; folder_image_content_type: string}>(
+                'SELECT folder_image_key, folder_image_content_type FROM character_folders WHERE id = ?',
+                [folder.id],
+                db,
+            ),
+        ).toEqual({folder_image_key: body.folderImageKey, folder_image_content_type: 'image/avif'})
         expect(mediaBucket.put).toHaveBeenCalledWith(
-            `characters/current-user/folders/folder-id/image/${body.folderImageKey}.webp`,
+            `characters/current-user/folders/folder-id/image/${body.folderImageKey}.avif`,
             expect.any(Uint8Array),
             {
                 httpMetadata: {
                     cacheControl: 'public, max-age=300, must-revalidate',
-                    contentType: 'image/webp',
+                    contentType: 'image/avif',
                 },
             },
         )
-        expect(imagesBinding.input).toHaveBeenCalledTimes(1)
-        const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
-        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 90})
     })
 })
 
@@ -3553,6 +3549,149 @@ describe('PUT /characters/:id/height-chart', () => {
 })
 
 describe('character media uploads', () => {
+    it('queues a completed gallery source when asynchronous uploads are enabled', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const queue = {send: vi.fn(async () => undefined)} as unknown as Queue
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+        const routeEnv = {
+            ...requestEnv(db, mediaBucket),
+            IMAGE_PROCESSING_QUEUE: queue,
+            IMAGE_UPLOAD_ASYNC_ENABLED: 'true',
+        }
+        const headers = {cookie: `myoc_session=${sessionToken}`, 'x-csrf-token': csrfToken}
+        const initResponse = await apiRoutes.request(
+            `https://example.com/characters/${character.id}/media/chunked/init`,
+            {method: 'POST', body: JSON.stringify({ratings: ['sfw']}), headers: {...headers, 'content-type': 'application/json'}},
+            routeEnv,
+        )
+        const init = (await initResponse.json()) as ChunkedSfwInitBody
+        const partResponse = await apiRoutes.request(
+            `https://example.com/characters/${character.id}/media/chunked/${init.mediaId}/sfw/${encodeURIComponent(init.uploads.sfw.uploadId)}/1?imageKey=${init.uploads.sfw.imageKey}&contentType=image%2Fpng`,
+            {method: 'PUT', body: createPngFile(800, 600), headers},
+            routeEnv,
+        )
+        const part = (await partResponse.json()) as R2UploadedPart
+        const completeBody = {
+            mediaId: init.mediaId,
+            sfwUpload: {...init.uploads.sfw, parts: [part]},
+        }
+
+        const missingKeyResponse = await apiRoutes.request(
+            `https://example.com/characters/${character.id}/media/chunked/complete`,
+            {method: 'POST', body: JSON.stringify(completeBody), headers: {...headers, 'content-type': 'application/json'}},
+            routeEnv,
+        )
+        expect(missingKeyResponse.status).toBe(400)
+
+        const response = await apiRoutes.request(
+            `https://example.com/characters/${character.id}/media/chunked/complete`,
+            {
+                method: 'POST',
+                body: JSON.stringify(completeBody),
+                headers: {...headers, 'content-type': 'application/json', 'idempotency-key': 'gallery-route-upload'},
+            },
+            routeEnv,
+        )
+
+        expect(response.status).toBe(202)
+        expect((await response.json()) as {job: {kind: string; state: string}}).toMatchObject({
+            job: {kind: 'gallery', state: 'waiting'},
+        })
+        expect(await queryOne<{state: string}>('SELECT state FROM image_upload_jobs', [], db)).toEqual({state: 'queued'})
+        expect(queue.send).toHaveBeenCalledOnce()
+        const publishedObjectKey = `characters/current-user/${character.id}/media/${init.mediaId}/sfw/${init.uploads.sfw.imageKey}.png`
+        const sourceObjectKey = `image-staging/${publishedObjectKey}`
+        expect(mediaBucket.createMultipartUpload).toHaveBeenCalledWith(sourceObjectKey, {
+            httpMetadata: {
+                cacheControl: 'private, no-store',
+                contentType: 'image/png',
+            },
+            ssecKey: objectStorageEncryptionKey,
+        })
+        expect(mediaBucket.resumeMultipartUpload).toHaveBeenCalledWith(sourceObjectKey, init.uploads.sfw.uploadId)
+        const partUpload = vi.mocked(mediaBucket.resumeMultipartUpload).mock.results[0]?.value
+        expect(partUpload?.uploadPart).toHaveBeenCalledWith(1, expect.any(ReadableStream), {ssecKey: objectStorageEncryptionKey})
+        expect(mediaBucket.get).toHaveBeenCalledWith(sourceObjectKey, {
+            range: {offset: 0, length: 1024 * 1024},
+            ssecKey: objectStorageEncryptionKey,
+        })
+        expect(await queryOne<{object_key: string}>('SELECT object_key FROM image_upload_sources', [], db)).toEqual({
+            object_key: sourceObjectKey,
+        })
+        expect(await mediaBucket.get(publishedObjectKey)).toBeNull()
+        expect(await mediaBucket.list()).toHaveProperty('objects.length', 1)
+    })
+
+    it('aborts an asynchronous gallery upload under its staging key', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+
+        const response = await apiRoutes.request(
+            `https://example.com/characters/${character.id}/media/chunked/media-id/sfw/upload-id?imageKey=image-key&contentType=image%2Fpng`,
+            {
+                method: 'DELETE',
+                headers: createRequestHeaders(undefined, {
+                    sessionToken,
+                    csrfToken: await createCsrfToken(sessionToken),
+                }),
+            },
+            {...requestEnv(db, mediaBucket), IMAGE_UPLOAD_ASYNC_ENABLED: 'true'},
+        )
+
+        expect(response.status).toBe(204)
+        expect(mediaBucket.resumeMultipartUpload).toHaveBeenCalledWith(
+            'image-staging/characters/current-user/character-id/media/media-id/sfw/image-key.png',
+            'upload-id',
+        )
+        const upload = vi.mocked(mediaBucket.resumeMultipartUpload).mock.results[0]?.value
+        expect(upload?.abort).toHaveBeenCalledOnce()
+    })
+
+    it('reports an asynchronous gallery completion failure', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+        const mediaBucket = createMockR2Bucket()
+        const response = await apiRoutes.request(
+            `https://example.com/characters/${character.id}/media/chunked/complete`,
+            {
+                method: 'POST',
+                body: JSON.stringify({
+                    mediaId: crypto.randomUUID(),
+                    sfwUpload: {
+                        uploadId: 'missing-upload',
+                        imageKey: crypto.randomUUID(),
+                        contentType: 'image/png',
+                        parts: [{partNumber: 1, etag: 'missing-part'}],
+                    },
+                }),
+                headers: {
+                    cookie: `myoc_session=${sessionToken}`,
+                    'content-type': 'application/json',
+                    'idempotency-key': 'gallery-failure-key',
+                    'x-csrf-token': csrfToken,
+                },
+            },
+            {
+                ...requestEnv(db, mediaBucket),
+                IMAGE_PROCESSING_QUEUE: {send: vi.fn()} as unknown as Queue,
+                IMAGE_UPLOAD_ASYNC_ENABLED: 'true',
+            },
+        )
+
+        expect(response.status).toBe(400)
+        expect(await mediaBucket.list()).toHaveProperty('objects.length', 0)
+    })
+
     it.each([
         {
             body: {},
@@ -4521,7 +4660,6 @@ describe('character media uploads', () => {
     it('retries container preview generation after a transient service response', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const imagesBinding = createMockImagesBinding()
         const previewContainer = createMockPreviewContainer([
             new Response('Container is starting', {status: 503}),
             new Response(createAvifBytes(800, 600), {
@@ -4541,7 +4679,6 @@ describe('character media uploads', () => {
             db,
             {
                 mediaBucket,
-                imagesBinding,
                 sessionToken,
                 csrfToken,
             },
@@ -4600,10 +4737,9 @@ describe('character media uploads', () => {
         await expectStoredSfwMedia(initBody.mediaId, {sfw_preview_width: 800, sfw_preview_height: 600})
     }, 10_000)
 
-    it('does not call Cloudflare image resizing for gallery previews', async () => {
+    it('stores the AVIF preview returned by the Sharp container', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const imagesBinding = createMockImagesBinding()
         const previewContainer = createMockPreviewContainer(
             new Response(createAvifBytes(800, 600), {
                 headers: {
@@ -4661,7 +4797,6 @@ describe('character media uploads', () => {
             },
             db,
             {
-                imagesBinding,
                 mediaBucket,
                 previewContainer: previewContainer.namespace,
                 sessionToken,
@@ -4680,7 +4815,6 @@ describe('character media uploads', () => {
         expect(body.media.sfwPreviewWidth).toBe(800)
         expect(body.media.sfwPreviewHeight).toBe(600)
         expect(previewContainer.fetch).toHaveBeenCalledTimes(1)
-        expect(imagesBinding.input).not.toHaveBeenCalled()
         await expectStoredSfwMedia(initBody.mediaId, {sfw_preview_width: 800, sfw_preview_height: 600})
     }, 12_000)
 
@@ -4726,7 +4860,9 @@ describe('character media uploads', () => {
     it('generates and stores blurred variants for NSFW gallery previews', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const imagesBinding = createMockImagesBinding()
+        const previewContainer = createMockPreviewContainer(
+            new Response(createAvifBytes(800, 600), {headers: {'content-type': 'image/avif'}}),
+        )
         const character = createCharacterRecord()
         await seedCurrentUser(sessionToken)
         await seedCharacterRecord(character)
@@ -4787,8 +4923,8 @@ describe('character media uploads', () => {
             },
             db,
             {
-                imagesBinding,
                 mediaBucket,
+                previewContainer: previewContainer.namespace,
                 sessionToken,
                 csrfToken,
             },
@@ -4802,17 +4938,10 @@ describe('character media uploads', () => {
             }
         }
         expect(body.media.nsfwBlurImageKey).toMatch(new RegExp(`^${uuidPattern}$`))
-        const blurTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
-        expect(imagesBinding.input).toHaveBeenCalledOnce()
-        expect(blurTransformer.output).toHaveBeenCalledWith({format: 'image/avif', quality: 60})
         expect(body.media.nsfwBlurImageUrl).toBe(
             `${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/nsfw/blur/${body.media.nsfwBlurImageKey}.avif`,
         )
-        expect(imagesBinding.input).toHaveBeenCalledTimes(1)
-        const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
-        expect(imageTransformer.transform).toHaveBeenNthCalledWith(1, {width: 960, fit: 'scale-down'})
-        expect(imageTransformer.transform).toHaveBeenNthCalledWith(2, {blur: 250})
-        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/avif', quality: 60})
+        expect(previewContainer.fetch).toHaveBeenCalledTimes(2)
         expect(mediaBucket.put).toHaveBeenCalledWith(
             `characters/current-user/character-id/media/${initBody.mediaId}/nsfw/blur/${body.media.nsfwBlurImageKey}.avif`,
             expect.any(Uint8Array),
@@ -5985,7 +6114,6 @@ describe('character media uploads', () => {
     it('replaces the NSFW variant on existing media and regenerates its blur image', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const imagesBinding = createMockImagesBinding()
         const character = createCharacterRecord()
         const media = createMediaRecord({
             character_id: character.id,
@@ -6014,7 +6142,6 @@ describe('character media uploads', () => {
             db,
             {
                 mediaBucket,
-                imagesBinding,
                 sessionToken,
                 csrfToken,
             },
@@ -6062,7 +6189,6 @@ describe('character media uploads', () => {
             db,
             {
                 mediaBucket,
-                imagesBinding,
                 sessionToken,
                 csrfToken,
             },
@@ -7366,7 +7492,7 @@ describe('remaining character route edge coverage', () => {
                 postFolder(
                     {
                         name: 'Folder',
-                        folderImageData: createPngDataUrl(16, 16),
+                        folderImageData: createPngDataUrl(512, 512),
                     },
                     db,
                     {

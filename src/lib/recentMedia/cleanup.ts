@@ -13,7 +13,7 @@ import {
 type RecentFeedCleanupEnv = {
     DB: D1Database
     RECENT_FEED_BLOCK_ITEMS?: string
-    RECENT_FEED_BUCKET: R2Bucket
+    MEDIA_BUCKET: R2Bucket
     RECENT_FEED_CLEANUP_ENABLED?: string
     RECENT_FEED_CURSOR_SECRET?: string
     RECENT_FEED_PUBLISH_ENABLED?: string
@@ -84,7 +84,12 @@ const MAXIMUM_REACHABLE_KEYS = 100_000
 const MAXIMUM_LISTED_OBJECTS = 100_000
 const MAXIMUM_MANIFEST_BYTES = 1024 * 1024
 const ORPHAN_GRACE_PERIOD_MS = 48 * 60 * 60 * 1000
-const LIST_PREFIXES = ['generations/v1/roots/', 'generations/v1/manifests/', 'generations/v1/blocks/', 'generations/v1/bootstrap/'] as const
+const LIST_PREFIXES = [
+    'recent-feed/generations/v1/roots/',
+    'recent-feed/generations/v1/manifests/',
+    'recent-feed/generations/v1/blocks/',
+    'recent-feed/generations/v1/bootstrap/',
+] as const
 
 export async function cleanupRecentFeed(env: RecentFeedCleanupEnv, now = new Date()): Promise<RecentFeedCleanupSummary> {
     const config = getRecentFeedConfig(env)
@@ -139,7 +144,7 @@ export async function cleanupRecentFeed(env: RecentFeedCleanupEnv, now = new Dat
             await env.DB.prepare(`DELETE FROM recent_feed_generations WHERE generation IN (${placeholders})`)
                 .bind(...generationBatch.map((generation) => generation.generation))
                 .run()
-            await env.RECENT_FEED_BUCKET.delete(generationBatch.map((generation) => generation.root_key))
+            await env.MEDIA_BUCKET.delete(generationBatch.map((generation) => generation.root_key))
         }
 
         const retainedGenerations = await countGenerations(env.DB)
@@ -150,7 +155,7 @@ export async function cleanupRecentFeed(env: RecentFeedCleanupEnv, now = new Dat
             return cleanupSummary(retainedGenerations, generations.length, expiredRootKeys.length)
         }
 
-        const graph = await markReachableObjects(env.RECENT_FEED_BUCKET, retainedRootKeys)
+        const graph = await markReachableObjects(env.MEDIA_BUCKET, retainedRootKeys)
 
         if (!graph) {
             logSkippedSweep('retained-graph-is-invalid-or-too-large')
@@ -158,7 +163,7 @@ export async function cleanupRecentFeed(env: RecentFeedCleanupEnv, now = new Dat
         }
 
         const orphanCutoff = new Date(now.getTime() - ORPHAN_GRACE_PERIOD_MS)
-        const orphanKeys = await findOrphanKeys(env.RECENT_FEED_BUCKET, graph.keys, orphanCutoff)
+        const orphanKeys = await findOrphanKeys(env.MEDIA_BUCKET, graph.keys, orphanCutoff)
 
         if (!orphanKeys) {
             logSkippedSweep('object-list-is-too-large')
@@ -173,7 +178,7 @@ export async function cleanupRecentFeed(env: RecentFeedCleanupEnv, now = new Dat
         const keysToDelete = orphanKeys.slice(0, MAXIMUM_DELETIONS_PER_RUN)
 
         for (let offset = 0; offset < keysToDelete.length; offset += R2_DELETE_BATCH_SIZE) {
-            await env.RECENT_FEED_BUCKET.delete(keysToDelete.slice(offset, offset + R2_DELETE_BATCH_SIZE))
+            await env.MEDIA_BUCKET.delete(keysToDelete.slice(offset, offset + R2_DELETE_BATCH_SIZE))
         }
 
         return cleanupSummary(retainedGenerations, generations.length, expiredRootKeys.length + keysToDelete.length)
@@ -551,15 +556,18 @@ function sumItemCounts(values: Array<{itemCount: number}>): number {
 }
 
 function isRootKey(key: string): boolean {
-    return /^generations\/v1\/roots\/[A-Za-z0-9-]+\.json$/.test(key)
+    return /^recent-feed\/generations\/v1\/roots\/[A-Za-z0-9-]+\.json$/.test(key)
 }
 
 function isManifestKey(key: string, variant: RecentFeedVariant, kind: string, value: string): boolean {
-    return key === `generations/v1/manifests/${variant}/${kind}/${value}/${keyDigest(key)}.json` && /^[a-f0-9]{64}$/.test(keyDigest(key))
+    return (
+        key === `recent-feed/generations/v1/manifests/${variant}/${kind}/${value}/${keyDigest(key)}.json` &&
+        /^[a-f0-9]{64}$/.test(keyDigest(key))
+    )
 }
 
 function isBlockKey(key: string, variant: RecentFeedVariant, hour: string): boolean {
-    return key === `generations/v1/blocks/${variant}/${hour}/${keyDigest(key)}.json` && /^[a-f0-9]{64}$/.test(keyDigest(key))
+    return key === `recent-feed/generations/v1/blocks/${variant}/${hour}/${keyDigest(key)}.json` && /^[a-f0-9]{64}$/.test(keyDigest(key))
 }
 
 function keyDigest(key: string): string {

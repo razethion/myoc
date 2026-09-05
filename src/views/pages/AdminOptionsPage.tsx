@@ -30,8 +30,9 @@ export function AdminOptionsPage({csrfToken, data, feedback}: AdminOptionsPagePr
 
             <section class="rounded border border-base-300 bg-base-200 p-4">
                 <p class="mb-3 text-sm text-base-content/70">
-                    Media preview regeneration runs as a durable background job. Starting it again while it runs does not create a duplicate
-                    job.
+                    Thumbnail regeneration and character media preview regeneration run as separate background jobs. Thumbnails use saved
+                    originals. If an original is missing, the job saves the current thumbnail as its source. Starting a running job again
+                    does not create a duplicate.
                 </p>
                 <div class="flex flex-wrap gap-3">
                     {data.jobs.map((job, index) => (
@@ -43,6 +44,49 @@ export function AdminOptionsPage({csrfToken, data, feedback}: AdminOptionsPagePr
                         </form>
                     ))}
                 </div>
+            </section>
+
+            <section class="mt-6">
+                <h3 class="mb-3 text-xl font-bold">Error Log</h3>
+
+                {data.errors.length > 0 ? (
+                    <div class="overflow-x-auto rounded border border-base-300">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Recorded</th>
+                                    <th>Source</th>
+                                    <th>Code</th>
+                                    <th>Message</th>
+                                    <th>References</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {data.errors.map((entry) => (
+                                    <tr>
+                                        <td class="whitespace-nowrap font-mono text-xs">{formatTimestamp(entry.createdAt)}</td>
+                                        <td class="whitespace-nowrap">{entry.sourceLabel}</td>
+                                        <td>
+                                            <span class="badge badge-error badge-sm">{entry.errorCode}</span>
+                                        </td>
+                                        <td class="min-w-64 max-w-xl whitespace-pre-wrap break-words text-sm text-error">
+                                            {entry.errorMessage}
+                                        </td>
+                                        <td class="min-w-64 font-mono text-xs">
+                                            {entry.jobId ? <div class="break-all">Job: {entry.jobId}</div> : null}
+                                            {entry.taskId ? <div class="break-all">Task: {entry.taskId}</div> : null}
+                                            {!entry.jobId && !entry.taskId ? <span>-</span> : null}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                ) : (
+                    <div class="rounded border border-dashed border-base-300 bg-base-200 p-8 text-center">
+                        <h4 class="text-lg font-bold">No processing errors</h4>
+                    </div>
+                )}
             </section>
 
             <section class="mt-6">
@@ -128,8 +172,8 @@ function RunSummary({run}: {run: AdminJobRun}) {
         return <LeaderboardRefreshSummary summary={run.summary} />
     }
 
-    if (run.jobName === 'media-preview-regeneration') {
-        return <MediaPreviewRegenerationSummary summary={run.summary} />
+    if (run.jobName === 'media-preview-regeneration' || run.jobName === 'thumbnail-regeneration') {
+        return <MediaPreviewRegenerationSummary summary={run.summary} thumbnails={run.jobName === 'thumbnail-regeneration'} />
     }
 
     return <R2CleanupSummary summary={run.summary} />
@@ -189,7 +233,7 @@ function LeaderboardRefreshSummary({summary}: {summary: AdminJobSummary}) {
     )
 }
 
-function MediaPreviewRegenerationSummary({summary}: {summary: AdminJobSummary}) {
+function MediaPreviewRegenerationSummary({summary, thumbnails}: {summary: AdminJobSummary; thumbnails: boolean}) {
     if (!('totalVariants' in summary) || !('processedVariants' in summary)) {
         return <JsonSummary summary={summary} />
     }
@@ -201,10 +245,12 @@ function MediaPreviewRegenerationSummary({summary}: {summary: AdminJobSummary}) 
             <progress class="progress" max={progressMaximum} value={Math.min(summary.processedVariants, progressMaximum)} />
             <div class="flex flex-wrap gap-x-3 gap-y-1">
                 <span>
-                    {summary.processedVariants} of {summary.totalVariants} variants processed
+                    {summary.processedVariants} of {summary.totalVariants} {thumbnails ? 'thumbnails' : 'variants'} processed
                 </span>
-                <span>{summary.regeneratedPreviews} previews</span>
-                <span>{summary.regeneratedBlurs} blurs</span>
+                <span>
+                    {summary.regeneratedPreviews} {thumbnails ? 'thumbnails replaced' : 'previews'}
+                </span>
+                {thumbnails ? null : <span>{summary.regeneratedBlurs} blurs</span>}
                 <span>{summary.skippedVariants} skipped</span>
                 {summary.failedVariants > 0 ? <span class="text-error">{summary.failedVariants} failed</span> : null}
             </div>

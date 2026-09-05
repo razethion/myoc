@@ -1,7 +1,19 @@
 import {describe, expect, it, vi} from 'vitest'
-import {executeD1ImportStatements, insertTableName, readR2CloneProgress} from './clone-prod-to-dev-helpers.mjs'
+import {executeD1ImportStatements, insertTableName, isCloneableMediaKey, readR2CloneProgress} from './clone-prod-to-dev-helpers.mjs'
 
 describe('clone production data helpers', () => {
+    it.each([
+        ['characters/alice/media/image.webp', true],
+        ['users/alice/profile.webp', true],
+        ['recent-feed/generations/v1/roots/r1.json', true],
+        ['image-sources/job-1/source', false],
+        ['image-staging/characters/alice/original.webp', false],
+        ['thumbnail-originals/characters/alice/image.webp', false],
+        ['d1/backups/2026-09-05.sql.gz', false],
+    ])('selects public media key %s for cloning: %s', (key, expected) => {
+        expect(isCloneableMediaKey(key)).toBe(expected)
+    })
+
     it('executes D1 statements and reports useful counts', () => {
         const inserts = Array.from({length: 500}, (_, index) => `INSERT INTO "users" VALUES (${index});`)
         const statements = [

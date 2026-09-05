@@ -638,7 +638,7 @@ async function getProfilePath(path: string, db: D1Database): Promise<Response> {
         {
             CACHE: workerEnv.CACHE,
             DB: db,
-            DB_BACKUP_BUCKET: workerEnv.DB_BACKUP_BUCKET,
+            OBJECT_STORAGE_ENCRYPTION_KEY: workerEnv.OBJECT_STORAGE_ENCRYPTION_KEY,
             MEDIA_BUCKET: workerEnv.MEDIA_BUCKET,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         },
@@ -652,7 +652,7 @@ async function getAppPath(path: string, database = db, headers: Record<string, s
         {
             CACHE: cache,
             DB: database,
-            DB_BACKUP_BUCKET: workerEnv.DB_BACKUP_BUCKET,
+            OBJECT_STORAGE_ENCRYPTION_KEY: workerEnv.OBJECT_STORAGE_ENCRYPTION_KEY,
             MEDIA_BUCKET: workerEnv.MEDIA_BUCKET,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         },
@@ -677,7 +677,7 @@ async function postPageAction(path: string, database: D1Database, mediaBucket: R
         {
             CACHE: createMockKVNamespace(),
             DB: database,
-            DB_BACKUP_BUCKET: workerEnv.DB_BACKUP_BUCKET,
+            OBJECT_STORAGE_ENCRYPTION_KEY: workerEnv.OBJECT_STORAGE_ENCRYPTION_KEY,
             MEDIA_BUCKET: mediaBucket,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         },
@@ -4186,6 +4186,91 @@ describe('GET /admin', () => {
         expect(errorResponse.status).toBe(200)
         expect(errorHtml).toContain('Admin job failed. Check Job History for details.')
         expect(errorHtml).toContain('No job runs')
+    })
+
+    it('shows dead-letter errors to admins and escapes their messages', async () => {
+        const pageDb = await seedPageDatabase({
+            currentUser: {...createCurrentUserRecord('admin_user'), role: 'admin'},
+        })
+        const ack = vi.fn()
+        const retry = vi.fn()
+        const failureBody = {
+            version: 1,
+            kind: 'media-regeneration',
+            taskId: 'preview-task',
+            runId: 'preview-run',
+            errorCode: 'preview_generation_failed',
+            error: '<script>console.log(1)</script>',
+        }
+        await app.queue(
+            {
+                queue: workerEnv.IMAGE_PROCESSING_DLQ_NAME,
+                messages: [
+                    {
+                        id: 'admin-log-message',
+                        timestamp: new Date(),
+                        attempts: 1,
+                        ack,
+                        retry,
+                        body: failureBody,
+                    },
+                ],
+            } as unknown as MessageBatch,
+            {...workerEnv, DB: pageDb},
+            {} as ExecutionContext,
+        )
+
+        const response = await getAppPath('/admin/admin-options', pageDb, {cookie: 'myoc_session=session-token'})
+        const html = await response.text()
+        expect(ack).toHaveBeenCalledOnce()
+        expect(retry).not.toHaveBeenCalled()
+        expect(response.status).toBe(200)
+        expect(html).toContain('Error Log')
+        expect(html).toContain('preview_generation_failed')
+        expect(html).toContain('preview-run')
+        expect(html).toContain('&lt;script&gt;console.log(1)&lt;/script&gt;')
+        expect(html).not.toContain('<script>console.log(1)</script>')
+    })
+
+    it('shows a separate thumbnail job and its replacement progress', async () => {
+        const response = await getAppPath(
+            '/admin/admin-options',
+            await seedPageDatabase({
+                currentUser: {...createCurrentUserRecord('admin_user'), role: 'admin'},
+                adminJobRuns: [
+                    {
+                        id: 'run-thumbnails',
+                        job_name: 'thumbnail-regeneration',
+                        trigger_source: 'manual',
+                        triggered_by_user_id: 'admin-user',
+                        triggered_by_username: 'admin_user',
+                        cron: null,
+                        status: 'running',
+                        started_at: '2026-07-11 08:59:00',
+                        finished_at: null,
+                        duration_ms: null,
+                        summary_json: JSON.stringify({
+                            totalVariants: 3,
+                            processedVariants: 2,
+                            regeneratedPreviews: 1,
+                            regeneratedBlurs: 0,
+                            skippedVariants: 1,
+                            failedVariants: 0,
+                            lastError: null,
+                        }),
+                        error_message: null,
+                    },
+                ],
+            }),
+            {cookie: 'myoc_session=session-token'},
+        )
+        const html = await response.text()
+        expect(response.status).toBe(200)
+        expect(html).toContain('action="/admin/admin-options/jobs/thumbnail-regeneration/run"')
+        expect(html).toContain('action="/admin/admin-options/jobs/media-preview-regeneration/run"')
+        expect(html).toContain('2 of 3 thumbnails processed')
+        expect(html).toContain('1 thumbnails replaced')
+        expect(html).not.toContain('0 blurs')
     })
 
     it('renders admin job run status, source, duration, and summary variants', async () => {

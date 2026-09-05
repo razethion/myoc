@@ -22,8 +22,8 @@
       "class_name": "MyocDockerSharpContainer",
       "image": "./containers/myoc-docker-sharp/Dockerfile",
       "image_build_context": "./containers/myoc-docker-sharp",
-      "instance_type": "standard-1",
-      "max_instances": 1
+      "instance_type": "standard-4",
+      "max_instances": 8
     }
   ],
   "durable_objects": {
@@ -44,6 +44,37 @@
       }
     }
   ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "IMAGE_PROCESSING_QUEUE",
+        "queue": "myoc-image-processing"
+      },
+      {
+        "binding": "IMAGE_PROCESSING_DLQ",
+        "queue": "myoc-image-processing-dlq"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "myoc-image-processing",
+        "max_batch_size": 1,
+        "max_batch_timeout": 0,
+        "max_retries": 10,
+        "dead_letter_queue": "myoc-image-processing-dlq",
+        "max_concurrency": 8,
+        "retry_delay": 1
+      },
+      {
+        "queue": "myoc-image-processing-dlq",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 10,
+        "max_concurrency": 1,
+        "retry_delay": 1
+      }
+    ]
+  },
   "migrations": [
     {
       "tag": "v1",
@@ -56,22 +87,20 @@
   "assets": {
     "directory": "./public"
   },
-  "images": {
-    "binding": "IMAGES",
-    "remote": true
-  },
   "vars": {
     "CLOUDFLARE_ACCOUNT_ID": "9b7b3de391cdb5368247e2c468ad1643",
     "D1_DATABASE_ID": "909ada8f-fc57-47ad-83e1-18ffe863debb",
+    "IMAGE_PROCESSING_DLQ_NAME": "myoc-image-processing-dlq",
+    "IMAGE_UPLOAD_ASYNC_ENABLED": "true",
     "MEDIA_PUBLIC_BASE_URL": "https://m.myoc.art",
     "RECENT_FEED_BLOCK_ITEMS": "96",
     "RECENT_FEED_CLEANUP_ENABLED": "true",
     "RECENT_FEED_PUBLISH_ENABLED": "true",
-    "RECENT_FEED_PUBLIC_BASE_URL": "https://feed-data.myoc.art",
+    "RECENT_FEED_PUBLIC_BASE_URL": "https://m.myoc.art",
     "RECENT_FEED_RETENTION_DAYS": "30"
   },
   "secrets": {
-    "required": ["D1_REST_API_TOKEN", "PREVIEW_PROCESSOR_TOKEN", "RECENT_FEED_CURSOR_SECRET"]
+    "required": ["D1_REST_API_TOKEN", "OBJECT_STORAGE_ENCRYPTION_KEY", "PREVIEW_PROCESSOR_TOKEN", "RECENT_FEED_CURSOR_SECRET"]
   },
   "d1_databases": [
     {
@@ -125,17 +154,6 @@
       "binding": "MEDIA_BUCKET",
       "bucket_name": "myoc",
       "preview_bucket_name": "myoc-dev",
-      "remote": true
-    },
-    {
-      "binding": "DB_BACKUP_BUCKET",
-      "bucket_name": "myoc-db-bak",
-      "remote": true
-    },
-    {
-      "binding": "RECENT_FEED_BUCKET",
-      "bucket_name": "myoc-recent-feed-prod",
-      "preview_bucket_name": "myoc-recent-feed-dev",
       "remote": true
     }
   ]

@@ -5,13 +5,13 @@ import type {RecentMediaItem} from '../recentMedia'
 import {getGeneratedRecentMediaPage, InvalidRecentFeedCursorError, RecentFeedGenerationExpiredError} from './reader'
 
 const db = useTestDatabase()
-const rootKey = 'generations/v1/roots/r7-demo.json'
-const yearKey = 'generations/v1/manifests/n0-u0/years/2026/year.json'
-const monthKey = 'generations/v1/manifests/n0-u0/months/2026-08/month.json'
-const dayKey = 'generations/v1/manifests/n0-u0/days/2026-08-25/day.json'
-const previousDayKey = 'generations/v1/manifests/n0-u0/days/2026-08-24/day.json'
-const blockKey = 'generations/v1/blocks/n0-u0/2026-08-25T12/block.json'
-const previousBlockKey = 'generations/v1/blocks/n0-u0/2026-08-24T12/block.json'
+const rootKey = 'recent-feed/generations/v1/roots/r7-demo.json'
+const yearKey = 'recent-feed/generations/v1/manifests/n0-u0/years/2026/year.json'
+const monthKey = 'recent-feed/generations/v1/manifests/n0-u0/months/2026-08/month.json'
+const dayKey = 'recent-feed/generations/v1/manifests/n0-u0/days/2026-08-25/day.json'
+const previousDayKey = 'recent-feed/generations/v1/manifests/n0-u0/days/2026-08-24/day.json'
+const blockKey = 'recent-feed/generations/v1/blocks/n0-u0/2026-08-25T12/block.json'
+const previousBlockKey = 'recent-feed/generations/v1/blocks/n0-u0/2026-08-24T12/block.json'
 const pointer = {
     generation: 'r7-demo',
     rootKey,
@@ -47,7 +47,7 @@ describe('generated recent media reader', () => {
         expect(second.items.map((item) => item.id)).toEqual(['media-2'])
         expect(first).toMatchObject({
             generation: 'r7-demo',
-            publicRootUrl: 'https://feed-data.myoc.art/generations/v1/roots/r7-demo.json',
+            publicRootUrl: 'https://m.myoc.art/recent-feed/generations/v1/roots/r7-demo.json',
             nextPosition: 1,
         })
         expect(second).toMatchObject({generation: 'r7-demo', nextPosition: null, nextCursor: null})
@@ -283,9 +283,9 @@ describe('generated recent media reader', () => {
 function readerEnvironment(bucket: R2Bucket, includePublicBaseUrl = false) {
     return {
         DB: db,
-        RECENT_FEED_BUCKET: bucket,
+        MEDIA_BUCKET: bucket,
         RECENT_FEED_CURSOR_SECRET: cursorSecret,
-        ...(includePublicBaseUrl ? {RECENT_FEED_PUBLIC_BASE_URL: 'https://feed-data.myoc.art'} : {}),
+        ...(includePublicBaseUrl ? {RECENT_FEED_PUBLIC_BASE_URL: 'https://m.myoc.art'} : {}),
     }
 }
 

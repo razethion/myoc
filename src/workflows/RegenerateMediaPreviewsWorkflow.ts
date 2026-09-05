@@ -1,35 +1,30 @@
 import {WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep} from 'cloudflare:workers'
-import {completeAdminJobRun, failAdminJobRun, updateAdminJobRunSummary} from '../lib/admin/jobs'
+import {failAdminJobRun} from '../lib/admin/jobs'
 import {
-    applyMediaPreviewRegenerationResults,
+    completeMediaPreviewRegenerationDispatch,
+    deleteFinishedMediaPreviewRegenerationItems,
+    enqueueMediaPreviewRegenerationCandidates,
     getMediaPreviewRegenerationCandidates,
-    initializeMediaPreviewRegenerationSummary,
-    MEDIA_PREVIEW_REGENERATION_ITEMS_PER_WORKFLOW,
+    initializeMediaPreviewRegenerationDispatch,
+    MEDIA_PREVIEW_REGENERATION_BATCH_SIZE,
+    MEDIA_PREVIEW_REGENERATION_BATCHES_PER_WORKFLOW,
     type MediaPreviewRegenerationCursor,
-    type MediaPreviewRegenerationResult,
-    type MediaPreviewRegenerationSummary,
     mediaPreviewRegenerationWorkflowInstanceId,
-    regenerateMediaPreviewCandidate,
 } from '../lib/admin/mediaPreviewRegeneration'
 import type {Bindings} from '../types/bindings'
+import {runThumbnailRegenerationWorkflow, type ThumbnailRegenerationWorkflowParams} from './thumbnailRegeneration'
 
-export type RegenerateMediaPreviewsWorkflowParams = {
+type MediaPreviewRegenerationWorkflowParams = {
+    kind?: 'media-previews'
     runId: string
     continuation?: {
         cursor: MediaPreviewRegenerationCursor
+        queuedVariants: number
         segment: number
-        summary: MediaPreviewRegenerationSummary
     }
 }
 
-const MEDIA_STEP_CONFIG = {
-    retries: {
-        limit: 3,
-        delay: '10 seconds',
-        backoff: 'exponential',
-    },
-    timeout: '10 minutes',
-} as const
+export type RegenerateMediaPreviewsWorkflowParams = MediaPreviewRegenerationWorkflowParams | ThumbnailRegenerationWorkflowParams
 
 const D1_STEP_CONFIG = {
     retries: {
@@ -43,12 +38,17 @@ const D1_STEP_CONFIG = {
 export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings, RegenerateMediaPreviewsWorkflowParams> {
     override async run(event: Readonly<WorkflowEvent<RegenerateMediaPreviewsWorkflowParams>>, step: WorkflowStep) {
         try {
-            return await this.runRegeneration(event.payload, step)
+            if (event.payload.kind === 'thumbnails') {
+                return await runThumbnailRegenerationWorkflow(this.env, event.payload, step)
+            }
+
+            return await this.dispatchRegeneration(event.payload, step)
         } catch (error) {
             const message = errorMessage(error)
 
             await step.do('record job failure', D1_STEP_CONFIG, async () => {
                 await failAdminJobRun(this.env.DB, event.payload.runId, message)
+                await deleteFinishedMediaPreviewRegenerationItems(this.env.DB, event.payload.runId)
                 return {recorded: true}
             })
 
@@ -56,65 +56,61 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
         }
     }
 
-    private async runRegeneration(params: RegenerateMediaPreviewsWorkflowParams, step: WorkflowStep) {
+    private async dispatchRegeneration(params: MediaPreviewRegenerationWorkflowParams, step: WorkflowStep) {
         const {continuation, runId} = params
-        let summary =
-            continuation?.summary ??
-            (await step.do('initialize job', D1_STEP_CONFIG, async () => {
-                const initial = await initializeMediaPreviewRegenerationSummary(this.env.DB)
-                await updateAdminJobRunSummary(this.env.DB, runId, initial)
-                return initial
-            }))
-        let cursor: MediaPreviewRegenerationCursor | null = continuation?.cursor ?? null
-        const segment = continuation?.segment ?? 0
-        let batchNumber = 1
-        let processedByInstance = 0
 
-        while (processedByInstance < MEDIA_PREVIEW_REGENERATION_ITEMS_PER_WORKFLOW) {
+        if (!continuation) {
+            await step.do('initialize job', D1_STEP_CONFIG, async () => {
+                return await initializeMediaPreviewRegenerationDispatch(this.env.DB, runId)
+            })
+        }
+
+        let cursor: MediaPreviewRegenerationCursor | null = continuation?.cursor ?? null
+        let queuedVariants = continuation?.queuedVariants ?? 0
+        const segment = continuation?.segment ?? 0
+
+        for (let batchNumber = 1; batchNumber <= MEDIA_PREVIEW_REGENERATION_BATCHES_PER_WORKFLOW; batchNumber += 1) {
             const candidates = await step.do(`load batch ${batchNumber}`, D1_STEP_CONFIG, async () => {
                 return await getMediaPreviewRegenerationCandidates(this.env.DB, cursor)
             })
 
             if (candidates.length === 0) {
-                await step.do('complete job', D1_STEP_CONFIG, async () => {
-                    await completeAdminJobRun(this.env.DB, runId, summary)
-                    return summary
+                await step.do('finish queue dispatch', D1_STEP_CONFIG, async () => {
+                    await completeMediaPreviewRegenerationDispatch(this.env.DB, runId)
+                    return {queuedVariants}
                 })
 
-                return summary
+                return {queuedVariants}
             }
 
-            const results: MediaPreviewRegenerationResult[] = []
+            const lastCandidate = candidates.at(-1)
 
-            for (const [index, candidate] of candidates.entries()) {
-                try {
-                    results.push(
-                        await step.do(`regenerate batch ${batchNumber} item ${index + 1}`, MEDIA_STEP_CONFIG, async () => {
-                            return await regenerateMediaPreviewCandidate(this.env, candidate)
-                        }),
-                    )
-                } catch (error) {
-                    results.push({
-                        status: 'failed',
-                        regeneratedBlur: false,
-                        error: errorMessage(error),
-                    })
-                }
-
-                cursor = {
-                    mediaId: candidate.mediaId,
-                    ratingOrder: candidate.ratingOrder,
-                }
+            /* istanbul ignore if -- a nonempty candidate batch always has a last item. */
+            if (!lastCandidate) {
+                throw new Error('Media preview candidate batch is empty')
             }
 
-            summary = applyMediaPreviewRegenerationResults(summary, results)
-            processedByInstance += candidates.length
-            await step.do(`record batch ${batchNumber}`, D1_STEP_CONFIG, async () => {
-                await updateAdminJobRunSummary(this.env.DB, runId, summary)
-                return summary
+            const dispatch = await step.do(`queue batch ${batchNumber}`, D1_STEP_CONFIG, async () => {
+                await enqueueMediaPreviewRegenerationCandidates(this.env.DB, this.env, runId, candidates)
+                return {
+                    cursor: {
+                        mediaId: lastCandidate.mediaId,
+                        ratingOrder: lastCandidate.ratingOrder,
+                    },
+                    queuedVariants: queuedVariants + candidates.length,
+                }
             })
+            cursor = dispatch.cursor
+            queuedVariants = dispatch.queuedVariants
 
-            batchNumber += 1
+            if (candidates.length < MEDIA_PREVIEW_REGENERATION_BATCH_SIZE) {
+                await step.do('finish queue dispatch', D1_STEP_CONFIG, async () => {
+                    await completeMediaPreviewRegenerationDispatch(this.env.DB, runId)
+                    return {queuedVariants}
+                })
+
+                return {queuedVariants}
+            }
         }
 
         const nextSegment = segment + 1
@@ -127,8 +123,8 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
                         runId,
                         continuation: {
                             cursor: continuationCursor,
+                            queuedVariants,
                             segment: nextSegment,
-                            summary,
                         },
                     },
                 },
@@ -136,7 +132,7 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
             return {started: true}
         })
 
-        return summary
+        return {queuedVariants}
     }
 }
 

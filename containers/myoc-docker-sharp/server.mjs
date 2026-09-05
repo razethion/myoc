@@ -3,16 +3,23 @@ import {createHash, randomUUID, timingSafeEqual} from 'node:crypto'
 import http from 'node:http'
 import process from 'node:process'
 import timers from 'node:timers'
-import {createAvifPreview} from './preview.mjs'
+import {createAvifBlur, createAvifPreview, createGalleryAvifOutputs, createSquareAvif} from './preview.mjs'
 
 const port = Number.parseInt(process.env['PORT'] ?? '8080', 10)
 const previewLongEdge = parsePositiveInteger(process.env['PREVIEW_MAX_LONG_EDGE'], 1600)
 const previewQuality = clamp(parsePositiveInteger(process.env['PREVIEW_AVIF_QUALITY'], 60), 1, 100)
+const blurMaxWidth = parsePositiveInteger(process.env['BLUR_MAX_WIDTH'], 960)
+const blurQuality = clamp(parsePositiveInteger(process.env['BLUR_AVIF_QUALITY'], 60), 1, 100)
+const blurSigma = clamp(parsePositiveNumber(process.env['BLUR_SIGMA'], 250), 0.3, 1000)
+const blurSourceMaxBytes = parsePositiveInteger(process.env['BLUR_SOURCE_MAX_BYTES'], 16 * 1024 * 1024)
 const requestBodyMaxBytes = parsePositiveInteger(process.env['REQUEST_BODY_MAX_BYTES'], 4096)
 const sourceImageMaxBytes = parsePositiveInteger(process.env['SOURCE_IMAGE_MAX_BYTES'], 64 * 1024 * 1024)
 const sourceFetchTimeoutMs = parsePositiveInteger(process.env['SOURCE_FETCH_TIMEOUT_MS'], 30_000)
 const sourceLimitInputPixels = parsePositiveInteger(process.env['SOURCE_LIMIT_INPUT_PIXELS'], 100_000_000)
 const allowHttpSourceUrls = process.env['ALLOW_HTTP_SOURCE_URLS'] === 'true'
+const squareImageQuality = clamp(parsePositiveInteger(process.env['SQUARE_IMAGE_AVIF_QUALITY'], 75), 1, 100)
+const squareImageSize = parsePositiveInteger(process.env['SQUARE_IMAGE_SIZE'], 512)
+const squareSourceMaxBytes = parsePositiveInteger(process.env['SQUARE_SOURCE_MAX_BYTES'], 3 * 1024 * 1024)
 
 const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', `https://${request.headers.host ?? 'localhost'}`)
@@ -28,8 +35,25 @@ const server = http.createServer(async (request, response) => {
         return
     }
 
+    if (url.pathname === '/images/blur') {
+        await handleBlurRequest(request, response)
+        return
+    }
+
+    if (url.pathname === '/images/square') {
+        await handleSquareRequest(request, response)
+        return
+    }
+
+    if (url.pathname === '/images/gallery') {
+        await handleGalleryRequest(request, response, url)
+        return
+    }
+
     sendJson(response, 404, {error: 'Not found'})
 })
+
+export {server}
 
 server.listen(port, '0.0.0.0', () => {
     console.log(`myoc-docker-sharp listening on ${port}`)
@@ -53,17 +77,155 @@ function shutdown(signal) {
         .unref()
 }
 
-async function handlePreviewRequest(request, response) {
+async function handleBlurRequest(request, response) {
+    if (!authorizePost(request, response)) return
+
+    const requestId = randomUUID()
+    const startedAt = Date.now()
+
+    try {
+        const sourceBytes = await readRequestBytes(request, blurSourceMaxBytes)
+        const result = await createAvifBlur(sourceBytes, {
+            limitInputPixels: sourceLimitInputPixels,
+            maxWidth: blurMaxWidth,
+            quality: blurQuality,
+            sigma: blurSigma,
+        })
+
+        console.log('Preview container processed blur', {
+            blurBytes: Buffer.byteLength(result.bytes),
+            blurHeight: result.height,
+            blurWidth: result.width,
+            durationMs: Date.now() - startedAt,
+            requestId,
+            sourceBytes: Buffer.byteLength(sourceBytes),
+        })
+
+        response.writeHead(200, {
+            'cache-control': 'no-store',
+            'content-length': Buffer.byteLength(result.bytes),
+            'content-type': 'image/avif',
+            'x-preview-height': result.height,
+            'x-preview-width': result.width,
+        })
+        response.end(result.bytes)
+    } catch (error) {
+        console.error('Blur generation failed', {
+            durationMs: Date.now() - startedAt,
+            error: error instanceof Error ? error.message : String(error),
+            requestId,
+        })
+        sendJson(response, 502, {error: 'Blur generation failed'})
+    }
+}
+
+async function handleSquareRequest(request, response) {
+    if (!authorizePost(request, response)) return
+
+    const requestId = randomUUID()
+    const startedAt = Date.now()
+
+    try {
+        const sourceBytes = await readRequestBytes(request, squareSourceMaxBytes)
+        const result = await createSquareAvif(sourceBytes, {
+            limitInputPixels: sourceLimitInputPixels,
+            quality: squareImageQuality,
+            size: squareImageSize,
+        })
+
+        console.log('Image container processed square image', {
+            durationMs: Date.now() - startedAt,
+            outputBytes: Buffer.byteLength(result.bytes),
+            requestId,
+            sourceBytes: Buffer.byteLength(sourceBytes),
+        })
+
+        response.writeHead(200, {
+            'cache-control': 'no-store',
+            'content-length': Buffer.byteLength(result.bytes),
+            'content-type': 'image/avif',
+            'x-preview-height': result.height,
+            'x-preview-width': result.width,
+        })
+        response.end(result.bytes)
+    } catch (error) {
+        console.error('Square image generation failed', {
+            durationMs: Date.now() - startedAt,
+            error: error instanceof Error ? error.message : String(error),
+            requestId,
+        })
+        sendJson(response, 422, {error: 'Square image generation failed'})
+    }
+}
+
+async function handleGalleryRequest(request, response, url) {
+    if (!authorizePost(request, response)) return
+
+    const requestId = randomUUID()
+    const startedAt = Date.now()
+
+    try {
+        const sourceBytes = await readRequestBytes(request, sourceImageMaxBytes)
+        const result = await createGalleryAvifOutputs(sourceBytes, {
+            blur: url.searchParams.get('blur') === '1',
+            blurMaxWidth,
+            blurQuality,
+            blurSigma,
+            limitInputPixels: sourceLimitInputPixels,
+            maxLongEdge: previewLongEdge,
+            previewQuality,
+        })
+        const body = result.blur ? Buffer.concat([result.preview.bytes, result.blur.bytes]) : result.preview.bytes
+        const headers = {
+            'cache-control': 'no-store',
+            'content-length': Buffer.byteLength(body),
+            'content-type': 'application/octet-stream',
+            'x-preview-height': result.preview.height,
+            'x-preview-length': Buffer.byteLength(result.preview.bytes),
+            'x-preview-width': result.preview.width,
+        }
+
+        if (result.blur) {
+            headers['x-blur-height'] = result.blur.height
+            headers['x-blur-length'] = Buffer.byteLength(result.blur.bytes)
+            headers['x-blur-width'] = result.blur.width
+        }
+
+        console.log('Image container processed gallery image', {
+            blurBytes: result.blur ? Buffer.byteLength(result.blur.bytes) : 0,
+            durationMs: Date.now() - startedAt,
+            previewBytes: Buffer.byteLength(result.preview.bytes),
+            requestId,
+            sourceBytes: Buffer.byteLength(sourceBytes),
+        })
+        response.writeHead(200, headers)
+        response.end(body)
+    } catch (error) {
+        console.error('Gallery image generation failed', {
+            durationMs: Date.now() - startedAt,
+            error: error instanceof Error ? error.message : String(error),
+            requestId,
+        })
+        sendJson(response, 422, {error: 'Gallery image generation failed'})
+    }
+}
+
+function authorizePost(request, response) {
     if (request.method !== 'POST') {
         response.writeHead(405, {allow: 'POST'})
         response.end()
-        return
+        return false
     }
 
     if (!isAuthorized(request)) {
         sendJson(response, 401, {error: 'Unauthorized'})
-        return
+        return false
     }
+    return true
+}
+
+async function handlePreviewRequest(request, response) {
+    if (!authorizePost(request, response)) return
 
     let payload
 
@@ -230,13 +392,13 @@ async function readResponseBytes(response, maxBytes) {
 }
 
 /**
- * @param {Buffer} sourceBytes
- * @returns {Promise<{bytes: Buffer, height: number, width: number}>}
- */
-/**
  * @returns {Promise<string>}
  */
-function readRequestText(request, maxBytes) {
+async function readRequestText(request, maxBytes) {
+    return (await readRequestBytes(request, maxBytes)).toString('utf8')
+}
+
+function readRequestBytes(request, maxBytes) {
     return new Promise((resolve, reject) => {
         const chunks = []
         let receivedBytes = 0
@@ -254,7 +416,7 @@ function readRequestText(request, maxBytes) {
             chunks.push(bytes)
         })
 
-        request.on('end', () => resolve(Buffer.concat(chunks, receivedBytes).toString('utf8')))
+        request.on('end', () => resolve(Buffer.concat(chunks, receivedBytes)))
         request.on('error', reject)
     })
 }
@@ -270,6 +432,11 @@ function sendJson(response, status, body) {
 function parsePositiveInteger(value, fallback) {
     const parsed = Number.parseInt(value ?? '', 10)
     return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function parsePositiveNumber(value, fallback) {
+    const parsed = Number.parseFloat(value ?? '')
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
 function clamp(value, min, max) {

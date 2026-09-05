@@ -15,7 +15,7 @@ const RecentFeedCursorPayloadSchema = z.object({
 type RecentFeedReaderEnv = {
     DB: D1Database
     RECENT_FEED_BLOCK_ITEMS?: string
-    RECENT_FEED_BUCKET: R2Bucket
+    MEDIA_BUCKET: R2Bucket
     RECENT_FEED_CLEANUP_ENABLED?: string
     RECENT_FEED_CURSOR_SECRET?: string
     RECENT_FEED_PUBLIC_BASE_URL?: string
@@ -121,7 +121,7 @@ async function loadRecentFeed(env: RecentFeedReaderEnv, request: RecentFeedReade
     const pointer = request.generation ? await getGenerationPointer(env.DB, request.generation) : await getRecentFeedPointer(env.DB)
     if (!pointer) throw unavailableGenerationError(request.generation)
 
-    const rootObject = await env.RECENT_FEED_BUCKET.get(pointer.rootKey)
+    const rootObject = await env.MEDIA_BUCKET.get(pointer.rootKey)
     if (!rootObject) throw unavailableGenerationError(request.generation)
 
     const root = RecentFeedRootSchema.parse(await rootObject.json<unknown>())
@@ -204,7 +204,7 @@ async function scanRecentMediaBatch(
         return loaded.initialItems.slice(position, position + limit)
     }
 
-    return await readRecentFeedTreeItems(env.RECENT_FEED_BUCKET, loaded.variantRoot, request.variant, position, limit, objectCache)
+    return await readRecentFeedTreeItems(env.MEDIA_BUCKET, loaded.variantRoot, request.variant, position, limit, objectCache)
 }
 
 function appendVisibleItems(target: RecentMediaItem[], scannedItems: RecentMediaItem[], revokedIds: Set<string>, limit: number): number {

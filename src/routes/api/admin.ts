@@ -11,6 +11,8 @@ import {toSqlTimestamp} from '../../lib/auth/session'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {ErrorResponseSchema, ImageApprovalDataSchema} from '../../lib/http/responseSchemas'
 import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../../lib/media/cacheControl'
+import {readGalleryImageDimensions} from '../../lib/media/imageMetadata'
+import {GALLERY_NSFW_BLUR_CONTENT_TYPE, generateNsfwBlurImage, mediaPreviewContainerIndex} from '../../lib/media/previewGeneration'
 import {deleteR2Objects} from '../../lib/media/r2Delete'
 import {characterMediaImageObjectKey, characterMediaNsfwBlurImageObjectKey, characterMediaPreviewImageObjectKey} from '../../lib/media/url'
 import type {Bindings} from '../../types/bindings'
@@ -18,10 +20,6 @@ import type {Bindings} from '../../types/bindings'
 export const adminRoutes = new Hono<{Bindings: Bindings}>()
 
 const GALLERY_IMAGE_CACHE_CONTROL = REVOCABLE_MEDIA_CACHE_CONTROL
-const GALLERY_NSFW_BLUR_CONTENT_TYPE = 'image/avif'
-const GALLERY_NSFW_BLUR_MAX_WIDTH = 960
-const GALLERY_NSFW_BLUR_AMOUNT = 250
-const GALLERY_NSFW_BLUR_QUALITY = 60
 
 type ImageApprovalRequest = {
     sfwAction?: unknown
@@ -275,12 +273,7 @@ async function copyReviewObjects(env: Bindings, update: MediaReviewUpdate): Prom
         }
 
         if (update.blurGeneration) {
-            await putNsfwBlurImage(
-                env.IMAGES,
-                env.MEDIA_BUCKET,
-                update.blurGeneration.sourceObjectKey,
-                update.blurGeneration.targetObjectKey,
-            )
+            await putNsfwBlurImage(env, update.blurGeneration.sourceObjectKey, update.blurGeneration.targetObjectKey)
             copiedObjectKeys.push(update.blurGeneration.targetObjectKey)
         }
 
@@ -701,31 +694,32 @@ function createPreviewMove(media: ModerationMediaRow, sourceRating: 'sfw' | 'nsf
     }
 }
 
-async function putNsfwBlurImage(images: ImagesBinding, bucket: R2Bucket, sourceObjectKey: string, targetObjectKey: string): Promise<void> {
-    const source = await bucket.get(sourceObjectKey)
+async function putNsfwBlurImage(
+    env: Pick<Bindings, 'MEDIA_BUCKET' | 'MYOC_DOCKER_SHARP_CONTAINER' | 'PREVIEW_PROCESSOR_TOKEN'>,
+    sourceObjectKey: string,
+    targetObjectKey: string,
+): Promise<void> {
+    const source = await env.MEDIA_BUCKET.get(sourceObjectKey)
 
+    /* istanbul ignore if -- the object was copied and checked immediately before this call. */
     if (!source?.body) {
         throw new Error(`Unable to generate NSFW blur image because preview object is missing: ${sourceObjectKey}`)
     }
 
-    const result = await images
-        .input(source.body)
-        .transform({width: GALLERY_NSFW_BLUR_MAX_WIDTH, fit: 'scale-down'})
-        .transform({blur: GALLERY_NSFW_BLUR_AMOUNT})
-        .output({format: GALLERY_NSFW_BLUR_CONTENT_TYPE, quality: GALLERY_NSFW_BLUR_QUALITY})
-    const response = result.response()
-    const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() ?? ''
+    const bytes = new Uint8Array(await source.arrayBuffer())
+    const sourceContentType = source.httpMetadata?.contentType ?? (sourceObjectKey.endsWith('.avif') ? 'image/avif' : 'image/webp')
+    const dimensions = readGalleryImageDimensions(bytes, sourceContentType)
 
-    if (!response.ok || contentType !== GALLERY_NSFW_BLUR_CONTENT_TYPE) {
-        throw new Error('Cloudflare Images did not return the requested AVIF blur image')
+    if (!dimensions) {
+        throw new Error(`Unable to generate NSFW blur image because preview object is invalid: ${sourceObjectKey}`)
     }
 
-    const bytes = new Uint8Array(await response.arrayBuffer())
+    const blur = await generateNsfwBlurImage(env, {bytes, ...dimensions}, {containerIndex: mediaPreviewContainerIndex(sourceObjectKey)})
 
-    await bucket.put(targetObjectKey, bytes, {
+    await env.MEDIA_BUCKET.put(targetObjectKey, blur.bytes, {
         httpMetadata: {
             cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
-            contentType,
+            contentType: blur.contentType,
         },
     })
 }
