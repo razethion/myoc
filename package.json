@@ -43,7 +43,7 @@
     "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@tailwindcss/cli": "^4.3.3",
     "@vitest/coverage-istanbul": "^4.1.11",
-    "daisyui": "^5.7.4",
+    "daisyui": "^5.7.22",
     "knip": "^6.32.2",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
