@@ -1677,6 +1677,23 @@ function RecentMediaFilterControls({showNsfw, showUnapproved}: {showNsfw: boolea
     )
 }
 
+export function RecentMediaUnavailablePage({
+    currentUser,
+    guestInitial,
+    mediaBaseUrl,
+}: Pick<RecentMediaPageProps, 'currentUser' | 'guestInitial' | 'mediaBaseUrl'>) {
+    return (
+        <BaseLayout title="Recently uploaded media | MyOC">
+            <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl} />
+            <main class="w-full px-3 py-6 sm:px-5 lg:px-6">
+                <div class="alert" role="alert">
+                    <span>Gallery is currently unavailable</span>
+                </div>
+            </main>
+        </BaseLayout>
+    )
+}
+
 export function RecentMediaPage({currentUser, guestInitial, mediaBaseUrl, page, showNsfw, showUnapproved}: RecentMediaPageProps) {
     const rows = chunkRecentMediaGroups(groupSequentialRecentMediaItems(page.items))
     const hasMore = Boolean(page.generation && page.publicRootUrl && page.nextPosition !== null)

@@ -166,6 +166,80 @@ describe('recent feed cleanup', () => {
         }
     })
 
+    it('removes a noncurrent generation with a missing root after it validates the current graph', async () => {
+        const graph = retainedObjectGraph()
+        await seedGeneration('r1-valid', graph.rootKey, '2026-06-10T12:00:00.000Z')
+        await setCurrentGeneration('r1-valid', graph.rootKey)
+        const missingRoot = 'recent-feed/generations/v1/roots/r1-missing.json'
+        await seedGeneration('r1-missing', missingRoot, '2026-06-11T12:00:00.000Z')
+        const validOldRoot = 'recent-feed/generations/v1/roots/r1-old-valid.json'
+        await seedGeneration('r1-old-valid', validOldRoot, '2026-06-11T11:00:00.000Z')
+        const bucket = createMockR2Bucket()
+        for (const [key, value] of graph.objects) {
+            await bucket.put(key, JSON.stringify(value))
+        }
+        await bucket.put(validOldRoot, JSON.stringify({...graph.root, generation: 'r1-old-valid'}))
+        const orphanRoot = 'recent-feed/generations/v1/roots/r-orphan.json'
+        await bucket.put(orphanRoot, '{}')
+
+        const summary = await cleanupRecentFeed(enabledEnvironment(bucket), new Date('2026-06-13T12:00:00.000Z'))
+
+        expect(summary).toEqual({retainedGenerations: 2, deletedGenerations: 1, deletedObjects: 1})
+        expect(
+            await queryOne<{generation: string}>('SELECT generation FROM recent_feed_generations WHERE generation = ?', ['r1-missing']),
+        ).toBeNull()
+        expect(
+            await queryOne<{generation: string}>('SELECT generation FROM recent_feed_generations WHERE generation = ?', ['r1-old-valid']),
+        ).toEqual({generation: 'r1-old-valid'})
+        expect(await bucket.get(validOldRoot)).not.toBeNull()
+        expect(await bucket.get(orphanRoot)).toBeNull()
+        for (const key of graph.reachableKeys) {
+            expect(await bucket.get(key)).not.toBeNull()
+        }
+    })
+
+    it('keeps all generation rows and objects when the current root is missing', async () => {
+        const currentRoot = 'recent-feed/generations/v1/roots/r1-current-missing.json'
+        await seedGeneration('r1-current-missing', currentRoot, '2026-06-10T12:00:00.000Z')
+        await setCurrentGeneration('r1-current-missing', currentRoot)
+        const bucket = createMockR2Bucket()
+        const orphanRoot = 'recent-feed/generations/v1/roots/r-orphan.json'
+        await bucket.put(orphanRoot, '{}')
+
+        const summary = await cleanupRecentFeed(enabledEnvironment(bucket), new Date('2026-06-13T12:00:00.000Z'))
+
+        expect(summary).toEqual({retainedGenerations: 1, deletedGenerations: 0, deletedObjects: 0})
+        expect(
+            await queryOne<{generation: string}>('SELECT generation FROM recent_feed_generations WHERE generation = ?', [
+                'r1-current-missing',
+            ]),
+        ).toEqual({generation: 'r1-current-missing'})
+        expect(await bucket.get(orphanRoot)).not.toBeNull()
+    })
+
+    it('does not remove missing generation rows when R2 cannot check them', async () => {
+        const graph = retainedObjectGraph()
+        await seedGeneration('r1-valid', graph.rootKey, '2026-06-10T12:00:00.000Z')
+        await setCurrentGeneration('r1-valid', graph.rootKey)
+        const unavailableRoot = 'recent-feed/generations/v1/roots/r1-unavailable.json'
+        await seedGeneration('r1-unavailable', unavailableRoot, '2026-06-11T12:00:00.000Z')
+        const bucket = createMockR2Bucket()
+        for (const [key, value] of graph.objects) {
+            await bucket.put(key, JSON.stringify(value))
+        }
+        const orphanRoot = 'recent-feed/generations/v1/roots/r-orphan.json'
+        await bucket.put(orphanRoot, '{}')
+        vi.mocked(bucket.head).mockRejectedValueOnce(new Error('R2 is unavailable'))
+
+        const summary = await cleanupRecentFeed(enabledEnvironment(bucket), new Date('2026-06-13T12:00:00.000Z'))
+
+        expect(summary).toEqual({retainedGenerations: 2, deletedGenerations: 0, deletedObjects: 0})
+        expect(
+            await queryOne<{generation: string}>('SELECT generation FROM recent_feed_generations WHERE generation = ?', ['r1-unavailable']),
+        ).toEqual({generation: 'r1-unavailable'})
+        expect(await bucket.get(orphanRoot)).not.toBeNull()
+    })
+
     it('deletes old orphan objects from all listing pages', async () => {
         const bucket = createMockR2Bucket()
         const orphanRoots = Array.from({length: 1_001}, (_, index) => `recent-feed/generations/v1/roots/r-orphan-${index}.json`)
@@ -224,8 +298,11 @@ describe('recent feed cleanup', () => {
         expect(await bucket.get(orphanRoot)).not.toBeNull()
     })
 
-    it('does not sweep objects when the retained root limit is exceeded', async () => {
-        await seedGenerations(2_001)
+    it.each([
+        {count: 2_000, deletedObjects: 1},
+        {count: 2_001, deletedObjects: 0},
+    ])('bounds the root scan with $count retained roots', async ({count, deletedObjects}) => {
+        await seedGenerations(count)
         const bucket = createMockR2Bucket()
         const emptyRoot = JSON.stringify({
             schemaVersion: 1,
@@ -239,7 +316,7 @@ describe('recent feed cleanup', () => {
                 'n1-u1': {itemCount: 0, years: []},
             },
         })
-        for (let index = 0; index < 2_001; index += 1) {
+        for (let index = 0; index < count; index += 1) {
             await bucket.put(`recent-feed/generations/v1/roots/r-new-${index}.json`, emptyRoot)
         }
         const orphanBlock = `recent-feed/generations/v1/blocks/n0-u0/2026-06-10T12/${'f'.repeat(64)}.json`
@@ -247,8 +324,8 @@ describe('recent feed cleanup', () => {
 
         const summary = await cleanupRecentFeed(enabledEnvironment(bucket), new Date('2026-08-25T12:00:00.000Z'))
 
-        expect(summary).toEqual({retainedGenerations: 2_001, deletedGenerations: 0, deletedObjects: 0})
-        expect(await bucket.get(orphanBlock)).not.toBeNull()
+        expect(summary).toEqual({retainedGenerations: count, deletedGenerations: 0, deletedObjects})
+        expect(Boolean(await bucket.get(orphanBlock))).toBe(deletedObjects === 0)
     })
 
     it('keeps new orphan objects during the grace period', async () => {
@@ -274,6 +351,30 @@ describe('recent feed cleanup', () => {
                 .prepare(
                     `UPDATE recent_feed_state
                      SET lease_owner = 'publisher', lease_expires_at = '2099-01-01 00:00:00'
+                     WHERE singleton = 1`,
+                )
+                .run()
+            return page
+        })
+
+        const summary = await cleanupRecentFeed(enabledEnvironment(bucket), new Date('2026-06-13T12:00:00.000Z'))
+
+        expect(summary).toEqual({retainedGenerations: 0, deletedGenerations: 0, deletedObjects: 0})
+        expect(await bucket.get(orphanRoot)).not.toBeNull()
+    })
+
+    it('does not delete orphans after its cleanup lease expires', async () => {
+        const bucket = createMockR2Bucket()
+        const orphanRoot = 'recent-feed/generations/v1/roots/r-orphan.json'
+        await bucket.put(orphanRoot, '{}')
+        const listObjects = vi.mocked(bucket.list).getMockImplementation()
+        if (!listObjects) throw new Error('The mock R2 list implementation is missing')
+        vi.mocked(bucket.list).mockImplementationOnce(async (options) => {
+            const page = await listObjects(options)
+            await db
+                .prepare(
+                    `UPDATE recent_feed_state
+                     SET lease_expires_at = '2000-01-01 00:00:00'
                      WHERE singleton = 1`,
                 )
                 .run()
@@ -364,6 +465,21 @@ async function seedGeneration(generation: string, rootKey: string, publishedAt: 
              ) VALUES (?, 1, ?, '{}', 0, 0, ?)`,
         )
         .bind(generation, rootKey, publishedAt)
+        .run()
+}
+
+async function setCurrentGeneration(generation: string, rootKey: string): Promise<void> {
+    await db
+        .prepare(
+            `UPDATE recent_feed_state
+             SET requested_revision = 1,
+                 published_revision = 1,
+                 generation = ?,
+                 root_key = ?,
+                 published_at = '2026-06-10T12:00:00.000Z'
+             WHERE singleton = 1`,
+        )
+        .bind(generation, rootKey)
         .run()
 }
 

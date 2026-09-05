@@ -26,7 +26,9 @@ type GenerationRow = {
     root_key: string
 }
 
-type RootKeyRow = {
+type RetainedRootRow = {
+    generation: string
+    is_current: number
     root_key: string
 }
 
@@ -147,32 +149,46 @@ export async function cleanupRecentFeed(env: RecentFeedCleanupEnv, now = new Dat
             await env.MEDIA_BUCKET.delete(generationBatch.map((generation) => generation.root_key))
         }
 
-        const retainedGenerations = await countGenerations(env.DB)
-        const retainedRootKeys = await loadRetainedRootKeys(env.DB)
+        let retainedGenerations = await countGenerations(env.DB)
+        const retainedRoots = await loadRetainedRoots(env.DB)
 
-        if (!retainedRootKeys) {
+        if (!retainedRoots) {
             logSkippedSweep('too-many-retained-roots')
             return cleanupSummary(retainedGenerations, generations.length, expiredRootKeys.length)
         }
 
-        const graph = await markReachableObjects(env.MEDIA_BUCKET, retainedRootKeys)
+        const missingGenerations = await findMissingNoncurrentGenerationRoots(env.MEDIA_BUCKET, retainedRoots)
+
+        if (!missingGenerations) {
+            logSkippedSweep('retained-root-is-missing-or-unavailable')
+            return cleanupSummary(retainedGenerations, generations.length, expiredRootKeys.length)
+        }
+
+        const missingRootKeys = new Set(missingGenerations.map((generation) => generation.root_key))
+        const graph = await markReachableObjects(
+            env.MEDIA_BUCKET,
+            retainedRoots.filter((root) => !missingRootKeys.has(root.root_key)).map((root) => root.root_key),
+        )
 
         if (!graph) {
             logSkippedSweep('retained-graph-is-invalid-or-too-large')
             return cleanupSummary(retainedGenerations, generations.length, expiredRootKeys.length)
         }
 
+        const quarantinedGenerations = await deleteMissingGenerationRows(env.DB, leaseOwner, missingGenerations)
+        retainedGenerations = await countGenerations(env.DB)
+
         const orphanCutoff = new Date(now.getTime() - ORPHAN_GRACE_PERIOD_MS)
         const orphanKeys = await findOrphanKeys(env.MEDIA_BUCKET, graph.keys, orphanCutoff)
 
         if (!orphanKeys) {
             logSkippedSweep('object-list-is-too-large')
-            return cleanupSummary(retainedGenerations, generations.length, expiredRootKeys.length)
+            return cleanupSummary(retainedGenerations, generations.length + quarantinedGenerations, expiredRootKeys.length)
         }
 
         if (!(await renewCleanupLease(env.DB, leaseOwner))) {
             logSkippedSweep('cleanup-lease-was-lost')
-            return cleanupSummary(retainedGenerations, generations.length, expiredRootKeys.length)
+            return cleanupSummary(retainedGenerations, generations.length + quarantinedGenerations, expiredRootKeys.length)
         }
 
         const keysToDelete = orphanKeys.slice(0, MAXIMUM_DELETIONS_PER_RUN)
@@ -181,7 +197,11 @@ export async function cleanupRecentFeed(env: RecentFeedCleanupEnv, now = new Dat
             await env.MEDIA_BUCKET.delete(keysToDelete.slice(offset, offset + R2_DELETE_BATCH_SIZE))
         }
 
-        return cleanupSummary(retainedGenerations, generations.length, expiredRootKeys.length + keysToDelete.length)
+        return cleanupSummary(
+            retainedGenerations,
+            generations.length + quarantinedGenerations,
+            expiredRootKeys.length + keysToDelete.length,
+        )
     } finally {
         await releaseCleanupLease(env.DB, leaseOwner)
     }
@@ -214,7 +234,7 @@ async function acquireCleanupLease(db: D1Database, owner: string): Promise<boole
 }
 
 async function renewCleanupLease(db: D1Database, owner: string): Promise<boolean> {
-    await db
+    const result = await db
         .prepare(
             `UPDATE recent_feed_state
              SET lease_expires_at = datetime('now', '+15 minutes'),
@@ -226,7 +246,7 @@ async function renewCleanupLease(db: D1Database, owner: string): Promise<boolean
         .bind(owner)
         .run()
 
-    return (await readLeaseOwner(db)) === owner
+    return Number(result.meta.changes) === 1
 }
 
 async function releaseCleanupLease(db: D1Database, owner: string): Promise<void> {
@@ -261,44 +281,57 @@ async function countGenerations(db: D1Database): Promise<number> {
     return row?.count ?? 0
 }
 
-async function loadRetainedRootKeys(db: D1Database): Promise<string[] | null> {
-    const rootKeys: string[] = []
+async function loadRetainedRoots(db: D1Database): Promise<RetainedRootRow[] | null> {
+    const roots: RetainedRootRow[] = []
     let cursor = ''
 
     while (true) {
         const result = await db
             .prepare(
-                `SELECT root_key
+                `SELECT COALESCE(retained.generation, '') AS generation,
+                        retained.root_key,
+                        CASE
+                            WHEN retained.root_key = state.root_key
+                              OR retained.generation = state.generation THEN 1
+                            ELSE 0
+                        END AS is_current
                  FROM (
-                     SELECT root_key
+                     SELECT generation, root_key
                      FROM recent_feed_generations
-                     UNION
-                     SELECT root_key
-                     FROM recent_feed_state
-                     WHERE singleton = 1 AND root_key IS NOT NULL
-                 )
-                 WHERE root_key > ?
-                 ORDER BY root_key
+                     UNION ALL
+                     SELECT NULL AS generation, pointer.root_key
+                     FROM recent_feed_state AS pointer
+                     WHERE pointer.singleton = 1
+                       AND pointer.root_key IS NOT NULL
+                       AND NOT EXISTS (
+                           SELECT 1
+                           FROM recent_feed_generations AS generation
+                           WHERE generation.root_key = pointer.root_key
+                       )
+                 ) AS retained
+                 JOIN recent_feed_state AS state ON state.singleton = 1
+                 WHERE retained.root_key > ?
+                 ORDER BY retained.root_key
                  LIMIT ?`,
             )
             .bind(cursor, RETAINED_ROOT_PAGE_SIZE)
-            .all<RootKeyRow>()
+            .all<RetainedRootRow>()
         const rows = result.results
 
         for (const row of rows) {
             if (!isRootKey(row.root_key)) {
                 return null
             }
-            rootKeys.push(row.root_key)
+            roots.push(row)
         }
 
         if (rows.length < RETAINED_ROOT_PAGE_SIZE) {
-            return rootKeys
+            return roots
         }
 
-        cursor = (rows.at(-1) as RootKeyRow).root_key
+        cursor = (rows.at(-1) as RetainedRootRow).root_key
 
-        if (rootKeys.length === MAXIMUM_RETAINED_ROOTS) {
+        if (roots.length === MAXIMUM_RETAINED_ROOTS) {
             const probe = await db
                 .prepare(
                     `SELECT root_key
@@ -315,10 +348,60 @@ async function loadRetainedRootKeys(db: D1Database): Promise<string[] | null> {
                      LIMIT 1`,
                 )
                 .bind(cursor)
-                .all<RootKeyRow>()
-            return probe.results.length === 0 ? rootKeys : null
+                .all<{root_key: string}>()
+            return probe.results.length === 0 ? roots : null
         }
     }
+}
+
+async function findMissingNoncurrentGenerationRoots(bucket: R2Bucket, roots: RetainedRootRow[]): Promise<GenerationRow[] | null> {
+    const currentRoot = roots.find((root) => root.is_current === 1)
+
+    if (!currentRoot) {
+        return []
+    }
+
+    const missing: GenerationRow[] = []
+
+    try {
+        for (const root of roots) {
+            if (root.is_current === 1 || (await bucket.head(root.root_key))) continue
+            missing.push({generation: root.generation, root_key: root.root_key})
+        }
+    } catch {
+        return null
+    }
+
+    return missing
+}
+
+async function deleteMissingGenerationRows(db: D1Database, leaseOwner: string, generations: GenerationRow[]): Promise<number> {
+    let deleted = 0
+    await renewCleanupLease(db, leaseOwner)
+
+    for (let offset = 0; offset < generations.length; offset += D1_DELETE_BATCH_SIZE) {
+        const batch = generations.slice(offset, offset + D1_DELETE_BATCH_SIZE)
+        const placeholders = batch.map(() => '?').join(', ')
+        const result = await db
+            .prepare(
+                `DELETE FROM recent_feed_generations
+                 WHERE generation IN (${placeholders})
+                   AND generation <> COALESCE((SELECT generation FROM recent_feed_state WHERE singleton = 1), '')
+                   AND root_key <> COALESCE((SELECT root_key FROM recent_feed_state WHERE singleton = 1), '')
+                   AND EXISTS (
+                       SELECT 1
+                       FROM recent_feed_state
+                       WHERE singleton = 1
+                         AND lease_owner = ?
+                         AND lease_expires_at > CURRENT_TIMESTAMP
+                   )`,
+            )
+            .bind(...batch.map((generation) => generation.generation), leaseOwner)
+            .run()
+        deleted += Number(result.meta.changes)
+    }
+
+    return deleted
 }
 
 async function markReachableObjects(bucket: R2Bucket, rootKeys: string[]): Promise<ReachableGraph | null> {

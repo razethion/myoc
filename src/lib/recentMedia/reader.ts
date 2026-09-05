@@ -1,9 +1,17 @@
 import {z} from 'zod'
-import {normalizeRecentMediaLimit, type RecentMediaItem, type RecentMediaOptions, type RecentMediaPage} from '../recentMedia'
+import {
+    normalizeRecentMediaLimit,
+    queryRecentMediaSourceRowsPage,
+    type RecentMediaItem,
+    type RecentMediaOptions,
+    type RecentMediaPage,
+    type RecentMediaSourceCursor,
+    recentMediaItemsFromRows,
+} from '../recentMedia'
 import {getRecentFeedConfig, RECENT_FEED_VARIANTS, recentFeedPublicObjectUrl, recentFeedVariant} from './config'
 import {type RecentFeedPointer, type RecentFeedRoot, RecentFeedRootSchema, type RecentFeedVariantRoot} from './model'
 import {getRecentFeedPointer} from './publisher'
-import {readRecentFeedTreeItems} from './tree'
+import {RecentFeedTreeError, readRecentFeedTreeItems} from './tree'
 
 const RecentFeedCursorPayloadSchema = z.object({
     version: z.literal(1),
@@ -11,9 +19,11 @@ const RecentFeedCursorPayloadSchema = z.object({
     variant: z.enum(RECENT_FEED_VARIANTS),
     position: z.number().int().nonnegative(),
 })
+const RECENT_MEDIA_FALLBACK_MAX_BATCHES = 10
 
 type RecentFeedReaderEnv = {
     DB: D1Database
+    MEDIA_PUBLIC_BASE_URL: string
     RECENT_FEED_BLOCK_ITEMS?: string
     MEDIA_BUCKET: R2Bucket
     RECENT_FEED_CLEANUP_ENABLED?: string
@@ -42,6 +52,8 @@ class RecentFeedUnavailableError extends Error {
         super(message)
     }
 }
+
+class RecentFeedMissingError extends RecentFeedUnavailableError {}
 
 type RecentFeedReaderRequest = {
     cursor: RecentFeedCursorPayload | null
@@ -73,25 +85,77 @@ export async function getGeneratedRecentMediaPage(
     }
 
     const request = await resolveRecentFeedRequest(options, config.cursorSecret)
-    const loaded = await loadRecentFeed(env, request)
     const limit = normalizeRecentMediaLimit(options.limit)
-    const collected = await collectRecentMedia(env, request, loaded, limit)
-    const nextPosition = request.position + collected.consumed
-    const hasMore = nextPosition < loaded.variantRoot.itemCount
-    const nextCursor = hasMore
-        ? await encodeRecentFeedCursor(
-              {version: 1, generation: loaded.root.generation, variant: request.variant, position: nextPosition},
-              config.cursorSecret,
-          )
-        : null
+
+    try {
+        const loaded = await loadRecentFeed(env, request)
+        const collected = await collectRecentMedia(env, request, loaded, limit)
+        const nextPosition = request.position + collected.consumed
+        const hasMore = nextPosition < loaded.variantRoot.itemCount
+        const nextCursor = hasMore
+            ? await encodeRecentFeedCursor(
+                  {version: 1, generation: loaded.root.generation, variant: request.variant, position: nextPosition},
+                  config.cursorSecret,
+              )
+            : null
+
+        return {
+            items: collected.items,
+            nextCursor,
+            generation: loaded.root.generation,
+            publishedAt: loaded.root.publishedAt,
+            publicRootUrl: recentFeedPublicObjectUrl(config.publicBaseUrl, loaded.pointer.rootKey),
+            nextPosition: hasMore ? nextPosition : null,
+        }
+    } catch (error) {
+        if (!canUseRecentMediaFallback(request) || !isRecoverableGeneratedFeedError(error)) {
+            throw error
+        }
+
+        return await getRecentMediaFallbackPage(env, options, limit)
+    }
+}
+
+function canUseRecentMediaFallback(request: RecentFeedReaderRequest): boolean {
+    return request.cursor === null && request.generation === null && request.position === 0
+}
+
+function isRecoverableGeneratedFeedError(error: unknown): boolean {
+    return (
+        error instanceof RecentFeedUnavailableError ||
+        error instanceof RecentFeedGenerationExpiredError ||
+        error instanceof RecentFeedTreeError ||
+        error instanceof SyntaxError ||
+        error instanceof z.ZodError
+    )
+}
+
+async function getRecentMediaFallbackPage(env: RecentFeedReaderEnv, options: RecentMediaOptions, limit: number): Promise<RecentMediaPage> {
+    const showNsfw = options.showNsfw === true
+    const showUnapproved = options.showUnapproved !== false
+    const items: RecentMediaItem[] = []
+    const batchSize = Math.max(limit * 2, 30)
+    let cursor: RecentMediaSourceCursor | null = null
+    let batchCount = 0
+
+    while (items.length < limit && batchCount < RECENT_MEDIA_FALLBACK_MAX_BATCHES) {
+        const rows = await queryRecentMediaSourceRowsPage(env.DB, cursor, batchSize)
+        batchCount += 1
+        items.push(...recentMediaItemsFromRows(rows, env.MEDIA_PUBLIC_BASE_URL, showNsfw, showUnapproved))
+
+        const lastRow = rows.at(-1)
+        if (rows.length < batchSize || !lastRow) break
+
+        cursor = {createdAt: lastRow.created_at, id: lastRow.id}
+    }
 
     return {
-        items: collected.items,
-        nextCursor,
-        generation: loaded.root.generation,
-        publishedAt: loaded.root.publishedAt,
-        publicRootUrl: recentFeedPublicObjectUrl(config.publicBaseUrl, loaded.pointer.rootKey),
-        nextPosition: hasMore ? nextPosition : null,
+        items: items.slice(0, limit),
+        nextCursor: null,
+        nextPosition: null,
+        publicRootUrl: null,
+        generation: null,
+        publishedAt: null,
     }
 }
 
@@ -134,7 +198,7 @@ async function loadRecentFeed(env: RecentFeedReaderEnv, request: RecentFeedReade
 }
 
 function unavailableGenerationError(generation: string | null): Error {
-    return generation ? new RecentFeedGenerationExpiredError() : new RecentFeedUnavailableError()
+    return generation ? new RecentFeedGenerationExpiredError() : new RecentFeedMissingError()
 }
 
 function validateRecentFeedRoot(root: RecentFeedRoot, pointer: RecentFeedPointer, generation: string | null): void {

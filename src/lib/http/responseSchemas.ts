@@ -286,16 +286,47 @@ const MediaPreviewRegenerationSummarySchema = z
     })
     .strict()
 
+const RecentFeedPublishSummarySchema = z
+    .object({
+        status: z.enum(['disabled', 'current', 'busy', 'building', 'published']),
+        generation: z.string().optional(),
+        revision: PositiveIntegerSchema.optional(),
+        dirtyHours: PositiveIntegerSchema.optional(),
+        itemCounts: z
+            .object({
+                'n0-u0': PositiveIntegerSchema,
+                'n0-u1': PositiveIntegerSchema,
+                'n1-u0': PositiveIntegerSchema,
+                'n1-u1': PositiveIntegerSchema,
+            })
+            .strict()
+            .optional(),
+        objectsWritten: PositiveIntegerSchema.optional(),
+        bytesWritten: PositiveIntegerSchema.optional(),
+        bootstrapRows: PositiveIntegerSchema.optional(),
+        regenerationRequested: z.boolean().optional(),
+        regenerationRequestedRevision: PositiveIntegerSchema.optional(),
+    })
+    .strict()
+
 const AdminJobSummarySchema = z.union([
     D1BackupSummarySchema,
     R2CleanupSummarySchema,
     LeaderboardRefreshSummarySchema,
     MediaPreviewRegenerationSummarySchema,
+    RecentFeedPublishSummarySchema,
 ])
 
 export const AdminJobRunResultSchema = z
     .object({
-        jobName: z.enum(['d1-backup', 'r2-media-cleanup', 'leaderboard-refresh', 'media-preview-regeneration']),
+        jobName: z.enum([
+            'd1-backup',
+            'r2-media-cleanup',
+            'leaderboard-refresh',
+            'recent-feed-regeneration',
+            'media-preview-regeneration',
+            'thumbnail-regeneration',
+        ]),
         runId: z.string(),
         status: AdminJobStatusSchema,
         summary: AdminJobSummarySchema.optional(),

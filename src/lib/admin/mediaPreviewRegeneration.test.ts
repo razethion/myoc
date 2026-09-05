@@ -4,7 +4,11 @@ import {createAvifBytes, createPngFile} from '../../test/imageFixtures'
 import {createMockR2Bucket} from '../../test/mockR2'
 import type {Bindings} from '../../types/bindings'
 import {characterMediaImageObjectKey, characterMediaNsfwBlurImageObjectKey, characterMediaPreviewImageObjectKey} from '../media/url'
-import {getMediaPreviewRegenerationCandidates, regenerateMediaPreviewCandidate} from './mediaPreviewRegeneration'
+import {
+    getMediaPreviewRegenerationCandidates,
+    initializeMediaPreviewRegenerationDispatch,
+    regenerateMediaPreviewCandidate,
+} from './mediaPreviewRegeneration'
 
 const db = useTestDatabase()
 const userId = 'preview-owner'
@@ -119,6 +123,134 @@ describe('media preview regeneration', () => {
             {mediaId, rating: 'nsfw', ratingOrder: 1},
         ])
         await expect(getMediaPreviewRegenerationCandidates(db, {mediaId, ratingOrder: 1})).resolves.toEqual([])
+    })
+
+    it('selects only variants with a missing or non-AVIF preview or NSFW blur', async () => {
+        await seedUser({id: userId})
+        await seedCharacter({id: characterId, userId})
+        await seedMedia({
+            id: 'a-valid',
+            userId,
+            characterId,
+            sfwPreviewImageKey: 'sfw-preview',
+            sfwPreviewContentType: 'image/avif',
+            nsfwImageKey: 'nsfw-source',
+            nsfwPreviewImageKey: 'nsfw-preview',
+            nsfwPreviewContentType: 'image/avif',
+            nsfwBlurImageKey: 'nsfw-blur',
+            nsfwBlurContentType: 'image/avif',
+        })
+        await seedMedia({
+            id: 'b-preview-webp',
+            userId,
+            characterId,
+            sfwPreviewImageKey: 'sfw-preview',
+            sfwPreviewContentType: 'image/webp',
+        })
+        await seedMedia({
+            id: 'c-preview-missing',
+            userId,
+            characterId,
+            sfwPreviewImageKey: null,
+            sfwPreviewContentType: 'image/avif',
+        })
+        await seedMedia({
+            id: 'd-preview-empty',
+            userId,
+            characterId,
+            sfwPreviewImageKey: '',
+            sfwPreviewContentType: 'image/avif',
+        })
+        await seedMedia({
+            id: 'e-both-invalid',
+            userId,
+            characterId,
+            sfwPreviewImageKey: null,
+            sfwPreviewContentType: 'image/avif',
+            nsfwImageKey: 'nsfw-source',
+            nsfwPreviewImageKey: 'nsfw-preview',
+            nsfwPreviewContentType: 'image/webp',
+            nsfwBlurImageKey: 'nsfw-blur',
+            nsfwBlurContentType: 'image/avif',
+        })
+        await seedMedia({
+            id: 'f-nsfw-blur-missing',
+            userId,
+            characterId,
+            sfwPreviewImageKey: 'sfw-preview',
+            sfwPreviewContentType: 'image/avif',
+            nsfwImageKey: 'nsfw-source',
+            nsfwPreviewImageKey: 'nsfw-preview',
+            nsfwPreviewContentType: 'image/avif',
+            nsfwBlurImageKey: null,
+            nsfwBlurContentType: 'image/avif',
+        })
+        await seedMedia({
+            id: 'g-nsfw-blur-webp',
+            userId,
+            characterId,
+            sfwImageKey: null,
+            nsfwImageKey: 'nsfw-source',
+            nsfwPreviewImageKey: 'nsfw-preview',
+            nsfwPreviewContentType: 'image/avif',
+            nsfwBlurImageKey: 'nsfw-blur',
+            nsfwBlurContentType: 'image/webp',
+        })
+
+        const candidates = await getMediaPreviewRegenerationCandidates(db, null, true)
+
+        expect(candidates.map(({mediaId: candidateMediaId, rating}) => [candidateMediaId, rating])).toEqual([
+            ['b-preview-webp', 'sfw'],
+            ['c-preview-missing', 'sfw'],
+            ['d-preview-empty', 'sfw'],
+            ['e-both-invalid', 'sfw'],
+            ['e-both-invalid', 'nsfw'],
+            ['f-nsfw-blur-missing', 'nsfw'],
+            ['g-nsfw-blur-webp', 'nsfw'],
+        ])
+
+        const runId = crypto.randomUUID()
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (id, job_name, trigger_source, status, started_at)
+                 VALUES (?, 'media-preview-regeneration', 'manual', 'running', CURRENT_TIMESTAMP)`,
+            )
+            .bind(runId)
+            .run()
+
+        await expect(initializeMediaPreviewRegenerationDispatch(db, runId, true)).resolves.toMatchObject({totalVariants: 7})
+    })
+
+    it('paginates sparse invalid variants without stopping at valid AVIF rows', async () => {
+        await seedUser({id: userId})
+        await seedCharacter({id: characterId, userId})
+        await seedMedia({
+            id: 'page-0000',
+            userId,
+            characterId,
+            sfwPreviewImageKey: 'sfw-preview',
+            sfwPreviewContentType: 'image/avif',
+        })
+
+        for (let index = 1; index <= 101; index += 1) {
+            await seedMedia({
+                id: `page-${String(index).padStart(4, '0')}`,
+                userId,
+                characterId,
+                sfwPreviewImageKey: null,
+                sfwPreviewContentType: 'image/avif',
+            })
+        }
+
+        const first = await getMediaPreviewRegenerationCandidates(db, null, true)
+        const last = first.at(-1)
+        if (!last) throw new Error('Expected a full first candidate page')
+        const second = await getMediaPreviewRegenerationCandidates(db, {mediaId: last.mediaId, ratingOrder: last.ratingOrder}, true)
+
+        expect(first).toHaveLength(100)
+        expect(first[0]).toMatchObject({mediaId: 'page-0001', rating: 'sfw'})
+        expect(last).toMatchObject({mediaId: 'page-0100', rating: 'sfw'})
+        expect(second).toMatchObject([{mediaId: 'page-0101', rating: 'sfw'}])
     })
 
     it('replaces SFW previews and NSFW previews and blurs without changing review data', async () => {

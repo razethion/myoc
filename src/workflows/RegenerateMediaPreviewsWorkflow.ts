@@ -12,10 +12,12 @@ import {
     mediaPreviewRegenerationWorkflowInstanceId,
 } from '../lib/admin/mediaPreviewRegeneration'
 import type {Bindings} from '../types/bindings'
+import {type RecentFeedRegenerationWorkflowParams, runRecentFeedRegenerationWorkflow} from './recentFeedRegeneration'
 import {runThumbnailRegenerationWorkflow, type ThumbnailRegenerationWorkflowParams} from './thumbnailRegeneration'
 
 type MediaPreviewRegenerationWorkflowParams = {
     kind?: 'media-previews'
+    onlyInvalid?: boolean
     runId: string
     continuation?: {
         cursor: MediaPreviewRegenerationCursor
@@ -24,7 +26,10 @@ type MediaPreviewRegenerationWorkflowParams = {
     }
 }
 
-export type RegenerateMediaPreviewsWorkflowParams = MediaPreviewRegenerationWorkflowParams | ThumbnailRegenerationWorkflowParams
+export type RegenerateMediaPreviewsWorkflowParams =
+    | MediaPreviewRegenerationWorkflowParams
+    | ThumbnailRegenerationWorkflowParams
+    | RecentFeedRegenerationWorkflowParams
 
 const D1_STEP_CONFIG = {
     retries: {
@@ -38,6 +43,9 @@ const D1_STEP_CONFIG = {
 export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings, RegenerateMediaPreviewsWorkflowParams> {
     override async run(event: Readonly<WorkflowEvent<RegenerateMediaPreviewsWorkflowParams>>, step: WorkflowStep) {
         try {
+            if (event.payload.kind === 'recent-feed') {
+                return await runRecentFeedRegenerationWorkflow(this.env, event.payload, step)
+            }
             if (event.payload.kind === 'thumbnails') {
                 return await runThumbnailRegenerationWorkflow(this.env, event.payload, step)
             }
@@ -48,7 +56,9 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
 
             await step.do('record job failure', D1_STEP_CONFIG, async () => {
                 await failAdminJobRun(this.env.DB, event.payload.runId, message)
-                await deleteFinishedMediaPreviewRegenerationItems(this.env.DB, event.payload.runId)
+                if (event.payload.kind !== 'recent-feed') {
+                    await deleteFinishedMediaPreviewRegenerationItems(this.env.DB, event.payload.runId)
+                }
                 return {recorded: true}
             })
 
@@ -61,7 +71,7 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
 
         if (!continuation) {
             await step.do('initialize job', D1_STEP_CONFIG, async () => {
-                return await initializeMediaPreviewRegenerationDispatch(this.env.DB, runId)
+                return await initializeMediaPreviewRegenerationDispatch(this.env.DB, runId, params.onlyInvalid)
             })
         }
 
@@ -71,7 +81,7 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
 
         for (let batchNumber = 1; batchNumber <= MEDIA_PREVIEW_REGENERATION_BATCHES_PER_WORKFLOW; batchNumber += 1) {
             const candidates = await step.do(`load batch ${batchNumber}`, D1_STEP_CONFIG, async () => {
-                return await getMediaPreviewRegenerationCandidates(this.env.DB, cursor)
+                return await getMediaPreviewRegenerationCandidates(this.env.DB, cursor, params.onlyInvalid)
             })
 
             if (candidates.length === 0) {
@@ -121,6 +131,7 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
                     id: mediaPreviewRegenerationWorkflowInstanceId(runId, nextSegment),
                     params: {
                         runId,
+                        onlyInvalid: params.onlyInvalid,
                         continuation: {
                             cursor: continuationCursor,
                             queuedVariants,

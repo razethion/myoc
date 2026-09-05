@@ -112,14 +112,29 @@ export function emptyMediaPreviewRegenerationSummary(): MediaPreviewRegeneration
     }
 }
 
-async function initializeMediaPreviewRegenerationSummary(db: D1Database): Promise<MediaPreviewRegenerationSummary> {
+async function initializeMediaPreviewRegenerationSummary(db: D1Database, onlyInvalid: boolean): Promise<MediaPreviewRegenerationSummary> {
     const totalVariants = await db
         .prepare(
             `SELECT COALESCE(SUM(
-                        CASE WHEN sfw_image_key IS NOT NULL THEN 1 ELSE 0 END +
-                        CASE WHEN nsfw_image_key IS NOT NULL THEN 1 ELSE 0 END
+                        CASE WHEN sfw_image_key IS NOT NULL AND sfw_image_key <> ''
+                            AND (? = 0 OR sfw_preview_image_key IS NULL OR sfw_preview_image_key = ''
+                                 OR sfw_preview_content_type IS NOT ?)
+                            THEN 1 ELSE 0 END +
+                        CASE WHEN nsfw_image_key IS NOT NULL AND nsfw_image_key <> ''
+                            AND (? = 0 OR nsfw_preview_image_key IS NULL OR nsfw_preview_image_key = ''
+                                 OR nsfw_preview_content_type IS NOT ?
+                                 OR nsfw_blur_image_key IS NULL OR nsfw_blur_image_key = ''
+                                 OR nsfw_blur_content_type IS NOT ?)
+                            THEN 1 ELSE 0 END
                     ), 0) AS total_variants
              FROM character_media`,
+        )
+        .bind(
+            Number(onlyInvalid),
+            GALLERY_PREVIEW_CONTENT_TYPE,
+            Number(onlyInvalid),
+            GALLERY_PREVIEW_CONTENT_TYPE,
+            GALLERY_NSFW_BLUR_CONTENT_TYPE,
         )
         .first<number>('total_variants')
 
@@ -129,8 +144,12 @@ async function initializeMediaPreviewRegenerationSummary(db: D1Database): Promis
     }
 }
 
-export async function initializeMediaPreviewRegenerationDispatch(db: D1Database, runId: string): Promise<MediaPreviewRegenerationSummary> {
-    const summary = await initializeMediaPreviewRegenerationSummary(db)
+export async function initializeMediaPreviewRegenerationDispatch(
+    db: D1Database,
+    runId: string,
+    onlyInvalid = false,
+): Promise<MediaPreviewRegenerationSummary> {
+    const summary = await initializeMediaPreviewRegenerationSummary(db, onlyInvalid)
     await db.batch([
         db
             .prepare(
@@ -454,6 +473,7 @@ export async function deleteFinishedMediaPreviewRegenerationItems(db: D1Database
 export async function getMediaPreviewRegenerationCandidates(
     db: D1Database,
     cursor: MediaPreviewRegenerationCursor | null,
+    onlyInvalid = false,
 ): Promise<MediaPreviewRegenerationCandidate[]> {
     const cursorMediaId = cursor?.mediaId ?? null
     const cursorRatingOrder = cursor?.ratingOrder ?? -1
@@ -500,13 +520,25 @@ export async function getMediaPreviewRegenerationCandidates(
                    blur_key,
                    blur_content_type
             FROM media_variants
-            WHERE ? IS NULL
+            WHERE image_key <> ''
+              AND (? = 0 OR preview_key IS NULL OR preview_key = '' OR preview_content_type IS NOT ?
+                   OR (rating = 'nsfw' AND (blur_key IS NULL OR blur_key = '' OR blur_content_type IS NOT ?)))
+              AND (? IS NULL
                OR media_id > ?
-               OR (media_id = ? AND rating_order > ?)
+               OR (media_id = ? AND rating_order > ?))
             ORDER BY media_id, rating_order
             LIMIT ?`,
         )
-        .bind(cursorMediaId, cursorMediaId, cursorMediaId, cursorRatingOrder, MEDIA_PREVIEW_REGENERATION_BATCH_SIZE)
+        .bind(
+            Number(onlyInvalid),
+            GALLERY_PREVIEW_CONTENT_TYPE,
+            GALLERY_NSFW_BLUR_CONTENT_TYPE,
+            cursorMediaId,
+            cursorMediaId,
+            cursorMediaId,
+            cursorRatingOrder,
+            MEDIA_PREVIEW_REGENERATION_BATCH_SIZE,
+        )
         .all<CandidateRow>()
 
     return result.results.flatMap(toCandidate)

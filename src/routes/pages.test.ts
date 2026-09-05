@@ -2,6 +2,7 @@ import {afterEach, describe, expect, it, vi} from 'vitest'
 import app from '../index'
 import {createCsrfToken} from '../lib/auth/session'
 import type {LeaderboardSnapshot} from '../lib/leaderboard'
+import {getGeneratedRecentMediaPage} from '../lib/recentMedia/reader'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import {expectSecurityHeaders} from '../test/assertions'
 import {queryOne, seedCharacter, seedFolder, seedMedia, seedPasskey, seedSession, seedUser, useResetTestDatabase} from '../test/d1'
@@ -905,6 +906,24 @@ describe('public page redirects', () => {
         expect(html).toContain('data-recent-feed')
         expect(html).toContain('data-persist-unapproved="false"')
         expect(html).toContain('Show unapproved')
+    })
+
+    it.each([false, true])('shows a generic unavailable page when the recent gallery cannot load (signed in: %s)', async (signedIn) => {
+        vi.mocked(getGeneratedRecentMediaPage).mockRejectedValueOnce(new Error('R2 internal error with private diagnostic details'))
+
+        const database = await seedPageDatabase({currentUser: signedIn ? createCurrentUserRecord('demo') : undefined})
+        const response = await getAppPath('/recent', database, signedIn ? {cookie: 'myoc_session=session-token'} : {})
+        const html = await response.text()
+
+        expect(response.status).toBe(503)
+        expect(response.headers.get('cache-control')).toBe('no-store')
+        expect(html).toContain('<title>Recently uploaded media | MyOC</title>')
+        expect(html).toContain('Gallery is currently unavailable')
+        expect(html).toContain('role="alert"')
+        expect(html).not.toContain('Internal Server Error')
+        expect(html).not.toContain('private diagnostic details')
+        expect(html).not.toContain('data-recent-feed')
+        expect(html).not.toContain('No uploads found')
     })
 
     it('renders the latest leaderboard snapshot from KV', async () => {
@@ -4139,8 +4158,12 @@ describe('GET /admin', () => {
         expect(html).toContain('Run R2 Media Cleanup')
         expect(html).toContain('action="/admin/admin-options/jobs/leaderboard-refresh/run"')
         expect(html).toContain('Run Leaderboard Refresh')
+        expect(html).toContain('action="/admin/admin-options/jobs/recent-feed-regeneration/run"')
+        expect(html).toContain('Run Recent Page Regeneration')
         expect(html).toContain('action="/admin/admin-options/jobs/media-preview-regeneration/run"')
         expect(html).toContain('Run Media Preview Regeneration')
+        expect(html).toContain('formaction="/admin/admin-options/jobs/media-preview-regeneration/run?onlyInvalid=true"')
+        expect(html).toContain('Repair missing or non-AVIF previews and blurs')
         expect(html).toContain('Job History')
         expect(html).toContain('Cron 0 8 * * *')
         expect(html).toContain('d1/myoc-db/2026/07/11/myoc-db.sql.gz')

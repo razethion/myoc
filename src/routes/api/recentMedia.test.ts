@@ -1,7 +1,7 @@
 import {Hono} from 'hono'
-import {describe, expect, it} from 'vitest'
+import {describe, expect, it, vi} from 'vitest'
 import type {RecentMediaItem} from '../../lib/recentMedia'
-import {seedAuthenticatedUser, useTestDatabase} from '../../test/d1'
+import {seedAuthenticatedUser, seedCharacter, seedMedia, seedUser, useTestDatabase} from '../../test/d1'
 import {createMockR2Bucket} from '../../test/mockR2'
 import {createWorkerEnv} from '../../test/workerBindings'
 import type {Bindings} from '../../types/bindings'
@@ -141,11 +141,60 @@ describe('recent media API', () => {
         })
     })
 
-    it('returns a server error when the generated feed is unavailable', async () => {
+    it('returns a D1 first page while no generated feed is published', async () => {
+        await seedUser({id: 'fallback-user'})
+        await seedCharacter({id: 'fallback-character', userId: 'fallback-user'})
+        await seedMedia({
+            id: 'fallback-media',
+            userId: 'fallback-user',
+            characterId: 'fallback-character',
+            sfwPreviewImageKey: 'fallback-preview',
+            sfwReviewStatus: 'approved',
+            sfwApprovedAt: '2026-08-25 12:00:00',
+            createdAt: '2026-08-25 12:00:00',
+            updatedAt: '2026-08-25 12:00:00',
+        })
+
+        const response = await app.request(
+            'https://example.com/api/recent-media?nsfw=false&unapproved=false',
+            {},
+            createWorkerEnv({
+                DB: db,
+                MEDIA_BUCKET: createMockR2Bucket(),
+                RECENT_FEED_CURSOR_SECRET: cursorSecret,
+            }),
+        )
+
+        expect(response.status).toBe(200)
+        await expect(response.json()).resolves.toMatchObject({
+            items: [{id: 'fallback-media'}],
+            generation: null,
+            nextCursor: null,
+            nextPosition: null,
+            publicRootUrl: null,
+            publishedAt: null,
+        })
+    })
+
+    it('returns a server error when R2 fails', async () => {
+        const bucket = createMockR2Bucket()
+        vi.spyOn(bucket, 'get').mockRejectedValue(new Error('R2 is unavailable'))
+        await db
+            .prepare(
+                `UPDATE recent_feed_state
+                 SET requested_revision = 7,
+                     published_revision = 7,
+                     generation = 'r7-unavailable',
+                     root_key = 'recent-feed/generations/v1/roots/r7-unavailable.json',
+                     published_at = '2026-08-25T12:05:00.000Z'
+                 WHERE singleton = 1`,
+            )
+            .run()
+
         const response = await app.request(
             'https://example.com/api/recent-media',
             {},
-            createWorkerEnv({DB: db, MEDIA_BUCKET: createMockR2Bucket()}),
+            createWorkerEnv({DB: db, MEDIA_BUCKET: bucket, RECENT_FEED_CURSOR_SECRET: cursorSecret}),
         )
 
         expect(response.status).toBe(500)
