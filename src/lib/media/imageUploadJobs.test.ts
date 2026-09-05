@@ -220,6 +220,44 @@ describe('image upload jobs', () => {
         })
     })
 
+    it.each([
+        ['character-profile', 'character-1'],
+        ['folder-image', 'folder-1'],
+    ] as const)('does not publish a %s image after its target is deleted', async (kind, targetId) => {
+        await seedUser({id: 'user-1'})
+        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        await seedFolder({id: 'folder-1', userId: 'user-1'})
+        const setup = createEnv(async () => {
+            const deleteSql =
+                kind === 'character-profile' ? 'DELETE FROM characters WHERE id = ?' : 'DELETE FROM character_folders WHERE id = ?'
+            await db.prepare(deleteSql).bind(targetId).run()
+            return new Response(createAvifBytes(512, 512), {headers: {'content-type': 'image/avif'}})
+        })
+        const job = await createSquareImageUploadJob(setup.env, {
+            userId: 'user-1',
+            kind,
+            targetId,
+            idempotencyKey: `deleted-${kind}`,
+            bytes: await pngBytes(),
+            now,
+        })
+
+        await consumeQueued(setup.env, firstQueuedMessage(setup.lanes))
+
+        expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({state: 'waiting', result: null})
+        expect(await queryAll("SELECT id FROM image_processing_tasks WHERE state = 'ready'", [], db)).toEqual([])
+        expect(await queryAll('SELECT id FROM image_processing_attempts', [], db)).toEqual([])
+        const cleanup = await queryAll<{bucket: string; object_key: string}>(
+            'SELECT bucket, object_key FROM image_cleanup_tasks WHERE job_id = ? ORDER BY bucket',
+            [job.id],
+            db,
+        )
+        expect(cleanup).toHaveLength(2)
+        const outputKey = cleanup.find((task) => task.bucket === 'media')?.object_key ?? ''
+        expect(outputKey).toMatch(/\.avif$/)
+        expect(cleanup).toContainEqual({bucket: 'source', object_key: thumbnailOriginalObjectKey(outputKey)})
+    })
+
     it('returns an existing job for the same request and rejects an idempotency conflict', async () => {
         await seedUser({id: 'user-1'})
         const setup = createEnv()

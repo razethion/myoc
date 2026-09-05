@@ -1232,12 +1232,13 @@ async function publishSquareOutput(
     const resultJson = JSON.stringify({contentType: 'image/avif', key, objectKey: outputKey, url: outputUrl})
     const statements = [
         targetUpdate,
+        // changes() checks the target update immediately before this statement in the batch.
         db
             .prepare(
                 `UPDATE image_processing_tasks
              SET state = 'ready', sharp_attempts = ?, lease_id = NULL, lease_expires_at = NULL,
                  output_json = ?, error_code = NULL, error_message = NULL, updated_at = ?
-             WHERE id = ? AND lease_id = ? AND state = 'processing'`,
+             WHERE id = ? AND lease_id = ? AND state = 'processing' AND changes() = 1`,
             )
             .bind(attemptNumber, resultJson, toSqlTimestamp(now), task.id, leaseId),
         db
@@ -1324,7 +1325,7 @@ async function publishSquareOutput(
 
     const jobUpdateIndex = 3
     const results = await db.batch(statements)
-    return (results[jobUpdateIndex]?.meta.changes ?? 0) > 0
+    return (results[0]?.meta.changes ?? 0) > 0 && (results[jobUpdateIndex]?.meta.changes ?? 0) > 0
 }
 
 function targetUpdateStatement(db: D1Database, task: TaskRow, leaseId: string, key: string, now: Date): D1PreparedStatement {
