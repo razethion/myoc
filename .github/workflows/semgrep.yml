@@ -39,6 +39,7 @@ jobs:
             semgrep-tests/routes/directImageResponse.ts \
             semgrep-tests/routes/directJsonResponse.ts \
             semgrep-tests/routes/imageBodyProxy.ts \
+            semgrep-tests/routes/unboundedRequestBody.ts \
             semgrep-tests/scriptJson.semgrep-test.tsx
           do
             semgrep test --config .semgrep.yml "$target"
