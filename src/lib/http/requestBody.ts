@@ -1,5 +1,7 @@
 type RequestBodyParser<T> = (response: Response) => Promise<T>
 
+export const STANDARD_JSON_REQUEST_MAX_BYTES = 1024 * 1024
+
 async function parseRequestBodyUpTo<T>(request: Request, maxBytes: number, parse: RequestBodyParser<T>): Promise<T | null> {
     const contentLength = request.headers.get('content-length')
     const contentType = request.headers.get('content-type')

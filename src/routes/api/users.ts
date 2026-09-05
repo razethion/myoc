@@ -2,7 +2,7 @@ import {Hono} from 'hono'
 import {z} from 'zod'
 import {getCurrentUser} from '../../lib/auth/session'
 import {jsonResponse} from '../../lib/http/jsonResponse'
-import {readFormDataUpTo} from '../../lib/http/requestBody'
+import {readFormDataUpTo, readJsonUpTo, STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
 import {ErrorResponseSchema, responseSchema} from '../../lib/http/responseSchemas'
 import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../../lib/media/cacheControl'
 import {normalizeProfileImagePayload, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/profileImage'
@@ -38,7 +38,21 @@ userRoutes.post('/me/recent-media-preference', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
-    const parsed = RecentMediaPreferenceRequestSchema.safeParse(await c.req.json().catch(() => null))
+    let body: unknown
+
+    try {
+        const parsedBody = await readJsonUpTo<unknown>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+
+        if (parsedBody === null) {
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Request body is too large'}, 413)
+        }
+
+        body = parsedBody
+    } catch {
+        body = null
+    }
+
+    const parsed = RecentMediaPreferenceRequestSchema.safeParse(body)
 
     if (!parsed.success) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Recent media preference is invalid'}, 400)

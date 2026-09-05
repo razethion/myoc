@@ -2,6 +2,7 @@ import {type VerifiedRegistrationResponse, verifyRegistrationResponse} from '@si
 import {beforeEach, describe, expect, it, vi} from 'vitest'
 import {hashRecoveryPhrase, verifyRecoveryPhrase} from '../../lib/auth/passkeys'
 import {createCsrfToken} from '../../lib/auth/session'
+import {STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
 import {countRows, queryAll, queryOne, seedChallenge, seedPasskey, seedSession, seedUser, useTestDatabase} from '../../test/d1'
 import {createAllowingAuthRateLimits, createMockRateLimit} from '../../test/mockRateLimit'
 import {apiRoutes} from '../api'
@@ -207,6 +208,18 @@ describe('POST /security/passkeys/verify', () => {
         expect(await response.json()).toEqual({
             error: 'Invalid JSON body',
         })
+        expect(verifyRegistrationResponse).not.toHaveBeenCalled()
+    })
+
+    it('returns 413 for an oversized JSON body', async () => {
+        await seedCurrentUser()
+
+        const response = await securityRequest('/passkeys/verify', db, {
+            body: {padding: 'x'.repeat(STANDARD_JSON_REQUEST_MAX_BYTES)},
+        })
+
+        expect(response.status).toBe(413)
+        await expect(response.json()).resolves.toEqual({error: 'Request body is too large'})
         expect(verifyRegistrationResponse).not.toHaveBeenCalled()
     })
 

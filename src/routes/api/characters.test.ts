@@ -1,6 +1,7 @@
 import {env} from 'cloudflare:workers'
 import {describe, expect, it, vi} from 'vitest'
 import {createCsrfToken} from '../../lib/auth/session'
+import {STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
 import {PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/profileImage'
 import {thumbnailOriginalObjectKey} from '../../lib/media/thumbnailSources'
 import {
@@ -798,6 +799,19 @@ describe('POST /characters/folders/tree', () => {
         expect(await response.json()).toEqual({
             error: 'Invalid JSON body',
         })
+    })
+
+    it('returns 413 for an oversized JSON body', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser(sessionToken)
+
+        const response = await postFolderTree({padding: 'x'.repeat(STANDARD_JSON_REQUEST_MAX_BYTES)}, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(413)
+        expect(await response.json()).toEqual({error: 'Request body is too large'})
     })
 
     it('returns 400 when folder tree items are not an array', async () => {

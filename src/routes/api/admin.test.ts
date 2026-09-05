@@ -1,5 +1,6 @@
 import {describe, expect, it, vi} from 'vitest'
 import {createCsrfToken} from '../../lib/auth/session'
+import {STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
 import {
     queryAll,
     queryOne,
@@ -795,6 +796,14 @@ describe('POST /admin/image-approvals/:mediaId', () => {
         )
         expect(response.status).toBe(400)
         await expect(response.json()).resolves.toEqual({error: 'Invalid JSON body'})
+    })
+
+    it('returns 413 for an oversized JSON body', async () => {
+        await seedCurrentUser('moderator')
+        const response = await postImageApproval(mediaId, {padding: 'x'.repeat(STANDARD_JSON_REQUEST_MAX_BYTES)}, createMockR2Bucket())
+
+        expect(response.status).toBe(413)
+        await expect(response.json()).resolves.toEqual({error: 'Request body is too large'})
     })
 
     it('returns 400 for a JSON body that is not an object', async () => {

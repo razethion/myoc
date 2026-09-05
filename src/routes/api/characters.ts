@@ -5,7 +5,7 @@ import {createImageReviewQueueStatement} from '../../lib/admin/imageApprovals'
 import {type CurrentUser, getCurrentUser, toSqlTimestamp} from '../../lib/auth/session'
 import {GALLERY_CHUNK_SIZE, GALLERY_MAX_IMAGES_PER_ROW, shouldForceGalleryRowFullWidth} from '../../lib/gallery'
 import {jsonResponse} from '../../lib/http/jsonResponse'
-import {readFormDataUpTo, readJsonUpTo} from '../../lib/http/requestBody'
+import {readFormDataUpTo, readJsonUpTo, STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
 import {
     CharacterFolderSchema,
     CharacterHeightChartSchema,
@@ -371,12 +371,10 @@ characterRoutes.post('/folders/tree', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
-    let body: SortTreeRequest
+    const body = await readCharacterJsonBody<SortTreeRequest>(c)
 
-    try {
-        body = await c.req.json<SortTreeRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     if (!Array.isArray(body.items)) {
@@ -428,12 +426,10 @@ characterRoutes.post('/order', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
-    let body: SortCharacterOrderRequest
+    const body = await readCharacterJsonBody<SortCharacterOrderRequest>(c)
 
-    try {
-        body = await c.req.json<SortCharacterOrderRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     const orderedIds = normalizeOrderedIds(body.characterIds, 'Character order')
@@ -490,12 +486,10 @@ characterRoutes.put('/folders/:id/placements', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Folder not found'}, 404)
     }
 
-    let body: SaveFolderPlacementsRequest
+    const body = await readCharacterJsonBody<SaveFolderPlacementsRequest>(c)
 
-    try {
-        body = await c.req.json<SaveFolderPlacementsRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     const orderedIds = normalizeOrderedIds(body.characterIds, 'Folder placements')
@@ -655,12 +649,10 @@ characterRoutes.patch('/folders/:id', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Folder not found'}, 404)
     }
 
-    let body: UpdateFolderRequest
+    const body = await readCharacterJsonBody<UpdateFolderRequest>(c)
 
-    try {
-        body = await c.req.json<UpdateFolderRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     const nameResult = normalizeFolderName(body.name ?? body['edit-folder-name'])
@@ -956,12 +948,10 @@ characterRoutes.patch('/:id', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
-    let body: UpdateCharacterRequest
+    const body = await readCharacterJsonBody<UpdateCharacterRequest>(c)
 
-    try {
-        body = await c.req.json<UpdateCharacterRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     const character = await getOwnedCharacter(c.env.DB, currentUser.id, c.req.param('id') ?? '')
@@ -1327,7 +1317,13 @@ characterRoutes.post('/toyhouse-import-items/:itemId/fail', async (c) => {
     let body: {error?: unknown}
 
     try {
-        body = await c.req.json<{error?: unknown}>()
+        const parsedBody = await readJsonUpTo<{error?: unknown}>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+
+        if (parsedBody === null) {
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Request body is too large'}, 413)
+        }
+
+        body = parsedBody
     } catch {
         body = {}
     }
@@ -1706,12 +1702,10 @@ characterRoutes.put('/:id/gallery', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
-    let body: GalleryLayoutRequest
+    const body = await readCharacterJsonBody<GalleryLayoutRequest>(c)
 
-    try {
-        body = await c.req.json<GalleryLayoutRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     const character = await getOwnedCharacter(c.env.DB, currentUser.id, c.req.param('id') ?? '')
@@ -1802,7 +1796,12 @@ characterRoutes.delete('/:id', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
-    const body = await parseDeleteCharacterRequest(c.req)
+    const body = await parseDeleteCharacterRequest(c)
+
+    if (body instanceof Response) {
+        return body
+    }
+
     const confirmName = normalizeOptionalText(body.confirmName ?? body['delete-character-confirm-name'])
     const permanent = normalizePermanentConfirmation(body.permanent ?? body['delete-confirm-permanent'])
 
@@ -2188,12 +2187,10 @@ async function parseChunkedUploadInitRequest(c: CharacterRouteContext): Promise<
       }
     | Response
 > {
-    let body: ChunkedMediaInitRequest
+    const body = await readCharacterJsonBody<ChunkedMediaInitRequest>(c)
 
-    try {
-        body = await c.req.json<ChunkedMediaInitRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     const uploads = parseChunkedUploadInits(body.uploads ?? body.ratings)
@@ -2203,6 +2200,20 @@ async function parseChunkedUploadInitRequest(c: CharacterRouteContext): Promise<
     }
 
     return uploads
+}
+
+async function readCharacterJsonBody<T>(c: CharacterRouteContext): Promise<T | Response> {
+    try {
+        const body = await readJsonUpTo<T>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+
+        if (body === null) {
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Request body is too large'}, 413)
+        }
+
+        return body
+    } catch {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    }
 }
 
 function parseMediaArtists(sfwValue: unknown, nsfwValue: unknown): ParsedMediaArtists | {error: string} {
@@ -2250,13 +2261,19 @@ async function parseChunkedMediaCompleteBody(c: CharacterRouteContext): Promise<
     | ParsedChunkedMediaComplete
     | {
           error: string
-          status: 400
+          status: 400 | 413
       }
 > {
     let body: ChunkedMediaCompleteRequest
 
     try {
-        body = await c.req.json<ChunkedMediaCompleteRequest>()
+        const parsedBody = await readJsonUpTo<ChunkedMediaCompleteRequest>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+
+        if (parsedBody === null) {
+            return {error: 'Request body is too large', status: 413}
+        }
+
+        body = parsedBody
     } catch {
         return {error: 'Invalid JSON body', status: 400}
     }
@@ -3078,7 +3095,11 @@ async function parseCreateFolderRequest(req: CharacterRouteContext['req']): Prom
     }
 
     if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {
-        const form = await req.formData()
+        const form = await readFormDataUpTo(req.raw, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES)
+
+        if (!form) {
+            return {error: 'Request body is too large', status: 413}
+        }
 
         return {
             name: form.get('name') ?? form.get('new-folder-name'),
@@ -3090,19 +3111,25 @@ async function parseCreateFolderRequest(req: CharacterRouteContext['req']): Prom
     return {error: 'JSON or form data is required'}
 }
 
-async function parseDeleteCharacterRequest(req: CharacterRouteContext['req']): Promise<DeleteCharacterRequest> {
-    const contentType = req.header('content-type') ?? ''
+async function parseDeleteCharacterRequest(c: CharacterRouteContext): Promise<DeleteCharacterRequest | Response> {
+    const contentType = c.req.header('content-type') ?? ''
 
     if (contentType.includes('application/json')) {
-        try {
-            return await req.json<DeleteCharacterRequest>()
-        } catch {
-            return {}
-        }
+        return await readCharacterJsonBody<DeleteCharacterRequest>(c)
     }
 
     if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {
-        const form = await req.formData()
+        let form: FormData | null
+
+        try {
+            form = await readFormDataUpTo(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+        } catch {
+            return {}
+        }
+
+        if (!form) {
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Request body is too large'}, 413)
+        }
 
         return {
             confirmName: form.get('confirmName'),

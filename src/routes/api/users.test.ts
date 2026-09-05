@@ -2,6 +2,7 @@ import {env} from 'cloudflare:workers'
 import {compare} from 'bcryptjs'
 import {describe, expect, it, vi} from 'vitest'
 import {createCsrfToken} from '../../lib/auth/session'
+import {STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
 import {PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/profileImage'
 import {thumbnailOriginalObjectKey} from '../../lib/media/thumbnailSources'
 import {APP_VERSION} from '../../lib/releases'
@@ -867,6 +868,19 @@ describe('POST /users/me/recent-media-preference', () => {
 
         expect(response.status).toBe(400)
         await expect(response.json()).resolves.toEqual({error: 'Recent media preference is invalid'})
+    })
+
+    it('returns 413 for an oversized JSON body', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser({}, sessionToken)
+
+        const response = await postCurrentUserRecentMediaPreference({padding: 'x'.repeat(STANDARD_JSON_REQUEST_MAX_BYTES)}, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(413)
+        await expect(response.json()).resolves.toEqual({error: 'Request body is too large'})
     })
 
     it.each([false, true])('stores showUnapproved=%s for the current user', async (showUnapproved) => {
