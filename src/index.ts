@@ -2,16 +2,18 @@ import {Hono} from 'hono'
 
 export {ContainerProxy} from '@cloudflare/containers'
 
-import {consumeImageProcessingDeadLetterQueue, consumeMediaPreviewDeadLetterQueue} from './lib/admin/deadLetterQueue'
+import {consumeImageProcessingDeadLetterQueue} from './lib/admin/deadLetterQueue'
 import {runAdminJob} from './lib/admin/jobs'
-import {consumeMediaPreviewRegenerationQueue} from './lib/admin/mediaPreviewQueue'
+import {consumeMediaPreviewRegenerationMessage} from './lib/admin/mediaPreviewQueue'
+import {consumeThumbnailRegenerationMessage} from './lib/admin/thumbnailRegeneration'
 import {securityHeaders} from './lib/http/securityHeaders'
-import {consumeImageProcessingQueue, reconcileImageUploads} from './lib/media/imageUploadJobs'
+import {consumeImageUploadProcessingMessage, reconcileImageUploads} from './lib/media/imageUploadJobs'
 import {cleanupRecentFeed} from './lib/recentMedia/cleanup'
 import {publishRecentFeed} from './lib/recentMedia/publisher'
 import {apiRoutes} from './routes/api'
 import {pageRoutes, renderNotFoundPage} from './routes/pages'
 import type {Bindings} from './types/bindings'
+import {ImageProcessingMessageSchema} from './types/imageProcessing'
 
 export {MyocDockerSharpContainer} from './containers/MyocDockerSharpContainer'
 export {RegenerateMediaPreviewsWorkflow} from './workflows/RegenerateMediaPreviewsWorkflow'
@@ -41,17 +43,38 @@ worker.queue = async (batch, env) => {
         return
     }
 
-    if (batch.queue === env.MEDIA_PREVIEW_REGENERATION_DLQ_NAME) {
-        await consumeMediaPreviewDeadLetterQueue(batch, env)
-        return
-    }
+    await consumeImageProcessingQueue(batch, env)
+}
 
-    if (batch.queue.includes('image-processing')) {
-        await consumeImageProcessingQueue(batch, env)
-        return
-    }
+export async function consumeImageProcessingQueue(batch: MessageBatch, env: Bindings, now = () => new Date()): Promise<void> {
+    await Promise.all(
+        batch.messages.map(async (message) => {
+            const parsed = ImageProcessingMessageSchema.safeParse(message.body)
 
-    await consumeMediaPreviewRegenerationQueue(batch, env)
+            if (!parsed.success) {
+                console.error(
+                    JSON.stringify({
+                        event: 'image_processing_invalid_message',
+                        messageId: message.id,
+                    }),
+                )
+                message.ack()
+                return
+            }
+
+            if (parsed.data.kind === 'upload') {
+                await consumeImageUploadProcessingMessage(message, parsed.data, env, now)
+                return
+            }
+
+            if (parsed.data.kind === 'media-regeneration') {
+                await consumeMediaPreviewRegenerationMessage(message, parsed.data, env, now)
+                return
+            }
+
+            await consumeThumbnailRegenerationMessage(message, parsed.data, env, now)
+        }),
+    )
 }
 
 worker.scheduled = (event, env, ctx) => {

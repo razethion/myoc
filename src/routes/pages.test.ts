@@ -638,7 +638,7 @@ async function getProfilePath(path: string, db: D1Database): Promise<Response> {
         {
             CACHE: workerEnv.CACHE,
             DB: db,
-            DB_BACKUP_BUCKET: workerEnv.DB_BACKUP_BUCKET,
+            OBJECT_STORAGE_ENCRYPTION_KEY: workerEnv.OBJECT_STORAGE_ENCRYPTION_KEY,
             MEDIA_BUCKET: workerEnv.MEDIA_BUCKET,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         },
@@ -652,7 +652,7 @@ async function getAppPath(path: string, database = db, headers: Record<string, s
         {
             CACHE: cache,
             DB: database,
-            DB_BACKUP_BUCKET: workerEnv.DB_BACKUP_BUCKET,
+            OBJECT_STORAGE_ENCRYPTION_KEY: workerEnv.OBJECT_STORAGE_ENCRYPTION_KEY,
             MEDIA_BUCKET: workerEnv.MEDIA_BUCKET,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         },
@@ -677,7 +677,7 @@ async function postPageAction(path: string, database: D1Database, mediaBucket: R
         {
             CACHE: createMockKVNamespace(),
             DB: database,
-            DB_BACKUP_BUCKET: workerEnv.DB_BACKUP_BUCKET,
+            OBJECT_STORAGE_ENCRYPTION_KEY: workerEnv.OBJECT_STORAGE_ENCRYPTION_KEY,
             MEDIA_BUCKET: mediaBucket,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         },
@@ -4196,14 +4196,15 @@ describe('GET /admin', () => {
         const retry = vi.fn()
         const failureBody = {
             version: 1,
+            kind: 'media-regeneration',
             taskId: 'preview-task',
             runId: 'preview-run',
-            containerSlot: 0,
+            errorCode: 'preview_generation_failed',
             error: '<script>console.log(1)</script>',
         }
         await app.queue(
             {
-                queue: workerEnv.MEDIA_PREVIEW_REGENERATION_DLQ_NAME,
+                queue: workerEnv.IMAGE_PROCESSING_DLQ_NAME,
                 messages: [
                     {
                         id: 'admin-log-message',

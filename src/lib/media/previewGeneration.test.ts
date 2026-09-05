@@ -105,26 +105,25 @@ describe('generateMediaPreviewWithContainer', () => {
         expect(fetch).toHaveBeenCalledTimes(3)
     })
 
-    it('uses overflow capacity after every primary container is busy', async () => {
+    it.each(['interactive', 'background'] as const)('finds free capacity for %s work', async (priority) => {
         const requestedContainers: string[] = []
         const env = routedPreviewEnvironment(async (containerName) => {
             requestedContainers.push(containerName)
-            const index = Number(containerName.split('-').at(-1))
-
-            return index < 3 ? new Response(null, {status: 429}) : avifResponse(100, 80)
+            return requestedContainers.length <= 3 ? new Response(null, {status: 429}) : avifResponse(100, 80)
         })
 
-        await expect(generateMediaPreviewWithContainer(env, sourceUrl, {width: 100, height: 80})).resolves.toMatchObject({
+        await expect(
+            generateMediaPreviewWithContainer(env, sourceUrl, {width: 100, height: 80}, {priority, maxAttempts: 1}),
+        ).resolves.toMatchObject({
             width: 100,
             height: 80,
         })
 
         expect(requestedContainers).toHaveLength(4)
-        expect(requestedContainers.slice(0, 3).every((name) => Number(name.split('-').at(-1)) < 3)).toBe(true)
-        expect(Number(requestedContainers[3]?.split('-').at(-1))).toBeGreaterThanOrEqual(3)
+        expect(new Set(requestedContainers).size).toBe(4)
     })
 
-    it('does not use overflow capacity for background work', async () => {
+    it('reports busy after all background capacity is in use', async () => {
         const requestedContainers: string[] = []
         const env = routedPreviewEnvironment(async (containerName) => {
             requestedContainers.push(containerName)
@@ -135,8 +134,7 @@ describe('generateMediaPreviewWithContainer', () => {
             'Container preview failed with 429',
         )
 
-        expect(requestedContainers).toHaveLength(1)
-        expect(Number(requestedContainers[0]?.split('-').at(-1))).toBeLessThan(3)
+        expect(new Set(requestedContainers)).toEqual(new Set(Array.from({length: 8}, (_, index) => `myoc-docker-sharp-${index}`)))
     })
 
     it('reports busy after all interactive capacity is in use', async () => {
@@ -153,19 +151,19 @@ describe('generateMediaPreviewWithContainer', () => {
         expect(new Set(requestedContainers)).toEqual(new Set(Array.from({length: 8}, (_, index) => `myoc-docker-sharp-${index}`)))
     })
 
-    it('keeps interactive work on primary containers when overflow is disabled', async () => {
+    it('uses the whole pool when a caller supplies a starting container', async () => {
         const requestedContainers: string[] = []
         const env = routedPreviewEnvironment(async (containerName) => {
             requestedContainers.push(containerName)
             return new Response(null, {status: 429})
-        }, false)
+        })
 
-        await expect(generateMediaPreviewWithContainer(env, sourceUrl, {width: 100, height: 80})).rejects.toThrow(
+        await expect(generateMediaPreviewWithContainer(env, sourceUrl, {width: 100, height: 80}, {containerIndex: 7})).rejects.toThrow(
             'Container preview failed with 429',
         )
 
-        expect(requestedContainers).toHaveLength(3)
-        expect(requestedContainers.every((name) => Number(name.split('-').at(-1)) < 3)).toBe(true)
+        expect(requestedContainers[0]).toBe('myoc-docker-sharp-7')
+        expect(new Set(requestedContainers).size).toBe(8)
     })
 
     it('retries a non-Error container failure', async () => {
@@ -244,7 +242,7 @@ describe('mediaPreviewContainerIndex', () => {
         const first = mediaPreviewContainerIndex('media-1:sfw')
 
         expect(first).toBeGreaterThanOrEqual(0)
-        expect(first).toBeLessThan(3)
+        expect(first).toBeLessThan(8)
         expect(mediaPreviewContainerIndex('media-1:sfw')).toBe(first)
     })
 })
@@ -351,10 +349,8 @@ function previewEnvironment(
 
 function routedPreviewEnvironment(
     fetch: (containerName: string) => Promise<Response>,
-    overflowEnabled = true,
-): Pick<Bindings, 'MEDIA_PREVIEW_OVERFLOW_ENABLED' | 'MYOC_DOCKER_SHARP_CONTAINER' | 'PREVIEW_PROCESSOR_TOKEN'> {
+): Pick<Bindings, 'MYOC_DOCKER_SHARP_CONTAINER' | 'PREVIEW_PROCESSOR_TOKEN'> {
     return {
-        MEDIA_PREVIEW_OVERFLOW_ENABLED: String(overflowEnabled),
         MYOC_DOCKER_SHARP_CONTAINER: {
             idFromName: vi.fn((name: string) => name),
             get: vi.fn((id: string) => ({fetch: async () => await fetch(id)})),

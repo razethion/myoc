@@ -16,12 +16,10 @@ function createQueue(): Queue {
 function createEnv(): Bindings {
     return {
         DB: db,
-        IMAGE_PROCESSING_QUEUE_0: createQueue(),
-        IMAGE_PROCESSING_QUEUE_1: createQueue(),
-        IMAGE_PROCESSING_QUEUE_2: createQueue(),
-        IMAGE_SOURCE_BUCKET: createMockR2Bucket(),
+        IMAGE_PROCESSING_QUEUE: createQueue(),
         MEDIA_BUCKET: createMockR2Bucket(),
         MEDIA_PUBLIC_BASE_URL: 'https://m.myoc.art',
+        OBJECT_STORAGE_ENCRYPTION_KEY: '11'.repeat(32),
     } as unknown as Bindings
 }
 
@@ -165,7 +163,7 @@ describe('image upload API', () => {
     it('propagates an unexpected source storage failure', async () => {
         await seedAuthenticatedUser({id: 'user-1'}, sessionToken)
         const env = createEnv()
-        vi.mocked(env.IMAGE_SOURCE_BUCKET.put).mockRejectedValueOnce(new Error('R2 unavailable'))
+        vi.mocked(env.MEDIA_BUCKET.put).mockRejectedValueOnce(new Error('R2 unavailable'))
         await expect(postUpload(env)).resolves.toHaveProperty('status', 500)
     })
 

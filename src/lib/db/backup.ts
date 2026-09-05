@@ -1,4 +1,5 @@
 import type {Bindings} from '../../types/bindings'
+import {objectStorageEncryptionKey} from '../storage/ssec'
 
 const DATABASE_NAME = 'myoc-db'
 const BACKUP_PREFIX = 'd1/myoc-db'
@@ -6,7 +7,10 @@ const EXPORT_POLL_ATTEMPTS = 10
 const EXPORT_POLL_DELAY_MS = 2_000
 const R2_MULTIPART_PART_BYTES = 5 * 1024 * 1024
 
-type D1BackupEnv = Pick<Bindings, 'CLOUDFLARE_ACCOUNT_ID' | 'D1_DATABASE_ID' | 'D1_REST_API_TOKEN' | 'DB_BACKUP_BUCKET'>
+type D1BackupEnv = Pick<
+    Bindings,
+    'CLOUDFLARE_ACCOUNT_ID' | 'D1_DATABASE_ID' | 'D1_REST_API_TOKEN' | 'MEDIA_BUCKET' | 'OBJECT_STORAGE_ENCRYPTION_KEY'
+>
 
 type BackupOptions = {
     fetch?: typeof fetch
@@ -63,15 +67,17 @@ export async function backupD1Database(env: D1BackupEnv, now = new Date(), optio
     const dumpStream = await exportD1DatabaseSqlStream(env, fetcher, options)
     const statsCounter = createSqlStatsCounter()
     const gzipStream = dumpStream.pipeThrough(statsCounter.stream).pipeThrough(new CompressionStream('gzip'))
-    const backupObject = await uploadMultipartStream(env.DB_BACKUP_BUCKET, key, gzipStream, {
+    const backupObject = await uploadMultipartStream(env.MEDIA_BUCKET, key, gzipStream, {
         httpMetadata: {
-            contentType: 'application/sql',
+            cacheControl: 'private, no-store',
             contentEncoding: 'gzip',
+            contentType: 'application/sql',
         },
         customMetadata: {
             database: DATABASE_NAME,
             generatedAt,
         },
+        ssecKey: objectStorageEncryptionKey(env),
     })
 
     const summary = {
@@ -97,7 +103,7 @@ async function uploadMultipartStream(
     const upload = await bucket.createMultipartUpload(key, options)
 
     try {
-        const parts = await uploadStreamParts(upload, stream)
+        const parts = await uploadStreamParts(upload, stream, options.ssecKey)
         return await upload.complete(parts)
     } catch (error) {
         await abortMultipartUpload(upload, key)
@@ -105,9 +111,13 @@ async function uploadMultipartStream(
     }
 }
 
-async function uploadStreamParts(upload: R2MultipartUpload, stream: ReadableStream<Uint8Array>): Promise<R2UploadedPart[]> {
+async function uploadStreamParts(
+    upload: R2MultipartUpload,
+    stream: ReadableStream<Uint8Array>,
+    ssecKey: R2MultipartOptions['ssecKey'],
+): Promise<R2UploadedPart[]> {
     const reader = stream.getReader()
-    const writer = new MultipartPartWriter(upload)
+    const writer = new MultipartPartWriter(upload, ssecKey)
 
     try {
         while (true) {
@@ -133,7 +143,10 @@ class MultipartPartWriter {
     private nextPartNumber = 1
     private readonly parts: R2UploadedPart[] = []
 
-    constructor(private readonly upload: R2MultipartUpload) {}
+    constructor(
+        private readonly upload: R2MultipartUpload,
+        private readonly ssecKey: R2MultipartOptions['ssecKey'],
+    ) {}
 
     async write(chunk: Uint8Array): Promise<void> {
         let chunkOffset = 0
@@ -161,7 +174,7 @@ class MultipartPartWriter {
 
     private async uploadBufferedPart(): Promise<void> {
         const bytes = this.bufferedBytes === this.buffer.byteLength ? this.buffer : this.buffer.slice(0, this.bufferedBytes)
-        this.parts.push(await this.upload.uploadPart(this.nextPartNumber, bytes))
+        this.parts.push(await this.upload.uploadPart(this.nextPartNumber, bytes, {ssecKey: this.ssecKey}))
         this.nextPartNumber += 1
         this.buffer = new Uint8Array(R2_MULTIPART_PART_BYTES)
         this.bufferedBytes = 0

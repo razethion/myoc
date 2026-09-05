@@ -19,7 +19,9 @@ import {
 
 export const MEDIA_PREVIEW_REGENERATION_BATCH_SIZE = 100
 export const MEDIA_PREVIEW_REGENERATION_BATCHES_PER_WORKFLOW = 2
-const LEGACY_MEDIA_PREVIEW_REGENERATION_ITEMS_PER_WORKFLOW = 250
+const MEDIA_PREVIEW_REGENERATION_ITEMS_PER_WORKFLOW =
+    MEDIA_PREVIEW_REGENERATION_BATCH_SIZE * MEDIA_PREVIEW_REGENERATION_BATCHES_PER_WORKFLOW
+const THUMBNAIL_REGENERATION_ITEMS_PER_WORKFLOW = 250
 const GALLERY_IMAGE_DIMENSION_PROBE_BYTES = 1024 * 1024
 
 export type MediaPreviewRegenerationSummary = {
@@ -41,11 +43,17 @@ export function mediaPreviewRegenerationWorkflowInstanceId(runId: string, segmen
     return segment === 0 ? runId : `${runId}-segment-${segment}`
 }
 
-export function activeMediaPreviewRegenerationWorkflowInstanceIds(runId: string, processedVariants: number): string[] {
-    const segment = Math.floor(processedVariants / LEGACY_MEDIA_PREVIEW_REGENERATION_ITEMS_PER_WORKFLOW)
+export function activeMediaPreviewRegenerationWorkflowInstanceIds(
+    runId: string,
+    processedVariants: number,
+    jobName: 'media-preview-regeneration' | 'thumbnail-regeneration',
+): string[] {
+    const itemsPerWorkflow =
+        jobName === 'media-preview-regeneration' ? MEDIA_PREVIEW_REGENERATION_ITEMS_PER_WORKFLOW : THUMBNAIL_REGENERATION_ITEMS_PER_WORKFLOW
+    const segment = Math.floor(processedVariants / itemsPerWorkflow)
     const currentId = mediaPreviewRegenerationWorkflowInstanceId(runId, segment)
 
-    if (segment === 0 || processedVariants % LEGACY_MEDIA_PREVIEW_REGENERATION_ITEMS_PER_WORKFLOW !== 0) {
+    if (segment === 0 || processedVariants % itemsPerWorkflow !== 0) {
         return [currentId]
     }
 
@@ -64,7 +72,6 @@ type MediaPreviewRegenerationEnv = Pick<
 >
 
 type MediaPreviewRegenerationOptions = {
-    containerIndex?: number
     maxContainerAttempts?: number
 }
 
@@ -72,15 +79,12 @@ export type MediaPreviewRegenerationItemStatus = MediaPreviewRegenerationResult[
 
 export type ClaimedMediaPreviewRegenerationTask = {
     candidateJson: string
-    containerSlot: 0 | 1 | 2
     leaseId: string
+    processingAttempts: number
     runId: string
 }
 
-type MediaPreviewRegenerationQueues = Pick<
-    Bindings,
-    'MEDIA_PREVIEW_REGENERATION_QUEUE_0' | 'MEDIA_PREVIEW_REGENERATION_QUEUE_1' | 'MEDIA_PREVIEW_REGENERATION_QUEUE_2'
->
+type MediaPreviewRegenerationQueue = Pick<Bindings, 'IMAGE_PROCESSING_QUEUE'>
 
 type CandidateRow = {
     media_id: string
@@ -149,24 +153,22 @@ export async function initializeMediaPreviewRegenerationDispatch(db: D1Database,
 
 export async function enqueueMediaPreviewRegenerationCandidates(
     db: D1Database,
-    queues: MediaPreviewRegenerationQueues,
+    queue: MediaPreviewRegenerationQueue,
     runId: string,
     candidates: MediaPreviewRegenerationCandidate[],
-    firstContainerSlot: 0 | 1 | 2,
-): Promise<0 | 1 | 2> {
+): Promise<void> {
     if (candidates.length === 0) {
-        return firstContainerSlot
+        return
     }
 
-    const tasks = candidates.map((candidate, index) => {
-        const containerSlot = ((firstContainerSlot + index) % 3) as 0 | 1 | 2
+    const tasks = candidates.map((candidate) => {
         return {
             candidate,
             message: {
                 version: 1 as const,
+                kind: 'media-regeneration' as const,
                 taskId: `${runId}:${candidate.mediaId}:${candidate.rating}`,
                 runId,
-                containerSlot,
             },
         }
     })
@@ -180,28 +182,12 @@ export async function enqueueMediaPreviewRegenerationCandidates(
                      VALUES (?, ?, ?, ?, ?, ?)
                      ON CONFLICT(run_id, media_id, rating) DO NOTHING`,
                 )
-                .bind(message.taskId, runId, candidate.mediaId, candidate.rating, message.containerSlot, JSON.stringify(candidate)),
+                .bind(message.taskId, runId, candidate.mediaId, candidate.rating, 0, JSON.stringify(candidate)),
         ),
     )
-    await Promise.all(
-        ([0, 1, 2] as const).map(async (containerSlot) => {
-            const messages = tasks
-                .filter((task) => task.message.containerSlot === containerSlot)
-                .map((task) => ({body: task.message satisfies MediaPreviewRegenerationMessage}))
-
-            if (messages.length > 0) {
-                await mediaPreviewRegenerationQueue(queues, containerSlot).sendBatch(messages)
-            }
-        }),
+    await queue.IMAGE_PROCESSING_QUEUE.sendBatch(
+        tasks.map(({message}) => ({body: message satisfies MediaPreviewRegenerationMessage, contentType: 'json'})),
     )
-
-    return ((firstContainerSlot + candidates.length) % 3) as 0 | 1 | 2
-}
-
-function mediaPreviewRegenerationQueue(queues: MediaPreviewRegenerationQueues, containerSlot: 0 | 1 | 2) {
-    if (containerSlot === 0) return queues.MEDIA_PREVIEW_REGENERATION_QUEUE_0
-    if (containerSlot === 1) return queues.MEDIA_PREVIEW_REGENERATION_QUEUE_1
-    return queues.MEDIA_PREVIEW_REGENERATION_QUEUE_2
 }
 
 export async function completeMediaPreviewRegenerationDispatch(db: D1Database, runId: string): Promise<void> {
@@ -269,14 +255,11 @@ export async function isMediaPreviewRegenerationDispatchActive(db: D1Database, r
                 SELECT 1
                 FROM media_preview_regeneration_runs AS runs
                 WHERE runs.run_id = ?
-                  AND (
-                      runs.dispatch_complete = 0
-                      OR EXISTS(
-                          SELECT 1
-                          FROM media_preview_regeneration_items AS items
-                          WHERE items.run_id = runs.run_id
-                            AND items.status IN ('pending', 'processing')
-                      )
+                  AND EXISTS(
+                      SELECT 1
+                      FROM media_preview_regeneration_items AS items
+                      WHERE items.run_id = runs.run_id
+                        AND items.status IN ('pending', 'processing')
                   )
             ) AS active`,
         )
@@ -290,12 +273,18 @@ export async function getMediaPreviewRegenerationItemState(
     db: D1Database,
     runId: string,
     taskId: string,
-): Promise<{jobStatus: string | null; itemStatus: MediaPreviewRegenerationItemStatus | null; leaseExpiresAt: string | null}> {
+): Promise<{
+    jobStatus: string | null
+    itemStatus: MediaPreviewRegenerationItemStatus | null
+    leaseExpiresAt: string | null
+    processingAttempts: number
+}> {
     const row = await db
         .prepare(
             `SELECT admin_job_runs.status AS job_status,
                     media_preview_regeneration_items.status AS item_status,
-                    media_preview_regeneration_items.lease_expires_at
+                    media_preview_regeneration_items.lease_expires_at,
+                    media_preview_regeneration_items.processing_attempts
              FROM admin_job_runs
              LEFT JOIN media_preview_regeneration_items
                ON media_preview_regeneration_items.run_id = admin_job_runs.id
@@ -303,12 +292,18 @@ export async function getMediaPreviewRegenerationItemState(
              WHERE admin_job_runs.id = ?`,
         )
         .bind(taskId, runId)
-        .first<{job_status: string; item_status: MediaPreviewRegenerationItemStatus | null; lease_expires_at: string | null}>()
+        .first<{
+            job_status: string
+            item_status: MediaPreviewRegenerationItemStatus | null
+            lease_expires_at: string | null
+            processing_attempts: number | null
+        }>()
 
     return {
         jobStatus: row?.job_status ?? null,
         itemStatus: row?.item_status ?? null,
         leaseExpiresAt: row?.lease_expires_at ?? null,
+        processingAttempts: Number(row?.processing_attempts ?? 0),
     }
 }
 
@@ -325,7 +320,8 @@ export async function claimMediaPreviewRegenerationTask(
             `UPDATE media_preview_regeneration_items
              SET status = 'processing',
                  lease_id = ?,
-                 lease_expires_at = ?
+                 lease_expires_at = ?,
+                 processing_attempts = processing_attempts + 1
              WHERE task_id = ?
                AND (
                    status = 'pending'
@@ -337,16 +333,16 @@ export async function claimMediaPreviewRegenerationTask(
                    WHERE id = media_preview_regeneration_items.run_id
                      AND status = 'running'
                )
-             RETURNING run_id, candidate_json, container_slot`,
+             RETURNING run_id, candidate_json, processing_attempts`,
         )
         .bind(leaseId, leaseExpiresAt, taskId, leasedAt)
-        .first<{run_id: string; candidate_json: string; container_slot: 0 | 1 | 2}>()
+        .first<{run_id: string; candidate_json: string; processing_attempts: number}>()
 
     return row
         ? {
               candidateJson: row.candidate_json,
-              containerSlot: row.container_slot,
               leaseId,
+              processingAttempts: row.processing_attempts,
               runId: row.run_id,
           }
         : null
@@ -393,6 +389,50 @@ export async function recordMediaPreviewRegenerationAttemptError(
         )
         .bind(message.slice(0, 2_000), taskId, leaseId)
         .run()
+}
+
+export async function releaseMediaPreviewRegenerationCapacityLease(db: D1Database, taskId: string, leaseId: string): Promise<void> {
+    await db
+        .prepare(
+            `UPDATE media_preview_regeneration_items
+             SET status = 'pending',
+                 lease_id = NULL,
+                 lease_expires_at = NULL,
+                 processing_attempts = MAX(0, processing_attempts - 1)
+             WHERE task_id = ?
+               AND status = 'processing'
+               AND lease_id = ?`,
+        )
+        .bind(taskId, leaseId)
+        .run()
+}
+
+export async function failExhaustedMediaPreviewRegenerationTask(
+    db: D1Database,
+    taskId: string,
+    error: string,
+    now: Date,
+    minimumAttempts: number,
+): Promise<boolean> {
+    const result = await db
+        .prepare(
+            `UPDATE media_preview_regeneration_items
+             SET status = 'failed',
+                 lease_id = NULL,
+                 lease_expires_at = NULL,
+                 regenerated_blur = 0,
+                 last_error = ?
+             WHERE task_id = ?
+               AND processing_attempts >= ?
+               AND (
+                   status = 'pending'
+                   OR (status = 'processing' AND lease_expires_at <= ?)
+               )`,
+        )
+        .bind(error.slice(0, 2_000), taskId, minimumAttempts, now.toISOString().replace('T', ' ').replace('Z', ''))
+        .run()
+
+    return Number(result.meta.changes) > 0
 }
 
 export async function deleteFinishedMediaPreviewRegenerationItems(db: D1Database, runId: string): Promise<void> {
@@ -508,7 +548,6 @@ export async function regenerateMediaPreviewCandidate(
             candidate.imageContentType,
         )
         const containerOptions = {
-            containerIndex: options.containerIndex,
             maxAttempts: options.maxContainerAttempts,
             priority: 'background' as const,
         }
@@ -627,7 +666,7 @@ async function putBlur(
     candidate: MediaPreviewRegenerationCandidate,
     targetBlurKey: string,
     preview: GeneratedGalleryPreview,
-    containerOptions: {containerIndex?: number; maxAttempts?: number; priority: 'background'},
+    containerOptions: {maxAttempts?: number; priority: 'background'},
 ): Promise<void> {
     const blur = await generateNsfwBlurImage(env, preview, containerOptions)
     await env.MEDIA_BUCKET.put(

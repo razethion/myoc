@@ -79,12 +79,23 @@ jobs:
 
       - name: Clean isolated dev resources
         env:
-          BACKUP_BUCKET: myoc-pr-${{ inputs.pull_request }}-backups
           CACHE_NAME: myoc-pr-${{ inputs.pull_request }}-cache
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CONTAINER_NAME: myoc-docker-sharp-pr-${{ inputs.pull_request }}
           DB_NAME: myoc-pr-${{ inputs.pull_request }}
+          IMAGE_DLQ: myoc-pr-${{ inputs.pull_request }}-image-processing-dlq
+          IMAGE_QUEUE: myoc-pr-${{ inputs.pull_request }}-image-processing
+          LEGACY_BACKUP_BUCKET: myoc-pr-${{ inputs.pull_request }}-backups
+          LEGACY_IMAGE_QUEUE_0: myoc-pr-${{ inputs.pull_request }}-image-processing-0
+          LEGACY_IMAGE_QUEUE_1: myoc-pr-${{ inputs.pull_request }}-image-processing-1
+          LEGACY_IMAGE_QUEUE_2: myoc-pr-${{ inputs.pull_request }}-image-processing-2
+          LEGACY_PREVIEW_DLQ: myoc-pr-${{ inputs.pull_request }}-preview-dlq
+          LEGACY_PREVIEW_QUEUE_0: myoc-pr-${{ inputs.pull_request }}-preview-0
+          LEGACY_PREVIEW_QUEUE_1: myoc-pr-${{ inputs.pull_request }}-preview-1
+          LEGACY_PREVIEW_QUEUE_2: myoc-pr-${{ inputs.pull_request }}-preview-2
+          LEGACY_RECENT_BUCKET: myoc-pr-${{ inputs.pull_request }}-recent-feed
+          LEGACY_SOURCE_BUCKET: myoc-pr-${{ inputs.pull_request }}-image-sources
           MEDIA_BUCKET: myoc-pr-${{ inputs.pull_request }}-media
           PR_NUMBER: ${{ inputs.pull_request }}
           WORKER_NAME: myoc-pr-${{ inputs.pull_request }}
@@ -100,11 +111,63 @@ jobs:
             echo "::warning::$1"
           }
 
+          delete_queue() {
+            local queue="$1"
+            local queue_output
+
+            if ! queue_output=$("$WRANGLER" queues info "$queue" 2>&1); then
+              if ! grep -Eqi 'not found|does not exist' <<< "$queue_output"; then
+                record_failure "Queue lookup failed for $queue: $queue_output"
+              fi
+              return
+            fi
+
+            if ! queue_output=$("$WRANGLER" queues delete "$queue" 2>&1); then
+              record_failure "Queue deletion failed for $queue: $queue_output"
+            fi
+          }
+
+          delete_bucket() {
+            local bucket="$1"
+            local public_url="$2"
+            local bucket_output
+
+            if ! bucket_output=$("$WRANGLER" r2 bucket info "$bucket" 2>&1); then
+              if ! grep -Eqi 'not found|does not exist' <<< "$bucket_output"; then
+                record_failure "R2 bucket lookup failed for $bucket: $bucket_output"
+              fi
+              return
+            fi
+
+            if [ "$public_url" = "true" ] && ! "$WRANGLER" r2 bucket dev-url disable "$bucket" --force; then
+              record_failure "The public development URL could not be disabled for $bucket."
+            fi
+
+            "$WRANGLER" r2 bucket lifecycle remove "$bucket" --name preview-expiry || true
+            if ! "$WRANGLER" r2 bucket lifecycle add "$bucket" preview-expiry --expire-days 1 --abort-multipart-days 1 --force; then
+              record_failure "The one-day cleanup lifecycle could not be set for $bucket."
+            fi
+
+            if ! "$WRANGLER" r2 bucket delete "$bucket"; then
+              record_failure "$bucket is not empty. Its one-day lifecycle will remove remaining objects. Run cleanup again later."
+            fi
+          }
+
           if ! worker_output=$("$WRANGLER" delete "$WORKER_NAME" --force 2>&1); then
             if ! grep -Eqi 'not found|does not exist' <<< "$worker_output"; then
               record_failure "Worker deletion failed: $worker_output"
             fi
           fi
+
+          delete_queue "$IMAGE_QUEUE"
+          delete_queue "$LEGACY_PREVIEW_QUEUE_0"
+          delete_queue "$LEGACY_PREVIEW_QUEUE_1"
+          delete_queue "$LEGACY_PREVIEW_QUEUE_2"
+          delete_queue "$LEGACY_IMAGE_QUEUE_0"
+          delete_queue "$LEGACY_IMAGE_QUEUE_1"
+          delete_queue "$LEGACY_IMAGE_QUEUE_2"
+          delete_queue "$LEGACY_PREVIEW_DLQ"
+          delete_queue "$IMAGE_DLQ"
 
           if "$WRANGLER" d1 list --json > d1-list.json; then
             if node -e "
@@ -136,27 +199,10 @@ jobs:
             record_failure "KV namespace listing failed."
           fi
 
-          for bucket in "$MEDIA_BUCKET" "$BACKUP_BUCKET"; do
-            if ! bucket_output=$("$WRANGLER" r2 bucket info "$bucket" 2>&1); then
-              if ! grep -Eqi 'not found|does not exist' <<< "$bucket_output"; then
-                record_failure "R2 bucket lookup failed for $bucket: $bucket_output"
-              fi
-              continue
-            fi
-
-            if [ "$bucket" = "$MEDIA_BUCKET" ] && ! "$WRANGLER" r2 bucket dev-url disable "$bucket" --force; then
-              record_failure "The public development URL could not be disabled for $bucket."
-            fi
-
-            "$WRANGLER" r2 bucket lifecycle remove "$bucket" --name preview-expiry || true
-            if ! "$WRANGLER" r2 bucket lifecycle add "$bucket" preview-expiry --expire-days 1 --abort-multipart-days 1 --force; then
-              record_failure "The one-day cleanup lifecycle could not be set for $bucket."
-            fi
-
-            if ! "$WRANGLER" r2 bucket delete "$bucket"; then
-              record_failure "$bucket is private but not empty. Its one-day lifecycle will remove remaining objects. Run cleanup again later."
-            fi
-          done
+          delete_bucket "$MEDIA_BUCKET" true
+          delete_bucket "$LEGACY_RECENT_BUCKET" true
+          delete_bucket "$LEGACY_SOURCE_BUCKET" false
+          delete_bucket "$LEGACY_BACKUP_BUCKET" false
 
           container_id=""
           page_token=""

@@ -1,13 +1,30 @@
+import {z} from 'zod'
 import type {Bindings} from '../../types/bindings'
+import type {
+    ImageProcessingMessage,
+    RegenerationProcessingFailureMessage,
+    ThumbnailRegenerationProcessingMessage,
+} from '../../types/imageProcessing'
 import {toSqlTimestamp} from '../auth/session'
 import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../media/cacheControl'
-import {generateSquareImageWithContainer} from '../media/previewGeneration'
+import {generateSquareImageWithContainer, PreviewContainerBusyError} from '../media/previewGeneration'
+import {imageProcessingErrorMessage as errorMessage, imageProcessingRetryDelaySeconds as retryDelaySeconds} from '../media/queueErrors'
 import {readThumbnailOriginal, retainThumbnailOriginal, thumbnailOriginalObjectKey} from '../media/thumbnailSources'
 import {characterFolderImageObjectKey, characterProfileImageObjectKey, profilePhotoObjectKey} from '../media/url'
+import {
+    claimMediaPreviewRegenerationTask,
+    deleteFinishedMediaPreviewRegenerationItems,
+    getMediaPreviewRegenerationItemState,
+    type MediaPreviewRegenerationSummary,
+    recordMediaPreviewRegenerationAttemptError,
+    recordMediaPreviewRegenerationResult,
+    releaseMediaPreviewRegenerationCapacityLease,
+} from './mediaPreviewRegeneration'
 
 const THUMBNAIL_CLEANUP_GRACE_MS = 60 * 60 * 1_000
 const DEFAULT_CANDIDATE_LIMIT = 25
 const MAX_CANDIDATE_LIMIT = 100
+const THUMBNAIL_REGENERATION_MAX_ATTEMPTS = 3
 
 type ThumbnailKind = 'user-profile' | 'character-profile' | 'folder-image'
 
@@ -38,6 +55,235 @@ type ThumbnailCandidateRow = {
 type ThumbnailReference = {
     image_key: string
     content_type: string
+}
+
+const ThumbnailCandidateSchema = z
+    .object({
+        kind: z.enum(['user-profile', 'character-profile', 'folder-image']),
+        userId: z.string().min(1),
+        targetId: z.string().min(1),
+        imageKey: z.string().min(1),
+        objectKey: z.string().min(1),
+        contentType: z.string().min(1),
+        outputImageKey: z.string().min(1),
+        outputObjectKey: z.string().min(1),
+    })
+    .strict()
+
+type ThumbnailRegenerationQueue = Pick<Bindings, 'IMAGE_PROCESSING_QUEUE'>
+
+export async function initializeThumbnailRegenerationDispatch(
+    db: D1Database,
+    runId: string,
+    totalVariants?: number,
+): Promise<{active: boolean; summary: MediaPreviewRegenerationSummary}> {
+    const summary = {
+        totalVariants: totalVariants ?? (await countThumbnailCandidates(db)),
+        processedVariants: 0,
+        regeneratedPreviews: 0,
+        regeneratedBlurs: 0,
+        skippedVariants: 0,
+        failedVariants: 0,
+        lastError: null,
+    }
+    const results = await db.batch([
+        db
+            .prepare(
+                `INSERT INTO media_preview_regeneration_runs (run_id, dispatch_complete, enqueued_items)
+                 SELECT ?, 0, 0
+                 WHERE EXISTS (
+                     SELECT 1
+                     FROM admin_job_runs
+                     WHERE id = ?
+                       AND job_name = 'thumbnail-regeneration'
+                       AND status = 'running'
+                 )
+                 ON CONFLICT(run_id) DO NOTHING`,
+            )
+            .bind(runId, runId),
+        db
+            .prepare(
+                `UPDATE admin_job_runs
+                 SET summary_json = ?
+                 WHERE id = ?
+                   AND job_name = 'thumbnail-regeneration'
+                   AND status = 'running'`,
+            )
+            .bind(JSON.stringify(summary), runId),
+    ])
+
+    return {active: Number(results[1]?.meta.changes) > 0, summary}
+}
+
+export async function enqueueThumbnailRegenerationCandidates(
+    db: D1Database,
+    queue: ThumbnailRegenerationQueue,
+    runId: string,
+    candidates: ThumbnailCandidate[],
+): Promise<boolean> {
+    if (candidates.length === 0) {
+        return await isThumbnailRegenerationJobRunning(db, runId)
+    }
+
+    if (!(await isThumbnailRegenerationJobRunning(db, runId))) {
+        return false
+    }
+
+    const tasks = candidates.map((candidate) => ({
+        candidate,
+        mediaId: `thumbnail:${candidate.kind}:${candidate.targetId}`,
+        message: {
+            version: 1 as const,
+            kind: 'thumbnail-regeneration' as const,
+            taskId: `${runId}:thumbnail:${candidate.kind}:${candidate.targetId}`,
+            runId,
+        } satisfies ThumbnailRegenerationProcessingMessage,
+    }))
+    await db.batch(
+        tasks.map(({candidate, mediaId, message}) =>
+            db
+                .prepare(
+                    `INSERT INTO media_preview_regeneration_items (
+                         task_id, run_id, media_id, rating, container_slot, candidate_json
+                     )
+                     SELECT ?, ?, ?, 'sfw', 0, ?
+                     WHERE EXISTS (
+                         SELECT 1
+                         FROM admin_job_runs
+                         WHERE id = ?
+                           AND job_name = 'thumbnail-regeneration'
+                           AND status = 'running'
+                     )
+                     ON CONFLICT(run_id, media_id, rating) DO NOTHING`,
+                )
+                .bind(message.taskId, runId, mediaId, JSON.stringify(candidate), runId),
+        ),
+    )
+    await queue.IMAGE_PROCESSING_QUEUE.sendBatch(
+        tasks.map(({message}) => ({body: message satisfies ImageProcessingMessage, contentType: 'json' as const})),
+    )
+    return true
+}
+
+export async function consumeThumbnailRegenerationMessage(
+    message: Message,
+    body: ThumbnailRegenerationProcessingMessage,
+    env: Bindings,
+    now = () => new Date(),
+): Promise<void> {
+    try {
+        const claimed = await claimMediaPreviewRegenerationTask(env.DB, body.taskId, now())
+
+        if (!claimed) {
+            await handleUnclaimedThumbnailMessage(message, env.DB, body, now())
+            return
+        }
+
+        let candidate: ThumbnailCandidate
+
+        try {
+            candidate = ThumbnailCandidateSchema.parse(JSON.parse(claimed.candidateJson))
+        } catch {
+            await finishFailedThumbnailMessage(message, env, body, claimed.leaseId, 'Stored thumbnail task data is invalid')
+            return
+        }
+
+        try {
+            const result = await regenerateThumbnail(env, candidate)
+            await recordMediaPreviewRegenerationResult(env.DB, body.taskId, claimed.leaseId, {
+                status: result.status,
+                regeneratedBlur: false,
+                error: null,
+            })
+            await deleteFinishedMediaPreviewRegenerationItems(env.DB, claimed.runId)
+            message.ack()
+        } catch (error) {
+            const failure = errorMessage(error)
+
+            if (error instanceof PreviewContainerBusyError) {
+                await releaseMediaPreviewRegenerationCapacityLease(env.DB, body.taskId, claimed.leaseId)
+                await env.IMAGE_PROCESSING_QUEUE.send(body, {contentType: 'json', delaySeconds: 1})
+                message.ack()
+                return
+            }
+
+            if (claimed.processingAttempts >= THUMBNAIL_REGENERATION_MAX_ATTEMPTS) {
+                await finishFailedThumbnailMessage(message, env, body, claimed.leaseId, failure)
+                return
+            }
+
+            await recordMediaPreviewRegenerationAttemptError(env.DB, body.taskId, claimed.leaseId, failure)
+            message.retry({delaySeconds: retryDelaySeconds(message.attempts)})
+        }
+    } catch (error) {
+        console.error(
+            JSON.stringify({
+                event: 'thumbnail_regeneration_queue_failed',
+                error: errorMessage(error),
+                messageId: message.id,
+                taskId: body.taskId,
+            }),
+        )
+        message.retry({delaySeconds: retryDelaySeconds(message.attempts)})
+    }
+}
+
+async function handleUnclaimedThumbnailMessage(
+    message: Message,
+    db: D1Database,
+    body: ThumbnailRegenerationProcessingMessage,
+    now: Date,
+): Promise<void> {
+    const state = await getMediaPreviewRegenerationItemState(db, body.runId, body.taskId)
+
+    if (state.jobStatus !== 'running' || (state.itemStatus !== 'pending' && state.itemStatus !== 'processing')) {
+        await deleteFinishedMediaPreviewRegenerationItems(db, body.runId)
+        message.ack()
+        return
+    }
+
+    const leaseDelay = state.leaseExpiresAt
+        ? Math.ceil((Date.parse(`${state.leaseExpiresAt.replace(' ', 'T')}Z`) - now.getTime()) / 1_000)
+        : 1
+    message.retry({delaySeconds: Math.max(1, Math.min(120, leaseDelay))})
+}
+
+async function finishFailedThumbnailMessage(
+    message: Message,
+    env: Bindings,
+    body: ThumbnailRegenerationProcessingMessage,
+    leaseId: string,
+    failure: string,
+): Promise<void> {
+    await env.IMAGE_PROCESSING_DLQ.send({
+        ...body,
+        errorCode: 'thumbnail_generation_failed',
+        error: failure.slice(0, 2_000),
+    } satisfies RegenerationProcessingFailureMessage)
+    await recordMediaPreviewRegenerationResult(env.DB, body.taskId, leaseId, {
+        status: 'failed',
+        regeneratedBlur: false,
+        error: failure,
+    })
+    await deleteFinishedMediaPreviewRegenerationItems(env.DB, body.runId)
+    message.ack()
+}
+
+async function isThumbnailRegenerationJobRunning(db: D1Database, runId: string): Promise<boolean> {
+    const running = await db
+        .prepare(
+            `SELECT EXISTS(
+                 SELECT 1
+                 FROM admin_job_runs
+                 WHERE id = ?
+                   AND job_name = 'thumbnail-regeneration'
+                   AND status = 'running'
+             ) AS running`,
+        )
+        .bind(runId)
+        .first<number>('running')
+
+    return Number(running) === 1
 }
 
 export async function countThumbnailCandidates(db: D1Database): Promise<number> {
@@ -107,6 +353,7 @@ export async function getThumbnailCandidates(
     return result.results.map(toThumbnailCandidate)
 }
 
+/** @internal Exposed for tests of source retention and conditional publication; queued jobs use the message handler. */
 export async function regenerateThumbnail(
     env: Bindings,
     candidate: ThumbnailCandidate,

@@ -1,8 +1,9 @@
 import {z} from 'zod'
 import type {Bindings} from '../../types/bindings'
-import type {ImageProcessingFailureMessage, ImageProcessingMessage} from '../../types/imageProcessing'
+import type {ImageProcessingFailureMessage, ImageUploadProcessingMessage} from '../../types/imageProcessing'
 import {recordAdminErrorLog} from '../admin/errorLog'
 import {toSqlTimestamp} from '../auth/session'
+import {objectStorageEncryptionKey} from '../storage/ssec'
 import {REVOCABLE_MEDIA_CACHE_CONTROL} from './cacheControl'
 import {readGalleryImageDimensions} from './imageMetadata'
 import {
@@ -16,6 +17,7 @@ import {
 import {retainThumbnailOriginal, thumbnailOriginalObjectKey} from './thumbnailSources'
 import {
     characterFolderImageObjectKey,
+    characterMediaImageObjectKey,
     characterMediaImageUrl,
     characterMediaNsfwBlurImageObjectKey,
     characterMediaNsfwBlurImageUrl,
@@ -35,14 +37,6 @@ const SQUARE_SOURCE_MAX_BYTES = 3 * 1024 * 1024
 
 export const ImageUploadKindSchema = z.enum(['gallery', 'user-profile', 'character-profile', 'folder-image'])
 type ImageUploadKind = z.infer<typeof ImageUploadKindSchema>
-
-const ImageProcessingMessageSchema = z
-    .object({
-        version: z.literal(1),
-        taskId: z.uuid(),
-        slot: z.union([z.literal(0), z.literal(1), z.literal(2)]),
-    })
-    .strict()
 
 type JobRow = {
     id: string
@@ -86,13 +80,13 @@ type TaskRow = {
     target_type: JobRow['target_type']
     generation: number
     job_state: ImageUploadInternalState
+    request_json: string
 }
 
 type FailedTaskReportRow = {
     id: string
     job_id: string
     run_id: string
-    container_slot: 0 | 1 | 2
     failure_event_id: string
     error_code: string
     error_message: string
@@ -211,7 +205,7 @@ export async function createGalleryImageUploadJob(env: Bindings, input: CreateGa
     for (const source of input.sources) {
         const sourceId = crypto.randomUUID()
         const taskId = crypto.randomUUID()
-        const slot = containerSlotForId(taskId)
+        const slot = 0
         statements.push(
             env.DB.prepare(
                 `INSERT INTO image_upload_sources (
@@ -279,16 +273,17 @@ export async function createSquareImageUploadJob(env: Bindings, input: CreateSqu
     const sourceId = crypto.randomUUID()
     const taskId = crypto.randomUUID()
     const runId = crypto.randomUUID()
-    const slot = containerSlotForId(taskId)
+    const slot = 0
     const sourceKey = `image-sources/${input.userId}/${jobId}/${sourceId}.png`
     const deadlineAt = toSqlTimestamp(new Date(now.getTime() + IMAGE_UPLOAD_DEADLINE_MS))
     const recipe = recipeForKind(input.kind)
 
-    await env.IMAGE_SOURCE_BUCKET.put(sourceKey, input.bytes, {
+    await env.MEDIA_BUCKET.put(sourceKey, input.bytes, {
         httpMetadata: {
             cacheControl: 'private, no-store',
             contentType: 'image/png',
         },
+        ssecKey: objectStorageEncryptionKey(env),
     })
 
     try {
@@ -329,7 +324,7 @@ export async function createSquareImageUploadJob(env: Bindings, input: CreateSqu
             ).bind(crypto.randomUUID(), taskId, slot, nowText, nowText),
         ])
     } catch (error) {
-        await env.IMAGE_SOURCE_BUCKET.delete(sourceKey)
+        await env.MEDIA_BUCKET.delete(sourceKey)
         throw error
     }
 
@@ -517,46 +512,39 @@ async function concurrentRetryStatus(
     throw new ImageUploadConflictError('The image upload retry changed. Reload the upload status and try again.')
 }
 
-export async function consumeImageProcessingQueue(batch: MessageBatch, env: Bindings, now = () => new Date()): Promise<void> {
-    await Promise.all(
-        batch.messages.map(async (message) => {
-            const parsed = ImageProcessingMessageSchema.safeParse(message.body)
+export async function consumeImageUploadProcessingMessage(
+    message: Message,
+    body: ImageUploadProcessingMessage,
+    env: Bindings,
+    now = () => new Date(),
+): Promise<void> {
+    try {
+        const action = await processImageTask(env, body, now())
+        await reportPendingImageTaskFailures(env, {taskId: body.taskId})
 
-            if (!parsed.success) {
-                console.error(JSON.stringify({event: 'image_task_invalid_message', messageId: message.id}))
-                message.ack()
-                return
-            }
-
-            try {
-                const action = await processImageTask(env, parsed.data, now())
-                await reportPendingImageTaskFailures(env, {taskId: parsed.data.taskId})
-
-                if (action === 'retry-capacity') {
-                    message.retry({delaySeconds: 1})
-                } else if (action === 'retry-processing') {
-                    message.retry({delaySeconds: message.attempts <= 1 ? 1 : 3})
-                } else {
-                    message.ack()
-                }
-            } catch (error) {
-                console.error(
-                    JSON.stringify({
-                        event: 'image_task_system_error',
-                        messageId: message.id,
-                        taskId: parsed.data.taskId,
-                        error: errorMessage(error),
-                    }),
-                )
-                message.retry({delaySeconds: Math.min(60, 2 ** Math.min(6, message.attempts))})
-            }
-        }),
-    )
+        if (action === 'retry-capacity') {
+            message.retry({delaySeconds: 1})
+        } else if (action === 'retry-processing') {
+            message.retry({delaySeconds: message.attempts <= 1 ? 1 : 3})
+        } else {
+            message.ack()
+        }
+    } catch (error) {
+        console.error(
+            JSON.stringify({
+                event: 'image_task_system_error',
+                messageId: message.id,
+                taskId: body.taskId,
+                error: errorMessage(error),
+            }),
+        )
+        message.retry({delaySeconds: Math.min(60, 2 ** Math.min(6, message.attempts))})
+    }
 }
 
 async function dispatchImageUploadOutbox(env: Bindings, now = new Date()): Promise<number> {
     const rows = await env.DB.prepare(
-        `SELECT id, task_id, container_slot
+        `SELECT id, task_id
          FROM image_queue_outbox
          WHERE state = 'pending'
            AND next_attempt_at <= ?
@@ -564,14 +552,14 @@ async function dispatchImageUploadOutbox(env: Bindings, now = new Date()): Promi
          LIMIT ?`,
     )
         .bind(toSqlTimestamp(now), IMAGE_UPLOAD_RECONCILE_LIMIT)
-        .all<{id: string; task_id: string; container_slot: 0 | 1 | 2}>()
+        .all<{id: string; task_id: string}>()
     let sent = 0
 
     for (const row of rows.results) {
-        const message = {version: 1, taskId: row.task_id, slot: row.container_slot} satisfies ImageProcessingMessage
+        const message = {version: 1, kind: 'upload', taskId: row.task_id} satisfies ImageUploadProcessingMessage
 
         try {
-            await imageProcessingQueue(env, row.container_slot).send(message, {contentType: 'json'})
+            await env.IMAGE_PROCESSING_QUEUE.send(message, {contentType: 'json'})
             await env.DB.batch([
                 env.DB.prepare(
                     `UPDATE image_queue_outbox
@@ -676,7 +664,7 @@ export async function reconcileImageUploads(env: Bindings, now = new Date()): Pr
 
     for (const task of cleanup.results) {
         try {
-            await (task.bucket === 'media' ? env.MEDIA_BUCKET : env.IMAGE_SOURCE_BUCKET).delete(task.object_key)
+            await env.MEDIA_BUCKET.delete(task.object_key)
             await env.DB.prepare(`UPDATE image_cleanup_tasks SET state = 'done', updated_at = ? WHERE id = ?`).bind(nowText, task.id).run()
         } catch (error) {
             await env.DB.prepare(
@@ -693,7 +681,7 @@ export async function reconcileImageUploads(env: Bindings, now = new Date()): Pr
 
 async function processImageTask(
     env: Bindings,
-    message: ImageProcessingMessage,
+    message: ImageUploadProcessingMessage,
     now: Date,
 ): Promise<'ack' | 'retry-capacity' | 'retry-processing'> {
     const leaseId = crypto.randomUUID()
@@ -702,7 +690,6 @@ async function processImageTask(
         `UPDATE image_processing_tasks
          SET state = 'processing', lease_id = ?, lease_expires_at = ?, updated_at = ?
          WHERE id = ?
-           AND container_slot = ?
            AND state = 'queued'
            AND sharp_attempts < ?
            AND EXISTS (
@@ -713,15 +700,7 @@ async function processImageTask(
            )
          RETURNING id`,
     )
-        .bind(
-            leaseId,
-            leaseExpiresAt,
-            toSqlTimestamp(now),
-            message.taskId,
-            message.slot,
-            IMAGE_TASK_MAX_SHARP_ATTEMPTS,
-            toSqlTimestamp(now),
-        )
+        .bind(leaseId, leaseExpiresAt, toSqlTimestamp(now), message.taskId, IMAGE_TASK_MAX_SHARP_ATTEMPTS, toSqlTimestamp(now))
         .first<{id: string}>()
 
     if (!claim) {
@@ -732,7 +711,7 @@ async function processImageTask(
 
     if (task?.lease_id !== leaseId) return 'ack'
 
-    const source = await env.IMAGE_SOURCE_BUCKET.get(task.source_key)
+    const source = await env.MEDIA_BUCKET.get(task.source_key, {ssecKey: objectStorageEncryptionKey(env)})
 
     if (!source || (!task.recipe.startsWith('gallery-') && source.size > SQUARE_SOURCE_MAX_BYTES)) {
         await failTask(env.DB, task, leaseId, 'source_unavailable', 'The uploaded source is not available.', now)
@@ -749,12 +728,11 @@ async function processImageTask(
 
     try {
         generated = await generateSquareImageWithContainer(env, sourceBytes, task.id, {
-            containerIndex: task.container_slot,
             maxAttempts: 1,
             priority: 'interactive',
         })
     } catch (error) {
-        return await handleTaskProcessingError(env.DB, task, leaseId, message.slot, error, now, startedAt)
+        return await handleTaskProcessingError(env.DB, task, leaseId, error, now, startedAt)
     }
 
     const outputKey = outputObjectKey(task)
@@ -767,10 +745,7 @@ async function processImageTask(
             },
         })
     } catch (error) {
-        await Promise.allSettled([
-            env.MEDIA_BUCKET.delete(outputKey),
-            env.IMAGE_SOURCE_BUCKET.delete(thumbnailOriginalObjectKey(outputKey)),
-        ])
+        await Promise.allSettled([env.MEDIA_BUCKET.delete(outputKey), env.MEDIA_BUCKET.delete(thumbnailOriginalObjectKey(outputKey))])
         throw error
     }
     const result = await publishSquareOutput(
@@ -805,7 +780,7 @@ async function processGalleryTask(
     env: Bindings,
     task: TaskRow,
     leaseId: string,
-    message: ImageProcessingMessage,
+    _message: ImageUploadProcessingMessage,
     now: Date,
     startedAt: number,
 ): Promise<'ack' | 'retry-capacity' | 'retry-processing'> {
@@ -820,17 +795,17 @@ async function processGalleryTask(
         generated = await generateGalleryOutputsWithContainer(
             env,
             async () => {
-                const source = await env.IMAGE_SOURCE_BUCKET.get(task.source_key)
+                const source = await env.MEDIA_BUCKET.get(task.source_key, {ssecKey: objectStorageEncryptionKey(env)})
                 if (!source) throw new PreviewValidationError('Gallery source is not available')
                 return source.body
             },
             {width: task.source_width, height: task.source_height},
             task.source_rating === 'nsfw',
             task.id,
-            {containerIndex: task.container_slot, maxAttempts: 1, priority: 'interactive'},
+            {maxAttempts: 1, priority: 'interactive'},
         )
     } catch (error) {
-        return await handleTaskProcessingError(env.DB, task, leaseId, message.slot, error, now, startedAt)
+        return await handleTaskProcessingError(env.DB, task, leaseId, error, now, startedAt)
     }
 
     const imageKey = fileStem(task.source_key)
@@ -847,19 +822,27 @@ async function processGalleryTask(
     const blurObjectKey = blurKey
         ? characterMediaNsfwBlurImageObjectKey(task.user_id, task.target_id, galleryMediaId(task), blurKey, GALLERY_NSFW_BLUR_CONTENT_TYPE)
         : null
-    const source = await env.IMAGE_SOURCE_BUCKET.get(task.source_key)
+    const source = await env.MEDIA_BUCKET.get(task.source_key, {ssecKey: objectStorageEncryptionKey(env)})
 
     if (!source) {
         await failTask(env.DB, task, leaseId, 'source_unavailable', 'The uploaded source is not available.', now)
         return 'ack'
     }
 
-    await writeGalleryOutputs(env.MEDIA_BUCKET, task, source.body, previewObjectKey, blurObjectKey, generated)
+    const imageObjectKey = characterMediaImageObjectKey(
+        task.user_id,
+        task.target_id,
+        galleryMediaId(task),
+        imageKey,
+        task.source_rating,
+        task.source_content_type,
+    )
+    await writeGalleryOutputs(env.MEDIA_BUCKET, task, source.body, imageObjectKey, previewObjectKey, blurObjectKey, generated)
 
     const output = {
         rating: task.source_rating,
         imageKey,
-        imageObjectKey: task.source_key,
+        imageObjectKey,
         imageContentType: task.source_content_type,
         width: task.source_width,
         height: task.source_height,
@@ -887,7 +870,7 @@ async function processGalleryTask(
             crypto.randomUUID(),
             task.id,
             attemptNumber,
-            `myoc-docker-sharp-${message.slot}`,
+            'myoc-docker-sharp-pool',
             Math.max(0, Date.now() - startedAt),
             toSqlTimestamp(now),
             toSqlTimestamp(now),
@@ -903,7 +886,7 @@ async function processGalleryTask(
     ])
 
     if ((results[1]?.meta.changes ?? 0) === 0) {
-        await env.MEDIA_BUCKET.delete(previewObjectKey)
+        await env.MEDIA_BUCKET.delete([imageObjectKey, previewObjectKey])
         if (blurObjectKey) await env.MEDIA_BUCKET.delete(blurObjectKey)
         return 'ack'
     }
@@ -937,13 +920,14 @@ async function writeGalleryOutputs(
     bucket: R2Bucket,
     task: TaskRow,
     source: ReadableStream,
+    imageObjectKey: string,
     previewObjectKey: string,
     blurObjectKey: string | null,
     generated: Awaited<ReturnType<typeof generateGalleryOutputsWithContainer>>,
 ): Promise<void> {
     await Promise.all([
         Promise.resolve().then(() =>
-            bucket.put(task.source_key, source, {
+            bucket.put(imageObjectKey, source, {
                 httpMetadata: {cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL, contentType: task.source_content_type},
             }),
         ),
@@ -968,7 +952,6 @@ async function handleTaskProcessingError(
     db: D1Database,
     task: TaskRow,
     leaseId: string,
-    slot: number,
     error: unknown,
     now: Date,
     startedAt: number,
@@ -980,7 +963,7 @@ async function handleTaskProcessingError(
 
     const attemptNumber = task.sharp_attempts + 1
     const terminal = error instanceof PreviewValidationError || attemptNumber >= IMAGE_TASK_MAX_SHARP_ATTEMPTS
-    await recordFailedAttempt(db, task, leaseId, slot, attemptNumber, error, terminal, now, Date.now() - startedAt)
+    await recordFailedAttempt(db, task, leaseId, attemptNumber, error, terminal, now, Date.now() - startedAt)
     return terminal ? 'ack' : 'retry-processing'
 }
 
@@ -1220,8 +1203,8 @@ async function queueGalleryOutputCleanup(db: D1Database, jobId: string, output: 
 }
 
 function galleryMediaId(task: TaskRow): string {
-    const parts = task.source_key.split('/')
-    return parts.at(-3) ?? task.job_id
+    const request = JSON.parse(task.request_json) as {mediaId?: unknown}
+    return typeof request.mediaId === 'string' && request.mediaId ? request.mediaId : task.job_id
 }
 
 function fileStem(key: string): string {
@@ -1272,7 +1255,7 @@ async function publishSquareOutput(
                 crypto.randomUUID(),
                 task.id,
                 attemptNumber,
-                `myoc-docker-sharp-${task.container_slot}`,
+                'myoc-docker-sharp-pool',
                 Math.max(0, durationMs),
                 toSqlTimestamp(now),
                 toSqlTimestamp(now),
@@ -1435,7 +1418,8 @@ async function readTask(db: D1Database, taskId: string): Promise<TaskRow | null>
             `SELECT tasks.*, sources.object_key AS source_key, sources.content_type AS source_content_type,
                     sources.byte_size AS source_byte_size, sources.width AS source_width,
                     sources.height AS source_height, sources.rating AS source_rating,
-                    jobs.user_id, jobs.target_id, jobs.target_type, jobs.generation, jobs.state AS job_state
+                    jobs.user_id, jobs.target_id, jobs.target_type, jobs.generation, jobs.state AS job_state,
+                    jobs.request_json
              FROM image_processing_tasks AS tasks
              JOIN image_upload_sources AS sources ON sources.id = tasks.source_id
              JOIN image_upload_jobs AS jobs ON jobs.id = tasks.job_id
@@ -1460,7 +1444,6 @@ async function recordFailedAttempt(
     db: D1Database,
     task: TaskRow,
     leaseId: string,
-    slot: number,
     attemptNumber: number,
     error: unknown,
     terminal: boolean,
@@ -1486,7 +1469,7 @@ async function recordFailedAttempt(
                 crypto.randomUUID(),
                 task.id,
                 attemptNumber,
-                `myoc-docker-sharp-${slot}`,
+                'myoc-docker-sharp-pool',
                 code,
                 Math.max(0, durationMs),
                 toSqlTimestamp(now),
@@ -1568,7 +1551,7 @@ async function reportPendingImageTaskFailures(
     }
 
     const failures = await env.DB.prepare(
-        `SELECT id, job_id, run_id, container_slot, failure_event_id, error_code, error_message
+        `SELECT id, job_id, run_id, failure_event_id, error_code, error_message
          FROM image_processing_tasks
          WHERE ${conditions.join(' AND ')}
          ORDER BY updated_at, id
@@ -1590,8 +1573,8 @@ async function reportPendingImageTaskFailures(
             await env.IMAGE_PROCESSING_DLQ.send(
                 {
                     version: 1,
+                    kind: 'upload',
                     taskId: failure.id,
-                    slot: failure.container_slot,
                     failureId: failure.failure_event_id,
                     jobId: failure.job_id,
                     errorCode: failure.error_code,
@@ -1693,18 +1676,6 @@ function recipeForKind(kind: Exclude<ImageUploadKind, 'gallery'>): TaskRow['reci
     if (kind === 'user-profile') return 'user-profile-v1'
     if (kind === 'character-profile') return 'character-profile-v1'
     return 'folder-image-v1'
-}
-
-function containerSlotForId(id: string): 0 | 1 | 2 {
-    let hash = 0
-    for (let index = 0; index < id.length; index += 1) hash = Math.imul(hash ^ id.charCodeAt(index), 16_777_619)
-    return ((hash >>> 0) % 3) as 0 | 1 | 2
-}
-
-function imageProcessingQueue(env: Bindings, slot: 0 | 1 | 2): Queue<ImageProcessingMessage> {
-    if (slot === 0) return env.IMAGE_PROCESSING_QUEUE_0
-    if (slot === 1) return env.IMAGE_PROCESSING_QUEUE_1
-    return env.IMAGE_PROCESSING_QUEUE_2
 }
 
 function cleanupStatementsForOutput(db: D1Database, jobId: string, outputJson: string, now: Date): D1PreparedStatement[] {

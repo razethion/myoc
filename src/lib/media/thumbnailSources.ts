@@ -1,4 +1,5 @@
 import type {Bindings} from '../../types/bindings'
+import {objectStorageEncryptionKey} from '../storage/ssec'
 
 const THUMBNAIL_SOURCE_MAX_BYTES = 3 * 1024 * 1024
 const THUMBNAIL_SOURCE_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/avif'])
@@ -24,28 +25,30 @@ export function thumbnailOriginalObjectKey(thumbnailObjectKey: string): string {
 }
 
 export async function retainThumbnailOriginal(
-    env: Pick<Bindings, 'IMAGE_SOURCE_BUCKET'>,
+    env: Pick<Bindings, 'MEDIA_BUCKET' | 'OBJECT_STORAGE_ENCRYPTION_KEY'>,
     thumbnailObjectKey: string,
     bytes: Uint8Array,
     contentType: string,
 ): Promise<void> {
     const normalizedContentType = validateThumbnailSource(bytes, contentType)
 
-    await env.IMAGE_SOURCE_BUCKET.put(thumbnailOriginalObjectKey(thumbnailObjectKey), bytes, {
+    await env.MEDIA_BUCKET.put(thumbnailOriginalObjectKey(thumbnailObjectKey), bytes, {
         onlyIf: new Headers({'if-none-match': '*'}),
         httpMetadata: {
             cacheControl: 'private, no-store',
             contentType: normalizedContentType,
         },
+        ssecKey: objectStorageEncryptionKey(env),
     })
 }
 
 export async function readThumbnailOriginal(
-    env: Pick<Bindings, 'DB' | 'IMAGE_SOURCE_BUCKET' | 'MEDIA_BUCKET'>,
+    env: Pick<Bindings, 'DB' | 'MEDIA_BUCKET' | 'OBJECT_STORAGE_ENCRYPTION_KEY'>,
     target: ThumbnailSourceTarget,
 ): Promise<{bytes: Uint8Array; contentType: ThumbnailContentType}> {
     const retainedKey = thumbnailOriginalObjectKey(target.objectKey)
-    const retained = await env.IMAGE_SOURCE_BUCKET.get(retainedKey)
+    const ssecKey = objectStorageEncryptionKey(env)
+    const retained = await env.MEDIA_BUCKET.get(retainedKey, {ssecKey})
 
     if (retained) {
         return await readBoundedObject(retained, retained.httpMetadata?.contentType)
@@ -54,7 +57,7 @@ export async function readThumbnailOriginal(
     const source = await findReadyUploadSource(env.DB, target)
 
     if (source) {
-        const sourceObject = await env.IMAGE_SOURCE_BUCKET.get(source.object_key)
+        const sourceObject = await env.MEDIA_BUCKET.get(source.object_key, {ssecKey})
 
         if (sourceObject) {
             return await readBoundedObject(sourceObject, source.content_type)

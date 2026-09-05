@@ -1,13 +1,4 @@
-import {z} from 'zod'
-
-export const MediaPreviewRegenerationMessageSchema = z
-    .object({
-        version: z.literal(1),
-        taskId: z.string().min(1).max(512),
-        runId: z.string().min(1).max(128),
-        containerSlot: z.union([z.literal(0), z.literal(1), z.literal(2)]),
-    })
-    .strict()
+import type {MediaRegenerationProcessingMessage, RegenerationProcessingFailureMessage} from './imageProcessing'
 
 export type MediaPreviewRegenerationCandidate = {
     mediaId: string
@@ -26,8 +17,6 @@ export type MediaPreviewRegenerationCandidate = {
     targetBlurKey: string | null
 }
 
-export type MediaPreviewRegenerationMessage = z.infer<typeof MediaPreviewRegenerationMessageSchema>
+export type MediaPreviewRegenerationMessage = MediaRegenerationProcessingMessage
 
-export type MediaPreviewRegenerationFailureMessage = MediaPreviewRegenerationMessage & {
-    error: string
-}
+export type MediaPreviewRegenerationFailureMessage = Extract<RegenerationProcessingFailureMessage, {kind: 'media-regeneration'}>

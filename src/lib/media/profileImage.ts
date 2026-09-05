@@ -54,7 +54,7 @@ function validateProfileImagePayload(
 export async function normalizeProfileImagePayload(
     image: ProfileImagePayload,
     label: string,
-    env: Pick<Bindings, 'MEDIA_PREVIEW_OVERFLOW_ENABLED' | 'MYOC_DOCKER_SHARP_CONTAINER' | 'PREVIEW_PROCESSOR_TOKEN'>,
+    env: Pick<Bindings, 'MYOC_DOCKER_SHARP_CONTAINER' | 'PREVIEW_PROCESSOR_TOKEN'>,
 ): Promise<
     | NormalizedProfileImagePayload
     | {

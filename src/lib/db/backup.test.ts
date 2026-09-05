@@ -8,6 +8,7 @@ const EXPORT_SQL = [
     'INSERT INTO "users" ("id", "email", "username", "password_hash") VALUES (\'user-1\', \'raz@example.test\', \'raz\', \'hash-1\');',
     'INSERT INTO "users" ("id", "email", "username", "password_hash") VALUES (\'user-2\', \'eth@example.test\', \'eth\', \'hash-2\');',
 ].join('\n')
+const encryptionKey = 'a5'.repeat(32)
 
 describe('backupD1Database', () => {
     it('uses the global fetch implementation when no fetch option is provided', async () => {
@@ -19,7 +20,8 @@ describe('backupD1Database', () => {
                 CLOUDFLARE_ACCOUNT_ID: 'account-id',
                 D1_DATABASE_ID: 'database-id',
                 D1_REST_API_TOKEN: 'api-token',
-                DB_BACKUP_BUCKET: createMockR2Bucket(),
+                MEDIA_BUCKET: createMockR2Bucket(),
+                OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey,
             })
 
             expect(summary.databaseName).toBe('myoc-db')
@@ -40,7 +42,8 @@ describe('backupD1Database', () => {
                 CLOUDFLARE_ACCOUNT_ID: 'account-id',
                 D1_DATABASE_ID: 'database-id',
                 D1_REST_API_TOKEN: 'api-token',
-                DB_BACKUP_BUCKET: backupBucket,
+                MEDIA_BUCKET: backupBucket,
+                OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey,
             },
             now,
             {
@@ -97,6 +100,7 @@ describe('backupD1Database', () => {
             summary.key,
             expect.objectContaining({
                 httpMetadata: {
+                    cacheControl: 'private, no-store',
                     contentEncoding: 'gzip',
                     contentType: 'application/sql',
                 },
@@ -104,6 +108,7 @@ describe('backupD1Database', () => {
                     database: 'myoc-db',
                     generatedAt: '2026-07-12T08:00:00.000Z',
                 },
+                ssecKey: encryptionKey,
             }),
         )
         expect(backupBucket.put).not.toHaveBeenCalled()
@@ -120,7 +125,7 @@ describe('backupD1Database', () => {
         const upload = {
             abort: vi.fn(),
             complete: vi.fn(async () => ({size: completedSize})),
-            uploadPart: vi.fn(async (partNumber: number, value: Uint8Array) => {
+            uploadPart: vi.fn(async (partNumber: number, value: Uint8Array, _options?: R2UploadPartOptions) => {
                 uploadedSizes.push(value.byteLength)
                 return {partNumber, etag: `etag-${partNumber}`}
             }),
@@ -132,7 +137,8 @@ describe('backupD1Database', () => {
                 CLOUDFLARE_ACCOUNT_ID: 'account-id',
                 D1_DATABASE_ID: 'database-id',
                 D1_REST_API_TOKEN: 'api-token',
-                DB_BACKUP_BUCKET: backupBucket,
+                MEDIA_BUCKET: backupBucket,
+                OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey,
             },
             new Date('2026-07-12T08:00:00.000Z'),
             {
@@ -147,6 +153,7 @@ describe('backupD1Database', () => {
         const partNumbers = upload.uploadPart.mock.calls.map(([partNumber]) => partNumber)
         expect(new Set(partNumbers).size).toBe(partNumbers.length)
         expect(partNumbers.every((partNumber) => Number.isInteger(partNumber) && partNumber >= 1 && partNumber <= 10_000)).toBe(true)
+        expect(upload.uploadPart.mock.calls.every(([, , options]) => options?.ssecKey === encryptionKey)).toBe(true)
         expect(summary.compressedBytes).toBe(completedSize)
     })
 
@@ -171,7 +178,8 @@ describe('backupD1Database', () => {
                         CLOUDFLARE_ACCOUNT_ID: 'account-id',
                         D1_DATABASE_ID: 'database-id',
                         D1_REST_API_TOKEN: 'api-token',
-                        DB_BACKUP_BUCKET: backupBucket,
+                        MEDIA_BUCKET: backupBucket,
+                        OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey,
                     },
                     new Date('2026-07-12T08:00:00.000Z'),
                     {
@@ -205,7 +213,8 @@ describe('backupD1Database', () => {
                     CLOUDFLARE_ACCOUNT_ID: 'account-id',
                     D1_DATABASE_ID: 'database-id',
                     D1_REST_API_TOKEN: 'api-token',
-                    DB_BACKUP_BUCKET: createMockR2Bucket(),
+                    MEDIA_BUCKET: createMockR2Bucket(),
+                    OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey,
                 },
                 new Date('2026-07-12T08:00:00.000Z'),
                 {
@@ -232,7 +241,8 @@ describe('backupD1Database', () => {
                     CLOUDFLARE_ACCOUNT_ID: 'account-id',
                     D1_DATABASE_ID: 'database-id',
                     D1_REST_API_TOKEN: 'api-token',
-                    DB_BACKUP_BUCKET: createMockR2Bucket(),
+                    MEDIA_BUCKET: createMockR2Bucket(),
+                    OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey,
                 },
                 new Date('2026-07-12T08:00:00.000Z'),
                 {
@@ -256,7 +266,8 @@ describe('backupD1Database', () => {
                     CLOUDFLARE_ACCOUNT_ID: 'account-id',
                     D1_DATABASE_ID: 'database-id',
                     D1_REST_API_TOKEN: 'api-token',
-                    DB_BACKUP_BUCKET: createMockR2Bucket(),
+                    MEDIA_BUCKET: createMockR2Bucket(),
+                    OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey,
                 },
                 new Date('2026-07-12T08:00:00.000Z'),
                 {
@@ -296,7 +307,8 @@ describe('backupD1Database', () => {
                     CLOUDFLARE_ACCOUNT_ID: 'account-id',
                     D1_DATABASE_ID: 'database-id',
                     D1_REST_API_TOKEN: 'api-token',
-                    DB_BACKUP_BUCKET: createMockR2Bucket(),
+                    MEDIA_BUCKET: createMockR2Bucket(),
+                    OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey,
                 },
                 new Date('2026-07-12T08:00:00.000Z'),
                 {
@@ -323,7 +335,8 @@ describe('backupD1Database', () => {
                     CLOUDFLARE_ACCOUNT_ID: 'account-id',
                     D1_DATABASE_ID: 'database-id',
                     D1_REST_API_TOKEN: 'api-token',
-                    DB_BACKUP_BUCKET: createMockR2Bucket(),
+                    MEDIA_BUCKET: createMockR2Bucket(),
+                    OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey,
                 },
                 new Date('2026-07-12T08:00:00.000Z'),
                 {
@@ -358,7 +371,8 @@ describe('backupD1Database', () => {
                     CLOUDFLARE_ACCOUNT_ID: 'account-id',
                     D1_DATABASE_ID: 'database-id',
                     D1_REST_API_TOKEN: 'api-token',
-                    DB_BACKUP_BUCKET: createMockR2Bucket(),
+                    MEDIA_BUCKET: createMockR2Bucket(),
+                    OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey,
                 },
                 new Date('2026-07-12T08:00:00.000Z'),
                 {
@@ -376,7 +390,8 @@ describe('backupD1Database', () => {
                     CLOUDFLARE_ACCOUNT_ID: 'account-id',
                     D1_DATABASE_ID: 'database-id',
                     D1_REST_API_TOKEN: undefined,
-                    DB_BACKUP_BUCKET: createMockR2Bucket(),
+                    MEDIA_BUCKET: createMockR2Bucket(),
+                    OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey,
                 } as unknown as Parameters<typeof backupD1Database>[0],
                 new Date('2026-07-12T08:00:00.000Z'),
                 {

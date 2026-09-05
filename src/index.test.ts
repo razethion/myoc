@@ -1,7 +1,10 @@
 import {beforeEach, describe, expect, it, vi} from 'vitest'
 import worker from './index'
+import {consumeImageProcessingDeadLetterQueue} from './lib/admin/deadLetterQueue'
 import {runAdminJob} from './lib/admin/jobs'
-import {consumeImageProcessingQueue, reconcileImageUploads} from './lib/media/imageUploadJobs'
+import {consumeMediaPreviewRegenerationMessage} from './lib/admin/mediaPreviewQueue'
+import {consumeThumbnailRegenerationMessage} from './lib/admin/thumbnailRegeneration'
+import {consumeImageUploadProcessingMessage, reconcileImageUploads} from './lib/media/imageUploadJobs'
 import {cleanupRecentFeed} from './lib/recentMedia/cleanup'
 import {publishRecentFeed} from './lib/recentMedia/publisher'
 import {createWorkerEnv} from './test/workerBindings'
@@ -35,10 +38,22 @@ vi.mock('./lib/media/imageUploadJobs', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./lib/media/imageUploadJobs')>()
     return {
         ...actual,
-        consumeImageProcessingQueue: vi.fn(async () => undefined),
+        consumeImageUploadProcessingMessage: vi.fn(async () => undefined),
         reconcileImageUploads: vi.fn(async () => undefined),
     }
 })
+
+vi.mock('./lib/admin/mediaPreviewQueue', () => ({
+    consumeMediaPreviewRegenerationMessage: vi.fn(async () => undefined),
+}))
+
+vi.mock('./lib/admin/thumbnailRegeneration', () => ({
+    consumeThumbnailRegenerationMessage: vi.fn(async () => undefined),
+}))
+
+vi.mock('./lib/admin/deadLetterQueue', () => ({
+    consumeImageProcessingDeadLetterQueue: vi.fn(async () => undefined),
+}))
 
 const env = createWorkerEnv()
 
@@ -94,11 +109,11 @@ describe('worker scheduled handler', () => {
 })
 
 describe('worker queue handler', () => {
-    it('acknowledges malformed preview work so it cannot block the queue', async () => {
+    it('acknowledges malformed work so it cannot block the queue', async () => {
         const ack = vi.fn()
         const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
         const batch = {
-            queue: 'myoc-media-preview-regeneration-0',
+            queue: 'myoc-image-processing',
             messages: [
                 {
                     ack,
@@ -119,15 +134,41 @@ describe('worker queue handler', () => {
         }
     })
 
-    it('routes image processing messages to the upload consumer', async () => {
+    it.each([
+        [{version: 1, kind: 'upload', taskId: '00000000-0000-4000-8000-000000000001'}, consumeImageUploadProcessingMessage],
+        [{version: 1, kind: 'media-regeneration', taskId: 'preview-task', runId: 'preview-run'}, consumeMediaPreviewRegenerationMessage],
+        [
+            {version: 1, kind: 'thumbnail-regeneration', taskId: 'thumbnail-task', runId: 'thumbnail-run'},
+            consumeThumbnailRegenerationMessage,
+        ],
+    ] as const)('routes $kind work by its validated message kind', async (body, consumer) => {
+        const message = {
+            ack: vi.fn(),
+            attempts: 1,
+            body,
+            id: 'message-1',
+            retry: vi.fn(),
+            timestamp: new Date(),
+        } as unknown as Message
         const batch = {
-            queue: 'myoc-image-processing-1',
+            queue: 'myoc-image-processing',
+            messages: [message],
+        } as unknown as MessageBatch
+
+        await worker.queue(batch, env, {} as ExecutionContext)
+
+        expect(consumer).toHaveBeenCalledWith(message, body, env, expect.any(Function))
+    })
+
+    it('routes the shared dead-letter queue to its consumer', async () => {
+        const batch = {
+            queue: env.IMAGE_PROCESSING_DLQ_NAME,
             messages: [],
         } as unknown as MessageBatch
 
         await worker.queue(batch, env, {} as ExecutionContext)
 
-        expect(consumeImageProcessingQueue).toHaveBeenCalledWith(batch, env)
+        expect(consumeImageProcessingDeadLetterQueue).toHaveBeenCalledWith(batch, env)
     })
 })
 

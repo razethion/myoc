@@ -15,10 +15,9 @@ const GALLERY_PREVIEW_DIMENSION_TOLERANCE = 1
 const GALLERY_PREVIEW_CONTAINER_MAX_ATTEMPTS = 3
 const GALLERY_PREVIEW_CONTAINER_RETRY_DELAY_MS = 1_000
 const GALLERY_NSFW_BLUR_MAX_WIDTH = 960
-const MEDIA_PREVIEW_PRIMARY_CONTAINER_COUNT = 3
 const MEDIA_PREVIEW_TOTAL_CONTAINER_COUNT = 8
 
-type PreviewGeneratorEnv = Pick<Bindings, 'MEDIA_PREVIEW_OVERFLOW_ENABLED' | 'MYOC_DOCKER_SHARP_CONTAINER' | 'PREVIEW_PROCESSOR_TOKEN'>
+type PreviewGeneratorEnv = Pick<Bindings, 'MYOC_DOCKER_SHARP_CONTAINER' | 'PREVIEW_PROCESSOR_TOKEN'>
 
 export type PreviewSourceImage = {
     width: number
@@ -236,12 +235,8 @@ async function withPreviewContainerRetry<T>(
 ): Promise<T> {
     const maxAttempts = options.maxAttempts ?? GALLERY_PREVIEW_CONTAINER_MAX_ATTEMPTS
     const firstContainerIndex = options.containerIndex ?? mediaPreviewContainerIndex(routingKey)
-    const containerIndices = mediaPreviewContainerIndices(
-        routingKey,
-        firstContainerIndex,
-        options.priority ?? 'interactive',
-        maxAttempts,
-        env.MEDIA_PREVIEW_OVERFLOW_ENABLED === 'true',
+    const containerIndices = Array.from({length: Math.max(MEDIA_PREVIEW_TOTAL_CONTAINER_COUNT, maxAttempts)}, (_, offset) =>
+        normalizeContainerIndex(firstContainerIndex + offset, MEDIA_PREVIEW_TOTAL_CONTAINER_COUNT),
     )
     let processingAttempts = 0
     let lastError: unknown = new Error('No preview container was selected.')
@@ -257,7 +252,7 @@ async function withPreviewContainerRetry<T>(
 
         lastError = result.error
 
-        if (shouldTryNextContainer(result.status, result.error, options.priority ?? 'interactive')) {
+        if (result.status === 'busy') {
             continue
         }
 
@@ -278,18 +273,6 @@ async function withPreviewContainerRetry<T>(
     throw lastError
 }
 
-function shouldTryNextContainer(status: 'busy' | 'failed', error: unknown, priority: 'background' | 'interactive'): boolean {
-    if (status === 'failed') {
-        return false
-    }
-
-    if (priority === 'background') {
-        throw error
-    }
-
-    return true
-}
-
 async function requestPreviewContainer<T>(
     container: DurableObjectStub,
     request: (container: DurableObjectStub) => Promise<T>,
@@ -308,38 +291,8 @@ async function requestPreviewContainer<T>(
     }
 }
 
-export function mediaPreviewContainerIndex(key: string): 0 | 1 | 2 {
-    return (mediaPreviewKeyHash(key) % MEDIA_PREVIEW_PRIMARY_CONTAINER_COUNT) as 0 | 1 | 2
-}
-
-function mediaPreviewContainerIndices(
-    routingKey: string,
-    firstContainerIndex: number,
-    priority: 'background' | 'interactive',
-    maxAttempts: number,
-    overflowEnabled: boolean,
-): number[] {
-    const normalizedPrimaryIndex = normalizeContainerIndex(firstContainerIndex, MEDIA_PREVIEW_PRIMARY_CONTAINER_COUNT)
-
-    if (priority === 'background') {
-        return Array.from({length: maxAttempts}, () => normalizedPrimaryIndex)
-    }
-
-    const primaryIndices = rotatedContainerIndices(0, MEDIA_PREVIEW_PRIMARY_CONTAINER_COUNT, normalizedPrimaryIndex)
-
-    if (!overflowEnabled) {
-        return primaryIndices
-    }
-
-    const overflowCount = MEDIA_PREVIEW_TOTAL_CONTAINER_COUNT - MEDIA_PREVIEW_PRIMARY_CONTAINER_COUNT
-    const firstOverflowIndex = MEDIA_PREVIEW_PRIMARY_CONTAINER_COUNT + (mediaPreviewKeyHash(routingKey) % overflowCount)
-    const overflowIndices = rotatedContainerIndices(MEDIA_PREVIEW_PRIMARY_CONTAINER_COUNT, overflowCount, firstOverflowIndex)
-
-    return [...primaryIndices, ...overflowIndices]
-}
-
-function rotatedContainerIndices(start: number, count: number, firstIndex: number): number[] {
-    return Array.from({length: count}, (_, offset) => start + ((firstIndex - start + offset) % count))
+export function mediaPreviewContainerIndex(key: string): number {
+    return mediaPreviewKeyHash(key) % MEDIA_PREVIEW_TOTAL_CONTAINER_COUNT
 }
 
 function normalizeContainerIndex(index: number, count: number): number {

@@ -71,6 +71,24 @@ describe('recent feed publisher', () => {
         })
     })
 
+    it('rebuilds a legacy feed into the shared media namespace', async () => {
+        const bucket = createMockR2Bucket()
+        const env = {...publisherEnv(bucket), RECENT_FEED_PUBLISH_ENABLED: 'true'}
+        await publishRecentFeed(env, {now: new Date('2026-08-25T13:00:00.000Z')})
+        const current = await getRecentFeedPointer(db)
+        if (!current) throw new Error('The current feed pointer is missing')
+        const currentRoot = await bucket.get(current.rootKey)
+        if (!currentRoot) throw new Error('The current feed root is missing')
+        const legacyRootKey = 'generations/v1/roots/legacy.json'
+        await bucket.put(legacyRootKey, await currentRoot.text())
+        await db.prepare('UPDATE recent_feed_state SET root_key = ? WHERE singleton = 1').bind(legacyRootKey).run()
+
+        await expect(publishRecentFeed(env, {now: new Date('2026-08-25T13:01:00.000Z')})).resolves.toMatchObject({status: 'published'})
+        await expect(getRecentFeedPointer(db)).resolves.toMatchObject({
+            rootKey: expect.stringMatching(/^recent-feed\/generations\/v1\/roots\//),
+        })
+    })
+
     it('writes a bounded content-addressed manifest tree and immutable blocks', async () => {
         const bucket = createMockR2Bucket()
         const metrics = {objectsWritten: 0, bytesWritten: 0}
@@ -92,9 +110,9 @@ describe('recent feed publisher', () => {
 
         expect(root).toMatchObject({itemCount: 2, years: [{year: '2026', itemCount: 2}]})
         expect(day.hours[0]?.blocks).toHaveLength(2)
-        expect(day.hours[0]?.blocks.every((block) => block.key.startsWith('generations/v1/blocks/n0-u1/'))).toBe(true)
-        expect(year.months[0]?.key).toMatch(/^generations\/v1\/manifests\/n0-u1\/months\/2026-08\//)
-        expect(month.days[0]?.key).toMatch(/^generations\/v1\/manifests\/n0-u1\/days\/2026-08-25\//)
+        expect(day.hours[0]?.blocks.every((block) => block.key.startsWith('recent-feed/generations/v1/blocks/n0-u1/'))).toBe(true)
+        expect(year.months[0]?.key).toMatch(/^recent-feed\/generations\/v1\/manifests\/n0-u1\/months\/2026-08\//)
+        expect(month.days[0]?.key).toMatch(/^recent-feed\/generations\/v1\/manifests\/n0-u1\/days\/2026-08-25\//)
         expect(metrics.objectsWritten).toBe(5)
 
         const repeatedMetrics = {objectsWritten: 0, bytesWritten: 0}
@@ -189,7 +207,7 @@ describe('recent feed publisher', () => {
             DB: db,
             MEDIA_PUBLIC_BASE_URL: 'https://m.myoc.art',
             RECENT_FEED_BLOCK_ITEMS: '96',
-            RECENT_FEED_BUCKET: bucket,
+            MEDIA_BUCKET: bucket,
             RECENT_FEED_PUBLISH_ENABLED: 'true',
         }
 
@@ -217,7 +235,7 @@ describe('recent feed publisher', () => {
         expect(publishedState.published_revision).toBe(1)
         expect(publishedState.requested_revision).toBe(2)
         expect(publishedState.bootstrap_revision).toBeNull()
-        expect(publishedState.root_key).toMatch(/^generations\/v1\/roots\//)
+        expect(publishedState.root_key).toMatch(/^recent-feed\/generations\/v1\/roots\//)
         expect(dirtyRevisions).toEqual([{revision: 2}])
     })
 
@@ -329,7 +347,7 @@ describe('recent feed publisher', () => {
         const initial = await publishRecentFeed(env, {now: new Date('2026-08-25T10:00:00.000Z')})
         await db.prepare('UPDATE recent_feed_state SET requested_revision = 2 WHERE singleton = 1').run()
         await db.prepare("UPDATE recent_feed_dirty_hours SET revision = 2 WHERE dirty_hour = '*'").run()
-        afterNextMatchingWrite(bucket, 'generations/v1/roots/', async () => {
+        afterNextMatchingWrite(bucket, 'recent-feed/generations/v1/roots/', async () => {
             await db.prepare("UPDATE recent_feed_state SET lease_expires_at = datetime('now', '-1 second') WHERE singleton = 1").run()
         })
 
@@ -365,7 +383,7 @@ describe('recent feed publisher', () => {
         let expireNextBlockWrite = true
         vi.mocked(bucket.put).mockImplementation(async (key, value, options) => {
             const result = await putObject(key, value, options)
-            if (expireNextBlockWrite && key.startsWith('generations/v1/blocks/')) {
+            if (expireNextBlockWrite && key.startsWith('recent-feed/generations/v1/blocks/')) {
                 expireNextBlockWrite = false
                 await db
                     .prepare(
@@ -387,7 +405,7 @@ describe('recent feed publisher', () => {
     it('retries an initial publication if its lease expires after the root write', async () => {
         const bucket = createMockR2Bucket()
         const env = {...publisherEnv(bucket), RECENT_FEED_PUBLISH_ENABLED: 'true'}
-        afterNextMatchingWrite(bucket, 'generations/v1/roots/', async () => {
+        afterNextMatchingWrite(bucket, 'recent-feed/generations/v1/roots/', async () => {
             await db.prepare("UPDATE recent_feed_state SET lease_expires_at = datetime('now', '-1 second') WHERE singleton = 1").run()
         })
 
@@ -408,7 +426,7 @@ describe('recent feed publisher', () => {
         const env = {...publisherEnv(bucket), RECENT_FEED_BLOCK_ITEMS: '96', RECENT_FEED_PUBLISH_ENABLED: 'true'}
 
         await expect(publishRecentFeed(env)).resolves.toMatchObject({status: 'building'})
-        const checkpoints = await bucket.list({prefix: 'generations/v1/bootstrap/'})
+        const checkpoints = await bucket.list({prefix: 'recent-feed/generations/v1/bootstrap/'})
         const checkpoint = checkpoints.objects[0]
         if (!checkpoint) throw new Error('The bootstrap checkpoint is missing')
         const checkpointObject = await bucket.get(checkpoint.key)
@@ -459,7 +477,7 @@ describe('recent feed publisher', () => {
         if (!deleteObjects) throw new Error('The R2 test bucket does not implement object deletion')
         vi.mocked(bucket.delete).mockImplementation(async (keys) => {
             const keyList = Array.isArray(keys) ? keys : [keys]
-            if (keyList.some((key) => key.startsWith('generations/v1/bootstrap/'))) {
+            if (keyList.some((key) => key.startsWith('recent-feed/generations/v1/bootstrap/'))) {
                 throw new Error('R2 cleanup is unavailable')
             }
             await deleteObjects(keys)
@@ -654,7 +672,7 @@ function publisherEnv(bucket: R2Bucket) {
     return {
         DB: db,
         MEDIA_PUBLIC_BASE_URL: 'https://m.myoc.art',
-        RECENT_FEED_BUCKET: bucket,
+        MEDIA_BUCKET: bucket,
     }
 }
 

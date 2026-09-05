@@ -1,3 +1,7 @@
+export function isCloneableMediaKey(key) {
+    return !['d1/', 'image-sources/', 'image-staging/', 'thumbnail-originals/'].some((prefix) => key.startsWith(prefix))
+}
+
 export function executeD1ImportStatements(db, statements) {
     const counts = {
         createdIndexes: 0,

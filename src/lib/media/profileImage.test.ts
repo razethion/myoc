@@ -69,7 +69,6 @@ function containerEnv(response: Uint8Array | Error = createAvifBytes(512, 512)) 
         return new Response(response, {headers: {'content-type': 'image/avif'}})
     })
     return {
-        MEDIA_PREVIEW_OVERFLOW_ENABLED: 'false' as const,
         MYOC_DOCKER_SHARP_CONTAINER: {
             idFromName: vi.fn(() => 'container-id'),
             get: vi.fn(() => ({fetch})),

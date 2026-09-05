@@ -65,7 +65,7 @@ export async function getAdminErrorLogs(db: D1Database, limit = 50): Promise<Adm
 
     return result.results.map((row) => ({
         source: row.source,
-        sourceLabel: row.source === 'image-processing' ? 'Image Upload' : 'Media Preview Regeneration',
+        sourceLabel: row.source === 'image-processing' ? 'Image Processing' : 'Media Preview Regeneration',
         messageId: row.message_id,
         jobId: row.job_id,
         taskId: row.task_id,

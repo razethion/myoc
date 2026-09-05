@@ -49,8 +49,8 @@ type AdminJobEnv = Pick<
     | 'D1_DATABASE_ID'
     | 'D1_REST_API_TOKEN'
     | 'DB'
-    | 'DB_BACKUP_BUCKET'
     | 'MEDIA_BUCKET'
+    | 'OBJECT_STORAGE_ENCRYPTION_KEY'
     | 'CACHE'
     | 'REGENERATE_MEDIA_PREVIEWS_WORKFLOW'
 >
@@ -365,7 +365,7 @@ async function isMediaPreviewWorkflowActive(
     startedAt: string,
     summary: MediaPreviewRegenerationSummary,
 ): Promise<boolean> {
-    if (jobName === 'media-preview-regeneration' && (await isMediaPreviewRegenerationDispatchActive(db, runId))) {
+    if (await isMediaPreviewRegenerationDispatchActive(db, runId)) {
         return true
     }
 
@@ -375,7 +375,7 @@ async function isMediaPreviewWorkflowActive(
     const statusErrors: Error[] = []
     const states: MediaPreviewWorkflowInstanceState[] = []
 
-    for (const instanceId of activeMediaPreviewRegenerationWorkflowInstanceIds(runId, summary.processedVariants)) {
+    for (const instanceId of activeMediaPreviewRegenerationWorkflowInstanceIds(runId, summary.processedVariants, jobName)) {
         try {
             const state = await getMediaPreviewWorkflowInstanceState(workflow, instanceId, recentlyStarted)
             if (state === 'active') {

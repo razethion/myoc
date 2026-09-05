@@ -2,11 +2,13 @@ import {describe, expect, it, vi} from 'vitest'
 import worker from '../../index'
 import {queryOne, seedUser, useTestDatabase} from '../../test/d1'
 import type {Bindings} from '../../types/bindings'
-import {consumeImageProcessingDeadLetterQueue, consumeMediaPreviewDeadLetterQueue} from './deadLetterQueue'
+import {consumeImageProcessingDeadLetterQueue} from './deadLetterQueue'
 import {getAdminErrorLogs} from './errorLog'
 
 const db = useTestDatabase()
 const now = new Date('2026-09-04T12:00:00Z')
+const imageProcessingQueue = {send: vi.fn(async () => undefined)} as unknown as Bindings['IMAGE_PROCESSING_QUEUE']
+const dlqEnv = {DB: db, IMAGE_PROCESSING_QUEUE: imageProcessingQueue}
 
 type Delivery = {
     ack: ReturnType<typeof vi.fn>
@@ -83,7 +85,7 @@ async function imageStates(jobId: string, taskId: string) {
 
 describe('dead-letter queue consumers', () => {
     it('routes an image dead-letter delivery to the error log with the current time', async () => {
-        const delivery = createDelivery({version: 1, taskId: crypto.randomUUID(), slot: 0})
+        const delivery = createDelivery({version: 1, kind: 'upload', taskId: crypto.randomUUID()})
         const queue = 'myoc-image-processing-dlq'
         await worker.queue(
             {...batch(delivery.message), queue},
@@ -98,10 +100,10 @@ describe('dead-letter queue consumers', () => {
 
     it('records an exhausted raw image upload delivery once and keeps its current task and job state', async () => {
         const {jobId, taskId} = await seedImageTask({job: 'processing', task: 'processing'})
-        const delivery = createDelivery({version: 1, taskId, slot: 0})
+        const delivery = createDelivery({version: 1, kind: 'upload', taskId})
 
-        await consumeImageProcessingDeadLetterQueue(batch(delivery.message), {DB: db}, () => now)
-        await consumeImageProcessingDeadLetterQueue(batch(createDelivery(delivery.body, 2, delivery.id).message), {DB: db}, () => now)
+        await consumeImageProcessingDeadLetterQueue(batch(delivery.message), dlqEnv, () => now)
+        await consumeImageProcessingDeadLetterQueue(batch(createDelivery(delivery.body, 2, delivery.id).message), dlqEnv, () => now)
 
         expect(delivery.ack).toHaveBeenCalledOnce()
         expect(delivery.retry).not.toHaveBeenCalled()
@@ -122,15 +124,15 @@ describe('dead-letter queue consumers', () => {
         const {jobId, taskId} = await seedImageTask()
         const delivery = createDelivery({
             version: 1,
+            kind: 'upload',
             taskId,
-            slot: 0,
             failureId: 'failure-event-1',
             jobId,
             errorCode: 'container_failed',
             error: 'The previous run could not reach the image processor.',
         })
 
-        await consumeImageProcessingDeadLetterQueue(batch(delivery.message), {DB: db}, () => now)
+        await consumeImageProcessingDeadLetterQueue(batch(delivery.message), dlqEnv, () => now)
 
         expect(delivery.ack).toHaveBeenCalledOnce()
         expect(delivery.retry).not.toHaveBeenCalled()
@@ -148,21 +150,21 @@ describe('dead-letter queue consumers', () => {
 
     it('records malformed deliveries with a generic error and acknowledges them', async () => {
         const image = createDelivery({version: 2})
-        const preview = createDelivery({version: 2})
+        const second = createDelivery({version: 2})
 
-        await consumeImageProcessingDeadLetterQueue(batch(image.message), {DB: db}, () => now)
-        await consumeMediaPreviewDeadLetterQueue(batch(preview.message), {DB: db}, () => now)
+        await consumeImageProcessingDeadLetterQueue(batch(image.message), dlqEnv, () => now)
+        await consumeImageProcessingDeadLetterQueue(batch(second.message), dlqEnv, () => now)
 
         expect(image.ack).toHaveBeenCalledOnce()
-        expect(preview.ack).toHaveBeenCalledOnce()
+        expect(second.ack).toHaveBeenCalledOnce()
         expect(image.retry).not.toHaveBeenCalled()
-        expect(preview.retry).not.toHaveBeenCalled()
+        expect(second.retry).not.toHaveBeenCalled()
         expect(await getAdminErrorLogs(db)).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({source: 'image-processing', messageId: image.id, errorCode: 'invalid_dead_letter_message'}),
                 expect.objectContaining({
-                    source: 'media-preview-regeneration',
-                    messageId: preview.id,
+                    source: 'image-processing',
+                    messageId: second.id,
                     errorCode: 'invalid_dead_letter_message',
                 }),
             ]),
@@ -170,18 +172,19 @@ describe('dead-letter queue consumers', () => {
     })
 
     it('records raw and stale enriched preview failures once without retrying successful log writes', async () => {
-        const raw = createDelivery({version: 1, taskId: 'old-task', runId: 'new-run', containerSlot: 1})
+        const raw = createDelivery({version: 1, kind: 'media-regeneration', taskId: 'old-task', runId: 'new-run'})
         const enriched = createDelivery({
             version: 1,
+            kind: 'media-regeneration',
             taskId: 'old-task',
             runId: 'new-run',
-            containerSlot: 1,
+            errorCode: 'preview_generation_failed',
             error: 'The old preview task failed.',
         })
 
-        await consumeMediaPreviewDeadLetterQueue(batch(raw.message), {DB: db}, () => now)
-        await consumeMediaPreviewDeadLetterQueue(batch(enriched.message), {DB: db}, () => now)
-        await consumeMediaPreviewDeadLetterQueue(batch(createDelivery(enriched.body, 2, crypto.randomUUID()).message), {DB: db}, () => now)
+        await consumeImageProcessingDeadLetterQueue(batch(raw.message), dlqEnv, () => now)
+        await consumeImageProcessingDeadLetterQueue(batch(enriched.message), dlqEnv, () => now)
+        await consumeImageProcessingDeadLetterQueue(batch(createDelivery(enriched.body, 2, crypto.randomUUID()).message), dlqEnv, () => now)
 
         expect(raw.ack).toHaveBeenCalledOnce()
         expect(enriched.ack).toHaveBeenCalledOnce()
@@ -208,28 +211,53 @@ describe('dead-letter queue consumers', () => {
         expect(await getAdminErrorLogs(db)).toHaveLength(2)
     })
 
+    it('records a thumbnail failure from the shared dead-letter queue', async () => {
+        const delivery = createDelivery({
+            version: 1,
+            kind: 'thumbnail-regeneration',
+            taskId: 'thumbnail-task',
+            runId: 'thumbnail-run',
+            errorCode: 'thumbnail_generation_failed',
+            error: 'The thumbnail could not be generated.',
+        })
+
+        await consumeImageProcessingDeadLetterQueue(batch(delivery.message), dlqEnv, () => now)
+
+        expect(delivery.ack).toHaveBeenCalledOnce()
+        expect(await getAdminErrorLogs(db)).toEqual([
+            expect.objectContaining({
+                source: 'image-processing',
+                messageId: 'thumbnail-run:thumbnail-task',
+                jobId: 'thumbnail-run',
+                taskId: 'thumbnail-task',
+                errorCode: 'thumbnail_generation_failed',
+            }),
+        ])
+    })
+
     it('retries dead-letter deliveries when the error log cannot be written', async () => {
         const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
         const image = createDelivery({version: 2}, 8)
-        const preview = createDelivery({version: 2}, 8)
+        const second = createDelivery({version: 2}, 8)
         const unavailable = {
             DB: {
                 prepare: () => {
                     throw new Error('D1 is unavailable')
                 },
             },
-        } as unknown as Pick<Bindings, 'DB'>
+            IMAGE_PROCESSING_QUEUE: imageProcessingQueue,
+        } as unknown as Pick<Bindings, 'DB' | 'IMAGE_PROCESSING_QUEUE'>
 
         try {
             await consumeImageProcessingDeadLetterQueue(batch(image.message), unavailable, () => now)
-            await consumeMediaPreviewDeadLetterQueue(batch(preview.message), unavailable, () => now)
+            await consumeImageProcessingDeadLetterQueue(batch(second.message), unavailable, () => now)
         } finally {
             error.mockRestore()
         }
 
         expect(image.ack).not.toHaveBeenCalled()
-        expect(preview.ack).not.toHaveBeenCalled()
+        expect(second.ack).not.toHaveBeenCalled()
         expect(image.retry).toHaveBeenCalledWith({delaySeconds: 60})
-        expect(preview.retry).toHaveBeenCalledWith({delaySeconds: 60})
+        expect(second.retry).toHaveBeenCalledWith({delaySeconds: 60})
     })
 })

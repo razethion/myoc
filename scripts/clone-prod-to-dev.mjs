@@ -8,7 +8,7 @@ import {dirname, resolve} from 'node:path'
 import {stdin as input, stdout as output} from 'node:process'
 import readline from 'node:readline/promises'
 import {fileURLToPath} from 'node:url'
-import {executeD1ImportStatements, insertTableName, readR2CloneProgress} from './clone-prod-to-dev-helpers.mjs'
+import {executeD1ImportStatements, insertTableName, isCloneableMediaKey, readR2CloneProgress} from './clone-prod-to-dev-helpers.mjs'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const tmpDir = resolve(rootDir, '.tmp')
@@ -68,9 +68,10 @@ Targets:
   R2: remote ${config.prodR2Bucket} -> remote ${config.devR2Bucket}
 
 R2 prefers server-side S3 CopyObject when R2 S3 credentials are available. Otherwise it falls
-back to a temporary local Worker with remote R2 bindings.
-Existing R2 keys are skipped, except height-chart objects are refreshed to avoid stale dev images
-after the production D1 import.
+back to a temporary local Worker with remote R2 bindings. The clone excludes encrypted image
+sources, thumbnail originals, and D1 backups because development uses a different encryption key.
+Existing public R2 keys are skipped, except height-chart objects are refreshed to avoid stale dev
+images after the production D1 import.
 
 Options:
   --yes                Skip confirmation.
@@ -136,7 +137,7 @@ async function confirmDestructiveWork() {
 
     const rl = readline.createInterface({input, output})
     try {
-        console.log('This will replace your local dev D1 data and mirror prod R2 into the remote dev R2 bucket.')
+        console.log('This will replace your local dev D1 data and mirror public prod R2 objects into the remote dev R2 bucket.')
         const answer = await rl.question('Type "clone prod to dev" to continue: ')
         if (answer.trim() !== 'clone prod to dev') {
             throw new Error('Confirmation did not match; aborting.')
@@ -366,15 +367,19 @@ async function cloneR2WithS3() {
     const sourceObjects = await listAllR2S3(config.prodR2Bucket, 'source')
     console.log('[r2] Listing destination bucket...')
     const destObjects = await listAllR2S3(config.devR2Bucket, 'destination')
-    const sourceByKey = new Map(sourceObjects.map((object) => [object.key, object]))
-    const destByKey = new Map(destObjects.map((object) => [object.key, object]))
-    const toCopy = sourceObjects.filter((source) => shouldCopyR2Object(source, destByKey))
+    const cloneableSourceObjects = sourceObjects.filter((object) => isCloneableMediaKey(object.key))
+    const cloneableDestObjects = destObjects.filter((object) => isCloneableMediaKey(object.key))
+    const sourceByKey = new Map(cloneableSourceObjects.map((object) => [object.key, object]))
+    const destByKey = new Map(cloneableDestObjects.map((object) => [object.key, object]))
+    const toCopy = cloneableSourceObjects.filter((source) => shouldCopyR2Object(source, destByKey))
     const toRefreshExisting = toCopy.filter((source) => destByKey.has(source.key))
-    const skippedExisting = sourceObjects.length - toCopy.length
-    const toDelete = destObjects.filter((dest) => !sourceByKey.has(dest.key))
+    const skippedExisting = cloneableSourceObjects.length - toCopy.length
+    const toDelete = cloneableDestObjects.filter((dest) => !sourceByKey.has(dest.key))
     const summary = {
         sourceObjects: sourceObjects.length,
         destObjects: destObjects.length,
+        excludedPrivateSource: sourceObjects.length - cloneableSourceObjects.length,
+        excludedPrivateDest: destObjects.length - cloneableDestObjects.length,
         toCopy: toCopy.length,
         toRefreshExisting: toRefreshExisting.length,
         skippedExisting,
@@ -384,13 +389,13 @@ async function cloneR2WithS3() {
     }
 
     console.log(
-        `[r2] Plan: ${summary.toCopy} copy, ${summary.toRefreshExisting} refresh existing height-chart, ${summary.skippedExisting} skip existing, ${summary.toDelete} delete, ${summary.sourceObjects} source object(s), ${summary.destObjects} destination object(s).`,
+        `[r2] Plan: ${summary.toCopy} copy, ${summary.toRefreshExisting} refresh existing height-chart, ${summary.skippedExisting} skip existing, ${summary.toDelete} delete, ${summary.excludedPrivateSource} private source and ${summary.excludedPrivateDest} private destination object(s) untouched, ${summary.sourceObjects} source object(s), ${summary.destObjects} destination object(s).`,
     )
 
     if (dryRun) {
         console.log('[r2] Dry run: no R2 objects were changed.')
         console.log(
-            `R2 plan: ${summary.toCopy} copy, ${summary.toRefreshExisting} refresh existing height-chart, ${summary.skippedExisting} skip existing, ${summary.toDelete} delete, ${summary.sourceObjects} source object(s).`,
+            `R2 plan: ${summary.toCopy} copy, ${summary.toRefreshExisting} refresh existing height-chart, ${summary.skippedExisting} skip existing, ${summary.toDelete} delete, ${summary.excludedPrivateSource} private source and ${summary.excludedPrivateDest} private destination object(s) untouched, ${summary.sourceObjects} source object(s).`,
         )
         return
     }
@@ -415,7 +420,7 @@ async function cloneR2WithS3() {
     }
 
     console.log(
-        `R2 plan: ${summary.toCopy} copy, ${summary.toRefreshExisting} refresh existing height-chart, ${summary.skippedExisting} skip existing, ${summary.toDelete} delete, ${summary.sourceObjects} source object(s).`,
+        `R2 plan: ${summary.toCopy} copy, ${summary.toRefreshExisting} refresh existing height-chart, ${summary.skippedExisting} skip existing, ${summary.toDelete} delete, ${summary.excludedPrivateSource} private source and ${summary.excludedPrivateDest} private destination object(s) untouched, ${summary.sourceObjects} source object(s).`,
     )
     console.log(`R2 applied: ${summary.copied} copied, ${summary.deleted} deleted.`)
 }
@@ -698,7 +703,7 @@ async function cloneR2WithWorker() {
 
         const summary = await readR2CloneProgress(response)
         console.log(
-            `R2 plan: ${summary.toCopy} copy, ${summary.toRefreshExisting} refresh existing height-chart, ${summary.skippedExisting} skip existing, ${summary.toDelete} delete, ${summary.sourceObjects} source object(s).`,
+            `R2 plan: ${summary.toCopy} copy, ${summary.toRefreshExisting} refresh existing height-chart, ${summary.skippedExisting} skip existing, ${summary.toDelete} delete, ${summary.excludedPrivateSource} private source and ${summary.excludedPrivateDest} private destination object(s) untouched, ${summary.sourceObjects} source object(s).`,
         )
         if (!dryRun) {
             console.log(`R2 applied: ${summary.copied} copied, ${summary.deleted} deleted.`)
@@ -797,6 +802,8 @@ function chunks(items, size) {
 
 function r2CloneWorkerSource() {
     return `
+${isCloneableMediaKey.toString()}
+
 export default {
     async fetch(request, env) {
         const url = new URL(request.url)
@@ -828,16 +835,20 @@ function cloneStream(url, env) {
                 const sourceObjects = await listAll(env.PROD_MEDIA_BUCKET, 'source', progress)
                 progress('[r2] Listing destination bucket...')
                 const destObjects = await listAll(env.DEV_MEDIA_BUCKET, 'destination', progress)
-                const sourceByKey = new Map(sourceObjects.map((object) => [object.key, object]))
-                const destByKey = new Map(destObjects.map((object) => [object.key, object]))
-                const toCopy = sourceObjects.filter((source) => shouldCopyR2Object(source, destByKey))
+                const cloneableSourceObjects = sourceObjects.filter((object) => isCloneableMediaKey(object.key))
+                const cloneableDestObjects = destObjects.filter((object) => isCloneableMediaKey(object.key))
+                const sourceByKey = new Map(cloneableSourceObjects.map((object) => [object.key, object]))
+                const destByKey = new Map(cloneableDestObjects.map((object) => [object.key, object]))
+                const toCopy = cloneableSourceObjects.filter((source) => shouldCopyR2Object(source, destByKey))
                 const toRefreshExisting = toCopy.filter((source) => destByKey.has(source.key))
-                const skippedExisting = sourceObjects.length - toCopy.length
-                const toDelete = destObjects.filter((dest) => !sourceByKey.has(dest.key))
+                const skippedExisting = cloneableSourceObjects.length - toCopy.length
+                const toDelete = cloneableDestObjects.filter((dest) => !sourceByKey.has(dest.key))
                 const summary = {
                     dryRun,
                     sourceObjects: sourceObjects.length,
                     destObjects: destObjects.length,
+                    excludedPrivateSource: sourceObjects.length - cloneableSourceObjects.length,
+                    excludedPrivateDest: destObjects.length - cloneableDestObjects.length,
                     toCopy: toCopy.length,
                     toRefreshExisting: toRefreshExisting.length,
                     skippedExisting,
@@ -846,7 +857,7 @@ function cloneStream(url, env) {
                     deleted: 0,
                 }
 
-                progress('[r2] Plan: ' + summary.toCopy + ' copy, ' + summary.toRefreshExisting + ' refresh existing height-chart, ' + summary.skippedExisting + ' skip existing, ' + summary.toDelete + ' delete, ' + summary.sourceObjects + ' source object(s), ' + summary.destObjects + ' destination object(s).')
+                progress('[r2] Plan: ' + summary.toCopy + ' copy, ' + summary.toRefreshExisting + ' refresh existing height-chart, ' + summary.skippedExisting + ' skip existing, ' + summary.toDelete + ' delete, ' + summary.excludedPrivateSource + ' private source and ' + summary.excludedPrivateDest + ' private destination object(s) untouched, ' + summary.sourceObjects + ' source object(s), ' + summary.destObjects + ' destination object(s).')
 
                 if (!dryRun) {
                     progress('[r2] Copying selected objects with concurrency ' + concurrency + '...')

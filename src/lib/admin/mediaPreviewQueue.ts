@@ -1,11 +1,12 @@
 import {z} from 'zod'
 import type {Bindings} from '../../types/bindings'
-import {
-    type MediaPreviewRegenerationCandidate,
-    type MediaPreviewRegenerationFailureMessage,
-    type MediaPreviewRegenerationMessage,
-    MediaPreviewRegenerationMessageSchema,
+import type {
+    MediaPreviewRegenerationCandidate,
+    MediaPreviewRegenerationFailureMessage,
+    MediaPreviewRegenerationMessage,
 } from '../../types/mediaPreviewQueue'
+import {PreviewContainerBusyError} from '../media/previewGeneration'
+import {imageProcessingErrorMessage as errorMessage, imageProcessingRetryDelaySeconds as retryDelaySeconds} from '../media/queueErrors'
 import {
     claimMediaPreviewRegenerationTask,
     deleteFinishedMediaPreviewRegenerationItems,
@@ -13,6 +14,7 @@ import {
     recordMediaPreviewRegenerationAttemptError,
     recordMediaPreviewRegenerationResult,
     regenerateMediaPreviewCandidate,
+    releaseMediaPreviewRegenerationCapacityLease,
 } from './mediaPreviewRegeneration'
 
 const MEDIA_PREVIEW_REGENERATION_MAX_ATTEMPTS = 3
@@ -36,23 +38,12 @@ const MediaPreviewRegenerationCandidateSchema = z
     })
     .strict()
 
-export async function consumeMediaPreviewRegenerationQueue(batch: MessageBatch, env: Bindings, now = () => new Date()): Promise<void> {
-    await Promise.all(batch.messages.map(async (message) => consumeMessage(message, env, now)))
-}
-
-async function consumeMessage(message: Message, env: Bindings, now: () => Date): Promise<void> {
-    const parsedMessage = MediaPreviewRegenerationMessageSchema.safeParse(message.body)
-
-    if (!parsedMessage.success) {
-        console.error('Discarded an invalid media preview regeneration message', {
-            messageId: message.id,
-        })
-        message.ack()
-        return
-    }
-
-    const body = parsedMessage.data satisfies MediaPreviewRegenerationMessage
-
+export async function consumeMediaPreviewRegenerationMessage(
+    message: Message,
+    body: MediaPreviewRegenerationMessage,
+    env: Bindings,
+    now: () => Date,
+): Promise<void> {
     try {
         const claimed = await claimMediaPreviewRegenerationTask(env.DB, body.taskId, now())
 
@@ -72,7 +63,6 @@ async function consumeMessage(message: Message, env: Bindings, now: () => Date):
 
         try {
             const result = await regenerateMediaPreviewCandidate(env, candidate, {
-                containerIndex: claimed.containerSlot,
                 maxContainerAttempts: 1,
             })
             await recordMediaPreviewRegenerationResult(env.DB, body.taskId, claimed.leaseId, result)
@@ -81,7 +71,14 @@ async function consumeMessage(message: Message, env: Bindings, now: () => Date):
         } catch (error) {
             const failure = errorMessage(error)
 
-            if (message.attempts >= MEDIA_PREVIEW_REGENERATION_MAX_ATTEMPTS) {
+            if (error instanceof PreviewContainerBusyError) {
+                await releaseMediaPreviewRegenerationCapacityLease(env.DB, body.taskId, claimed.leaseId)
+                await env.IMAGE_PROCESSING_QUEUE.send(body, {contentType: 'json', delaySeconds: 1})
+                message.ack()
+                return
+            }
+
+            if (claimed.processingAttempts >= MEDIA_PREVIEW_REGENERATION_MAX_ATTEMPTS) {
                 await finishFailedMessage(message, env, body, claimed.leaseId, failure)
                 return
             }
@@ -132,21 +129,13 @@ async function finishFailedMessage(
 }
 
 async function sendToDeadLetterQueue(
-    env: Pick<Bindings, 'MEDIA_PREVIEW_REGENERATION_DLQ'>,
+    env: Pick<Bindings, 'IMAGE_PROCESSING_DLQ'>,
     body: MediaPreviewRegenerationMessage,
     failure: string,
 ): Promise<void> {
-    await env.MEDIA_PREVIEW_REGENERATION_DLQ.send({
+    await env.IMAGE_PROCESSING_DLQ.send({
         ...body,
+        errorCode: 'preview_generation_failed',
         error: failure.slice(0, 2_000),
     } satisfies MediaPreviewRegenerationFailureMessage)
-}
-
-function retryDelaySeconds(attempts: number): number {
-    return Math.min(60, 2 ** Math.min(6, Math.max(0, attempts - 1)))
-}
-
-function errorMessage(error: unknown): string {
-    const message = error instanceof Error && error.message ? error.message : String(error)
-    return message.slice(0, 2_000)
 }

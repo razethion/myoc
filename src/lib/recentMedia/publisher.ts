@@ -49,7 +49,7 @@ type RecentFeedPublisherEnv = {
     DB: D1Database
     MEDIA_PUBLIC_BASE_URL: string
     RECENT_FEED_BLOCK_ITEMS?: string
-    RECENT_FEED_BUCKET: R2Bucket
+    MEDIA_BUCKET: R2Bucket
     RECENT_FEED_CLEANUP_ENABLED?: string
     RECENT_FEED_CURSOR_SECRET?: string
     RECENT_FEED_PUBLISH_ENABLED?: string
@@ -211,9 +211,9 @@ async function publishAcquiredRecentFeed(
         return continueRecentFeedBootstrap(env, config, state, leaseOwner, startedAt, now)
     }
 
-    const previousRoot = await readJson(env.RECENT_FEED_BUCKET, state.root_key, RecentFeedRootSchema)
+    const previousRoot = await readJson(env.MEDIA_BUCKET, state.root_key, RecentFeedRootSchema)
 
-    if (state.requested_revision <= state.published_revision && previousRoot.initialItems) {
+    if (state.requested_revision <= state.published_revision && previousRoot.initialItems && isNamespacedRecentFeedRoot(state.root_key)) {
         return {status: 'current', generation: state.generation ?? undefined, revision: state.published_revision}
     }
 
@@ -231,7 +231,7 @@ async function publishIncrementalRecentFeed(
 ): Promise<RecentFeedPublishSummary> {
     const targetRevision = state.requested_revision
     const dirtyRows = await getDirtyHours(env.DB, targetRevision)
-    const fullBuild = dirtyRows.some((row) => row.dirty_hour === '*')
+    const fullBuild = dirtyRows.some((row) => row.dirty_hour === '*') || !isNamespacedRecentFeedRoot(state.root_key)
     const dirtyHours = fullBuild ? [] : dirtyRows.map((row) => row.dirty_hour)
     await renewPublicationLease(env.DB, leaseOwner)
     const sourceRowsByHour = await loadSourceRowsByHour(env.DB, dirtyHours, fullBuild)
@@ -242,7 +242,7 @@ async function publishIncrementalRecentFeed(
     for (const variant of RECENT_FEED_VARIANTS) {
         await renewPublicationLease(env.DB, leaseOwner)
         variantRoots[variant] = await buildRecentFeedVariantTree(
-            env.RECENT_FEED_BUCKET,
+            env.MEDIA_BUCKET,
             variant,
             fullBuild ? emptyVariantRoot() : previousRoot.variants[variant],
             sourceRowsByHour,
@@ -256,7 +256,7 @@ async function publishIncrementalRecentFeed(
         await renewPublicationLease(env.DB, leaseOwner)
     }
 
-    const pointer = await writeRecentFeedRoot(env.RECENT_FEED_BUCKET, variantRoots, targetRevision, now, config, metrics, () =>
+    const pointer = await writeRecentFeedRoot(env.MEDIA_BUCKET, variantRoots, targetRevision, now, config, metrics, () =>
         renewPublicationLease(env.DB, leaseOwner),
     )
     await checkpointPublication(env.DB, leaseOwner, targetRevision, pointer, variantRoots, metrics)
@@ -286,6 +286,10 @@ async function publishIncrementalRecentFeed(
     }
 }
 
+function isNamespacedRecentFeedRoot(key: string | null): boolean {
+    return key?.startsWith('recent-feed/generations/v1/roots/') === true
+}
+
 async function writeRecentFeedRoot(
     bucket: R2Bucket,
     variantRoots: RecentFeedRoot['variants'],
@@ -302,7 +306,7 @@ async function writeRecentFeedRoot(
         JSON.stringify({throughRevision: targetRevision, publishedAt, variants: variantRoots, initialItems}),
     )
     const generation = `r${targetRevision}-${generationDigest.slice(0, 16)}`
-    const rootKey = `generations/v1/roots/${generation}-${generationDigest.slice(16, 48)}.json`
+    const rootKey = `recent-feed/generations/v1/roots/${generation}-${generationDigest.slice(16, 48)}.json`
     const existingRoot = await bucket.get(rootKey)
     const root = existingRoot
         ? RecentFeedRootSchema.parse(await existingRoot.json<unknown>())
@@ -692,7 +696,7 @@ async function writeBootstrapActiveSegment(bucket: R2Bucket, revision: number, a
     })
     const json = JSON.stringify(segment)
     const digest = await sha256Hex(json)
-    const key = `generations/v1/bootstrap/r${revision}/${active.hour}/${digest}.json`
+    const key = `recent-feed/generations/v1/bootstrap/r${revision}/${active.hour}/${digest}.json`
 
     if (!(await bucket.head(key))) {
         await bucket.put(key, json, {
@@ -1043,7 +1047,7 @@ async function writeYearManifest(
     }
     const key = await putContentAddressedManifest(
         bucket,
-        `generations/v1/manifests/${variant}/years/${year}`,
+        `recent-feed/generations/v1/manifests/${variant}/years/${year}`,
         manifest,
         cacheControl,
         metrics,
@@ -1069,7 +1073,7 @@ async function writeMonthManifest(
     }
     const key = await putContentAddressedManifest(
         bucket,
-        `generations/v1/manifests/${variant}/months/${month}`,
+        `recent-feed/generations/v1/manifests/${variant}/months/${month}`,
         manifest,
         cacheControl,
         metrics,
@@ -1095,7 +1099,7 @@ async function writeDayManifest(
     }
     const key = await putContentAddressedManifest(
         bucket,
-        `generations/v1/manifests/${variant}/days/${day}`,
+        `recent-feed/generations/v1/manifests/${variant}/days/${day}`,
         manifest,
         cacheControl,
         metrics,
@@ -1114,7 +1118,7 @@ async function continueRecentFeedBootstrap(
     const {state, targetRevision} = await ensureBootstrapState(env.DB, leaseOwner, initialState)
     const variantRoots = parseBootstrapVariantRoots(state.bootstrap_variant_roots_json)
     const activeHour = state.bootstrap_active_key
-        ? await loadBootstrapActiveHour(env.RECENT_FEED_BUCKET, state.bootstrap_active_key, config.blockItems)
+        ? await loadBootstrapActiveHour(env.MEDIA_BUCKET, state.bootstrap_active_key, config.blockItems)
         : null
     const cursor = bootstrapCursor(state)
     const sourceRows = await queryRecentMediaSourceRowsPage(env.DB, cursor, RECENT_FEED_BOOTSTRAP_ROW_BUDGET + 1)
@@ -1183,13 +1187,13 @@ async function processBootstrapPageRows(
         const hour = recentMediaHour(row)
 
         if (result.activeHour && result.activeHour.hour !== hour) {
-            await completeBootstrapHour(env.RECENT_FEED_BUCKET, config, result, metrics)
+            await completeBootstrapHour(env.MEDIA_BUCKET, config, result, metrics)
             if (result.completedHours >= RECENT_FEED_BOOTSTRAP_HOUR_BUDGET) break
         }
 
         result.activeHour ??= emptyBootstrapActiveHour(hour)
         await addBootstrapRow(
-            env.RECENT_FEED_BUCKET,
+            env.MEDIA_BUCKET,
             result.activeHour,
             row,
             env.MEDIA_PUBLIC_BASE_URL,
@@ -1203,7 +1207,7 @@ async function processBootstrapPageRows(
 
     result.nextUnprocessedRow = sourceRows[result.processedRows]
     if (result.activeHour && (!result.nextUnprocessedRow || recentMediaHour(result.nextUnprocessedRow) !== result.activeHour.hour)) {
-        await completeBootstrapHour(env.RECENT_FEED_BUCKET, config, result, metrics)
+        await completeBootstrapHour(env.MEDIA_BUCKET, config, result, metrics)
     }
     return result
 }
@@ -1239,7 +1243,7 @@ async function applyCompletedBootstrapHours(
     for (const variant of RECENT_FEED_VARIANTS) {
         if (completedReferences[variant].size === 0) continue
         variantRoots[variant] = await applyRecentFeedVariantHours(
-            env.RECENT_FEED_BUCKET,
+            env.MEDIA_BUCKET,
             variant,
             variantRoots[variant],
             completedReferences[variant],
@@ -1267,10 +1271,10 @@ async function checkpointBootstrapProgress(
     leaseOwner: string,
     startedAt: number,
 ): Promise<RecentFeedPublishSummary> {
-    const activeKey = page.activeHour ? await writeBootstrapActiveSegment(env.RECENT_FEED_BUCKET, targetRevision, page.activeHour) : null
+    const activeKey = page.activeHour ? await writeBootstrapActiveSegment(env.MEDIA_BUCKET, targetRevision, page.activeHour) : null
     if (!page.nextCursor) throw new Error('Recent feed bootstrap cursor is invalid')
     await checkpointRecentFeedBootstrap(env.DB, leaseOwner, targetRevision, page.nextCursor, variantRoots, activeKey, totalMetrics)
-    await deleteBootstrapCheckpointKeys(env.RECENT_FEED_BUCKET, page.checkpointKeysToDelete)
+    await deleteBootstrapCheckpointKeys(env.MEDIA_BUCKET, page.checkpointKeysToDelete)
     console.log(
         JSON.stringify({
             event: 'recent-feed-bootstrap-progress',
@@ -1305,14 +1309,14 @@ async function publishCompletedBootstrap(
     startedAt: number,
     now: Date,
 ): Promise<RecentFeedPublishSummary> {
-    const initialItems = await buildRecentFeedInitialItems(env.RECENT_FEED_BUCKET, variantRoots)
+    const initialItems = await buildRecentFeedInitialItems(env.MEDIA_BUCKET, variantRoots)
     await renewPublicationLease(env.DB, leaseOwner)
     const publishedAt = now.toISOString()
     const generationDigest = await sha256Hex(
         JSON.stringify({throughRevision: targetRevision, publishedAt, variants: variantRoots, initialItems}),
     )
     const generation = `r${targetRevision}-${generationDigest.slice(0, 16)}`
-    const rootKey = `generations/v1/roots/${generation}-${generationDigest.slice(16, 48)}.json`
+    const rootKey = `recent-feed/generations/v1/roots/${generation}-${generationDigest.slice(16, 48)}.json`
     const root: RecentFeedRoot = {
         schemaVersion: RECENT_FEED_SCHEMA_VERSION,
         generation,
@@ -1321,13 +1325,13 @@ async function publishCompletedBootstrap(
         variants: variantRoots,
         initialItems,
     }
-    await putJsonIfMissing(env.RECENT_FEED_BUCKET, rootKey, JSON.stringify(root), config.immutableCacheControl, metrics)
+    await putJsonIfMissing(env.MEDIA_BUCKET, rootKey, JSON.stringify(root), config.immutableCacheControl, metrics)
     const completedMetrics = combinedBootstrapMetrics(state, metrics)
     totalMetrics.objectsWritten = completedMetrics.objectsWritten
     totalMetrics.bytesWritten = completedMetrics.bytesWritten
     const pointer: RecentFeedPointer = {generation, rootKey, publishedAt, throughRevision: targetRevision}
     await checkpointInitialPublication(env.DB, leaseOwner, pointer, variantRoots, totalMetrics)
-    await deleteBootstrapCheckpointKeys(env.RECENT_FEED_BUCKET, page.checkpointKeysToDelete)
+    await deleteBootstrapCheckpointKeys(env.MEDIA_BUCKET, page.checkpointKeysToDelete)
     const itemCounts = recentFeedItemCounts(variantRoots)
 
     console.log(
@@ -1372,7 +1376,7 @@ async function writeRecentFeedBlock(
     }
     const json = JSON.stringify(block)
     const digest = await sha256Hex(json)
-    const key = `generations/v1/blocks/${variant}/${hour}/${digest}.json`
+    const key = `recent-feed/generations/v1/blocks/${variant}/${hour}/${digest}.json`
 
     await putJsonIfMissing(bucket, key, json, cacheControl, metrics)
     return {key, itemCount: items.length}

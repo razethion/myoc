@@ -34,6 +34,7 @@ import {createRequestHeaders, type TestRequestOptions} from '../../test/request'
 import {apiRoutes} from '../api'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
+const objectStorageEncryptionKey = '0123456789abcdef'.repeat(4)
 const uuidPattern = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
 const currentUserRecord = {
     id: 'current-user',
@@ -252,7 +253,6 @@ type FolderResponse = {
 type CharacterRequestOptions = TestRequestOptions & {
     mediaBucket?: R2Bucket
     previewContainer?: DurableObjectNamespace
-    sourceBucket?: R2Bucket
 }
 
 type ChunkedSfwInitBody = {
@@ -266,16 +266,16 @@ type ChunkedSfwInitBody = {
     }
 }
 
-function requestEnv(db: D1Database, mediaBucket?: R2Bucket, previewContainer?: DurableObjectNamespace, sourceBucket?: R2Bucket) {
+function requestEnv(db: D1Database, mediaBucket?: R2Bucket, previewContainer?: DurableObjectNamespace) {
     const defaultContainer = createMockPreviewContainer(
         new Response(createAvifBytes(512, 512), {headers: {'content-type': 'image/avif'}}),
     ).namespace
     return {
         DB: db,
-        IMAGE_SOURCE_BUCKET: sourceBucket ?? createMockR2Bucket(),
         MEDIA_BUCKET: mediaBucket ?? createMockR2Bucket(),
         MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         MYOC_DOCKER_SHARP_CONTAINER: previewContainer ?? defaultContainer,
+        OBJECT_STORAGE_ENCRYPTION_KEY: objectStorageEncryptionKey,
         PREVIEW_PROCESSOR_TOKEN: 'preview-token',
     }
 }
@@ -391,7 +391,7 @@ async function postCharacter(body: unknown, db: D1Database, options: CharacterRe
             body: body instanceof FormData || typeof body === 'string' ? body : JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.previewContainer, options.sourceBucket),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -403,7 +403,7 @@ async function postFolder(body: unknown, db: D1Database, options: CharacterReque
             body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.previewContainer, options.sourceBucket),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -415,7 +415,7 @@ async function postFolderImage(folderId: string, body: BodyInit, db: D1Database,
             body,
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.previewContainer, options.sourceBucket),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -682,7 +682,7 @@ async function postProfileImage(
             body,
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.previewContainer, options.sourceBucket),
+        requestEnv(db, options.mediaBucket, options.previewContainer),
     )
 }
 
@@ -1893,7 +1893,7 @@ describe('POST /characters/folders/:id/image', () => {
             )
 
             expect(response.status).toBe(500)
-            const uploadedKey = vi.mocked(mediaBucket.put).mock.calls[0]?.[0]
+            const uploadedKey = vi.mocked(mediaBucket.put).mock.calls.find(([key]) => !key.startsWith('thumbnail-originals/'))?.[0]
             expect(uploadedKey).toMatch(new RegExp(`^characters/current-user/folders/folder-id/image/avif-${uuidPattern}\\.avif$`))
             expect(mediaBucket.delete).toHaveBeenCalledWith(uploadedKey)
             expect(
@@ -2546,7 +2546,7 @@ describe('POST /characters', () => {
             )
 
             expect(response.status).toBe(500)
-            const uploadedKey = vi.mocked(mediaBucket.put).mock.calls[0]?.[0]
+            const uploadedKey = vi.mocked(mediaBucket.put).mock.calls.find(([key]) => !key.startsWith('thumbnail-originals/'))?.[0]
             expect(uploadedKey).toMatch(new RegExp(`^characters/current-user/${uuidPattern}/profile/avif-${uuidPattern}\\.avif$`))
             expect(mediaBucket.delete).toHaveBeenCalledWith(uploadedKey)
             expect(await queryAll<{id: string}>('SELECT id FROM characters', [], db)).toEqual([])
@@ -2855,7 +2855,6 @@ describe('POST /characters/:id/profile-image', () => {
     it('replaces the character profile image and deletes the old object', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const sourceBucket = createMockR2Bucket()
         const file = createWebpFile()
         const character = createCharacterRecord({
             profile_image_key: 'old-profile-image',
@@ -2867,7 +2866,6 @@ describe('POST /characters/:id/profile-image', () => {
 
         const response = await postProfileImage(character.id, form, db, {
             mediaBucket,
-            sourceBucket,
             sessionToken,
             csrfToken: await createCsrfToken(sessionToken),
         })
@@ -2899,7 +2897,7 @@ describe('POST /characters/:id/profile-image', () => {
             ),
         ).toEqual({profile_image_key: body.profileImageKey, profile_image_content_type: 'image/avif'})
         expect(mediaBucket.delete).toHaveBeenCalledWith('characters/current-user/character-id/profile/old-profile-image.webp')
-        expect(sourceBucket.put).toHaveBeenCalledWith(
+        expect(mediaBucket.put).toHaveBeenCalledWith(
             thumbnailOriginalObjectKey(`characters/current-user/character-id/profile/${body.profileImageKey}.avif`),
             new Uint8Array(await file.arrayBuffer()),
             {
@@ -2908,9 +2906,10 @@ describe('POST /characters/:id/profile-image', () => {
                     cacheControl: 'private, no-store',
                     contentType: 'image/webp',
                 },
+                ssecKey: objectStorageEncryptionKey,
             },
         )
-        expect(sourceBucket.delete).toHaveBeenCalledWith(
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
             thumbnailOriginalObjectKey('characters/current-user/character-id/profile/old-profile-image.webp'),
         )
     })
@@ -2939,7 +2938,7 @@ describe('POST /characters/:id/profile-image', () => {
             )
 
             expect(response.status).toBe(500)
-            const uploadedKey = vi.mocked(mediaBucket.put).mock.calls[0]?.[0]
+            const uploadedKey = vi.mocked(mediaBucket.put).mock.calls.find(([key]) => !key.startsWith('thumbnail-originals/'))?.[0]
             expect(uploadedKey).toMatch(new RegExp(`^characters/current-user/character-id/profile/avif-${uuidPattern}\\.avif$`))
             expect(mediaBucket.delete).toHaveBeenCalledWith(uploadedKey)
             expect(
@@ -3552,7 +3551,6 @@ describe('PUT /characters/:id/height-chart', () => {
 describe('character media uploads', () => {
     it('queues a completed gallery source when asynchronous uploads are enabled', async () => {
         const sessionToken = 'session-token'
-        const sourceBucket = createMockR2Bucket()
         const mediaBucket = createMockR2Bucket()
         const character = createCharacterRecord()
         const queue = {send: vi.fn(async () => undefined)} as unknown as Queue
@@ -3561,10 +3559,7 @@ describe('character media uploads', () => {
         const csrfToken = await createCsrfToken(sessionToken)
         const routeEnv = {
             ...requestEnv(db, mediaBucket),
-            IMAGE_PROCESSING_QUEUE_0: queue,
-            IMAGE_PROCESSING_QUEUE_1: queue,
-            IMAGE_PROCESSING_QUEUE_2: queue,
-            IMAGE_SOURCE_BUCKET: sourceBucket,
+            IMAGE_PROCESSING_QUEUE: queue,
             IMAGE_UPLOAD_ASYNC_ENABLED: 'true',
         }
         const headers = {cookie: `myoc_session=${sessionToken}`, 'x-csrf-token': csrfToken}
@@ -3608,8 +3603,55 @@ describe('character media uploads', () => {
         })
         expect(await queryOne<{state: string}>('SELECT state FROM image_upload_jobs', [], db)).toEqual({state: 'queued'})
         expect(queue.send).toHaveBeenCalledOnce()
-        expect(await mediaBucket.list()).toHaveProperty('objects.length', 0)
-        expect(await sourceBucket.list()).toHaveProperty('objects.length', 1)
+        const publishedObjectKey = `characters/current-user/${character.id}/media/${init.mediaId}/sfw/${init.uploads.sfw.imageKey}.png`
+        const sourceObjectKey = `image-staging/${publishedObjectKey}`
+        expect(mediaBucket.createMultipartUpload).toHaveBeenCalledWith(sourceObjectKey, {
+            httpMetadata: {
+                cacheControl: 'private, no-store',
+                contentType: 'image/png',
+            },
+            ssecKey: objectStorageEncryptionKey,
+        })
+        expect(mediaBucket.resumeMultipartUpload).toHaveBeenCalledWith(sourceObjectKey, init.uploads.sfw.uploadId)
+        const partUpload = vi.mocked(mediaBucket.resumeMultipartUpload).mock.results[0]?.value
+        expect(partUpload?.uploadPart).toHaveBeenCalledWith(1, expect.any(ReadableStream), {ssecKey: objectStorageEncryptionKey})
+        expect(mediaBucket.get).toHaveBeenCalledWith(sourceObjectKey, {
+            range: {offset: 0, length: 1024 * 1024},
+            ssecKey: objectStorageEncryptionKey,
+        })
+        expect(await queryOne<{object_key: string}>('SELECT object_key FROM image_upload_sources', [], db)).toEqual({
+            object_key: sourceObjectKey,
+        })
+        expect(await mediaBucket.get(publishedObjectKey)).toBeNull()
+        expect(await mediaBucket.list()).toHaveProperty('objects.length', 1)
+    })
+
+    it('aborts an asynchronous gallery upload under its staging key', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+
+        const response = await apiRoutes.request(
+            `https://example.com/characters/${character.id}/media/chunked/media-id/sfw/upload-id?imageKey=image-key&contentType=image%2Fpng`,
+            {
+                method: 'DELETE',
+                headers: createRequestHeaders(undefined, {
+                    sessionToken,
+                    csrfToken: await createCsrfToken(sessionToken),
+                }),
+            },
+            {...requestEnv(db, mediaBucket), IMAGE_UPLOAD_ASYNC_ENABLED: 'true'},
+        )
+
+        expect(response.status).toBe(204)
+        expect(mediaBucket.resumeMultipartUpload).toHaveBeenCalledWith(
+            'image-staging/characters/current-user/character-id/media/media-id/sfw/image-key.png',
+            'upload-id',
+        )
+        const upload = vi.mocked(mediaBucket.resumeMultipartUpload).mock.results[0]?.value
+        expect(upload?.abort).toHaveBeenCalledOnce()
     })
 
     it('reports an asynchronous gallery completion failure', async () => {
@@ -3618,7 +3660,7 @@ describe('character media uploads', () => {
         await seedCurrentUser(sessionToken)
         await seedCharacterRecord(character)
         const csrfToken = await createCsrfToken(sessionToken)
-        const sourceBucket = createMockR2Bucket()
+        const mediaBucket = createMockR2Bucket()
         const response = await apiRoutes.request(
             `https://example.com/characters/${character.id}/media/chunked/complete`,
             {
@@ -3640,17 +3682,14 @@ describe('character media uploads', () => {
                 },
             },
             {
-                ...requestEnv(db),
-                IMAGE_PROCESSING_QUEUE_0: {send: vi.fn()} as unknown as Queue,
-                IMAGE_PROCESSING_QUEUE_1: {send: vi.fn()} as unknown as Queue,
-                IMAGE_PROCESSING_QUEUE_2: {send: vi.fn()} as unknown as Queue,
-                IMAGE_SOURCE_BUCKET: sourceBucket,
+                ...requestEnv(db, mediaBucket),
+                IMAGE_PROCESSING_QUEUE: {send: vi.fn()} as unknown as Queue,
                 IMAGE_UPLOAD_ASYNC_ENABLED: 'true',
             },
         )
 
         expect(response.status).toBe(400)
-        expect(await sourceBucket.list()).toHaveProperty('objects.length', 0)
+        expect(await mediaBucket.list()).toHaveProperty('objects.length', 0)
     })
 
     it.each([

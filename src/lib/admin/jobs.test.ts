@@ -215,6 +215,38 @@ describe('thumbnail regeneration jobs', () => {
         })
     })
 
+    it('reuses a thumbnail run while its durable queue item is pending', async () => {
+        const runId = 'queued-thumbnail-run'
+        await db.batch([
+            db
+                .prepare(
+                    `INSERT INTO admin_job_runs (
+                         id, job_name, trigger_source, status, started_at, summary_json
+                     ) VALUES (?, 'thumbnail-regeneration', 'manual', 'running', ?, ?)`,
+                )
+                .bind(runId, '2026-01-01 00:00:00', JSON.stringify({...emptyRegenerationSummary(), totalVariants: 1})),
+            db
+                .prepare(
+                    `INSERT INTO media_preview_regeneration_runs (run_id, dispatch_complete, enqueued_items)
+                     VALUES (?, 1, 1)`,
+                )
+                .bind(runId),
+            db
+                .prepare(
+                    `INSERT INTO media_preview_regeneration_items (
+                         task_id, run_id, media_id, rating, container_slot, candidate_json
+                     ) VALUES (?, ?, 'thumbnail:user-profile:queued-user', 'sfw', 0, '{}')`,
+                )
+                .bind(`${runId}:thumbnail:user-profile:queued-user`, runId),
+        ])
+        const workflow = createMockWorkflowBinding({[runId]: 'complete'})
+
+        const result = await runAdminJob(thumbnailJobEnv(workflow), 'thumbnail-regeneration', {triggerSource: 'manual'})
+
+        expect(result).toMatchObject({jobName: 'thumbnail-regeneration', runId, status: 'running'})
+        expect(workflow.create).not.toHaveBeenCalled()
+    })
+
     it('closes a stopped workflow before it starts a replacement', async () => {
         await db
             .prepare(

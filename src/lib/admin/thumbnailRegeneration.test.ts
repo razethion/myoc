@@ -1,16 +1,29 @@
 import {describe, expect, it, vi} from 'vitest'
 import {queryAll, queryOne, seedCharacter, seedFolder, seedUser, useTestDatabase} from '../../test/d1'
 import {createAvifBytes, createPngFile} from '../../test/imageFixtures'
+import {createMockQueue as createQueue} from '../../test/mockQueue'
 import {createMockR2Bucket} from '../../test/mockR2'
 import {createWorkerEnv} from '../../test/workerBindings'
 import type {Bindings} from '../../types/bindings'
+import type {ThumbnailRegenerationProcessingMessage} from '../../types/imageProcessing'
+import {PreviewContainerBusyError} from '../media/previewGeneration'
 import {thumbnailOriginalObjectKey} from '../media/thumbnailSources'
-import {countThumbnailCandidates, getThumbnailCandidates, regenerateThumbnail, type ThumbnailCandidate} from './thumbnailRegeneration'
+import {claimMediaPreviewRegenerationTask, completeMediaPreviewRegenerationDispatch} from './mediaPreviewRegeneration'
+import {
+    consumeThumbnailRegenerationMessage,
+    countThumbnailCandidates,
+    enqueueThumbnailRegenerationCandidates,
+    getThumbnailCandidates,
+    initializeThumbnailRegenerationDispatch,
+    regenerateThumbnail,
+    type ThumbnailCandidate,
+} from './thumbnailRegeneration'
 
 const db = useTestDatabase()
 const userId = 'thumbnail-owner'
 const characterId = 'thumbnail-character'
 const folderId = 'thumbnail-folder'
+const objectStorageEncryptionKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 
 function createThumbnailBucket(onPut?: (key: string) => Promise<void> | void): R2Bucket {
     const bucket = createMockR2Bucket()
@@ -53,14 +66,84 @@ function createSquareContainer(onFetch?: (request: Request) => Promise<void> | v
     } as unknown as Bindings['MYOC_DOCKER_SHARP_CONTAINER']
 }
 
+function combinedThumbnailBucket(mediaBucket: R2Bucket, sourceBucket: R2Bucket): R2Bucket {
+    return new Proxy(mediaBucket, {
+        get(target, property, receiver) {
+            if (property === 'get' || property === 'head' || property === 'put' || property === 'delete') {
+                return (key: string, ...args: unknown[]) => {
+                    const bucket = key.startsWith('thumbnail-originals/') ? sourceBucket : target
+                    return Reflect.apply(bucket[property] as (...values: unknown[]) => unknown, bucket, [key, ...args])
+                }
+            }
+            return Reflect.get(target, property, receiver)
+        },
+    })
+}
+
 function regenerationEnv(mediaBucket: R2Bucket, sourceBucket: R2Bucket, container = createSquareContainer()): Bindings {
     return createWorkerEnv({
         DB: db,
-        IMAGE_SOURCE_BUCKET: sourceBucket,
-        MEDIA_BUCKET: mediaBucket,
+        MEDIA_BUCKET: combinedThumbnailBucket(mediaBucket, sourceBucket),
         MYOC_DOCKER_SHARP_CONTAINER: container,
+        OBJECT_STORAGE_ENCRYPTION_KEY: objectStorageEncryptionKey,
         PREVIEW_PROCESSOR_TOKEN: 'thumbnail-test-token',
     })
+}
+
+function createMessage(body: ThumbnailRegenerationProcessingMessage, attempts = 1) {
+    const ack = vi.fn()
+    const retry = vi.fn()
+    const message = {
+        ack,
+        attempts,
+        body,
+        id: crypto.randomUUID(),
+        retry,
+        timestamp: new Date('2026-09-04T12:00:00Z'),
+    } as unknown as Message
+
+    return {ack, message, retry}
+}
+
+async function seedThumbnailJob(runId: string, status = 'running'): Promise<void> {
+    await db
+        .prepare(
+            `INSERT INTO admin_job_runs (id, job_name, trigger_source, status, started_at, summary_json)
+             VALUES (?, 'thumbnail-regeneration', 'manual', ?, CURRENT_TIMESTAMP, '{}')`,
+        )
+        .bind(runId, status)
+        .run()
+}
+
+async function createQueuedThumbnail(options: {container?: Bindings['MYOC_DOCKER_SHARP_CONTAINER']; complete?: boolean} = {}) {
+    const runId = crypto.randomUUID()
+    await seedUser({id: userId, username: 'thumbnail_owner', profilePhotoKey: 'user-old'})
+    await seedThumbnailJob(runId)
+    const candidate = candidateFor(await getThumbnailCandidates(db, null), 'user-profile')
+    const mediaBucket = createThumbnailBucket()
+    const sourceBucket = createThumbnailBucket()
+    await sourceBucket.put(thumbnailOriginalObjectKey(candidate.objectKey), await pngBytes(), {
+        httpMetadata: {contentType: 'image/png'},
+    })
+    const processingQueue = createQueue<ThumbnailRegenerationProcessingMessage>()
+    const deadLetterQueue = createQueue()
+    const env = createWorkerEnv({
+        DB: db,
+        IMAGE_PROCESSING_DLQ: deadLetterQueue.queue,
+        IMAGE_PROCESSING_QUEUE: processingQueue.queue,
+        MEDIA_BUCKET: combinedThumbnailBucket(mediaBucket, sourceBucket),
+        MYOC_DOCKER_SHARP_CONTAINER: options.container ?? createSquareContainer(),
+        OBJECT_STORAGE_ENCRYPTION_KEY: objectStorageEncryptionKey,
+        PREVIEW_PROCESSOR_TOKEN: 'thumbnail-test-token',
+    })
+
+    await initializeThumbnailRegenerationDispatch(db, runId)
+    await enqueueThumbnailRegenerationCandidates(db, env, runId, [candidate])
+    if (options.complete ?? true) await completeMediaPreviewRegenerationDispatch(db, runId)
+    const body = processingQueue.bodies[0]
+    if (!body) throw new Error('Expected one queued thumbnail task')
+
+    return {body, candidate, deadLetterQueue, env, processingQueue, runId}
 }
 
 async function pngBytes(): Promise<Uint8Array> {
@@ -121,6 +204,229 @@ describe('thumbnail regeneration', () => {
         expect(firstPage[0]?.outputImageKey).toMatch(/^avif-[0-9a-f-]+$/)
         expect(firstPage[0]?.outputObjectKey).toMatch(/\.avif$/)
         await expect(getThumbnailCandidates(db, null, 0)).rejects.toThrow('Thumbnail candidate limit must be from 1 through 100')
+    })
+
+    it('stores and processes a thumbnail task through the shared image queue', async () => {
+        const {body, candidate, deadLetterQueue, env, processingQueue, runId} = await createQueuedThumbnail()
+
+        expect(processingQueue.bodies).toEqual([
+            {
+                version: 1,
+                kind: 'thumbnail-regeneration',
+                taskId: `${runId}:thumbnail:user-profile:${userId}`,
+                runId,
+            },
+        ])
+        expect(
+            await queryOne<{candidate_json: string; container_slot: number; media_id: string; status: string}>(
+                `SELECT candidate_json, container_slot, media_id, status
+                 FROM media_preview_regeneration_items
+                 WHERE task_id = ?`,
+                [body.taskId],
+                db,
+            ),
+        ).toEqual({
+            candidate_json: JSON.stringify(candidate),
+            container_slot: 0,
+            media_id: `thumbnail:user-profile:${userId}`,
+            status: 'pending',
+        })
+        const delivery = createMessage(body)
+
+        await consumeThumbnailRegenerationMessage(delivery.message, body, env)
+
+        expect(delivery.ack).toHaveBeenCalledOnce()
+        expect(delivery.retry).not.toHaveBeenCalled()
+        expect(deadLetterQueue.bodies).toEqual([])
+        expect(await currentImageKey(candidate)).toBe(candidate.outputImageKey)
+        const job = await queryOne<{status: string; summary_json: string}>(
+            'SELECT status, summary_json FROM admin_job_runs WHERE id = ?',
+            [runId],
+            db,
+        )
+        expect(job?.status).toBe('success')
+        expect(JSON.parse(job?.summary_json ?? '{}')).toMatchObject({
+            totalVariants: 1,
+            processedVariants: 1,
+            regeneratedPreviews: 1,
+        })
+        await expect(queryOne('SELECT task_id FROM media_preview_regeneration_items WHERE run_id = ?', [runId], db)).resolves.toBeNull()
+    })
+
+    it('does not enqueue thumbnail work for a stopped job or an empty page', async () => {
+        const runId = crypto.randomUUID()
+        await seedThumbnailJob(runId, 'error')
+        const queue = createQueue<ThumbnailRegenerationProcessingMessage>()
+        const inactive = await initializeThumbnailRegenerationDispatch(db, runId)
+
+        expect(inactive.active).toBe(false)
+        await expect(enqueueThumbnailRegenerationCandidates(db, {IMAGE_PROCESSING_QUEUE: queue.queue}, runId, [])).resolves.toBe(false)
+        await expect(
+            enqueueThumbnailRegenerationCandidates(db, {IMAGE_PROCESSING_QUEUE: queue.queue}, runId, [
+                {
+                    kind: 'user-profile',
+                    userId,
+                    targetId: userId,
+                    imageKey: 'old',
+                    objectKey: 'old.avif',
+                    contentType: 'image/avif',
+                    outputImageKey: 'new',
+                    outputObjectKey: 'new.avif',
+                },
+            ]),
+        ).resolves.toBe(false)
+        expect(queue.bodies).toEqual([])
+        await expect(queryOne('SELECT run_id FROM media_preview_regeneration_runs WHERE run_id = ?', [runId], db)).resolves.toBeNull()
+    })
+
+    it('retries a failed thumbnail and completes it on the next delivery', async () => {
+        const container = createSquareContainer()
+        const stub = container.get(container.idFromName('thumbnail-container-id'))
+        vi.mocked(stub.fetch)
+            .mockRejectedValueOnce(new Error('Container stopped'))
+            .mockResolvedValueOnce(new Response(createAvifBytes(512, 512), {headers: {'content-type': 'image/avif'}}))
+        const {body, env, runId} = await createQueuedThumbnail({container})
+        const first = createMessage(body)
+
+        await consumeThumbnailRegenerationMessage(first.message, body, env)
+
+        expect(first.ack).not.toHaveBeenCalled()
+        expect(first.retry).toHaveBeenCalledWith({delaySeconds: 1})
+        expect(
+            await queryOne<{last_error: string; status: string}>(
+                'SELECT last_error, status FROM media_preview_regeneration_items WHERE task_id = ?',
+                [body.taskId],
+                db,
+            ),
+        ).toEqual({last_error: 'Container stopped', status: 'pending'})
+
+        const second = createMessage(body, 2)
+        await consumeThumbnailRegenerationMessage(second.message, body, env)
+
+        expect(second.ack).toHaveBeenCalledOnce()
+        expect(second.retry).not.toHaveBeenCalled()
+        expect(await queryOne<{status: string}>('SELECT status FROM admin_job_runs WHERE id = ?', [runId], db)).toEqual({status: 'success'})
+    })
+
+    it('records a terminal thumbnail failure in the shared dead-letter queue', async () => {
+        const container = createSquareContainer()
+        const stub = container.get(container.idFromName('thumbnail-container-id'))
+        vi.mocked(stub.fetch).mockRejectedValue(new Error('Container stopped'))
+        const {body, deadLetterQueue, env, runId} = await createQueuedThumbnail({container})
+        const first = createMessage(body, 10)
+        const second = createMessage(body, 10)
+        const delivery = createMessage(body, 10)
+
+        await consumeThumbnailRegenerationMessage(first.message, body, env)
+        await consumeThumbnailRegenerationMessage(second.message, body, env)
+        await consumeThumbnailRegenerationMessage(delivery.message, body, env)
+
+        expect(first.retry).toHaveBeenCalled()
+        expect(second.retry).toHaveBeenCalled()
+        expect(delivery.ack).toHaveBeenCalledOnce()
+        expect(delivery.retry).not.toHaveBeenCalled()
+        expect(deadLetterQueue.bodies).toEqual([
+            {
+                ...body,
+                errorCode: 'thumbnail_generation_failed',
+                error: 'Container stopped',
+            },
+        ])
+        const job = await queryOne<{status: string; summary_json: string}>(
+            'SELECT status, summary_json FROM admin_job_runs WHERE id = ?',
+            [runId],
+            db,
+        )
+        expect(job?.status).toBe('success')
+        expect(JSON.parse(job?.summary_json ?? '{}')).toMatchObject({
+            processedVariants: 1,
+            failedVariants: 1,
+            lastError: 'Container stopped',
+        })
+    })
+
+    it('requeues capacity-only failures without using the processing attempt limit', async () => {
+        const container = createSquareContainer()
+        const stub = container.get(container.idFromName('thumbnail-container-id'))
+        vi.mocked(stub.fetch).mockRejectedValue(new PreviewContainerBusyError('All image processors are busy'))
+        const {body, deadLetterQueue, env, processingQueue} = await createQueuedThumbnail({container})
+        const delivery = createMessage(body, 10)
+
+        await consumeThumbnailRegenerationMessage(delivery.message, body, env)
+
+        expect(delivery.ack).toHaveBeenCalledOnce()
+        expect(delivery.retry).not.toHaveBeenCalled()
+        expect(processingQueue.bodies).toEqual([body, body])
+        expect(deadLetterQueue.bodies).toEqual([])
+        expect(
+            await queryOne<{last_error: string | null; processing_attempts: number; status: string}>(
+                'SELECT last_error, processing_attempts, status FROM media_preview_regeneration_items WHERE task_id = ?',
+                [body.taskId],
+                db,
+            ),
+        ).toEqual({last_error: null, processing_attempts: 0, status: 'pending'})
+    })
+
+    it('moves invalid stored thumbnail data to the shared dead-letter queue', async () => {
+        const {body, deadLetterQueue, env} = await createQueuedThumbnail()
+        await db.prepare(`UPDATE media_preview_regeneration_items SET candidate_json = '{}' WHERE task_id = ?`).bind(body.taskId).run()
+        const delivery = createMessage(body)
+
+        await consumeThumbnailRegenerationMessage(delivery.message, body, env)
+
+        expect(delivery.ack).toHaveBeenCalledOnce()
+        expect(deadLetterQueue.bodies).toEqual([
+            expect.objectContaining({
+                ...body,
+                errorCode: 'thumbnail_generation_failed',
+                error: 'Stored thumbnail task data is invalid',
+            }),
+        ])
+    })
+
+    it('delays a duplicate thumbnail delivery while its lease is active', async () => {
+        const {body, env} = await createQueuedThumbnail({complete: false})
+        const now = new Date('2026-09-04T12:00:00Z')
+        await claimMediaPreviewRegenerationTask(db, body.taskId, now)
+        const delivery = createMessage(body, 2)
+
+        await consumeThumbnailRegenerationMessage(delivery.message, body, env, () => new Date(now.getTime() + 1_000))
+
+        expect(delivery.ack).not.toHaveBeenCalled()
+        expect(delivery.retry).toHaveBeenCalledWith({delaySeconds: 119})
+    })
+
+    it('acknowledges a stale thumbnail delivery and retries a storage failure', async () => {
+        const {body, env} = await createQueuedThumbnail()
+        const first = createMessage(body)
+        await consumeThumbnailRegenerationMessage(first.message, body, env)
+        const duplicate = createMessage(body, 2)
+        await consumeThumbnailRegenerationMessage(duplicate.message, body, env)
+        expect(duplicate.ack).toHaveBeenCalledOnce()
+
+        const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        const unavailable = {
+            ...env,
+            DB: {
+                prepare: () => {
+                    throw new Error('D1 is unavailable')
+                },
+            },
+        } as unknown as Bindings
+        const failed = createMessage({...body, taskId: 'unavailable-task'}, 8)
+
+        try {
+            await consumeThumbnailRegenerationMessage(
+                failed.message,
+                failed.message.body as ThumbnailRegenerationProcessingMessage,
+                unavailable,
+            )
+        } finally {
+            error.mockRestore()
+        }
+
+        expect(failed.ack).not.toHaveBeenCalled()
+        expect(failed.retry).toHaveBeenCalledWith({delaySeconds: 60})
     })
 
     it('skips a reference that changed before processing starts', async () => {

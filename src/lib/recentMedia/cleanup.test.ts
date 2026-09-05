@@ -47,7 +47,7 @@ describe('recent feed cleanup', () => {
 
     it('deletes an expired root and keeps the newest generations', async () => {
         await seedGenerations(100)
-        const oldRoot = 'generations/v1/roots/r-old.json'
+        const oldRoot = 'recent-feed/generations/v1/roots/r-old.json'
         await seedGeneration('r-old', oldRoot, '2026-06-01T00:00:00.000Z')
         const bucket = createMockR2Bucket()
         await bucket.put(oldRoot, '{}')
@@ -66,7 +66,7 @@ describe('recent feed cleanup', () => {
 
     it('keeps the root object unreferenced when R2 deletion fails', async () => {
         await seedGenerations(100)
-        const oldRoot = 'generations/v1/roots/r-old.json'
+        const oldRoot = 'recent-feed/generations/v1/roots/r-old.json'
         await seedGeneration('r-old', oldRoot, '2026-06-01T00:00:00.000Z')
         const bucket = createMockR2Bucket()
         await bucket.put(oldRoot, '{}')
@@ -84,7 +84,7 @@ describe('recent feed cleanup', () => {
 
     it('keeps the root object when the generation row cannot be deleted', async () => {
         await seedGenerations(100)
-        const oldRoot = 'generations/v1/roots/r-old.json'
+        const oldRoot = 'recent-feed/generations/v1/roots/r-old.json'
         await seedGeneration('r-old', oldRoot, '2026-06-01T00:00:00.000Z')
         const bucket = createMockR2Bucket()
         await bucket.put(oldRoot, '{}')
@@ -110,7 +110,7 @@ describe('recent feed cleanup', () => {
 
     it('finishes cleanup when the lease cannot be released', async () => {
         const bucket = createMockR2Bucket()
-        const orphanRoot = 'generations/v1/roots/r-orphan.json'
+        const orphanRoot = 'recent-feed/generations/v1/roots/r-orphan.json'
         await bucket.put(orphanRoot, '{}')
         await db
             .prepare(`CREATE TRIGGER fail_recent_feed_lease_release
@@ -148,9 +148,9 @@ describe('recent feed cleanup', () => {
             await bucket.put(key, JSON.stringify(value))
         }
 
-        const orphanManifest = `generations/v1/manifests/n0-u0/days/2026-06-09/${'e'.repeat(64)}.json`
-        const orphanBlock = `generations/v1/blocks/n0-u0/2026-06-09T12/${'f'.repeat(64)}.json`
-        const orphanRoot = 'generations/v1/roots/r-orphan.json'
+        const orphanManifest = `recent-feed/generations/v1/manifests/n0-u0/days/2026-06-09/${'e'.repeat(64)}.json`
+        const orphanBlock = `recent-feed/generations/v1/blocks/n0-u0/2026-06-09T12/${'f'.repeat(64)}.json`
+        const orphanRoot = 'recent-feed/generations/v1/roots/r-orphan.json'
         await bucket.put(orphanManifest, '{}')
         await bucket.put(orphanBlock, '{}')
         await bucket.put(orphanRoot, '{}')
@@ -168,7 +168,7 @@ describe('recent feed cleanup', () => {
 
     it('deletes old orphan objects from all listing pages', async () => {
         const bucket = createMockR2Bucket()
-        const orphanRoots = Array.from({length: 1_001}, (_, index) => `generations/v1/roots/r-orphan-${index}.json`)
+        const orphanRoots = Array.from({length: 1_001}, (_, index) => `recent-feed/generations/v1/roots/r-orphan-${index}.json`)
         await Promise.all(orphanRoots.map(async (key) => await bucket.put(key, '{}')))
 
         const summary = await cleanupRecentFeed(enabledEnvironment(bucket), new Date('2026-06-13T12:00:00.000Z'))
@@ -179,10 +179,10 @@ describe('recent feed cleanup', () => {
     })
 
     it('does not sweep child objects when a retained root is invalid', async () => {
-        const rootKey = 'generations/v1/roots/r1-invalid.json'
+        const rootKey = 'recent-feed/generations/v1/roots/r1-invalid.json'
         await seedGeneration('r1-invalid', rootKey, '2026-06-10T12:00:00.000Z')
         const bucket = createMockR2Bucket()
-        const orphanBlock = `generations/v1/blocks/n0-u0/2026-06-10T12/${'f'.repeat(64)}.json`
+        const orphanBlock = `recent-feed/generations/v1/blocks/n0-u0/2026-06-10T12/${'f'.repeat(64)}.json`
         await bucket.put(rootKey, '{}')
         await bucket.put(orphanBlock, '{}')
 
@@ -195,7 +195,7 @@ describe('recent feed cleanup', () => {
     it('does not sweep objects when a retained root key is invalid', async () => {
         await seedGeneration('r1-invalid-key', 'invalid-root-key', '2026-06-10T12:00:00.000Z')
         const bucket = createMockR2Bucket()
-        const orphanRoot = 'generations/v1/roots/r-orphan.json'
+        const orphanRoot = 'recent-feed/generations/v1/roots/r-orphan.json'
         await bucket.put(orphanRoot, '{}')
 
         const summary = await cleanupRecentFeed(enabledEnvironment(bucket), new Date('2026-06-13T12:00:00.000Z'))
@@ -205,10 +205,10 @@ describe('recent feed cleanup', () => {
     })
 
     it('does not sweep objects when R2 cannot read a retained root', async () => {
-        const rootKey = 'generations/v1/roots/r1-unavailable.json'
+        const rootKey = 'recent-feed/generations/v1/roots/r1-unavailable.json'
         await seedGeneration('r1-unavailable', rootKey, '2026-06-10T12:00:00.000Z')
         const bucket = createMockR2Bucket()
-        const orphanRoot = 'generations/v1/roots/r-orphan.json'
+        const orphanRoot = 'recent-feed/generations/v1/roots/r-orphan.json'
         await bucket.put(rootKey, '{}')
         await bucket.put(orphanRoot, '{}')
         const getObject = vi.mocked(bucket.get).getMockImplementation()
@@ -240,9 +240,9 @@ describe('recent feed cleanup', () => {
             },
         })
         for (let index = 0; index < 2_001; index += 1) {
-            await bucket.put(`generations/v1/roots/r-new-${index}.json`, emptyRoot)
+            await bucket.put(`recent-feed/generations/v1/roots/r-new-${index}.json`, emptyRoot)
         }
-        const orphanBlock = `generations/v1/blocks/n0-u0/2026-06-10T12/${'f'.repeat(64)}.json`
+        const orphanBlock = `recent-feed/generations/v1/blocks/n0-u0/2026-06-10T12/${'f'.repeat(64)}.json`
         await bucket.put(orphanBlock, '{}')
 
         const summary = await cleanupRecentFeed(enabledEnvironment(bucket), new Date('2026-08-25T12:00:00.000Z'))
@@ -253,7 +253,7 @@ describe('recent feed cleanup', () => {
 
     it('keeps new orphan objects during the grace period', async () => {
         const bucket = createMockR2Bucket()
-        const newOrphan = 'generations/v1/roots/r-new-orphan.json'
+        const newOrphan = 'recent-feed/generations/v1/roots/r-new-orphan.json'
         await bucket.put(newOrphan, '{}')
 
         const summary = await cleanupRecentFeed(enabledEnvironment(bucket), new Date('2026-06-12T00:00:00.000Z'))
@@ -264,7 +264,7 @@ describe('recent feed cleanup', () => {
 
     it('does not delete orphans after its cleanup lease is lost', async () => {
         const bucket = createMockR2Bucket()
-        const orphanRoot = 'generations/v1/roots/r-orphan.json'
+        const orphanRoot = 'recent-feed/generations/v1/roots/r-orphan.json'
         await bucket.put(orphanRoot, '{}')
         const listObjects = vi.mocked(bucket.list).getMockImplementation()
         if (!listObjects) throw new Error('The mock R2 list implementation is missing')
@@ -288,7 +288,7 @@ describe('recent feed cleanup', () => {
 
     it('does not sweep objects when R2 returns an incomplete listing page', async () => {
         const bucket = createMockR2Bucket()
-        const orphanRoot = 'generations/v1/roots/r-orphan.json'
+        const orphanRoot = 'recent-feed/generations/v1/roots/r-orphan.json'
         await bucket.put(orphanRoot, '{}')
         const incompletePage: R2Objects = {
             objects: [],
@@ -337,7 +337,7 @@ describe('recent feed cleanup', () => {
 function enabledEnvironment(bucket: R2Bucket) {
     return {
         DB: db,
-        RECENT_FEED_BUCKET: bucket,
+        MEDIA_BUCKET: bucket,
         RECENT_FEED_CLEANUP_ENABLED: 'true',
     }
 }
@@ -351,7 +351,7 @@ async function seedGenerations(count: number): Promise<void> {
                     generation, through_revision, root_key, item_counts_json, object_count, byte_count, published_at
                  ) VALUES (?, 1, ?, '{}', 0, 0, '2026-08-25T00:00:00.000Z')`,
             )
-            .bind(generation, `generations/v1/roots/${generation}.json`)
+            .bind(generation, `recent-feed/generations/v1/roots/${generation}.json`)
     })
     await db.batch(statements)
 }
@@ -375,7 +375,7 @@ async function seedRetainedObjectGraph(graph: ReturnType<typeof retainedObjectGr
         await bucket.put(key, JSON.stringify(value))
     }
 
-    const orphanRoot = 'generations/v1/roots/r-orphan.json'
+    const orphanRoot = 'recent-feed/generations/v1/roots/r-orphan.json'
     await bucket.put(orphanRoot, '{}')
     return {bucket, orphanRoot}
 }
@@ -406,11 +406,11 @@ function retainedObjectGraph(): {
         hours: Array<{hour: string; itemCount: number; blocks: Array<{key: string; itemCount: number}>}>
     }
 } {
-    const rootKey = 'generations/v1/roots/r1-valid.json'
-    const yearKey = `generations/v1/manifests/n0-u0/years/2026/${'a'.repeat(64)}.json`
-    const monthKey = `generations/v1/manifests/n0-u0/months/2026-06/${'b'.repeat(64)}.json`
-    const dayKey = `generations/v1/manifests/n0-u0/days/2026-06-10/${'c'.repeat(64)}.json`
-    const blockKey = `generations/v1/blocks/n0-u0/2026-06-10T12/${'d'.repeat(64)}.json`
+    const rootKey = 'recent-feed/generations/v1/roots/r1-valid.json'
+    const yearKey = `recent-feed/generations/v1/manifests/n0-u0/years/2026/${'a'.repeat(64)}.json`
+    const monthKey = `recent-feed/generations/v1/manifests/n0-u0/months/2026-06/${'b'.repeat(64)}.json`
+    const dayKey = `recent-feed/generations/v1/manifests/n0-u0/days/2026-06-10/${'c'.repeat(64)}.json`
+    const blockKey = `recent-feed/generations/v1/blocks/n0-u0/2026-06-10T12/${'d'.repeat(64)}.json`
     const emptyVariant = {itemCount: 0, years: []}
     const root = {
         schemaVersion: 1,
@@ -487,7 +487,8 @@ const invalidRetainedGraphCases: Array<{name: string; mutate: (graph: RetainedOb
     {
         name: 'a root uses an invalid year manifest key',
         mutate: ({root}) => {
-            firstFixtureItem(n0u0Variant(root).years, 'year reference').key = 'generations/v1/manifests/n0-u0/years/2026/not-a-digest.json'
+            firstFixtureItem(n0u0Variant(root).years, 'year reference').key =
+                'recent-feed/generations/v1/manifests/n0-u0/years/2026/not-a-digest.json'
         },
     },
     {
@@ -514,7 +515,8 @@ const invalidRetainedGraphCases: Array<{name: string; mutate: (graph: RetainedOb
     {
         name: 'a year manifest uses an invalid month manifest key',
         mutate: ({year}) => {
-            firstFixtureItem(year.months, 'month reference').key = 'generations/v1/manifests/n0-u0/months/2026-06/not-a-digest.json'
+            firstFixtureItem(year.months, 'month reference').key =
+                'recent-feed/generations/v1/manifests/n0-u0/months/2026-06/not-a-digest.json'
         },
     },
     {
@@ -532,7 +534,8 @@ const invalidRetainedGraphCases: Array<{name: string; mutate: (graph: RetainedOb
     {
         name: 'a month manifest uses an invalid day manifest key',
         mutate: ({month}) => {
-            firstFixtureItem(month.days, 'day reference').key = 'generations/v1/manifests/n0-u0/days/2026-06-10/not-a-digest.json'
+            firstFixtureItem(month.days, 'day reference').key =
+                'recent-feed/generations/v1/manifests/n0-u0/days/2026-06-10/not-a-digest.json'
         },
     },
     {
@@ -557,7 +560,7 @@ const invalidRetainedGraphCases: Array<{name: string; mutate: (graph: RetainedOb
         name: 'a day manifest uses an invalid block key',
         mutate: ({day}) => {
             const hour = firstFixtureItem(day.hours, 'hour reference')
-            firstFixtureItem(hour.blocks, 'block reference').key = 'generations/v1/blocks/n0-u0/2026-06-10T12/not-a-digest.json'
+            firstFixtureItem(hour.blocks, 'block reference').key = 'recent-feed/generations/v1/blocks/n0-u0/2026-06-10T12/not-a-digest.json'
         },
     },
 ]

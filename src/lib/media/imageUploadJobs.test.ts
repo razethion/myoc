@@ -3,10 +3,10 @@ import {queryAll, queryOne, seedCharacter, seedFolder, seedUser, useTestDatabase
 import {createAvifBytes, createPngFile} from '../../test/imageFixtures'
 import {createMockR2Bucket} from '../../test/mockR2'
 import type {Bindings} from '../../types/bindings'
-import type {ImageProcessingFailureMessage, ImageProcessingMessage} from '../../types/imageProcessing'
+import type {ImageProcessingFailureMessage, ImageUploadProcessingMessage} from '../../types/imageProcessing'
 import {
     cancelImageUploadJob,
-    consumeImageProcessingQueue,
+    consumeImageUploadProcessingMessage,
     createGalleryImageUploadJob,
     createSquareImageUploadJob,
     getImageUploadBatchStatus,
@@ -22,9 +22,9 @@ import {characterMediaImageObjectKey} from './url'
 const db = useTestDatabase()
 const now = new Date('2026-09-04T12:00:00Z')
 
-type QueuedMessage = {body: ImageProcessingMessage}
+type QueuedMessage = {body: ImageUploadProcessingMessage}
 
-function createQueue<T = ImageProcessingMessage>() {
+function createQueue<T = ImageUploadProcessingMessage>() {
     const messages: Array<{body: T}> = []
     const queue = {
         send: vi.fn(async (body: T) => {
@@ -68,28 +68,23 @@ function createEnv(
             ? galleryResponse(new URL(request.url).searchParams.get('blur') === '1')
             : new Response(createAvifBytes(512, 512), {headers: {'content-type': 'image/avif'}}),
 ) {
-    const lane0 = createQueue()
-    const lane1 = createQueue()
-    const lane2 = createQueue()
+    const processing = createQueue()
     const deadLetter = createQueue<ImageProcessingFailureMessage>()
     const container = createContainer(handler)
-    const sourceBucket = createMockR2Bucket()
     const mediaBucket = createMockR2Bucket()
+    const sourceBucket = mediaBucket
     const env = {
         DB: db,
-        IMAGE_PROCESSING_QUEUE_0: lane0.queue,
-        IMAGE_PROCESSING_QUEUE_1: lane1.queue,
-        IMAGE_PROCESSING_QUEUE_2: lane2.queue,
+        IMAGE_PROCESSING_QUEUE: processing.queue,
         IMAGE_PROCESSING_DLQ: deadLetter.queue,
-        IMAGE_SOURCE_BUCKET: sourceBucket,
         MEDIA_BUCKET: mediaBucket,
-        MEDIA_PREVIEW_OVERFLOW_ENABLED: 'true',
         MEDIA_PUBLIC_BASE_URL: 'https://m.myoc.art',
         MYOC_DOCKER_SHARP_CONTAINER: container.namespace,
+        OBJECT_STORAGE_ENCRYPTION_KEY: '11'.repeat(32),
         PREVIEW_PROCESSOR_TOKEN: 'processor-token',
     } as unknown as Bindings
 
-    return {container, deadLetter, env, lanes: [lane0, lane1, lane2], mediaBucket, sourceBucket}
+    return {container, deadLetter, env, lanes: [processing], mediaBucket, sourceBucket}
 }
 
 async function pngBytes(width = 512, height = 512): Promise<Uint8Array> {
@@ -106,7 +101,7 @@ function firstQueuedMessage(lanes: Array<{messages: QueuedMessage[]}>): QueuedMe
     return message
 }
 
-function queueMessage(body: unknown, attempts = 1) {
+function queueMessage(body: ImageUploadProcessingMessage, attempts = 1) {
     const ack = vi.fn()
     const retry = vi.fn()
     const message = {
@@ -117,21 +112,24 @@ function queueMessage(body: unknown, attempts = 1) {
         retry,
         timestamp: now,
     } as unknown as Message
-    const batch = {
-        messages: [message],
-        queue: 'myoc-image-processing-0',
-    } as unknown as MessageBatch
-    return {ack, batch, retry}
+    return {ack, message, retry}
 }
 
 async function consumeQueued(env: Bindings, queued: QueuedMessage, attempts = 1) {
     const message = queueMessage(queued.body, attempts)
-    await consumeImageProcessingQueue(message.batch, env, () => now)
+    await consumeImageUploadProcessingMessage(message.message, queued.body, env, () => now)
     return message
 }
 
 async function createSingleGalleryJob(setup: ReturnType<typeof createEnv>, rating: 'sfw' | 'nsfw' = 'sfw') {
-    const objectKey = characterMediaImageObjectKey('user-1', 'character-1', 'media-1', `${rating}-source`, rating, 'image/png')
+    const objectKey = `image-staging/${characterMediaImageObjectKey(
+        'user-1',
+        'character-1',
+        'media-1',
+        `${rating}-source`,
+        rating,
+        'image/png',
+    )}`
     const bytes = await pngBytes(100, 80)
     await setup.sourceBucket.put(objectKey, bytes)
     const job = await createGalleryImageUploadJob(setup.env, {
@@ -188,7 +186,7 @@ describe('image upload jobs', () => {
         )
         expect(user?.profile_photo_key).toMatch(/^avif-/)
         expect(user?.profile_photo_content_type).toBe('image/avif')
-        expect(await setup.sourceBucket.list()).toHaveProperty('objects.length', 2)
+        expect(await setup.sourceBucket.list()).toHaveProperty('objects.length', 3)
         const outputKey = (ready?.result?.objectKey as string | undefined) ?? ''
         const retained = await setup.sourceBucket.get(thumbnailOriginalObjectKey(outputKey))
         expect(retained).not.toBeNull()
@@ -534,7 +532,6 @@ describe('image upload jobs', () => {
         await seedUser({id: 'user-1'})
         const setup = createEnv()
         const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-        vi.mocked(setup.mediaBucket.put).mockRejectedValueOnce(new Error('R2 write failed'))
         await createSquareImageUploadJob(setup.env, {
             userId: 'user-1',
             kind: 'user-profile',
@@ -543,6 +540,9 @@ describe('image upload jobs', () => {
             bytes: await pngBytes(),
             now,
         })
+        vi.mocked(setup.mediaBucket.put)
+            .mockResolvedValueOnce({} as R2Object)
+            .mockRejectedValueOnce(new Error('R2 write failed'))
 
         try {
             const delivery = await consumeQueued(setup.env, firstQueuedMessage(setup.lanes))
@@ -597,7 +597,14 @@ describe('image upload jobs', () => {
         const sources = []
 
         for (const rating of ['sfw', 'nsfw'] as const) {
-            const objectKey = characterMediaImageObjectKey('user-1', 'character-1', 'media-1', `${rating}-source`, rating, 'image/png')
+            const objectKey = `image-staging/${characterMediaImageObjectKey(
+                'user-1',
+                'character-1',
+                'media-1',
+                `${rating}-source`,
+                rating,
+                'image/png',
+            )}`
             const bytes = await pngBytes(100, 80)
             await setup.sourceBucket.put(objectKey, bytes)
             sources.push({
@@ -801,21 +808,15 @@ describe('image upload jobs', () => {
         expect(status).toMatchObject({state: 'ready', result: {media: {nsfwImageKey: null, nsfwImageUrl: null}}})
     })
 
-    it('acknowledges invalid and missing tasks without starting Sharp', async () => {
+    it('acknowledges a missing task without starting Sharp', async () => {
         const setup = createEnv()
-        const invalid = queueMessage({version: 2, taskId: 'bad', slot: 8})
-        const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        const body = {version: 1, kind: 'upload', taskId: crypto.randomUUID()} as const
+        const missing = queueMessage(body)
 
-        try {
-            await consumeImageProcessingQueue(invalid.batch, setup.env, () => now)
-            expect(invalid.ack).toHaveBeenCalledOnce()
-            const missing = queueMessage({version: 1, taskId: crypto.randomUUID(), slot: 0})
-            await consumeImageProcessingQueue(missing.batch, setup.env)
-            expect(missing.ack).toHaveBeenCalledOnce()
-            expect(setup.container.fetch).not.toHaveBeenCalled()
-        } finally {
-            error.mockRestore()
-        }
+        await consumeImageUploadProcessingMessage(missing.message, body, setup.env)
+
+        expect(missing.ack).toHaveBeenCalledOnce()
+        expect(setup.container.fetch).not.toHaveBeenCalled()
     })
 
     it('lets Queue retry a system failure without using a Sharp attempt', async () => {
@@ -1015,7 +1016,14 @@ describe('image upload jobs', () => {
         const sources = []
 
         for (const rating of ['sfw', 'nsfw'] as const) {
-            const objectKey = characterMediaImageObjectKey('user-1', 'character-1', 'media-retry', `${rating}-source`, rating, 'image/png')
+            const objectKey = `image-staging/${characterMediaImageObjectKey(
+                'user-1',
+                'character-1',
+                'media-retry',
+                `${rating}-source`,
+                rating,
+                'image/png',
+            )}`
             const bytes = await pngBytes(100, 80)
             await setup.sourceBucket.put(objectKey, bytes)
             sources.push({

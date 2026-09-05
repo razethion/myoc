@@ -5,6 +5,7 @@ import {createMockR2Bucket} from '../../test/mockR2'
 import {readThumbnailOriginal, retainThumbnailOriginal, type ThumbnailSourceTarget, thumbnailOriginalObjectKey} from './thumbnailSources'
 
 const db = useTestDatabase()
+const encryptionKey = 'a5'.repeat(32)
 const target: ThumbnailSourceTarget = {
     kind: 'user-profile',
     userId: 'user-1',
@@ -19,7 +20,12 @@ describe('thumbnail sources', () => {
         const sourceBucket = createMockR2Bucket()
         const bytes = await pngBytes()
 
-        await retainThumbnailOriginal({IMAGE_SOURCE_BUCKET: sourceBucket}, target.objectKey, bytes, 'IMAGE/PNG')
+        await retainThumbnailOriginal(
+            {MEDIA_BUCKET: sourceBucket, OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey},
+            target.objectKey,
+            bytes,
+            'IMAGE/PNG',
+        )
 
         expect(sourceBucket.put).toHaveBeenCalledWith(thumbnailOriginalObjectKey(target.objectKey), bytes, {
             onlyIf: expect.any(Headers),
@@ -27,6 +33,7 @@ describe('thumbnail sources', () => {
                 cacheControl: 'private, no-store',
                 contentType: 'image/png',
             },
+            ssecKey: encryptionKey,
         })
         const options = vi.mocked(sourceBucket.put).mock.calls[0]?.[2]
         expect(options?.onlyIf).toBeInstanceOf(Headers)
@@ -35,23 +42,23 @@ describe('thumbnail sources', () => {
 
     it('reads the deterministic retained original before other sources', async () => {
         const sourceBucket = createMockR2Bucket()
-        const mediaBucket = createMockR2Bucket()
         const bytes = await pngBytes()
-        vi.mocked(sourceBucket.get).mockResolvedValueOnce(r2Object(target.objectKey, bytes, 'image/png'))
+        const retainedKey = thumbnailOriginalObjectKey(target.objectKey)
+        vi.mocked(sourceBucket.get).mockResolvedValueOnce(r2Object(retainedKey, bytes, 'image/png'))
 
         await expect(
-            readThumbnailOriginal({DB: db, IMAGE_SOURCE_BUCKET: sourceBucket, MEDIA_BUCKET: mediaBucket}, target),
+            readThumbnailOriginal({DB: db, MEDIA_BUCKET: sourceBucket, OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey}, target),
         ).resolves.toEqual({
             bytes,
             contentType: 'image/png',
         })
-        expect(mediaBucket.get).not.toHaveBeenCalled()
+        expect(sourceBucket.get).toHaveBeenCalledTimes(1)
+        expect(sourceBucket.get).toHaveBeenCalledWith(retainedKey, {ssecKey: encryptionKey})
     })
 
     it('uses only a ready upload source whose result key matches the current image', async () => {
         await seedUser({id: target.userId})
         const sourceBucket = createMockR2Bucket()
-        const mediaBucket = createMockR2Bucket()
         const matchingBytes = await pngBytes()
         const unrelatedBytes = new Uint8Array([1, 2, 3])
         await insertReadySource('job-matching', 'source-matching', 'source/matching.png', target.imageKey, '2026-09-04 12:00:00')
@@ -63,69 +70,59 @@ describe('thumbnail sources', () => {
             )
 
         await expect(
-            readThumbnailOriginal({DB: db, IMAGE_SOURCE_BUCKET: sourceBucket, MEDIA_BUCKET: mediaBucket}, target),
+            readThumbnailOriginal({DB: db, MEDIA_BUCKET: sourceBucket, OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey}, target),
         ).resolves.toEqual({
             bytes: matchingBytes,
             contentType: 'image/png',
         })
-        expect(sourceBucket.get).toHaveBeenLastCalledWith('source/matching.png')
-        expect(mediaBucket.get).not.toHaveBeenCalled()
+        expect(sourceBucket.get).toHaveBeenLastCalledWith('source/matching.png', {ssecKey: encryptionKey})
     })
 
     it('retains the current thumbnail when no original source exists', async () => {
-        const sourceBucket = createMockR2Bucket()
         const mediaBucket = createMockR2Bucket()
         const bytes = createAvifBytes(512, 512)
-        vi.mocked(mediaBucket.get).mockResolvedValueOnce(r2Object(target.objectKey, bytes, 'image/avif'))
+        vi.mocked(mediaBucket.get)
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce(r2Object(target.objectKey, bytes, 'image/avif'))
 
         await expect(
-            readThumbnailOriginal({DB: db, IMAGE_SOURCE_BUCKET: sourceBucket, MEDIA_BUCKET: mediaBucket}, target),
+            readThumbnailOriginal({DB: db, MEDIA_BUCKET: mediaBucket, OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey}, target),
         ).resolves.toEqual({
             bytes,
             contentType: 'image/avif',
         })
-        expect(sourceBucket.put).toHaveBeenCalledWith(thumbnailOriginalObjectKey(target.objectKey), bytes, {
+        expect(mediaBucket.put).toHaveBeenCalledWith(thumbnailOriginalObjectKey(target.objectKey), bytes, {
             onlyIf: expect.any(Headers),
             httpMetadata: {
                 cacheControl: 'private, no-store',
                 contentType: 'image/avif',
             },
+            ssecKey: encryptionKey,
         })
     })
 
     it('rejects oversized and unsupported retained sources before regeneration', async () => {
         const sourceBucket = createMockR2Bucket()
-        const mediaBucket = createMockR2Bucket()
         vi.mocked(sourceBucket.get).mockResolvedValueOnce(r2Object(target.objectKey, new Uint8Array(3 * 1024 * 1024 + 1), 'image/png'))
 
-        await expect(readThumbnailOriginal({DB: db, IMAGE_SOURCE_BUCKET: sourceBucket, MEDIA_BUCKET: mediaBucket}, target)).rejects.toThrow(
-            'The thumbnail source is too large',
-        )
+        const env = {DB: db, MEDIA_BUCKET: sourceBucket, OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey}
+        await expect(readThumbnailOriginal(env, target)).rejects.toThrow('The thumbnail source is too large')
 
         vi.mocked(sourceBucket.get).mockResolvedValueOnce(r2Object(target.objectKey, new Uint8Array([1]), 'image/gif'))
-        await expect(readThumbnailOriginal({DB: db, IMAGE_SOURCE_BUCKET: sourceBucket, MEDIA_BUCKET: mediaBucket}, target)).rejects.toThrow(
-            'The thumbnail source type is not supported',
-        )
+        await expect(readThumbnailOriginal(env, target)).rejects.toThrow('The thumbnail source type is not supported')
     })
 
     it('rejects missing, empty, and oversized sources', async () => {
-        const sourceBucket = createMockR2Bucket()
         const mediaBucket = createMockR2Bucket()
 
-        await expect(readThumbnailOriginal({DB: db, IMAGE_SOURCE_BUCKET: sourceBucket, MEDIA_BUCKET: mediaBucket}, target)).rejects.toThrow(
-            'The thumbnail source is not available',
+        const env = {DB: db, MEDIA_BUCKET: mediaBucket, OBJECT_STORAGE_ENCRYPTION_KEY: encryptionKey}
+        await expect(readThumbnailOriginal(env, target)).rejects.toThrow('The thumbnail source is not available')
+        await expect(retainThumbnailOriginal(env, target.objectKey, new Uint8Array(), 'image/png')).rejects.toThrow(
+            'The thumbnail source is empty',
         )
-        await expect(
-            retainThumbnailOriginal({IMAGE_SOURCE_BUCKET: sourceBucket}, target.objectKey, new Uint8Array(), 'image/png'),
-        ).rejects.toThrow('The thumbnail source is empty')
-        await expect(
-            retainThumbnailOriginal(
-                {IMAGE_SOURCE_BUCKET: sourceBucket},
-                target.objectKey,
-                new Uint8Array(3 * 1024 * 1024 + 1),
-                'image/png',
-            ),
-        ).rejects.toThrow('The thumbnail source is too large')
+        await expect(retainThumbnailOriginal(env, target.objectKey, new Uint8Array(3 * 1024 * 1024 + 1), 'image/png')).rejects.toThrow(
+            'The thumbnail source is too large',
+        )
     })
 })
 

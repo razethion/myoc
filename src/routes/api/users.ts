@@ -129,10 +129,7 @@ userRoutes.post('/me/profile-photo', async (c) => {
             .bind(profilePhotoKey, currentUser.id)
             .run()
     } catch (error) {
-        await Promise.allSettled([
-            c.env.MEDIA_BUCKET.delete(objectKey),
-            c.env.IMAGE_SOURCE_BUCKET.delete(thumbnailOriginalObjectKey(objectKey)),
-        ])
+        await Promise.allSettled([c.env.MEDIA_BUCKET.delete(objectKey), c.env.MEDIA_BUCKET.delete(thumbnailOriginalObjectKey(objectKey))])
         throw error
     }
 
@@ -141,7 +138,7 @@ userRoutes.post('/me/profile-photo', async (c) => {
         try {
             await Promise.all([
                 c.env.MEDIA_BUCKET.delete(oldObjectKey),
-                c.env.IMAGE_SOURCE_BUCKET.delete(thumbnailOriginalObjectKey(oldObjectKey)),
+                c.env.MEDIA_BUCKET.delete(thumbnailOriginalObjectKey(oldObjectKey)),
             ])
         } catch (error) {
             console.warn('Unable to delete old profile photo', error)

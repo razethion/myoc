@@ -23,7 +23,7 @@ describe('recent feed configuration', () => {
                 RECENT_FEED_CLEANUP_ENABLED: 'true',
                 RECENT_FEED_CURSOR_SECRET: `  ${cursorSecret}  `,
                 RECENT_FEED_PUBLISH_ENABLED: 'true',
-                RECENT_FEED_PUBLIC_BASE_URL: ' https://feed-data.myoc.art ',
+                RECENT_FEED_PUBLIC_BASE_URL: ' https://m.myoc.art ',
                 RECENT_FEED_RETENTION_DAYS: '500',
             }),
         ).toEqual({
@@ -32,7 +32,7 @@ describe('recent feed configuration', () => {
             cursorSecret,
             immutableCacheControl: 'public, max-age=31536000, immutable',
             publishEnabled: true,
-            publicBaseUrl: 'https://feed-data.myoc.art',
+            publicBaseUrl: 'https://m.myoc.art',
             retentionDays: 365,
         })
     })
@@ -50,11 +50,11 @@ describe('recent feed configuration', () => {
     })
 
     it('accepts an HTTPS public origin', () => {
-        const config = getRecentFeedConfig({RECENT_FEED_PUBLIC_BASE_URL: 'https://feed-data.myoc.art'})
+        const config = getRecentFeedConfig({RECENT_FEED_PUBLIC_BASE_URL: 'https://m.myoc.art'})
 
-        expect(config.publicBaseUrl).toBe('https://feed-data.myoc.art')
-        expect(recentFeedPublicObjectUrl(config.publicBaseUrl, 'generations/v1/roots/r1-demo.json')).toBe(
-            'https://feed-data.myoc.art/generations/v1/roots/r1-demo.json',
+        expect(config.publicBaseUrl).toBe('https://m.myoc.art')
+        expect(recentFeedPublicObjectUrl(config.publicBaseUrl, 'recent-feed/generations/v1/roots/r1-demo.json')).toBe(
+            'https://m.myoc.art/recent-feed/generations/v1/roots/r1-demo.json',
         )
     })
 
@@ -62,8 +62,8 @@ describe('recent feed configuration', () => {
         // noinspection HttpUrlsUsage -- This test requires an insecure URL.
         expect(getRecentFeedConfig({RECENT_FEED_PUBLIC_BASE_URL: 'http://feed-data.myoc.art'}).publicBaseUrl).toBeNull()
         expect(getRecentFeedConfig({RECENT_FEED_PUBLIC_BASE_URL: 'https://user:pass@feed-data.myoc.art'}).publicBaseUrl).toBeNull()
-        expect(recentFeedPublicObjectUrl('https://feed-data.myoc.art', '../private.json')).toBeNull()
-        expect(recentFeedPublicObjectUrl('https://feed-data.myoc.art', 'generations/v1/../../private.json')).toBeNull()
+        expect(recentFeedPublicObjectUrl('https://m.myoc.art', '../private.json')).toBeNull()
+        expect(recentFeedPublicObjectUrl('https://m.myoc.art', 'recent-feed/generations/v1/../../private.json')).toBeNull()
     })
 
     it.each([

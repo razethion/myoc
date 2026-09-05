@@ -140,11 +140,11 @@ Usage:
   npm run recent-feed:backfill -- --production --confirm-production=DATABASE:BUCKET
 
 The default mode reads local D1 and uses the development bindings in wrangler.jsonc. In the
-current config, this writes generated objects to the preview recent-feed R2 bucket. The script
+current config, this writes generated objects to the preview media R2 bucket. The script
 creates a restricted temporary config and cannot use the production D1 database or production
-recent-feed bucket.
+media bucket.
 
-Production mode uses the production D1 database and recent-feed bucket. It never resets feed
+Production mode uses the production D1 database and media bucket. It never resets feed
 state. It requires an exact --confirm-production value based on the configured database and
 bucket names.
 
@@ -202,8 +202,8 @@ function httpsOrigin(value, name) {
     return url.origin
 }
 
-function productionBackfillTarget(config, database, recentFeedBucket) {
-    const confirmation = `${database.database_name}:${recentFeedBucket.bucket_name}`
+function productionBackfillTarget(config, database, mediaBucket) {
+    const confirmation = `${database.database_name}:${mediaBucket.bucket_name}`
     if (options.confirmProduction !== confirmation) {
         throw new Error(`Production backfill requires --confirm-production=${confirmation}.`)
     }
@@ -215,25 +215,25 @@ function productionBackfillTarget(config, database, recentFeedBucket) {
     }
 
     return {
-        bucketName: recentFeedBucket.bucket_name,
+        bucketName: mediaBucket.bucket_name,
         mediaBaseUrl: config.vars.MEDIA_PUBLIC_BASE_URL,
         mediaBaseUrlName: 'wrangler.jsonc MEDIA_PUBLIC_BASE_URL',
     }
 }
 
-function developmentBackfillTarget(developmentMediaBaseUrl, recentFeedBucket) {
-    if (!recentFeedBucket.preview_bucket_name) {
-        throw new Error('wrangler.jsonc must define RECENT_FEED_BUCKET.preview_bucket_name for the dev backfill.')
+function developmentBackfillTarget(developmentMediaBaseUrl, mediaBucket) {
+    if (!mediaBucket.preview_bucket_name) {
+        throw new Error('wrangler.jsonc must define MEDIA_BUCKET.preview_bucket_name for the dev backfill.')
     }
-    if (recentFeedBucket.preview_bucket_name === recentFeedBucket.bucket_name) {
-        throw new Error('The recent-feed preview and production R2 bucket names must be different.')
+    if (mediaBucket.preview_bucket_name === mediaBucket.bucket_name) {
+        throw new Error('The media preview and production R2 bucket names must be different.')
     }
     if (!developmentMediaBaseUrl) {
         throw new Error('.dev.vars must define MEDIA_PUBLIC_BASE_URL for the dev backfill.')
     }
 
     return {
-        bucketName: recentFeedBucket.preview_bucket_name,
+        bucketName: mediaBucket.preview_bucket_name,
         mediaBaseUrl: developmentMediaBaseUrl,
         mediaBaseUrlName: '.dev.vars MEDIA_PUBLIC_BASE_URL',
     }
@@ -250,16 +250,16 @@ async function createRestrictedConfig() {
     }
 
     const database = config.d1_databases?.find((binding) => binding.binding === 'DB')
-    const recentFeedBucket = config.r2_buckets?.find((binding) => binding.binding === 'RECENT_FEED_BUCKET')
+    const mediaBucket = config.r2_buckets?.find((binding) => binding.binding === 'MEDIA_BUCKET')
     const devVars = existsSync(devVarsPath) ? await readFile(devVarsPath, 'utf8') : ''
     const developmentMediaBaseUrl = readDevVar(devVars, 'MEDIA_PUBLIC_BASE_URL')
 
     if (!database) throw new Error('wrangler.jsonc does not define the D1 binding.')
-    if (!recentFeedBucket?.bucket_name) throw new Error('wrangler.jsonc does not define the production recent-feed bucket.')
+    if (!mediaBucket?.bucket_name) throw new Error('wrangler.jsonc does not define the production media bucket.')
 
     const target = options.production
-        ? productionBackfillTarget(config, database, recentFeedBucket)
-        : developmentBackfillTarget(developmentMediaBaseUrl, recentFeedBucket)
+        ? productionBackfillTarget(config, database, mediaBucket)
+        : developmentBackfillTarget(developmentMediaBaseUrl, mediaBucket)
     expectedMediaOrigin = httpsOrigin(target.mediaBaseUrl, target.mediaBaseUrlName)
     selectedBucketName = target.bucketName
 
@@ -276,7 +276,7 @@ async function createRestrictedConfig() {
         d1_databases: [{...database, remote: options.production}],
         r2_buckets: [
             {
-                binding: 'RECENT_FEED_BUCKET',
+                binding: 'MEDIA_BUCKET',
                 bucket_name: selectedBucketName,
                 remote: options.production || !options.local,
             },

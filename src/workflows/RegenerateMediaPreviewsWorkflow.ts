@@ -19,7 +19,6 @@ type MediaPreviewRegenerationWorkflowParams = {
     runId: string
     continuation?: {
         cursor: MediaPreviewRegenerationCursor
-        nextContainerSlot: 0 | 1 | 2
         queuedVariants: number
         segment: number
     }
@@ -49,9 +48,7 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
 
             await step.do('record job failure', D1_STEP_CONFIG, async () => {
                 await failAdminJobRun(this.env.DB, event.payload.runId, message)
-                if (event.payload.kind !== 'thumbnails') {
-                    await deleteFinishedMediaPreviewRegenerationItems(this.env.DB, event.payload.runId)
-                }
+                await deleteFinishedMediaPreviewRegenerationItems(this.env.DB, event.payload.runId)
                 return {recorded: true}
             })
 
@@ -69,7 +66,6 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
         }
 
         let cursor: MediaPreviewRegenerationCursor | null = continuation?.cursor ?? null
-        let nextContainerSlot = continuation?.nextContainerSlot ?? 0
         let queuedVariants = continuation?.queuedVariants ?? 0
         const segment = continuation?.segment ?? 0
 
@@ -95,24 +91,16 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
             }
 
             const dispatch = await step.do(`queue batch ${batchNumber}`, D1_STEP_CONFIG, async () => {
-                const followingContainerSlot = await enqueueMediaPreviewRegenerationCandidates(
-                    this.env.DB,
-                    this.env,
-                    runId,
-                    candidates,
-                    nextContainerSlot,
-                )
+                await enqueueMediaPreviewRegenerationCandidates(this.env.DB, this.env, runId, candidates)
                 return {
                     cursor: {
                         mediaId: lastCandidate.mediaId,
                         ratingOrder: lastCandidate.ratingOrder,
                     },
-                    nextContainerSlot: followingContainerSlot,
                     queuedVariants: queuedVariants + candidates.length,
                 }
             })
             cursor = dispatch.cursor
-            nextContainerSlot = dispatch.nextContainerSlot
             queuedVariants = dispatch.queuedVariants
 
             if (candidates.length < MEDIA_PREVIEW_REGENERATION_BATCH_SIZE) {
@@ -135,7 +123,6 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
                         runId,
                         continuation: {
                             cursor: continuationCursor,
-                            nextContainerSlot,
                             queuedVariants,
                             segment: nextSegment,
                         },

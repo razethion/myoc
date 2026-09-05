@@ -64,7 +64,7 @@ function requestEnv(
     return {
         CACHE: createMockKVNamespace(),
         DB: db,
-        DB_BACKUP_BUCKET: createMockR2Bucket(),
+        OBJECT_STORAGE_ENCRYPTION_KEY: '0123456789abcdef'.repeat(4),
         MEDIA_BUCKET: mediaBucket,
         MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         MYOC_DOCKER_SHARP_CONTAINER: previewContainer.namespace,
@@ -317,17 +317,17 @@ describe('POST /admin/admin-options/jobs/:jobName/run', () => {
     })
 
     it.each([
-        ['the continuation is queued', 250, {'continued-run': 'complete', 'continued-run-segment-1': 'queued'}],
-        ['the previous segment is still running', 250, {'continued-run': 'running', 'continued-run-segment-1': 'missing'}],
-        ['the continuation is not visible yet', 250, {'continued-run': 'complete', 'continued-run-segment-1': 'missing'}],
-        ['the continuation is processing', 251, {'continued-run': 'complete', 'continued-run-segment-1': 'running'}],
+        ['the continuation is queued', 200, {'continued-run': 'complete', 'continued-run-segment-1': 'queued'}],
+        ['the previous segment is still running', 200, {'continued-run': 'running', 'continued-run-segment-1': 'missing'}],
+        ['the continuation is not visible yet', 200, {'continued-run': 'complete', 'continued-run-segment-1': 'missing'}],
+        ['the continuation is processing', 201, {'continued-run': 'complete', 'continued-run-segment-1': 'running'}],
     ])('reuses a continued preview job when %s', async (_caseName, processedVariants, statuses) => {
         await seedCurrentUser()
         await seedPreviewRegenerationRun(
             'continued-run',
             '2026-01-01 00:00:00',
             JSON.stringify({
-                totalVariants: 251,
+                totalVariants: 201,
                 processedVariants,
                 regeneratedPreviews: processedVariants,
                 regeneratedBlurs: 0,
@@ -352,7 +352,7 @@ describe('POST /admin/admin-options/jobs/:jobName/run', () => {
         expect(workflow.create).not.toHaveBeenCalled()
     })
 
-    it('reuses a job while queue dispatch or item processing remains active', async () => {
+    it('restarts a job whose dispatcher stopped without queueing work', async () => {
         await seedCurrentUser()
         await seedPreviewRegenerationRun('queued-run', '2026-01-01 00:00:00', JSON.stringify({processedVariants: 0}))
         await db
@@ -373,8 +373,9 @@ describe('POST /admin/admin-options/jobs/:jobName/run', () => {
         const body = (await response.json()) as {ok: true; run: {runId: string; status: string}}
 
         expect(response.status).toBe(200)
-        expect(body.run).toMatchObject({runId: 'queued-run', status: 'running'})
-        expect(workflow.create).not.toHaveBeenCalled()
+        expect(body.run.status).toBe('running')
+        expect(body.run.runId).not.toBe('queued-run')
+        expect(workflow.create).toHaveBeenCalledOnce()
     })
 
     it('records a failed preview workflow start on the job run', async () => {

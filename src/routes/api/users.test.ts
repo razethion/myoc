@@ -24,6 +24,7 @@ import {authPageActionRoutes} from '../page-actions/auth'
 import {settingsPageActionRoutes} from '../page-actions/settings'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
+const objectStorageEncryptionKey = '0123456789abcdef'.repeat(4)
 const profilePhotoKeyPattern = /^avif-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
 function createSquareImageContainer(
@@ -195,7 +196,6 @@ async function postProfilePhoto(
         csrfToken: string
         file?: File
         previewContainer?: DurableObjectNamespace
-        sourceBucket?: R2Bucket
     },
 ): Promise<Response> {
     const form = new FormData()
@@ -220,9 +220,9 @@ async function postProfilePhoto(
             MYOC_DOCKER_SHARP_CONTAINER: options.previewContainer ?? createSquareImageContainer().namespace,
             MEDIA_PREVIEW_OVERFLOW_ENABLED: 'false',
             PREVIEW_PROCESSOR_TOKEN: 'preview-token',
-            IMAGE_SOURCE_BUCKET: options.sourceBucket ?? createMockR2Bucket(),
             MEDIA_BUCKET: mediaBucket,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+            OBJECT_STORAGE_ENCRYPTION_KEY: objectStorageEncryptionKey,
         },
     )
 }
@@ -1057,7 +1057,6 @@ describe('POST /users/me/profile-photo', () => {
     it('uploads a validated 512x512 AVIF profile photo to R2', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const sourceBucket = createMockR2Bucket()
         const file = createWebpFile()
         await seedCurrentUser({profilePhotoKey: 'old-profile-photo-key'}, sessionToken)
 
@@ -1065,7 +1064,6 @@ describe('POST /users/me/profile-photo', () => {
             sessionToken,
             csrfToken: await createCsrfToken(sessionToken),
             file,
-            sourceBucket,
         })
 
         expect(response.status).toBe(200)
@@ -1073,7 +1071,7 @@ describe('POST /users/me/profile-photo', () => {
         const body = (await response.json()) as {profilePhotoKey: string; profilePhotoUrl: string}
         expect(body.profilePhotoKey).toMatch(profilePhotoKeyPattern)
         expect(body.profilePhotoUrl).toBe(`${mediaPublicBaseUrl}/users/current-user/profile/${body.profilePhotoKey}.avif`)
-        expect(mediaBucket.put).toHaveBeenCalledTimes(1)
+        expect(mediaBucket.put).toHaveBeenCalledTimes(2)
         expect(mediaBucket.put).toHaveBeenCalledWith(`users/current-user/profile/${body.profilePhotoKey}.avif`, expect.any(Uint8Array), {
             httpMetadata: {
                 cacheControl: 'public, max-age=300, must-revalidate',
@@ -1081,7 +1079,7 @@ describe('POST /users/me/profile-photo', () => {
             },
         })
         expect(mediaBucket.delete).toHaveBeenCalledWith('users/current-user/profile/old-profile-photo-key.webp')
-        expect(sourceBucket.put).toHaveBeenCalledWith(
+        expect(mediaBucket.put).toHaveBeenCalledWith(
             thumbnailOriginalObjectKey(`users/current-user/profile/${body.profilePhotoKey}.avif`),
             new Uint8Array(await file.arrayBuffer()),
             {
@@ -1090,11 +1088,10 @@ describe('POST /users/me/profile-photo', () => {
                     cacheControl: 'private, no-store',
                     contentType: 'image/webp',
                 },
+                ssecKey: objectStorageEncryptionKey,
             },
         )
-        expect(sourceBucket.delete).toHaveBeenCalledWith(
-            thumbnailOriginalObjectKey('users/current-user/profile/old-profile-photo-key.webp'),
-        )
+        expect(mediaBucket.delete).toHaveBeenCalledWith(thumbnailOriginalObjectKey('users/current-user/profile/old-profile-photo-key.webp'))
         expect(
             await queryOne<{profile_photo_key: string; profile_photo_content_type: string}>(
                 'SELECT profile_photo_key, profile_photo_content_type FROM users WHERE id = ?',
@@ -1128,7 +1125,7 @@ describe('POST /users/me/profile-photo', () => {
             )
 
             expect(response.status).toBe(500)
-            const uploadedKey = vi.mocked(mediaBucket.put).mock.calls[0]?.[0]
+            const uploadedKey = vi.mocked(mediaBucket.put).mock.calls.find(([key]) => !key.startsWith('thumbnail-originals/'))?.[0]
             expect(uploadedKey).toMatch(/^users\/current-user\/profile\/.+\.avif$/)
             expect((uploadedKey as string).slice('users/current-user/profile/'.length, -'.avif'.length)).toMatch(profilePhotoKeyPattern)
             expect(mediaBucket.delete).toHaveBeenCalledWith(uploadedKey)
@@ -1140,9 +1137,10 @@ describe('POST /users/me/profile-photo', () => {
     it('deletes the retained source when the public profile photo write fails', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const sourceBucket = createMockR2Bucket()
         const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-        vi.mocked(mediaBucket.put).mockRejectedValueOnce(new Error('R2 write failed'))
+        const putImplementation = vi.mocked(mediaBucket.put).getMockImplementation()
+        if (!putImplementation) throw new Error('Expected the mock R2 bucket to have a put implementation')
+        vi.mocked(mediaBucket.put).mockImplementationOnce(putImplementation).mockRejectedValueOnce(new Error('R2 write failed'))
         await seedCurrentUser({}, sessionToken)
 
         try {
@@ -1150,13 +1148,12 @@ describe('POST /users/me/profile-photo', () => {
                 sessionToken,
                 csrfToken: await createCsrfToken(sessionToken),
                 file: createWebpFile(),
-                sourceBucket,
             })
 
             expect(response.status).toBe(500)
-            const retainedKey = vi.mocked(sourceBucket.put).mock.calls[0]?.[0]
+            const retainedKey = vi.mocked(mediaBucket.put).mock.calls[0]?.[0]
             expect(retainedKey).toMatch(/^thumbnail-originals\/users\/current-user\/profile\/.+\.avif\.source$/)
-            expect(sourceBucket.delete).toHaveBeenCalledWith(retainedKey)
+            expect(mediaBucket.delete).toHaveBeenCalledWith(retainedKey)
             expect(mediaBucket.delete).toHaveBeenCalledWith((retainedKey as string).slice('thumbnail-originals/'.length, -'.source'.length))
         } finally {
             error.mockRestore()
