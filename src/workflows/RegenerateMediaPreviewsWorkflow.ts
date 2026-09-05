@@ -12,8 +12,10 @@ import {
     mediaPreviewRegenerationWorkflowInstanceId,
 } from '../lib/admin/mediaPreviewRegeneration'
 import type {Bindings} from '../types/bindings'
+import {runThumbnailRegenerationWorkflow, type ThumbnailRegenerationWorkflowParams} from './thumbnailRegeneration'
 
-export type RegenerateMediaPreviewsWorkflowParams = {
+type MediaPreviewRegenerationWorkflowParams = {
+    kind?: 'media-previews'
     runId: string
     continuation?: {
         cursor: MediaPreviewRegenerationCursor
@@ -22,6 +24,8 @@ export type RegenerateMediaPreviewsWorkflowParams = {
         segment: number
     }
 }
+
+export type RegenerateMediaPreviewsWorkflowParams = MediaPreviewRegenerationWorkflowParams | ThumbnailRegenerationWorkflowParams
 
 const D1_STEP_CONFIG = {
     retries: {
@@ -35,13 +39,19 @@ const D1_STEP_CONFIG = {
 export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings, RegenerateMediaPreviewsWorkflowParams> {
     override async run(event: Readonly<WorkflowEvent<RegenerateMediaPreviewsWorkflowParams>>, step: WorkflowStep) {
         try {
+            if (event.payload.kind === 'thumbnails') {
+                return await runThumbnailRegenerationWorkflow(this.env, event.payload, step)
+            }
+
             return await this.dispatchRegeneration(event.payload, step)
         } catch (error) {
             const message = errorMessage(error)
 
             await step.do('record job failure', D1_STEP_CONFIG, async () => {
                 await failAdminJobRun(this.env.DB, event.payload.runId, message)
-                await deleteFinishedMediaPreviewRegenerationItems(this.env.DB, event.payload.runId)
+                if (event.payload.kind !== 'thumbnails') {
+                    await deleteFinishedMediaPreviewRegenerationItems(this.env.DB, event.payload.runId)
+                }
                 return {recorded: true}
             })
 
@@ -49,7 +59,7 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
         }
     }
 
-    private async dispatchRegeneration(params: RegenerateMediaPreviewsWorkflowParams, step: WorkflowStep) {
+    private async dispatchRegeneration(params: MediaPreviewRegenerationWorkflowParams, step: WorkflowStep) {
         const {continuation, runId} = params
 
         if (!continuation) {

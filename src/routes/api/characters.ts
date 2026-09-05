@@ -36,6 +36,7 @@ import {
     PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES,
 } from '../../lib/media/profileImage'
 import {deleteR2Objects} from '../../lib/media/r2Delete'
+import {retainThumbnailOriginal, thumbnailOriginalObjectKey} from '../../lib/media/thumbnailSources'
 import {
     characterFolderImageObjectKey,
     characterFolderImageUrl,
@@ -211,6 +212,10 @@ type JsonProfileImage = {
 type ValidatedProfileImage = {
     contentType: string
     bytes: Uint8Array
+    source: {
+        contentType: 'image/png' | 'image/jpeg' | 'image/webp'
+        bytes: Uint8Array
+    }
 }
 
 type NewFolderInput = {
@@ -564,20 +569,22 @@ characterRoutes.post('/folders', async (c) => {
     const uploadedObjectKey =
         input.folderImage && folderImageKey ? characterFolderImageObjectKey(currentUser.id, folder.id, folderImageKey) : null
 
-    if (input.folderImage && uploadedObjectKey) {
-        await c.env.MEDIA_BUCKET.put(uploadedObjectKey, input.folderImage.bytes, {
-            httpMetadata: {
-                cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
-                contentType: input.folderImage.contentType,
-            },
-        })
-    }
-
     try {
+        if (input.folderImage && uploadedObjectKey) {
+            await retainThumbnailOriginal(c.env, uploadedObjectKey, input.folderImage.source.bytes, input.folderImage.source.contentType)
+            await c.env.MEDIA_BUCKET.put(uploadedObjectKey, input.folderImage.bytes, {
+                httpMetadata: {
+                    cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
+                    contentType: input.folderImage.contentType,
+                },
+            })
+        }
+
         await c.env.DB.prepare(
-            `INSERT INTO character_folders (id, user_id, name, parent_folder_id, folder_image_key, sort_order,
-                                            created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO character_folders (
+                 id, user_id, name, parent_folder_id, folder_image_key, folder_image_content_type,
+                 sort_order, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, 'image/avif', ?, ?, ?)`,
         )
             .bind(
                 folder.id,
@@ -592,7 +599,7 @@ characterRoutes.post('/folders', async (c) => {
             .run()
     } catch (error) {
         if (uploadedObjectKey) {
-            await c.env.MEDIA_BUCKET.delete(uploadedObjectKey)
+            await deleteThumbnailObjects(c.env, uploadedObjectKey)
         }
         throw error
     }
@@ -721,17 +728,18 @@ characterRoutes.post('/folders/:id/image', async (c) => {
     const folderImageKey = `avif-${crypto.randomUUID()}`
     const folderImageObjectKey = characterFolderImageObjectKey(currentUser.id, folder.id, folderImageKey)
 
-    await c.env.MEDIA_BUCKET.put(folderImageObjectKey, folderImageResult.bytes, {
-        httpMetadata: {
-            cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
-            contentType: folderImageResult.contentType,
-        },
-    })
-
     try {
+        await retainThumbnailOriginal(c.env, folderImageObjectKey, folderImageResult.source.bytes, folderImageResult.source.contentType)
+        await c.env.MEDIA_BUCKET.put(folderImageObjectKey, folderImageResult.bytes, {
+            httpMetadata: {
+                cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
+                contentType: folderImageResult.contentType,
+            },
+        })
         await c.env.DB.prepare(
             `UPDATE character_folders
              SET folder_image_key = ?,
+                 folder_image_content_type = 'image/avif',
                  updated_at = ?
              WHERE id = ?
                AND user_id = ?`,
@@ -739,12 +747,12 @@ characterRoutes.post('/folders/:id/image', async (c) => {
             .bind(folderImageKey, toSqlTimestamp(new Date()), folder.id, currentUser.id)
             .run()
     } catch (error) {
-        await c.env.MEDIA_BUCKET.delete(folderImageObjectKey)
+        await deleteThumbnailObjects(c.env, folderImageObjectKey)
         throw error
     }
 
     if (folder.folder_image_key) {
-        await deleteR2Objects(c.env.MEDIA_BUCKET, [characterFolderImageObjectKey(currentUser.id, folder.id, folder.folder_image_key)])
+        await deleteThumbnailObjects(c.env, characterFolderImageObjectKey(currentUser.id, folder.id, folder.folder_image_key))
     }
 
     return jsonResponse(c, CharacterFolderImageResponseSchema, {
@@ -778,7 +786,7 @@ characterRoutes.delete('/folders/:id/image', async (c) => {
         .run()
 
     if (folder.folder_image_key) {
-        await deleteR2Objects(c.env.MEDIA_BUCKET, [characterFolderImageObjectKey(currentUser.id, folder.id, folder.folder_image_key)])
+        await deleteThumbnailObjects(c.env, characterFolderImageObjectKey(currentUser.id, folder.id, folder.folder_image_key))
     }
 
     return c.body(null, 204)
@@ -829,7 +837,7 @@ characterRoutes.delete('/folders/:id', async (c) => {
     ])
 
     if (folder.folder_image_key) {
-        await deleteR2Objects(c.env.MEDIA_BUCKET, [characterFolderImageObjectKey(currentUser.id, folder.id, folder.folder_image_key)])
+        await deleteThumbnailObjects(c.env, characterFolderImageObjectKey(currentUser.id, folder.id, folder.folder_image_key))
     }
 
     return c.body(null, 204)
@@ -876,13 +884,6 @@ characterRoutes.post('/', async (c) => {
     const profileImageKey = `avif-${crypto.randomUUID()}`
     const profileImageObjectKey = characterProfileImageObjectKey(currentUser.id, characterId, profileImageKey)
 
-    await c.env.MEDIA_BUCKET.put(profileImageObjectKey, profileImageResult.bytes, {
-        httpMetadata: {
-            cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
-            contentType: profileImageResult.contentType,
-        },
-    })
-
     const character: CharacterRecord = {
         id: characterId,
         user_id: currentUser.id,
@@ -895,12 +896,19 @@ characterRoutes.post('/', async (c) => {
     }
 
     try {
+        await retainThumbnailOriginal(c.env, profileImageObjectKey, profileImageResult.source.bytes, profileImageResult.source.contentType)
+        await c.env.MEDIA_BUCKET.put(profileImageObjectKey, profileImageResult.bytes, {
+            httpMetadata: {
+                cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
+                contentType: profileImageResult.contentType,
+            },
+        })
         const statements: D1PreparedStatement[] = [
             c.env.DB.prepare(
-                `INSERT INTO characters (id, size_chart_id, user_id, name, profile_image_key, folder_id, sort_order,
-                                         created_at,
-                                         updated_at)
-                 VALUES (?, randomblob(6), ?, ?, ?, ?, ?, ?, ?)`,
+                `INSERT INTO characters (
+                     id, size_chart_id, user_id, name, profile_image_key, profile_image_content_type,
+                     folder_id, sort_order, created_at, updated_at
+                 ) VALUES (?, randomblob(6), ?, ?, ?, 'image/avif', ?, ?, ?, ?)`,
             ).bind(
                 character.id,
                 character.user_id,
@@ -925,7 +933,7 @@ characterRoutes.post('/', async (c) => {
         await c.env.DB.batch(statements)
     } catch (error) {
         if (profileImageKey) {
-            await c.env.MEDIA_BUCKET.delete(profileImageObjectKey)
+            await deleteThumbnailObjects(c.env, profileImageObjectKey)
         }
 
         if (isDuplicateCharacterNameError(error)) {
@@ -1027,17 +1035,18 @@ characterRoutes.post('/:id/profile-image', async (c) => {
     const profileImageKey = `avif-${crypto.randomUUID()}`
     const profileImageObjectKey = characterProfileImageObjectKey(currentUser.id, character.id, profileImageKey)
 
-    await c.env.MEDIA_BUCKET.put(profileImageObjectKey, profileImageResult.bytes, {
-        httpMetadata: {
-            cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
-            contentType: profileImageResult.contentType,
-        },
-    })
-
     try {
+        await retainThumbnailOriginal(c.env, profileImageObjectKey, profileImageResult.source.bytes, profileImageResult.source.contentType)
+        await c.env.MEDIA_BUCKET.put(profileImageObjectKey, profileImageResult.bytes, {
+            httpMetadata: {
+                cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
+                contentType: profileImageResult.contentType,
+            },
+        })
         await c.env.DB.prepare(
             `UPDATE characters
              SET profile_image_key = ?,
+                 profile_image_content_type = 'image/avif',
                  updated_at = ?
              WHERE id = ?
                AND user_id = ?`,
@@ -1045,13 +1054,16 @@ characterRoutes.post('/:id/profile-image', async (c) => {
             .bind(profileImageKey, toSqlTimestamp(new Date()), character.id, currentUser.id)
             .run()
     } catch (error) {
-        await c.env.MEDIA_BUCKET.delete(profileImageObjectKey)
+        await deleteThumbnailObjects(c.env, profileImageObjectKey)
         throw error
     }
 
     if (character.profile_image_key) {
         try {
-            await c.env.MEDIA_BUCKET.delete(characterProfileImageObjectKey(currentUser.id, character.id, character.profile_image_key))
+            await deleteThumbnailObjectsStrict(
+                c.env,
+                characterProfileImageObjectKey(currentUser.id, character.id, character.profile_image_key),
+            )
         } catch (error) {
             console.warn('Unable to delete old character profile image', error)
         }
@@ -1842,7 +1854,10 @@ characterRoutes.delete('/:id', async (c) => {
 
     if (character.profile_image_key) {
         try {
-            await c.env.MEDIA_BUCKET.delete(characterProfileImageObjectKey(currentUser.id, character.id, character.profile_image_key))
+            await deleteThumbnailObjectsStrict(
+                c.env,
+                characterProfileImageObjectKey(currentUser.id, character.id, character.profile_image_key),
+            )
         } catch (error) {
             console.warn('Unable to delete character profile image', error)
         }
@@ -4181,10 +4196,7 @@ async function validateProfileImage(
     file: File | JsonProfileImage | null,
     label = 'Character profile image',
 ): Promise<
-    | {
-          contentType: string
-          bytes: Uint8Array
-      }
+    | ValidatedProfileImage
     | {
           error: string
           status: 400 | 413
@@ -4209,7 +4221,19 @@ async function validateProfileImage(
     return {
         contentType: normalized.contentType,
         bytes: normalized.bytes,
+        source: normalized.source,
     }
+}
+
+async function deleteThumbnailObjects(env: Pick<Bindings, 'IMAGE_SOURCE_BUCKET' | 'MEDIA_BUCKET'>, objectKey: string): Promise<void> {
+    await Promise.all([
+        deleteR2Objects(env.MEDIA_BUCKET, [objectKey]),
+        deleteR2Objects(env.IMAGE_SOURCE_BUCKET, [thumbnailOriginalObjectKey(objectKey)]),
+    ])
+}
+
+async function deleteThumbnailObjectsStrict(env: Pick<Bindings, 'IMAGE_SOURCE_BUCKET' | 'MEDIA_BUCKET'>, objectKey: string): Promise<void> {
+    await Promise.all([env.MEDIA_BUCKET.delete(objectKey), env.IMAGE_SOURCE_BUCKET.delete(thumbnailOriginalObjectKey(objectKey))])
 }
 
 async function readProfileImageFile(file: File): Promise<{contentType: string; bytes: Uint8Array}> {

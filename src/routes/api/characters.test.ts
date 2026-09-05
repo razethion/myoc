@@ -2,6 +2,7 @@ import {env} from 'cloudflare:workers'
 import {describe, expect, it, vi} from 'vitest'
 import {createCsrfToken} from '../../lib/auth/session'
 import {PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/profileImage'
+import {thumbnailOriginalObjectKey} from '../../lib/media/thumbnailSources'
 import {
     queryAll,
     queryOne,
@@ -251,6 +252,7 @@ type FolderResponse = {
 type CharacterRequestOptions = TestRequestOptions & {
     mediaBucket?: R2Bucket
     previewContainer?: DurableObjectNamespace
+    sourceBucket?: R2Bucket
 }
 
 type ChunkedSfwInitBody = {
@@ -264,12 +266,13 @@ type ChunkedSfwInitBody = {
     }
 }
 
-function requestEnv(db: D1Database, mediaBucket?: R2Bucket, previewContainer?: DurableObjectNamespace) {
+function requestEnv(db: D1Database, mediaBucket?: R2Bucket, previewContainer?: DurableObjectNamespace, sourceBucket?: R2Bucket) {
     const defaultContainer = createMockPreviewContainer(
         new Response(createAvifBytes(512, 512), {headers: {'content-type': 'image/avif'}}),
     ).namespace
     return {
         DB: db,
+        IMAGE_SOURCE_BUCKET: sourceBucket ?? createMockR2Bucket(),
         MEDIA_BUCKET: mediaBucket ?? createMockR2Bucket(),
         MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         MYOC_DOCKER_SHARP_CONTAINER: previewContainer ?? defaultContainer,
@@ -388,7 +391,7 @@ async function postCharacter(body: unknown, db: D1Database, options: CharacterRe
             body: body instanceof FormData || typeof body === 'string' ? body : JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.previewContainer),
+        requestEnv(db, options.mediaBucket, options.previewContainer, options.sourceBucket),
     )
 }
 
@@ -400,7 +403,7 @@ async function postFolder(body: unknown, db: D1Database, options: CharacterReque
             body: typeof body === 'string' ? body : JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.previewContainer),
+        requestEnv(db, options.mediaBucket, options.previewContainer, options.sourceBucket),
     )
 }
 
@@ -412,7 +415,7 @@ async function postFolderImage(folderId: string, body: BodyInit, db: D1Database,
             body,
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.previewContainer),
+        requestEnv(db, options.mediaBucket, options.previewContainer, options.sourceBucket),
     )
 }
 
@@ -679,7 +682,7 @@ async function postProfileImage(
             body,
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.previewContainer),
+        requestEnv(db, options.mediaBucket, options.previewContainer, options.sourceBucket),
     )
 }
 
@@ -2852,16 +2855,19 @@ describe('POST /characters/:id/profile-image', () => {
     it('replaces the character profile image and deletes the old object', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
+        const sourceBucket = createMockR2Bucket()
+        const file = createWebpFile()
         const character = createCharacterRecord({
             profile_image_key: 'old-profile-image',
         })
         await seedCurrentUser(sessionToken)
         await seedCharacterRecord(character)
         const form = new FormData()
-        form.set('profileImage', createWebpFile())
+        form.set('profileImage', file)
 
         const response = await postProfileImage(character.id, form, db, {
             mediaBucket,
+            sourceBucket,
             sessionToken,
             csrfToken: await createCsrfToken(sessionToken),
         })
@@ -2886,9 +2892,27 @@ describe('POST /characters/:id/profile-image', () => {
             },
         )
         expect(
-            await queryOne<{profile_image_key: string}>('SELECT profile_image_key FROM characters WHERE id = ?', [character.id], db),
-        ).toEqual({profile_image_key: body.profileImageKey})
+            await queryOne<{profile_image_key: string; profile_image_content_type: string}>(
+                'SELECT profile_image_key, profile_image_content_type FROM characters WHERE id = ?',
+                [character.id],
+                db,
+            ),
+        ).toEqual({profile_image_key: body.profileImageKey, profile_image_content_type: 'image/avif'})
         expect(mediaBucket.delete).toHaveBeenCalledWith('characters/current-user/character-id/profile/old-profile-image.webp')
+        expect(sourceBucket.put).toHaveBeenCalledWith(
+            thumbnailOriginalObjectKey(`characters/current-user/character-id/profile/${body.profileImageKey}.avif`),
+            new Uint8Array(await file.arrayBuffer()),
+            {
+                onlyIf: expect.any(Headers),
+                httpMetadata: {
+                    cacheControl: 'private, no-store',
+                    contentType: 'image/webp',
+                },
+            },
+        )
+        expect(sourceBucket.delete).toHaveBeenCalledWith(
+            thumbnailOriginalObjectKey('characters/current-user/character-id/profile/old-profile-image.webp'),
+        )
     })
 
     it('deletes the uploaded profile image when the D1 update fails', async () => {
@@ -3007,8 +3031,12 @@ describe('POST /characters/:id/profile-image', () => {
         expect(response.status).toBe(200)
         const body = (await response.json()) as {folderImageKey: string}
         expect(
-            await queryOne<{folder_image_key: string}>('SELECT folder_image_key FROM character_folders WHERE id = ?', [folder.id], db),
-        ).toEqual({folder_image_key: body.folderImageKey})
+            await queryOne<{folder_image_key: string; folder_image_content_type: string}>(
+                'SELECT folder_image_key, folder_image_content_type FROM character_folders WHERE id = ?',
+                [folder.id],
+                db,
+            ),
+        ).toEqual({folder_image_key: body.folderImageKey, folder_image_content_type: 'image/avif'})
         expect(mediaBucket.put).toHaveBeenCalledWith(
             `characters/current-user/folders/folder-id/image/${body.folderImageKey}.avif`,
             expect.any(Uint8Array),

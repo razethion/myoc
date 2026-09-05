@@ -19,6 +19,10 @@ type ProfileImagePayload = {
 type NormalizedProfileImagePayload = {
     contentType: typeof SQUARE_IMAGE_CONTENT_TYPE
     bytes: Uint8Array
+    source: {
+        contentType: 'image/png' | 'image/jpeg' | 'image/webp'
+        bytes: Uint8Array
+    }
 }
 
 function validateProfileImagePayload(
@@ -75,9 +79,11 @@ export async function normalizeProfileImagePayload(
     }
 
     try {
-        return await generateSquareImageWithContainer(env, image.bytes, crypto.randomUUID(), {
-            sourceContentType: contentType as 'image/jpeg' | 'image/png' | 'image/webp',
+        const sourceContentType = contentType as 'image/jpeg' | 'image/png' | 'image/webp'
+        const normalized = await generateSquareImageWithContainer(env, image.bytes, crypto.randomUUID(), {
+            sourceContentType,
         })
+        return {...normalized, source: {bytes: image.bytes, contentType: sourceContentType}}
     } catch {
         return {error: PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR, status: 400}
     }

@@ -1,10 +1,27 @@
 import {introspectWorkflowInstance} from 'cloudflare:test'
 import {env, type WorkflowEvent, type WorkflowStep} from 'cloudflare:workers'
-import {describe, expect, it, vi} from 'vitest'
+import {beforeEach, describe, expect, it, vi} from 'vitest'
+import {
+    countThumbnailCandidates,
+    getThumbnailCandidates,
+    regenerateThumbnail,
+    type ThumbnailCandidate,
+} from '../lib/admin/thumbnailRegeneration'
 import {queryAll, queryOne, seedCharacter, seedMedia, seedUser, useTestDatabase} from '../test/d1'
 import type {Bindings} from '../types/bindings'
 import type {RegenerateMediaPreviewsWorkflowParams} from './RegenerateMediaPreviewsWorkflow'
 import {RegenerateMediaPreviewsWorkflow} from './RegenerateMediaPreviewsWorkflow'
+
+vi.mock('../lib/admin/thumbnailRegeneration', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../lib/admin/thumbnailRegeneration')>()
+
+    return {
+        ...actual,
+        countThumbnailCandidates: vi.fn(actual.countThumbnailCandidates),
+        getThumbnailCandidates: vi.fn(actual.getThumbnailCandidates),
+        regenerateThumbnail: vi.fn(actual.regenerateThumbnail),
+    }
+})
 
 const db = useTestDatabase()
 
@@ -26,14 +43,14 @@ function summary(totalVariants = 0) {
     }
 }
 
-async function seedJob(runId: string): Promise<void> {
+async function seedJob(runId: string, jobName = 'media-preview-regeneration', status = 'running'): Promise<void> {
     await db
         .prepare(
             `INSERT INTO admin_job_runs (
                 id, job_name, trigger_source, status, started_at, summary_json
-            ) VALUES (?, 'media-preview-regeneration', 'manual', 'running', ?, ?)`,
+            ) VALUES (?, ?, 'manual', ?, ?, ?)`,
         )
-        .bind(runId, '2026-09-03 12:00:00', JSON.stringify(summary()))
+        .bind(runId, jobName, status, '2026-09-03 12:00:00', JSON.stringify(summary()))
         .run()
 }
 
@@ -61,7 +78,11 @@ function createQueue() {
     return {sendBatch, binding: {sendBatch} as unknown as Queue}
 }
 
-async function runWorkflow(params: RegenerateMediaPreviewsWorkflowParams, failure?: {name: string; error: Error}) {
+async function runWorkflow(
+    params: RegenerateMediaPreviewsWorkflowParams,
+    failure?: {name: string; error: Error},
+    beforeStep?: (name: string) => void | Promise<void>,
+) {
     const lane0 = createQueue()
     const lane1 = createQueue()
     const lane2 = createQueue()
@@ -78,6 +99,8 @@ async function runWorkflow(params: RegenerateMediaPreviewsWorkflowParams, failur
     let failed = false
     const step = {
         do: async (name: string, _config: unknown, callback: () => Promise<unknown>) => {
+            await beforeStep?.(name)
+
             if (!failed && failure?.name === name) {
                 failed = true
                 throw failure.error
@@ -92,6 +115,12 @@ async function runWorkflow(params: RegenerateMediaPreviewsWorkflowParams, failur
 }
 
 describe('RegenerateMediaPreviewsWorkflow', () => {
+    beforeEach(() => {
+        vi.mocked(countThumbnailCandidates).mockReset()
+        vi.mocked(getThumbnailCandidates).mockReset()
+        vi.mocked(regenerateThumbnail).mockReset()
+    })
+
     it('completes an empty regeneration job', async () => {
         const runId = crypto.randomUUID()
         await seedJob(runId)
@@ -183,4 +212,176 @@ describe('RegenerateMediaPreviewsWorkflow', () => {
 
         expect(await getJob(runId)).toMatchObject({status: 'error', summary_json: null, error_message: 'Error'})
     })
+
+    it('records thumbnail results and continues after one candidate fails', async () => {
+        const runId = crypto.randomUUID()
+        const candidates = [thumbnailCandidate('a'), thumbnailCandidate('b'), thumbnailCandidate('c'), thumbnailCandidate('d')]
+        await seedJob(runId, 'thumbnail-regeneration')
+        vi.mocked(countThumbnailCandidates).mockResolvedValue(candidates.length)
+        vi.mocked(getThumbnailCandidates).mockResolvedValueOnce(candidates)
+        vi.mocked(regenerateThumbnail)
+            .mockResolvedValueOnce({status: 'regenerated', error: null})
+            .mockRejectedValueOnce(new Error('processor failed'))
+            .mockResolvedValueOnce({status: 'skipped', error: null})
+            .mockRejectedValueOnce(new Error())
+
+        const output = await runWorkflow({kind: 'thumbnails', runId})
+
+        expect(output.output).toEqual({
+            totalVariants: 4,
+            processedVariants: 4,
+            regeneratedPreviews: 1,
+            regeneratedBlurs: 0,
+            skippedVariants: 1,
+            failedVariants: 2,
+            lastError: 'Error',
+        })
+        const run = await getJob(runId)
+        expect(run).toMatchObject({status: 'success', error_message: null})
+        expect(JSON.parse(run?.summary_json ?? 'null')).toEqual(output.output)
+    })
+
+    it('completes an empty thumbnail job', async () => {
+        const runId = crypto.randomUUID()
+        await seedJob(runId, 'thumbnail-regeneration')
+        vi.mocked(countThumbnailCandidates).mockResolvedValue(0)
+        vi.mocked(getThumbnailCandidates).mockResolvedValue([])
+
+        const output = await runWorkflow({kind: 'thumbnails', runId})
+
+        expect(output.output).toEqual(summary())
+        expect(await getJob(runId)).toMatchObject({status: 'success', error_message: null})
+        expect(regenerateThumbnail).not.toHaveBeenCalled()
+    })
+
+    it('starts a thumbnail continuation after 250 candidates', async () => {
+        const runId = crypto.randomUUID()
+        const candidates = Array.from({length: 251}, (_, index) => thumbnailCandidate(String(index + 1).padStart(4, '0')))
+        await seedJob(runId, 'thumbnail-regeneration')
+        vi.mocked(countThumbnailCandidates).mockResolvedValue(candidates.length)
+        vi.mocked(getThumbnailCandidates).mockImplementation(async (_db, cursor, limit = 25) => {
+            const start = cursor ? candidates.findIndex((candidate) => candidate.targetId === cursor.targetId) + 1 : 0
+            return candidates.slice(start, start + limit)
+        })
+        vi.mocked(regenerateThumbnail).mockResolvedValue({status: 'regenerated', error: null})
+
+        const first = await runWorkflow({kind: 'thumbnails', runId})
+
+        expect(first.output).toMatchObject({totalVariants: 251, processedVariants: 250, regeneratedPreviews: 250})
+        expect(first.createBatch).toHaveBeenCalledWith([
+            {
+                id: `${runId}-segment-1`,
+                params: {
+                    kind: 'thumbnails',
+                    runId,
+                    continuation: {
+                        cursor: {kind: 'user-profile', targetId: '0250'},
+                        segment: 1,
+                    },
+                },
+            },
+        ])
+
+        const continuation = await runWorkflow({
+            kind: 'thumbnails',
+            runId,
+            continuation: {
+                cursor: {kind: 'user-profile', targetId: '0250'},
+                segment: 1,
+            },
+        })
+        expect(continuation.output).toMatchObject({totalVariants: 251, processedVariants: 251, regeneratedPreviews: 251})
+        expect(await getJob(runId)).toMatchObject({status: 'success', error_message: null})
+    })
+
+    it('stops a stale thumbnail workflow before it processes a candidate', async () => {
+        const runId = crypto.randomUUID()
+        await seedJob(runId, 'thumbnail-regeneration', 'error')
+        vi.mocked(countThumbnailCandidates).mockResolvedValue(1)
+        vi.mocked(getThumbnailCandidates).mockResolvedValue([thumbnailCandidate('stale')])
+
+        const output = await runWorkflow({kind: 'thumbnails', runId})
+
+        expect(output.output).toEqual(summary(1))
+        expect(regenerateThumbnail).not.toHaveBeenCalled()
+        expect(await getJob(runId)).toMatchObject({status: 'error'})
+    })
+
+    it('stops when a thumbnail job closes after initialization', async () => {
+        const runId = crypto.randomUUID()
+        await seedJob(runId, 'thumbnail-regeneration')
+        vi.mocked(countThumbnailCandidates).mockResolvedValue(1)
+        vi.mocked(getThumbnailCandidates).mockResolvedValue([thumbnailCandidate('stale')])
+
+        const output = await runWorkflow({kind: 'thumbnails', runId}, undefined, async (name) => {
+            if (name === 'regenerate thumbnail 1') {
+                await db.prepare("UPDATE admin_job_runs SET status = 'error' WHERE id = ?").bind(runId).run()
+            }
+        })
+
+        expect(output.output).toEqual(summary(1))
+        expect(regenerateThumbnail).not.toHaveBeenCalled()
+        expect(await getJob(runId)).toMatchObject({status: 'error'})
+    })
+
+    it('stops when a thumbnail job closes before it records a result', async () => {
+        const runId = crypto.randomUUID()
+        await seedJob(runId, 'thumbnail-regeneration')
+        vi.mocked(countThumbnailCandidates).mockResolvedValue(1)
+        vi.mocked(getThumbnailCandidates).mockResolvedValue([thumbnailCandidate('stale')])
+        vi.mocked(regenerateThumbnail).mockResolvedValue({status: 'regenerated', error: null})
+
+        const output = await runWorkflow({kind: 'thumbnails', runId}, undefined, async (name) => {
+            if (name === 'record thumbnail result 1') {
+                await db.prepare("UPDATE admin_job_runs SET status = 'error' WHERE id = ?").bind(runId).run()
+            }
+        })
+
+        expect(output.output).toEqual({...summary(1), processedVariants: 1, regeneratedPreviews: 1})
+        expect(regenerateThumbnail).toHaveBeenCalledOnce()
+        expect(await getJob(runId)).toMatchObject({status: 'error'})
+    })
+
+    it.each([
+        ['malformed', '{not json'],
+        ['incomplete', '{}'],
+        ['missing', null],
+    ])('uses an empty summary when a continuation has %s job data', async (_caseName, summaryJson) => {
+        const runId = crypto.randomUUID()
+        await seedJob(runId, 'thumbnail-regeneration')
+        await db.prepare('UPDATE admin_job_runs SET summary_json = ? WHERE id = ?').bind(summaryJson, runId).run()
+        vi.mocked(getThumbnailCandidates).mockResolvedValue([])
+
+        const output = await runWorkflow({
+            kind: 'thumbnails',
+            runId,
+            continuation: {cursor: {kind: 'user-profile', targetId: 'previous'}, segment: 1},
+        })
+
+        expect(output.output).toEqual(summary())
+        expect(await getJob(runId)).toMatchObject({status: 'success'})
+    })
+
+    it('records a job failure when thumbnail initialization cannot finish', async () => {
+        const runId = crypto.randomUUID()
+        await seedJob(runId, 'thumbnail-regeneration')
+        vi.mocked(countThumbnailCandidates).mockRejectedValue(new Error('D1 unavailable'))
+
+        await expect(runWorkflow({kind: 'thumbnails', runId})).rejects.toThrow('D1 unavailable')
+
+        expect(await getJob(runId)).toMatchObject({status: 'error', summary_json: null, error_message: 'D1 unavailable'})
+    })
 })
+
+function thumbnailCandidate(targetId: string): ThumbnailCandidate {
+    return {
+        kind: 'user-profile',
+        userId: targetId,
+        targetId,
+        imageKey: `image-${targetId}`,
+        objectKey: `users/${targetId}/profile/image-${targetId}.avif`,
+        contentType: 'image/avif',
+        outputImageKey: `avif-output-${targetId}`,
+        outputObjectKey: `users/${targetId}/profile/avif-output-${targetId}.avif`,
+    }
+}

@@ -30,8 +30,9 @@ export function AdminOptionsPage({csrfToken, data, feedback}: AdminOptionsPagePr
 
             <section class="rounded border border-base-300 bg-base-200 p-4">
                 <p class="mb-3 text-sm text-base-content/70">
-                    Media preview regeneration runs as a durable background job. Starting it again while it runs does not create a duplicate
-                    job.
+                    Thumbnail regeneration and character media preview regeneration run as separate background jobs. Thumbnails use saved
+                    originals. If an original is missing, the job saves the current thumbnail as its source. Starting a running job again
+                    does not create a duplicate.
                 </p>
                 <div class="flex flex-wrap gap-3">
                     {data.jobs.map((job, index) => (
@@ -171,8 +172,8 @@ function RunSummary({run}: {run: AdminJobRun}) {
         return <LeaderboardRefreshSummary summary={run.summary} />
     }
 
-    if (run.jobName === 'media-preview-regeneration') {
-        return <MediaPreviewRegenerationSummary summary={run.summary} />
+    if (run.jobName === 'media-preview-regeneration' || run.jobName === 'thumbnail-regeneration') {
+        return <MediaPreviewRegenerationSummary summary={run.summary} thumbnails={run.jobName === 'thumbnail-regeneration'} />
     }
 
     return <R2CleanupSummary summary={run.summary} />
@@ -232,7 +233,7 @@ function LeaderboardRefreshSummary({summary}: {summary: AdminJobSummary}) {
     )
 }
 
-function MediaPreviewRegenerationSummary({summary}: {summary: AdminJobSummary}) {
+function MediaPreviewRegenerationSummary({summary, thumbnails}: {summary: AdminJobSummary; thumbnails: boolean}) {
     if (!('totalVariants' in summary) || !('processedVariants' in summary)) {
         return <JsonSummary summary={summary} />
     }
@@ -244,10 +245,12 @@ function MediaPreviewRegenerationSummary({summary}: {summary: AdminJobSummary}) 
             <progress class="progress" max={progressMaximum} value={Math.min(summary.processedVariants, progressMaximum)} />
             <div class="flex flex-wrap gap-x-3 gap-y-1">
                 <span>
-                    {summary.processedVariants} of {summary.totalVariants} variants processed
+                    {summary.processedVariants} of {summary.totalVariants} {thumbnails ? 'thumbnails' : 'variants'} processed
                 </span>
-                <span>{summary.regeneratedPreviews} previews</span>
-                <span>{summary.regeneratedBlurs} blurs</span>
+                <span>
+                    {summary.regeneratedPreviews} {thumbnails ? 'thumbnails replaced' : 'previews'}
+                </span>
+                {thumbnails ? null : <span>{summary.regeneratedBlurs} blurs</span>}
                 <span>{summary.skippedVariants} skipped</span>
                 {summary.failedVariants > 0 ? <span class="text-error">{summary.failedVariants} failed</span> : null}
             </div>

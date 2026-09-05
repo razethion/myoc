@@ -13,6 +13,10 @@ describe('normalizeProfileImagePayload', () => {
             {
                 bytes: output,
                 contentType: 'image/avif',
+                source: {
+                    bytes,
+                    contentType: 'image/png',
+                },
             },
         )
     })

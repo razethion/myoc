@@ -13,6 +13,7 @@ import {
     PreviewContainerBusyError,
     PreviewValidationError,
 } from './previewGeneration'
+import {retainThumbnailOriginal, thumbnailOriginalObjectKey} from './thumbnailSources'
 import {
     characterFolderImageObjectKey,
     characterMediaImageUrl,
@@ -744,9 +745,10 @@ async function processImageTask(
     }
 
     let generated: Awaited<ReturnType<typeof generateSquareImageWithContainer>>
+    const sourceBytes = new Uint8Array(await source.arrayBuffer())
 
     try {
-        generated = await generateSquareImageWithContainer(env, new Uint8Array(await source.arrayBuffer()), task.id, {
+        generated = await generateSquareImageWithContainer(env, sourceBytes, task.id, {
             containerIndex: task.container_slot,
             maxAttempts: 1,
             priority: 'interactive',
@@ -756,12 +758,21 @@ async function processImageTask(
     }
 
     const outputKey = outputObjectKey(task)
-    await env.MEDIA_BUCKET.put(outputKey, generated.bytes, {
-        httpMetadata: {
-            cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
-            contentType: generated.contentType,
-        },
-    })
+    try {
+        await retainThumbnailOriginal(env, outputKey, sourceBytes, task.source_content_type)
+        await env.MEDIA_BUCKET.put(outputKey, generated.bytes, {
+            httpMetadata: {
+                cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
+                contentType: generated.contentType,
+            },
+        })
+    } catch (error) {
+        await Promise.allSettled([
+            env.MEDIA_BUCKET.delete(outputKey),
+            env.IMAGE_SOURCE_BUCKET.delete(thumbnailOriginalObjectKey(outputKey)),
+        ])
+        throw error
+    }
     const result = await publishSquareOutput(
         env.DB,
         task,
@@ -773,19 +784,18 @@ async function processImageTask(
     )
 
     if (!result) {
-        await env.DB.prepare(
-            `INSERT OR IGNORE INTO image_cleanup_tasks (id, job_id, bucket, object_key, state, not_before, created_at, updated_at)
-             VALUES (?, ?, 'media', ?, 'pending', ?, ?, ?)`,
-        )
-            .bind(
-                crypto.randomUUID(),
-                task.job_id,
-                outputKey,
-                toSqlTimestamp(new Date(now.getTime() + IMAGE_CLEANUP_GRACE_MS)),
-                toSqlTimestamp(now),
-                toSqlTimestamp(now),
-            )
-            .run()
+        const notBefore = toSqlTimestamp(new Date(now.getTime() + IMAGE_CLEANUP_GRACE_MS))
+        const nowText = toSqlTimestamp(now)
+        await env.DB.batch([
+            env.DB.prepare(
+                `INSERT OR IGNORE INTO image_cleanup_tasks (id, job_id, bucket, object_key, state, not_before, created_at, updated_at)
+                 VALUES (?, ?, 'media', ?, 'pending', ?, ?, ?)`,
+            ).bind(crypto.randomUUID(), task.job_id, outputKey, notBefore, nowText, nowText),
+            env.DB.prepare(
+                `INSERT OR IGNORE INTO image_cleanup_tasks (id, job_id, bucket, object_key, state, not_before, created_at, updated_at)
+                 VALUES (?, ?, 'source', ?, 'pending', ?, ?, ?)`,
+            ).bind(crypto.randomUUID(), task.job_id, thumbnailOriginalObjectKey(outputKey), notBefore, nowText, nowText),
+        ])
     }
 
     return 'ack'
@@ -1305,6 +1315,27 @@ async function publishSquareOutput(
                     task.job_id,
                     resultJson,
                 ),
+            db
+                .prepare(
+                    `INSERT OR IGNORE INTO image_cleanup_tasks (
+                     id, job_id, bucket, object_key, state, not_before, created_at, updated_at
+                 )
+                 SELECT ?, ?, 'source', ?, 'pending', ?, ?, ?
+                 WHERE EXISTS (
+                     SELECT 1 FROM image_upload_jobs
+                     WHERE id = ? AND state = 'ready' AND result_json = ?
+                 )`,
+                )
+                .bind(
+                    crypto.randomUUID(),
+                    task.job_id,
+                    thumbnailOriginalObjectKey(old),
+                    toSqlTimestamp(new Date(now.getTime() + IMAGE_CLEANUP_GRACE_MS)),
+                    toSqlTimestamp(now),
+                    toSqlTimestamp(now),
+                    task.job_id,
+                    resultJson,
+                ),
         )
     }
 
@@ -1690,6 +1721,20 @@ function cleanupStatementsForOutput(db: D1Database, jobId: string, outputJson: s
                       crypto.randomUUID(),
                       jobId,
                       parsed.objectKey,
+                      toSqlTimestamp(new Date(now.getTime() + IMAGE_CLEANUP_GRACE_MS)),
+                      toSqlTimestamp(now),
+                      toSqlTimestamp(now),
+                  ),
+              db
+                  .prepare(
+                      `INSERT OR IGNORE INTO image_cleanup_tasks (
+                       id, job_id, bucket, object_key, state, not_before, created_at, updated_at
+                   ) VALUES (?, ?, 'source', ?, 'pending', ?, ?, ?)`,
+                  )
+                  .bind(
+                      crypto.randomUUID(),
+                      jobId,
+                      thumbnailOriginalObjectKey(parsed.objectKey),
                       toSqlTimestamp(new Date(now.getTime() + IMAGE_CLEANUP_GRACE_MS)),
                       toSqlTimestamp(now),
                       toSqlTimestamp(now),

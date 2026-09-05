@@ -1,6 +1,6 @@
-import {describe, expect, it} from 'vitest'
+import {describe, expect, it, vi} from 'vitest'
 import {queryOne, seedUser, useTestDatabase} from '../../test/d1'
-import {type AdminJobSummary, getAdminOptionsData, recordAdminJobRun} from './jobs'
+import {type AdminJobSummary, getAdminOptionsData, recordAdminJobRun, runAdminJob} from './jobs'
 
 const db = useTestDatabase()
 
@@ -13,6 +13,43 @@ const backupSummary = {
     schemaObjects: 5,
     tables: 4,
 } satisfies AdminJobSummary
+
+function createMockWorkflowBinding(initialStatuses: Record<string, string> = {}) {
+    const statuses = new Map(Object.entries(initialStatuses))
+
+    return {
+        create: vi.fn(async ({id}: {id: string}) => {
+            statuses.set(id, 'running')
+            return {id}
+        }),
+        get: vi.fn(async (id: string) => {
+            if (statuses.get(id) === 'missing') {
+                throw new Error('Workflow instance does not exist')
+            }
+
+            return {
+                id,
+                status: vi.fn(async () => ({status: statuses.get(id) ?? 'unknown'})),
+            }
+        }),
+    }
+}
+
+function thumbnailJobEnv(workflow: ReturnType<typeof createMockWorkflowBinding>): Parameters<typeof runAdminJob>[0] {
+    return {DB: db, REGENERATE_MEDIA_PREVIEWS_WORKFLOW: workflow} as unknown as Parameters<typeof runAdminJob>[0]
+}
+
+function emptyRegenerationSummary() {
+    return {
+        totalVariants: 0,
+        processedVariants: 0,
+        regeneratedPreviews: 0,
+        regeneratedBlurs: 0,
+        skippedVariants: 0,
+        failedVariants: 0,
+        lastError: null,
+    }
+}
 
 describe('recordAdminJobRun', () => {
     it('records successful job runs', async () => {
@@ -152,5 +189,97 @@ describe('getAdminOptionsData', () => {
                 summary: backupSummary,
             }),
         ])
+    })
+
+    it('includes the thumbnail regeneration job', async () => {
+        const data = await getAdminOptionsData(db)
+
+        expect(data.jobs).toContainEqual({name: 'thumbnail-regeneration', label: 'Thumbnail Regeneration'})
+    })
+})
+
+describe('thumbnail regeneration jobs', () => {
+    it('starts one workflow and reuses its active run', async () => {
+        const workflow = createMockWorkflowBinding()
+        const env = thumbnailJobEnv(workflow)
+
+        const first = await runAdminJob(env, 'thumbnail-regeneration', {triggerSource: 'manual'})
+        const second = await runAdminJob(env, 'thumbnail-regeneration', {triggerSource: 'manual'})
+
+        expect(second).toEqual(first)
+        expect(first).toMatchObject({jobName: 'thumbnail-regeneration', status: 'running', summary: emptyRegenerationSummary()})
+        expect(workflow.create).toHaveBeenCalledOnce()
+        expect(workflow.create).toHaveBeenCalledWith({
+            id: first.runId,
+            params: {kind: 'thumbnails', runId: first.runId},
+        })
+    })
+
+    it('closes a stopped workflow before it starts a replacement', async () => {
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (
+                    id, job_name, trigger_source, status, started_at, summary_json
+                ) VALUES (?, 'thumbnail-regeneration', 'manual', 'running', ?, ?)`,
+            )
+            .bind('stopped-thumbnail-run', '2026-01-01 00:00:00', JSON.stringify(emptyRegenerationSummary()))
+            .run()
+        const workflow = createMockWorkflowBinding({'stopped-thumbnail-run': 'terminated'})
+
+        const result = await runAdminJob(thumbnailJobEnv(workflow), 'thumbnail-regeneration', {triggerSource: 'manual'})
+        const stopped = await queryOne<{status: string; error_message: string | null}>(
+            'SELECT status, error_message FROM admin_job_runs WHERE id = ?',
+            ['stopped-thumbnail-run'],
+        )
+
+        expect(result).toMatchObject({jobName: 'thumbnail-regeneration', status: 'running'})
+        expect(result.runId).not.toBe('stopped-thumbnail-run')
+        expect(stopped).toEqual({
+            status: 'error',
+            error_message: 'The thumbnail regeneration Workflow stopped before the job record finished.',
+        })
+        expect(workflow.create).toHaveBeenCalledOnce()
+    })
+
+    it('records a workflow start failure', async () => {
+        const workflow = createMockWorkflowBinding()
+        workflow.create.mockRejectedValueOnce(new Error('Workflow could not start'))
+
+        await expect(runAdminJob(thumbnailJobEnv(workflow), 'thumbnail-regeneration', {triggerSource: 'manual'})).rejects.toThrow(
+            'Workflow could not start',
+        )
+
+        expect(
+            await queryOne<{status: string; error_message: string | null}>(
+                `SELECT status, error_message
+                 FROM admin_job_runs
+                 WHERE job_name = 'thumbnail-regeneration'`,
+            ),
+        ).toEqual({status: 'error', error_message: 'Workflow could not start'})
+    })
+
+    it('replaces an old thumbnail run when its continuation is missing', async () => {
+        const staleSummary = {...emptyRegenerationSummary(), totalVariants: 251, processedVariants: 250}
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (
+                    id, job_name, trigger_source, status, started_at, summary_json
+                ) VALUES (?, 'thumbnail-regeneration', 'manual', 'running', ?, ?)`,
+            )
+            .bind('stale-thumbnail-run', '2026-01-01 00:00:00', JSON.stringify(staleSummary))
+            .run()
+        const workflow = createMockWorkflowBinding({
+            'stale-thumbnail-run': 'complete',
+            'stale-thumbnail-run-segment-1': 'missing',
+        })
+
+        const result = await runAdminJob(thumbnailJobEnv(workflow), 'thumbnail-regeneration', {triggerSource: 'manual'})
+
+        expect(result).toMatchObject({jobName: 'thumbnail-regeneration', status: 'running'})
+        expect(result.runId).not.toBe('stale-thumbnail-run')
+        expect(await queryOne<{status: string}>('SELECT status FROM admin_job_runs WHERE id = ?', ['stale-thumbnail-run'])).toEqual({
+            status: 'error',
+        })
+        expect(workflow.create).toHaveBeenCalledOnce()
     })
 })

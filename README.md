@@ -107,6 +107,12 @@ curl "http://localhost:8787/api/search?type=characters&q=raz"
 
 ## Development
 
+Admins can start thumbnail regeneration from `/admin/admin-options`. This job replaces user profile, folder, and
+character profile thumbnails with AVIF images. It runs separately from character media preview regeneration.
+It uses the saved cropped image before compression. If that source is missing, it first saves the current thumbnail
+in private storage and uses those bytes for this run and later runs. A new image upload supplies a new cropped source.
+The current thumbnail stays available until its replacement is ready. A concurrent user upload takes precedence.
+
 Common commands:
 
 ```sh

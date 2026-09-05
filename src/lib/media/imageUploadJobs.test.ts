@@ -16,6 +16,7 @@ import {
     reconcileImageUploads,
     retryImageUploadJob,
 } from './imageUploadJobs'
+import {thumbnailOriginalObjectKey} from './thumbnailSources'
 import {characterMediaImageObjectKey} from './url'
 
 const db = useTestDatabase()
@@ -187,7 +188,12 @@ describe('image upload jobs', () => {
         )
         expect(user?.profile_photo_key).toMatch(/^avif-/)
         expect(user?.profile_photo_content_type).toBe('image/avif')
-        expect(await setup.sourceBucket.list()).toHaveProperty('objects.length', 1)
+        expect(await setup.sourceBucket.list()).toHaveProperty('objects.length', 2)
+        const outputKey = (ready?.result?.objectKey as string | undefined) ?? ''
+        const retained = await setup.sourceBucket.get(thumbnailOriginalObjectKey(outputKey))
+        expect(retained).not.toBeNull()
+        if (!retained) throw new Error('Expected a retained thumbnail source')
+        expect(new Uint8Array(await retained.arrayBuffer())).toEqual(await pngBytes())
         expect(await getImageUploadBatchStatus(db, 'user-1', 'batch-1')).toHaveLength(1)
     })
 
@@ -455,7 +461,10 @@ describe('image upload jobs', () => {
         })
         expect(await queryAll('SELECT id FROM image_processing_attempts', [], db)).toEqual([])
         expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({state: 'waiting'})
-        expect(await queryAll<{bucket: string}>('SELECT bucket FROM image_cleanup_tasks', [], db)).toEqual([{bucket: 'media'}])
+        expect(await queryAll<{bucket: string}>('SELECT bucket FROM image_cleanup_tasks ORDER BY bucket', [], db)).toEqual([
+            {bucket: 'media'},
+            {bucket: 'source'},
+        ])
     })
 
     it('does not let a worker with an expired lease fail a current task', async () => {
@@ -521,6 +530,34 @@ describe('image upload jobs', () => {
         expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({state: 'failed', error: {code: 'source_unavailable'}})
     })
 
+    it('deletes a retained output source when the public R2 write fails', async () => {
+        await seedUser({id: 'user-1'})
+        const setup = createEnv()
+        const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        vi.mocked(setup.mediaBucket.put).mockRejectedValueOnce(new Error('R2 write failed'))
+        await createSquareImageUploadJob(setup.env, {
+            userId: 'user-1',
+            kind: 'user-profile',
+            targetId: 'user-1',
+            idempotencyKey: 'media-write-failure',
+            bytes: await pngBytes(),
+            now,
+        })
+
+        try {
+            const delivery = await consumeQueued(setup.env, firstQueuedMessage(setup.lanes))
+            expect(delivery.retry).toHaveBeenCalledOnce()
+            const retainedKey = vi.mocked(setup.sourceBucket.put).mock.calls[1]?.[0]
+            expect(retainedKey).toMatch(/^thumbnail-originals\/users\/user-1\/profile\/.+\.avif\.source$/)
+            expect(setup.sourceBucket.delete).toHaveBeenCalledWith(retainedKey)
+            expect(setup.mediaBucket.delete).toHaveBeenCalledWith(
+                (retainedKey as string).slice('thumbnail-originals/'.length, -'.source'.length),
+            )
+        } finally {
+            error.mockRestore()
+        }
+    })
+
     it('queues an unpublished square output for cleanup after a cancel race', async () => {
         await seedUser({id: 'user-1'})
         let jobId = ''
@@ -542,7 +579,15 @@ describe('image upload jobs', () => {
         expect(await queryOne<{state: string}>('SELECT state FROM image_upload_jobs WHERE id = ?', [job.id], db)).toEqual({
             state: 'canceled',
         })
-        expect(await queryAll<{object_key: string}>('SELECT object_key FROM image_cleanup_tasks', [], db)).toHaveLength(1)
+        const cleanup = await queryAll<{bucket: string; object_key: string}>(
+            'SELECT bucket, object_key FROM image_cleanup_tasks ORDER BY bucket',
+            [],
+            db,
+        )
+        expect(cleanup).toHaveLength(2)
+        const mediaCleanup = cleanup.find((task) => task.bucket === 'media')
+        expect(mediaCleanup).toBeDefined()
+        expect(cleanup).toContainEqual({bucket: 'source', object_key: thumbnailOriginalObjectKey(mediaCleanup?.object_key ?? '')})
     })
 
     it('publishes an SFW and NSFW gallery pair only after both outputs are ready', async () => {
@@ -951,9 +996,16 @@ describe('image upload jobs', () => {
 
         await retryImageUploadJob(setup.env, 'user-1', job.id, 'retry-output-key', now)
 
-        expect(await queryOne<{object_key: string}>('SELECT object_key FROM image_cleanup_tasks', [], db)).toEqual({
-            object_key: 'old-output.avif',
-        })
+        expect(
+            await queryAll<{bucket: string; object_key: string}>(
+                'SELECT bucket, object_key FROM image_cleanup_tasks ORDER BY bucket',
+                [],
+                db,
+            ),
+        ).toEqual([
+            {bucket: 'media', object_key: 'old-output.avif'},
+            {bucket: 'source', object_key: thumbnailOriginalObjectKey('old-output.avif')},
+        ])
     })
 
     it('restarts every unfinished task in a failed gallery pair', async () => {

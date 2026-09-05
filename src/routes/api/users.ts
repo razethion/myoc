@@ -6,6 +6,7 @@ import {readFormDataUpTo} from '../../lib/http/requestBody'
 import {ErrorResponseSchema, responseSchema} from '../../lib/http/responseSchemas'
 import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../../lib/media/cacheControl'
 import {normalizeProfileImagePayload, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/profileImage'
+import {retainThumbnailOriginal, thumbnailOriginalObjectKey} from '../../lib/media/thumbnailSources'
 import {profilePhotoObjectKey, profilePhotoUrl} from '../../lib/media/url'
 import {APP_VERSION} from '../../lib/releases'
 import type {Bindings} from '../../types/bindings'
@@ -112,29 +113,36 @@ userRoutes.post('/me/profile-photo', async (c) => {
     const profilePhotoKey = `avif-${crypto.randomUUID()}`
     const objectKey = profilePhotoObjectKey(currentUser.id, profilePhotoKey)
 
-    await c.env.MEDIA_BUCKET.put(objectKey, image.bytes, {
-        httpMetadata: {
-            cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
-            contentType: image.contentType,
-        },
-    })
-
     try {
+        await retainThumbnailOriginal(c.env, objectKey, image.source.bytes, image.source.contentType)
+        await c.env.MEDIA_BUCKET.put(objectKey, image.bytes, {
+            httpMetadata: {
+                cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
+                contentType: image.contentType,
+            },
+        })
         await c.env.DB.prepare(
             `UPDATE users
-             SET profile_photo_key = ?
+             SET profile_photo_key = ?, profile_photo_content_type = 'image/avif'
              WHERE id = ?`,
         )
             .bind(profilePhotoKey, currentUser.id)
             .run()
     } catch (error) {
-        await c.env.MEDIA_BUCKET.delete(objectKey)
+        await Promise.allSettled([
+            c.env.MEDIA_BUCKET.delete(objectKey),
+            c.env.IMAGE_SOURCE_BUCKET.delete(thumbnailOriginalObjectKey(objectKey)),
+        ])
         throw error
     }
 
     if (currentUser.profilePhotoKey) {
+        const oldObjectKey = profilePhotoObjectKey(currentUser.id, currentUser.profilePhotoKey)
         try {
-            await c.env.MEDIA_BUCKET.delete(profilePhotoObjectKey(currentUser.id, currentUser.profilePhotoKey))
+            await Promise.all([
+                c.env.MEDIA_BUCKET.delete(oldObjectKey),
+                c.env.IMAGE_SOURCE_BUCKET.delete(thumbnailOriginalObjectKey(oldObjectKey)),
+            ])
         } catch (error) {
             console.warn('Unable to delete old profile photo', error)
         }

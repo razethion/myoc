@@ -56,7 +56,7 @@ export type PreviewContainerRequestOptions = {
     containerIndex?: number
     maxAttempts?: number
     priority?: 'background' | 'interactive'
-    sourceContentType?: 'image/jpeg' | 'image/png' | 'image/webp'
+    sourceContentType?: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/avif'
 }
 
 export async function generateMediaPreviewWithContainer(

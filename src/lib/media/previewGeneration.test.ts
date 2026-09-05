@@ -269,18 +269,21 @@ describe('container image recipes', () => {
         ).rejects.toThrow('Container square image must be a 512x512 AVIF image')
     })
 
-    it('forwards the validated source content type to the square recipe', async () => {
-        const fetch = vi.fn(async (_input?: RequestInfo | URL, init?: RequestInit) => {
-            expect(new Headers(init?.headers).get('content-type')).toBe('image/jpeg')
-            return avifResponse(512, 512)
-        })
+    it.each(['image/jpeg', 'image/png', 'image/webp', 'image/avif'] as const)(
+        'forwards %s to the square recipe',
+        async (sourceContentType) => {
+            const fetch = vi.fn(async (_input?: RequestInfo | URL, init?: RequestInit) => {
+                expect(new Headers(init?.headers).get('content-type')).toBe(sourceContentType)
+                return avifResponse(512, 512)
+            })
 
-        await expect(
-            generateSquareImageWithContainer(previewEnvironment([], fetch), new Uint8Array([1]), 'square', {
-                sourceContentType: 'image/jpeg',
-            }),
-        ).resolves.toMatchObject({contentType: 'image/avif'})
-    })
+            await expect(
+                generateSquareImageWithContainer(previewEnvironment([], fetch), new Uint8Array([1]), 'square', {
+                    sourceContentType,
+                }),
+            ).resolves.toMatchObject({contentType: 'image/avif'})
+        },
+    )
 
     it.each([
         ['a failed response', new Response('failed', {status: 503}), false, 'Container gallery image failed with 503'],

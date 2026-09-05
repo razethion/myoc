@@ -3,6 +3,7 @@ import {compare} from 'bcryptjs'
 import {describe, expect, it, vi} from 'vitest'
 import {createCsrfToken} from '../../lib/auth/session'
 import {PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/profileImage'
+import {thumbnailOriginalObjectKey} from '../../lib/media/thumbnailSources'
 import {APP_VERSION} from '../../lib/releases'
 import {expectSessionCookie} from '../../test/assertions'
 import {queryAll, queryOne, seedAuthenticatedUser, seedUser, useTestDatabase, withFailingTrigger} from '../../test/d1'
@@ -189,7 +190,13 @@ async function postRawPasskeyPromptResponse(body: BodyInit, db: D1Database, sess
 async function postProfilePhoto(
     db: D1Database,
     mediaBucket: R2Bucket,
-    options: {sessionToken: string; csrfToken: string; file?: File; previewContainer?: DurableObjectNamespace},
+    options: {
+        sessionToken: string
+        csrfToken: string
+        file?: File
+        previewContainer?: DurableObjectNamespace
+        sourceBucket?: R2Bucket
+    },
 ): Promise<Response> {
     const form = new FormData()
     form.set('csrfToken', options.csrfToken)
@@ -213,6 +220,7 @@ async function postProfilePhoto(
             MYOC_DOCKER_SHARP_CONTAINER: options.previewContainer ?? createSquareImageContainer().namespace,
             MEDIA_PREVIEW_OVERFLOW_ENABLED: 'false',
             PREVIEW_PROCESSOR_TOKEN: 'preview-token',
+            IMAGE_SOURCE_BUCKET: options.sourceBucket ?? createMockR2Bucket(),
             MEDIA_BUCKET: mediaBucket,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         },
@@ -1049,12 +1057,15 @@ describe('POST /users/me/profile-photo', () => {
     it('uploads a validated 512x512 AVIF profile photo to R2', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
+        const sourceBucket = createMockR2Bucket()
+        const file = createWebpFile()
         await seedCurrentUser({profilePhotoKey: 'old-profile-photo-key'}, sessionToken)
 
         const response = await postProfilePhoto(db, mediaBucket, {
             sessionToken,
             csrfToken: await createCsrfToken(sessionToken),
-            file: createWebpFile(),
+            file,
+            sourceBucket,
         })
 
         expect(response.status).toBe(200)
@@ -1070,9 +1081,27 @@ describe('POST /users/me/profile-photo', () => {
             },
         })
         expect(mediaBucket.delete).toHaveBeenCalledWith('users/current-user/profile/old-profile-photo-key.webp')
+        expect(sourceBucket.put).toHaveBeenCalledWith(
+            thumbnailOriginalObjectKey(`users/current-user/profile/${body.profilePhotoKey}.avif`),
+            new Uint8Array(await file.arrayBuffer()),
+            {
+                onlyIf: expect.any(Headers),
+                httpMetadata: {
+                    cacheControl: 'private, no-store',
+                    contentType: 'image/webp',
+                },
+            },
+        )
+        expect(sourceBucket.delete).toHaveBeenCalledWith(
+            thumbnailOriginalObjectKey('users/current-user/profile/old-profile-photo-key.webp'),
+        )
         expect(
-            await queryOne<{profile_photo_key: string}>('SELECT profile_photo_key FROM users WHERE id = ?', [currentUser.id], db),
-        ).toEqual({profile_photo_key: body.profilePhotoKey})
+            await queryOne<{profile_photo_key: string; profile_photo_content_type: string}>(
+                'SELECT profile_photo_key, profile_photo_content_type FROM users WHERE id = ?',
+                [currentUser.id],
+                db,
+            ),
+        ).toEqual({profile_photo_key: body.profilePhotoKey, profile_photo_content_type: 'image/avif'})
     })
 
     it('deletes the new R2 object when the D1 profile update fails', async () => {
@@ -1103,6 +1132,32 @@ describe('POST /users/me/profile-photo', () => {
             expect(uploadedKey).toMatch(/^users\/current-user\/profile\/.+\.avif$/)
             expect((uploadedKey as string).slice('users/current-user/profile/'.length, -'.avif'.length)).toMatch(profilePhotoKeyPattern)
             expect(mediaBucket.delete).toHaveBeenCalledWith(uploadedKey)
+        } finally {
+            error.mockRestore()
+        }
+    })
+
+    it('deletes the retained source when the public profile photo write fails', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const sourceBucket = createMockR2Bucket()
+        const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        vi.mocked(mediaBucket.put).mockRejectedValueOnce(new Error('R2 write failed'))
+        await seedCurrentUser({}, sessionToken)
+
+        try {
+            const response = await postProfilePhoto(db, mediaBucket, {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+                file: createWebpFile(),
+                sourceBucket,
+            })
+
+            expect(response.status).toBe(500)
+            const retainedKey = vi.mocked(sourceBucket.put).mock.calls[0]?.[0]
+            expect(retainedKey).toMatch(/^thumbnail-originals\/users\/current-user\/profile\/.+\.avif\.source$/)
+            expect(sourceBucket.delete).toHaveBeenCalledWith(retainedKey)
+            expect(mediaBucket.delete).toHaveBeenCalledWith((retainedKey as string).slice('thumbnail-originals/'.length, -'.source'.length))
         } finally {
             error.mockRestore()
         }
