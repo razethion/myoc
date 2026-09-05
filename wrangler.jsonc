@@ -22,8 +22,8 @@
       "class_name": "MyocDockerSharpContainer",
       "image": "./containers/myoc-docker-sharp/Dockerfile",
       "image_build_context": "./containers/myoc-docker-sharp",
-      "instance_type": "standard-1",
-      "max_instances": 1
+      "instance_type": "standard-4",
+      "max_instances": 8
     }
   ],
   "durable_objects": {
@@ -44,6 +44,114 @@
       }
     }
   ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "MEDIA_PREVIEW_REGENERATION_QUEUE_0",
+        "queue": "myoc-media-preview-regeneration-0"
+      },
+      {
+        "binding": "MEDIA_PREVIEW_REGENERATION_QUEUE_1",
+        "queue": "myoc-media-preview-regeneration-1"
+      },
+      {
+        "binding": "MEDIA_PREVIEW_REGENERATION_QUEUE_2",
+        "queue": "myoc-media-preview-regeneration-2"
+      },
+      {
+        "binding": "MEDIA_PREVIEW_REGENERATION_DLQ",
+        "queue": "myoc-media-preview-regeneration-dlq"
+      },
+      {
+        "binding": "IMAGE_PROCESSING_QUEUE_0",
+        "queue": "myoc-image-processing-0"
+      },
+      {
+        "binding": "IMAGE_PROCESSING_QUEUE_1",
+        "queue": "myoc-image-processing-1"
+      },
+      {
+        "binding": "IMAGE_PROCESSING_QUEUE_2",
+        "queue": "myoc-image-processing-2"
+      },
+      {
+        "binding": "IMAGE_PROCESSING_DLQ",
+        "queue": "myoc-image-processing-dlq"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "myoc-media-preview-regeneration-0",
+        "max_batch_size": 1,
+        "max_batch_timeout": 0,
+        "max_retries": 2,
+        "dead_letter_queue": "myoc-media-preview-regeneration-dlq",
+        "max_concurrency": 3,
+        "retry_delay": 1
+      },
+      {
+        "queue": "myoc-media-preview-regeneration-1",
+        "max_batch_size": 1,
+        "max_batch_timeout": 0,
+        "max_retries": 2,
+        "dead_letter_queue": "myoc-media-preview-regeneration-dlq",
+        "max_concurrency": 3,
+        "retry_delay": 1
+      },
+      {
+        "queue": "myoc-media-preview-regeneration-2",
+        "max_batch_size": 1,
+        "max_batch_timeout": 0,
+        "max_retries": 2,
+        "dead_letter_queue": "myoc-media-preview-regeneration-dlq",
+        "max_concurrency": 3,
+        "retry_delay": 1
+      },
+      {
+        "queue": "myoc-image-processing-0",
+        "max_batch_size": 1,
+        "max_batch_timeout": 0,
+        "max_retries": 10,
+        "dead_letter_queue": "myoc-image-processing-dlq",
+        "max_concurrency": 8,
+        "retry_delay": 1
+      },
+      {
+        "queue": "myoc-image-processing-1",
+        "max_batch_size": 1,
+        "max_batch_timeout": 0,
+        "max_retries": 10,
+        "dead_letter_queue": "myoc-image-processing-dlq",
+        "max_concurrency": 8,
+        "retry_delay": 1
+      },
+      {
+        "queue": "myoc-image-processing-2",
+        "max_batch_size": 1,
+        "max_batch_timeout": 0,
+        "max_retries": 10,
+        "dead_letter_queue": "myoc-image-processing-dlq",
+        "max_concurrency": 8,
+        "retry_delay": 1
+      },
+      {
+        "queue": "myoc-media-preview-regeneration-dlq",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 10,
+        "max_concurrency": 1,
+        "retry_delay": 1
+      },
+      {
+        "queue": "myoc-image-processing-dlq",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 10,
+        "max_concurrency": 1,
+        "retry_delay": 1
+      }
+    ]
+  },
   "migrations": [
     {
       "tag": "v1",
@@ -56,13 +164,13 @@
   "assets": {
     "directory": "./public"
   },
-  "images": {
-    "binding": "IMAGES",
-    "remote": true
-  },
   "vars": {
     "CLOUDFLARE_ACCOUNT_ID": "9b7b3de391cdb5368247e2c468ad1643",
     "D1_DATABASE_ID": "909ada8f-fc57-47ad-83e1-18ffe863debb",
+    "IMAGE_PROCESSING_DLQ_NAME": "myoc-image-processing-dlq",
+    "IMAGE_UPLOAD_ASYNC_ENABLED": "true",
+    "MEDIA_PREVIEW_REGENERATION_DLQ_NAME": "myoc-media-preview-regeneration-dlq",
+    "MEDIA_PREVIEW_OVERFLOW_ENABLED": "true",
     "MEDIA_PUBLIC_BASE_URL": "https://m.myoc.art",
     "RECENT_FEED_BLOCK_ITEMS": "96",
     "RECENT_FEED_CLEANUP_ENABLED": "true",
@@ -121,6 +229,12 @@
     }
   ],
   "r2_buckets": [
+    {
+      "binding": "IMAGE_SOURCE_BUCKET",
+      "bucket_name": "myoc-image-sources",
+      "preview_bucket_name": "myoc-image-sources-dev",
+      "remote": true
+    },
     {
       "binding": "MEDIA_BUCKET",
       "bucket_name": "myoc",

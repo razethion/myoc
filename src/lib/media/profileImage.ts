@@ -1,10 +1,10 @@
-import {getWebpDimensions} from './webp'
+import type {Bindings} from '../../types/bindings'
+import {readGalleryImageDimensions} from './imageMetadata'
+import {generateSquareImageWithContainer, type SQUARE_IMAGE_CONTENT_TYPE} from './previewGeneration'
 
 const PROFILE_IMAGE_SIZE = 512
 const PROFILE_IMAGE_MAX_BYTES = 2 * 1024 * 1024
-const PROFILE_IMAGE_WEBP_QUALITY = 90
-const PROFILE_IMAGE_CONTENT_TYPE = 'image/webp'
-const PROFILE_IMAGE_CONVERTIBLE_CONTENT_TYPES = new Set(['image/png', 'image/jpeg'])
+const PROFILE_IMAGE_SOURCE_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
 const PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR = 'Unexpected media, contact support'
 const PROFILE_IMAGE_MAX_REQUEST_BYTES = 3 * 1024 * 1024
 const PROFILE_IMAGE_MAX_DATA_URL_BYTES = Math.ceil(PROFILE_IMAGE_MAX_REQUEST_BYTES / 3) * 4 + 4
@@ -17,7 +17,7 @@ type ProfileImagePayload = {
 }
 
 type NormalizedProfileImagePayload = {
-    contentType: typeof PROFILE_IMAGE_CONTENT_TYPE
+    contentType: typeof SQUARE_IMAGE_CONTENT_TYPE
     bytes: Uint8Array
 }
 
@@ -34,7 +34,7 @@ function validateProfileImagePayload(
         return {error: `${label} must be 2 MB or smaller`, status: 400}
     }
 
-    const dimensions = getWebpDimensions(image.bytes)
+    const dimensions = readGalleryImageDimensions(image.bytes, image.contentType)
 
     if (!dimensions) {
         return {error: PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR, status: 400}
@@ -50,7 +50,7 @@ function validateProfileImagePayload(
 export async function normalizeProfileImagePayload(
     image: ProfileImagePayload,
     label: string,
-    images: ImagesBinding | undefined,
+    env: Pick<Bindings, 'MEDIA_PREVIEW_OVERFLOW_ENABLED' | 'MYOC_DOCKER_SHARP_CONTAINER' | 'PREVIEW_PROCESSOR_TOKEN'>,
 ): Promise<
     | NormalizedProfileImagePayload
     | {
@@ -63,75 +63,24 @@ export async function normalizeProfileImagePayload(
     }
 
     const contentType = image.contentType.toLowerCase()
-    const normalizedImage: NormalizedProfileImagePayload | {error: string; status: 400} =
-        contentType === PROFILE_IMAGE_CONTENT_TYPE
-            ? {
-                  contentType: PROFILE_IMAGE_CONTENT_TYPE,
-                  bytes: image.bytes,
-              }
-            : await convertProfileImageToWebp(
-                  {
-                      contentType,
-                      bytes: image.bytes,
-                  },
-                  images,
-              )
 
-    if ('error' in normalizedImage) {
-        return normalizedImage
+    if (!PROFILE_IMAGE_SOURCE_CONTENT_TYPES.has(contentType)) {
+        return {error: PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR, status: 400}
     }
 
-    const validation = validateProfileImagePayload(normalizedImage, label)
+    const validation = validateProfileImagePayload({...image, contentType}, label)
 
     if ('error' in validation) {
         return validation
     }
 
-    return normalizedImage
-}
-
-async function convertProfileImageToWebp(
-    image: ProfileImagePayload,
-    images: ImagesBinding | undefined,
-): Promise<
-    | NormalizedProfileImagePayload
-    | {
-          error: string
-          status: 400
-      }
-> {
-    if (!PROFILE_IMAGE_CONVERTIBLE_CONTENT_TYPES.has(image.contentType) || !images) {
-        return {error: PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR, status: 400}
-    }
-
     try {
-        const result = await images.input(streamFromBytes(image.bytes)).output({
-            format: PROFILE_IMAGE_CONTENT_TYPE,
-            quality: PROFILE_IMAGE_WEBP_QUALITY,
+        return await generateSquareImageWithContainer(env, image.bytes, crypto.randomUUID(), {
+            sourceContentType: contentType as 'image/jpeg' | 'image/png' | 'image/webp',
         })
-        const response = result.response()
-        const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.toLowerCase() ?? result.contentType().toLowerCase()
-
-        if (contentType !== PROFILE_IMAGE_CONTENT_TYPE) {
-            return {error: PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR, status: 400}
-        }
-
-        return {
-            contentType: PROFILE_IMAGE_CONTENT_TYPE,
-            bytes: new Uint8Array(await response.arrayBuffer()),
-        }
     } catch {
         return {error: PROFILE_IMAGE_UNEXPECTED_MEDIA_ERROR, status: 400}
     }
-}
-
-function streamFromBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
-    return new ReadableStream<Uint8Array>({
-        start(controller) {
-            controller.enqueue(bytes)
-            controller.close()
-        },
-    })
 }
 
 export function isProfileImageDataUrlTooLarge(encodedBytes: string): boolean {

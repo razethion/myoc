@@ -21,11 +21,13 @@ import {
 import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../../lib/media/cacheControl'
 import {type HeightChartJson, parseHeightChartJson as parseCharacterHeightChartJson} from '../../lib/media/heightChart'
 import {type GalleryImageMetadata, readGalleryImageDimensions, readGalleryImageMetadata} from '../../lib/media/imageMetadata'
+import {type CompletedGalleryJobSource, createGalleryImageUploadJob} from '../../lib/media/imageUploadJobs'
 import {
     GALLERY_NSFW_BLUR_CONTENT_TYPE,
     type GeneratedGalleryPreview,
     generateMediaPreviewWithContainer,
     generateNsfwBlurImage,
+    mediaPreviewContainerIndex,
 } from '../../lib/media/previewGeneration'
 import {
     isProfileImageDataUrlTooLarge,
@@ -71,6 +73,21 @@ const ChunkedUploadInitResponseSchema = responseSchema({
     }),
 })
 const MediaResponseSchema = responseSchema({media: PublicMediaSchema})
+const QueuedMediaResponseSchema = responseSchema({
+    job: z
+        .object({
+            id: z.string(),
+            batchId: z.string().nullable(),
+            state: z.enum(['checking', 'uploading', 'waiting', 'processing', 'ready', 'failed', 'canceled']),
+            kind: z.literal('gallery'),
+            result: z.record(z.string(), z.unknown()).nullable(),
+            error: z.object({code: z.string(), message: z.string()}).strict().nullable(),
+            createdAt: z.string(),
+            updatedAt: z.string(),
+        })
+        .strict(),
+    statusUrl: z.string(),
+})
 const ToyhouseImportCompleteResponseSchema = responseSchema({
     media: PublicMediaSchema,
     skipped: z.boolean(),
@@ -532,7 +549,7 @@ characterRoutes.post('/folders', async (c) => {
 
     const now = toSqlTimestamp(new Date())
     const folderId = crypto.randomUUID()
-    const folderImageKey = input.folderImage ? crypto.randomUUID() : null
+    const folderImageKey = input.folderImage ? `avif-${crypto.randomUUID()}` : null
     const folder: CharacterFolderRecord = {
         id: folderId,
         user_id: currentUser.id,
@@ -606,7 +623,7 @@ async function validateNewFolderInput(c: CharacterRouteContext, currentUser: Cur
         return jsonResponse(c, ErrorResponseSchema, {error: 'Parent folder not found'}, 404)
     }
 
-    const folderImage = parsed.folderImage ? await validateProfileImage(c.env.IMAGES, parsed.folderImage, 'Folder image') : null
+    const folderImage = parsed.folderImage ? await validateProfileImage(c.env, parsed.folderImage, 'Folder image') : null
 
     if (folderImage && 'error' in folderImage) {
         return jsonResponse(c, ErrorResponseSchema, {error: folderImage.error}, folderImage.status)
@@ -695,13 +712,13 @@ characterRoutes.post('/folders/:id/image', async (c) => {
     }
 
     const file = form.get('folderImage') ?? form.get('folder-image')
-    const folderImageResult = await validateProfileImage(c.env.IMAGES, file instanceof File ? file : null, 'Folder image')
+    const folderImageResult = await validateProfileImage(c.env, file instanceof File ? file : null, 'Folder image')
 
     if ('error' in folderImageResult) {
         return jsonResponse(c, ErrorResponseSchema, {error: folderImageResult.error}, folderImageResult.status)
     }
 
-    const folderImageKey = crypto.randomUUID()
+    const folderImageKey = `avif-${crypto.randomUUID()}`
     const folderImageObjectKey = characterFolderImageObjectKey(currentUser.id, folder.id, folderImageKey)
 
     await c.env.MEDIA_BUCKET.put(folderImageObjectKey, folderImageResult.bytes, {
@@ -848,7 +865,7 @@ characterRoutes.post('/', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Folder not found'}, 404)
     }
 
-    const profileImageResult = await validateProfileImage(c.env.IMAGES, parsed.profileImage)
+    const profileImageResult = await validateProfileImage(c.env, parsed.profileImage)
 
     if ('error' in profileImageResult) {
         return jsonResponse(c, ErrorResponseSchema, {error: profileImageResult.error}, profileImageResult.status)
@@ -856,7 +873,7 @@ characterRoutes.post('/', async (c) => {
 
     const now = new Date()
     const characterId = crypto.randomUUID()
-    const profileImageKey = crypto.randomUUID()
+    const profileImageKey = `avif-${crypto.randomUUID()}`
     const profileImageObjectKey = characterProfileImageObjectKey(currentUser.id, characterId, profileImageKey)
 
     await c.env.MEDIA_BUCKET.put(profileImageObjectKey, profileImageResult.bytes, {
@@ -1001,13 +1018,13 @@ characterRoutes.post('/:id/profile-image', async (c) => {
 
     const {currentUser, character, form} = owned
     const file = form.get('profileImage') ?? form.get('character-profile-photo')
-    const profileImageResult = await validateProfileImage(c.env.IMAGES, file instanceof File ? file : null)
+    const profileImageResult = await validateProfileImage(c.env, file instanceof File ? file : null)
 
     if ('error' in profileImageResult) {
         return jsonResponse(c, ErrorResponseSchema, {error: profileImageResult.error}, profileImageResult.status)
     }
 
-    const profileImageKey = crypto.randomUUID()
+    const profileImageKey = `avif-${crypto.randomUUID()}`
     const profileImageObjectKey = characterProfileImageObjectKey(currentUser.id, character.id, profileImageKey)
 
     await c.env.MEDIA_BUCKET.put(profileImageObjectKey, profileImageResult.bytes, {
@@ -1154,10 +1171,17 @@ characterRoutes.post('/:id/media/chunked/init', async (c) => {
     let chunkedUploads: Awaited<ReturnType<typeof createChunkedGalleryUploads>>
 
     try {
-        chunkedUploads = await createChunkedGalleryUploads(c.env.MEDIA_BUCKET, currentUser.id, character.id, mediaId, uploads.uploads, {
-            referenceId: initReferenceId,
-            operation: 'create-media',
-        })
+        chunkedUploads = await createChunkedGalleryUploads(
+            galleryCreateUploadBucket(c.env),
+            currentUser.id,
+            character.id,
+            mediaId,
+            uploads.uploads,
+            {
+                referenceId: initReferenceId,
+                operation: 'create-media',
+            },
+        )
     } catch (error) {
         const referenceId = error instanceof ChunkedUploadInitError ? error.referenceId : initReferenceId
         console.error('Chunked gallery upload init route failed', {
@@ -1229,7 +1253,7 @@ characterRoutes.put('/:id/media/chunked/:mediaId/:rating/:uploadId/:partNumber',
         rating,
         contentType.contentType,
     )
-    const upload = c.env.MEDIA_BUCKET.resumeMultipartUpload(objectKey, uploadId)
+    const upload = galleryCreateUploadBucket(c.env).resumeMultipartUpload(objectKey, uploadId)
     const uploadedPart = await upload.uploadPart(partNumber, c.req.raw.body)
 
     return jsonResponse(c, R2UploadedPartSchema, uploadedPart)
@@ -1274,7 +1298,7 @@ characterRoutes.delete('/:id/media/chunked/:mediaId/:rating/:uploadId', async (c
         rating,
         contentType.contentType,
     )
-    const upload = c.env.MEDIA_BUCKET.resumeMultipartUpload(objectKey, uploadId)
+    const upload = galleryCreateUploadBucket(c.env).resumeMultipartUpload(objectKey, uploadId)
     await upload.abort()
 
     return c.body(null, 204)
@@ -1432,6 +1456,10 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
         )
     }
 
+    if (c.env.IMAGE_UPLOAD_ASYNC_ENABLED === 'true') {
+        return await completeQueuedGalleryUpload(c, currentUser, character.id, mediaId.value, complete)
+    }
+
     const completedKeys: string[] = []
     const referenceId = crypto.randomUUID()
     let media: CharacterMediaRecord
@@ -1449,6 +1477,63 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
 
     return jsonResponse(c, MediaResponseSchema, {media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, media)}, 201)
 })
+
+async function completeQueuedGalleryUpload(
+    c: CharacterRouteContext,
+    currentUser: CurrentUser,
+    characterId: string,
+    mediaId: string,
+    complete: ParsedChunkedMediaComplete,
+): Promise<Response> {
+    const idempotencyKey = c.req.header('idempotency-key')?.trim() ?? ''
+
+    if (idempotencyKey.length < 8 || idempotencyKey.length > 200) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'A valid Idempotency-Key header is required'}, 400)
+    }
+
+    const completedKeys: string[] = []
+
+    try {
+        const sources = await completeQueuedGallerySources(c.env, currentUser.id, characterId, mediaId, complete, completedKeys)
+        const job = await createGalleryImageUploadJob(c.env, {
+            userId: currentUser.id,
+            characterId,
+            mediaId,
+            idempotencyKey,
+            sfwArtist: complete.artists.sfwArtist,
+            nsfwArtist: complete.artists.nsfwArtist,
+            sources,
+        })
+        return jsonResponse(c, QueuedMediaResponseSchema, {job, statusUrl: `/api/image-uploads/${encodeURIComponent(job.id)}`}, 202)
+    } catch (error) {
+        await deleteR2Objects(c.env.IMAGE_SOURCE_BUCKET, completedKeys)
+        return mediaCompletionErrorResponse(c, error, crypto.randomUUID())
+    }
+}
+
+async function completeQueuedGallerySources(
+    env: Bindings,
+    userId: string,
+    characterId: string,
+    mediaId: string,
+    complete: ParsedChunkedMediaComplete,
+    completedKeys: string[],
+): Promise<CompletedGalleryJobSource[]> {
+    const sources: CompletedGalleryJobSource[] = []
+
+    for (const [rating, upload, label] of [
+        ['sfw', complete.sfwUpload, 'SFW image'],
+        ['nsfw', complete.nsfwUpload, 'NSFW image'],
+    ] as const) {
+        if (!upload) continue
+        const image = await completeChunkedGalleryUpload(env.IMAGE_SOURCE_BUCKET, userId, characterId, mediaId, upload, rating, label)
+        const objectKey = characterMediaImageObjectKey(userId, characterId, mediaId, image.imageKey, rating, image.contentType)
+        completedKeys.push(objectKey)
+        sources.push({rating, objectKey, ...image})
+    }
+
+    return sources
+}
 
 /* istanbul ignore next -- route behavior is covered by integration tests; remaining branches are defensive upload-init failure paths. */
 characterRoutes.post('/:id/media/:mediaId/chunked/init', async (c) => {
@@ -2520,6 +2605,7 @@ async function completeMediaVariant(
     rating: MediaRating,
     label: string,
 ): Promise<CompletedMediaVariant> {
+    const containerIndex = mediaPreviewContainerIndex(`${context.userId}:${context.characterId}:${context.mediaId}:${rating}`)
     const image = await completeChunkedGalleryUpload(
         context.env.MEDIA_BUCKET,
         context.userId,
@@ -2542,17 +2628,19 @@ async function completeMediaVariant(
         image,
         rating,
         context.completedKeys,
+        containerIndex,
     )
     const nsfwBlurImageKey =
         rating === 'nsfw'
             ? await putNsfwBlurImage(
-                  context.env.IMAGES,
+                  context.env,
                   context.env.MEDIA_BUCKET,
                   context.userId,
                   context.characterId,
                   context.mediaId,
                   preview.preview,
                   context.completedKeys,
+                  containerIndex,
               )
             : null
 
@@ -2833,8 +2921,9 @@ async function generateAndPutMediaPreviewImage(
     image: CompletedGalleryUpload,
     rating: MediaRating,
     uploadedKeys: string[],
+    containerIndex: number,
 ): Promise<CompletedGalleryPreview & {preview: ParsedPreviewImage}> {
-    const preview = await generateMediaPreviewImage(env, mediaPublicBaseUrl, userId, characterId, mediaId, image, rating)
+    const preview = await generateMediaPreviewImage(env, mediaPublicBaseUrl, userId, characterId, mediaId, image, rating, containerIndex)
     const stored = await putMediaPreviewImage(bucket, userId, characterId, mediaId, preview, rating, uploadedKeys)
 
     return {
@@ -2851,24 +2940,26 @@ async function generateMediaPreviewImage(
     mediaId: string,
     image: CompletedGalleryUpload,
     rating: MediaRating,
+    containerIndex: number,
 ): Promise<ParsedPreviewImage> {
     const sourceUrl = characterMediaImageUrl(mediaPublicBaseUrl, userId, characterId, mediaId, image.imageKey, rating, image.contentType)
-    return await generateMediaPreviewWithContainer(env, sourceUrl, image)
+    return await generateMediaPreviewWithContainer(env, sourceUrl, image, {containerIndex})
 }
 
 /* istanbul ignore next -- blur generation is route-tested; remaining branch is a defensive content-type fallback. */
 async function putNsfwBlurImage(
-    images: ImagesBinding | undefined,
+    env: Pick<Bindings, 'MYOC_DOCKER_SHARP_CONTAINER' | 'PREVIEW_PROCESSOR_TOKEN'>,
     bucket: R2Bucket,
     userId: string,
     characterId: string,
     mediaId: string,
     preview: ParsedPreviewImage,
     uploadedKeys: string[],
+    containerIndex: number,
 ): Promise<string> {
     const imageKey = crypto.randomUUID()
     const objectKey = characterMediaNsfwBlurImageObjectKey(userId, characterId, mediaId, imageKey, GALLERY_NSFW_BLUR_CONTENT_TYPE)
-    const blur = await generateNsfwBlurImage(images, preview)
+    const blur = await generateNsfwBlurImage(env, preview, {containerIndex})
 
     await bucket.put(objectKey, blur.bytes, {
         httpMetadata: {
@@ -4086,7 +4177,7 @@ async function deleteR2ObjectIfPresent(bucket: R2Bucket, objectKey: string | nul
 }
 
 async function validateProfileImage(
-    images: ImagesBinding | undefined,
+    env: Pick<Bindings, 'MEDIA_PREVIEW_OVERFLOW_ENABLED' | 'MYOC_DOCKER_SHARP_CONTAINER' | 'PREVIEW_PROCESSOR_TOKEN'>,
     file: File | JsonProfileImage | null,
     label = 'Character profile image',
 ): Promise<
@@ -4109,7 +4200,7 @@ async function validateProfileImage(
         return profileImage
     }
 
-    const normalized = await normalizeProfileImagePayload(profileImage, label, images)
+    const normalized = await normalizeProfileImagePayload(profileImage, label, env)
 
     if ('error' in normalized) {
         return normalized
@@ -4411,4 +4502,8 @@ async function readStoredGalleryImageMetadata(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function galleryCreateUploadBucket(env: Bindings): R2Bucket {
+    return env.IMAGE_UPLOAD_ASYNC_ENABLED === 'true' ? env.IMAGE_SOURCE_BUCKET : env.MEDIA_BUCKET
 }

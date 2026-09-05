@@ -2,8 +2,11 @@ import {Hono} from 'hono'
 
 export {ContainerProxy} from '@cloudflare/containers'
 
+import {consumeImageProcessingDeadLetterQueue, consumeMediaPreviewDeadLetterQueue} from './lib/admin/deadLetterQueue'
 import {runAdminJob} from './lib/admin/jobs'
+import {consumeMediaPreviewRegenerationQueue} from './lib/admin/mediaPreviewQueue'
 import {securityHeaders} from './lib/http/securityHeaders'
+import {consumeImageProcessingQueue, reconcileImageUploads} from './lib/media/imageUploadJobs'
 import {cleanupRecentFeed} from './lib/recentMedia/cleanup'
 import {publishRecentFeed} from './lib/recentMedia/publisher'
 import {apiRoutes} from './routes/api'
@@ -28,12 +31,32 @@ app.route('/', pageRoutes)
 app.notFound(async (c) => renderNotFoundPage(c))
 
 const worker = app as typeof app & {
+    queue: (batch: MessageBatch, env: Bindings, ctx: ExecutionContext) => Promise<void>
     scheduled: (event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) => void
+}
+
+worker.queue = async (batch, env) => {
+    if (batch.queue === env.IMAGE_PROCESSING_DLQ_NAME) {
+        await consumeImageProcessingDeadLetterQueue(batch, env)
+        return
+    }
+
+    if (batch.queue === env.MEDIA_PREVIEW_REGENERATION_DLQ_NAME) {
+        await consumeMediaPreviewDeadLetterQueue(batch, env)
+        return
+    }
+
+    if (batch.queue.includes('image-processing')) {
+        await consumeImageProcessingQueue(batch, env)
+        return
+    }
+
+    await consumeMediaPreviewRegenerationQueue(batch, env)
 }
 
 worker.scheduled = (event, env, ctx) => {
     if (event.cron === RECENT_FEED_RECOVERY_CRON) {
-        ctx.waitUntil(publishRecentFeed(env))
+        ctx.waitUntil(Promise.all([publishRecentFeed(env), reconcileImageUploads(env)]).then(() => undefined))
         return
     }
 

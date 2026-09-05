@@ -46,6 +46,49 @@ export function AdminOptionsPage({csrfToken, data, feedback}: AdminOptionsPagePr
             </section>
 
             <section class="mt-6">
+                <h3 class="mb-3 text-xl font-bold">Error Log</h3>
+
+                {data.errors.length > 0 ? (
+                    <div class="overflow-x-auto rounded border border-base-300">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Recorded</th>
+                                    <th>Source</th>
+                                    <th>Code</th>
+                                    <th>Message</th>
+                                    <th>References</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {data.errors.map((entry) => (
+                                    <tr>
+                                        <td class="whitespace-nowrap font-mono text-xs">{formatTimestamp(entry.createdAt)}</td>
+                                        <td class="whitespace-nowrap">{entry.sourceLabel}</td>
+                                        <td>
+                                            <span class="badge badge-error badge-sm">{entry.errorCode}</span>
+                                        </td>
+                                        <td class="min-w-64 max-w-xl whitespace-pre-wrap break-words text-sm text-error">
+                                            {entry.errorMessage}
+                                        </td>
+                                        <td class="min-w-64 font-mono text-xs">
+                                            {entry.jobId ? <div class="break-all">Job: {entry.jobId}</div> : null}
+                                            {entry.taskId ? <div class="break-all">Task: {entry.taskId}</div> : null}
+                                            {!entry.jobId && !entry.taskId ? <span>-</span> : null}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                ) : (
+                    <div class="rounded border border-dashed border-base-300 bg-base-200 p-8 text-center">
+                        <h4 class="text-lg font-bold">No processing errors</h4>
+                    </div>
+                )}
+            </section>
+
+            <section class="mt-6">
                 <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
                     <h3 class="text-xl font-bold">Job History</h3>
                     <a class="btn btn-sm btn-outline" href="/admin/admin-options">

@@ -451,9 +451,8 @@ async function createCroppedCharacterProfileFile() {
                 reject(new Error('Could not prepare profile image.'));
                 return;
             }
-            const extension = blob.type === 'image/png' ? 'png' : blob.type === 'image/jpeg' ? 'jpg' : 'webp';
-            resolve(new File([blob], 'character-profile.' + extension, { type: blob.type || 'image/webp' }));
-        }, 'image/webp', 0.9);
+            resolve(new File([blob], 'character-profile.png', { type: 'image/png' }));
+        }, 'image/png');
     });
 }
 
@@ -971,22 +970,46 @@ async function uploadMedia({sfwFile, nsfwFile, sfwArtist, nsfwArtist}, progress)
     if (progress) progress({ status: 'Finalizing', percent: 95, detail: 'Finishing upload' });
     const result = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/media/chunked/complete', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
         requestLabel: 'Finalizing upload',
         body: JSON.stringify(completeBody)
     });
-    mediaLibrary.set(result.media.id, result.media);
+    if (result.job) {
+        if (progress) progress({ status: 'Processing', percent: 95, detail: 'Processing image' });
+        return await new Promise((resolve, reject) => {
+            window.myocUploadCenter?.track(result, {
+                label: 'Gallery image',
+                csrfToken,
+                onReady(jobResult) {
+                    if (!jobResult.media) {
+                        reject(new Error('The completed upload did not include media.'));
+                        return;
+                    }
+                    addUploadedMedia(jobResult.media, progress);
+                    resolve(jobResult.media);
+                },
+                onFailed(error) {
+                    reject(new Error(error.message || 'Gallery image could not be processed.'));
+                }
+            });
+        });
+    }
+    addUploadedMedia(result.media, progress);
+    return result.media;
+}
+
+function addUploadedMedia(media, progress) {
+    mediaLibrary.set(media.id, media);
     const layout = getActiveLayout();
     let targetRow = layout.rows[layout.rows.length - 1];
     if (!targetRow || targetRow.mediaIds.length >= maxGalleryImagesPerRow) {
         targetRow = createEmptyGalleryRow();
         layout.rows.push(targetRow);
     }
-    targetRow.mediaIds.push(result.media.id);
+    targetRow.mediaIds.push(media.id);
     normalizeLayoutForceFullWidth(layout);
     renderGallery();
     if (progress) progress({ status: 'Done', percent: 100, detail: 'Upload complete' });
-    return result.media;
 }
 
 async function uploadChunkedImage(mediaId, rating, image, upload, progress) {
@@ -1661,13 +1684,27 @@ characterSettingsForm.addEventListener('submit', async (event) => {
         if (characterProfileImageInput.files[0]) {
             const croppedProfileImage = await createCroppedCharacterProfileFile();
             const profileImageFormData = new FormData();
-            profileImageFormData.set('profileImage', croppedProfileImage);
-            const profileImageResult = await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/profile-image', {
+            profileImageFormData.set('kind', 'character-profile');
+            profileImageFormData.set('targetId', character.id);
+            profileImageFormData.set('source', croppedProfileImage);
+            const profileImageResult = await apiFetch('/api/image-uploads', {
                 method: 'POST',
+                headers: { 'idempotency-key': crypto.randomUUID() },
                 body: profileImageFormData
             });
-            character.profileImageKey = profileImageResult.profileImageKey;
-            characterProfileImagePreview.src = profileImageResult.profileImageUrl;
+            window.myocUploadCenter?.track(profileImageResult, {
+                label: character.name + ' profile image',
+                csrfToken,
+                onReady(result) {
+                    if (!result.url) return;
+                    character.profileImageKey = result.key;
+                    characterProfileImagePreview.src = result.url + '?v=' + Date.now();
+                    showAlert('Profile image updated.', true);
+                },
+                onFailed(error) {
+                    showAlert(error.message || 'Profile image could not be processed.', false);
+                }
+            });
             characterProfileImageInput.value = '';
             resetCharacterProfileCropper();
         }

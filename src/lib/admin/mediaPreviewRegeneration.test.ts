@@ -1,17 +1,10 @@
 import {describe, expect, it, vi} from 'vitest'
 import {queryOne, seedCharacter, seedMedia, seedUser, useTestDatabase} from '../../test/d1'
 import {createAvifBytes, createPngFile} from '../../test/imageFixtures'
-import {createMockImagesBinding} from '../../test/mockImages'
 import {createMockR2Bucket} from '../../test/mockR2'
 import type {Bindings} from '../../types/bindings'
 import {characterMediaImageObjectKey, characterMediaNsfwBlurImageObjectKey, characterMediaPreviewImageObjectKey} from '../media/url'
-import {
-    applyMediaPreviewRegenerationResults,
-    emptyMediaPreviewRegenerationSummary,
-    getMediaPreviewRegenerationCandidates,
-    initializeMediaPreviewRegenerationSummary,
-    regenerateMediaPreviewCandidate,
-} from './mediaPreviewRegeneration'
+import {getMediaPreviewRegenerationCandidates, regenerateMediaPreviewCandidate} from './mediaPreviewRegeneration'
 
 const db = useTestDatabase()
 const userId = 'preview-owner'
@@ -19,11 +12,20 @@ const characterId = 'preview-character'
 const mediaId = 'preview-media'
 const mediaPublicBaseUrl: Bindings['MEDIA_PUBLIC_BASE_URL'] = 'https://m.myoc.art'
 
-function createMockPreviewContainer(width: number, height: number): Bindings['MYOC_DOCKER_SHARP_CONTAINER'] {
+function createMockPreviewContainer(
+    responses: Response | Error | Array<Response | Error> = new Response(createAvifBytes(100, 80), {
+        headers: {'content-type': 'image/avif'},
+    }),
+): Bindings['MYOC_DOCKER_SHARP_CONTAINER'] {
+    const responseSequence = Array.isArray(responses) ? responses : [responses]
+    let responseIndex = 0
     const fetch = vi.fn(async () => {
-        return new Response(createAvifBytes(width, height), {
-            headers: {'content-type': 'image/avif'},
-        })
+        const response = responseSequence[Math.min(responseIndex, responseSequence.length - 1)]
+        responseIndex += 1
+
+        if (response instanceof Error) throw response
+        if (!response) throw new Error('Missing mocked container response')
+        return response.clone()
     })
 
     return {
@@ -32,13 +34,12 @@ function createMockPreviewContainer(width: number, height: number): Bindings['MY
     } as unknown as Bindings['MYOC_DOCKER_SHARP_CONTAINER']
 }
 
-function regenerationEnv(bucket: R2Bucket, images: ImagesBinding | undefined = createMockImagesBinding()) {
+function regenerationEnv(bucket: R2Bucket, previewContainer = createMockPreviewContainer()) {
     return {
         DB: db,
-        IMAGES: images,
         MEDIA_BUCKET: bucket,
         MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
-        MYOC_DOCKER_SHARP_CONTAINER: createMockPreviewContainer(100, 80),
+        MYOC_DOCKER_SHARP_CONTAINER: previewContainer,
         PREVIEW_PROCESSOR_TOKEN: 'preview-token',
     }
 }
@@ -80,41 +81,17 @@ async function seedPreviewMedia(): Promise<void> {
     })
 }
 
+async function createRegenerationFixture(rating: 'sfw' | 'nsfw') {
+    await seedPreviewMedia()
+    const bucket = createMockR2Bucket()
+    await bucket.put(characterMediaImageObjectKey(userId, characterId, mediaId, `${rating}-source`, rating, 'image/png'), await pngBytes())
+    const candidate = (await getMediaPreviewRegenerationCandidates(db, null)).find((item) => item.rating === rating)
+
+    if (!candidate) throw new Error(`Expected an ${rating.toUpperCase()} regeneration candidate`)
+    return {bucket, candidate}
+}
+
 describe('media preview regeneration', () => {
-    it('initializes and accumulates the regeneration progress summary', async () => {
-        expect(emptyMediaPreviewRegenerationSummary()).toEqual({
-            totalVariants: 0,
-            processedVariants: 0,
-            regeneratedPreviews: 0,
-            regeneratedBlurs: 0,
-            skippedVariants: 0,
-            failedVariants: 0,
-            lastError: null,
-        })
-        await expect(initializeMediaPreviewRegenerationSummary(db)).resolves.toMatchObject({totalVariants: 0})
-
-        await seedPreviewMedia()
-
-        const summary = await initializeMediaPreviewRegenerationSummary(db)
-        expect(summary).toMatchObject({totalVariants: 2})
-        expect(
-            applyMediaPreviewRegenerationResults(summary, [
-                {status: 'regenerated', regeneratedBlur: false, error: null},
-                {status: 'regenerated', regeneratedBlur: true, error: null},
-                {status: 'skipped', regeneratedBlur: false, error: null},
-                {status: 'failed', regeneratedBlur: false, error: 'Preview processor is unavailable'},
-            ]),
-        ).toEqual({
-            totalVariants: 2,
-            processedVariants: 4,
-            regeneratedPreviews: 2,
-            regeneratedBlurs: 1,
-            skippedVariants: 1,
-            failedVariants: 1,
-            lastError: 'Preview processor is unavailable',
-        })
-    })
-
     it('returns ordered candidates after a cursor and ignores media with an empty image key', async () => {
         await seedPreviewMedia()
         await seedMedia({
@@ -229,14 +206,7 @@ describe('media preview regeneration', () => {
     })
 
     it('keeps the current database references when another update wins the publish race', async () => {
-        await seedPreviewMedia()
-        const bucket = createMockR2Bucket()
-        await bucket.put(characterMediaImageObjectKey(userId, characterId, mediaId, 'sfw-source', 'sfw', 'image/png'), await pngBytes())
-        const candidate = (await getMediaPreviewRegenerationCandidates(db, null))[0]
-
-        if (!candidate) {
-            throw new Error('Expected an SFW regeneration candidate')
-        }
+        const {bucket, candidate} = await createRegenerationFixture('sfw')
         await db.prepare(`UPDATE character_media SET sfw_preview_image_key = 'newer-preview' WHERE id = ?`).bind(mediaId).run()
         const result = await regenerateMediaPreviewCandidate(regenerationEnv(bucket), candidate)
 
@@ -248,6 +218,84 @@ describe('media preview regeneration', () => {
         await expect(
             bucket.get(characterMediaPreviewImageObjectKey(userId, characterId, mediaId, candidate.targetPreviewKey, 'sfw', 'image/avif')),
         ).resolves.toBeNull()
+    })
+
+    it('skips a task when its source key changed after dispatch', async () => {
+        await seedPreviewMedia()
+        const bucket = createMockR2Bucket()
+        const candidate = (await getMediaPreviewRegenerationCandidates(db, null))[0]
+
+        if (!candidate) throw new Error('Expected an SFW regeneration candidate')
+        await db.prepare(`UPDATE character_media SET sfw_image_key = 'new-source' WHERE id = ?`).bind(mediaId).run()
+
+        await expect(regenerateMediaPreviewCandidate(regenerationEnv(bucket), candidate)).resolves.toEqual({
+            status: 'skipped',
+            regeneratedBlur: false,
+            error: null,
+        })
+    })
+
+    it('does not delete a published target when a duplicate attempt fails', async () => {
+        const {bucket, candidate} = await createRegenerationFixture('sfw')
+        const targetKey = characterMediaPreviewImageObjectKey(userId, characterId, mediaId, candidate.targetPreviewKey, 'sfw', 'image/avif')
+        const publishedBytes = createAvifBytes(100, 80)
+        await bucket.put(targetKey, publishedBytes)
+        await db
+            .prepare(`UPDATE character_media SET sfw_preview_image_key = ?, sfw_preview_content_type = 'image/avif' WHERE id = ?`)
+            .bind(candidate.targetPreviewKey, mediaId)
+            .run()
+
+        await expect(
+            regenerateMediaPreviewCandidate(
+                regenerationEnv(bucket, createMockPreviewContainer(new Error('Container stopped'))),
+                candidate,
+                {
+                    maxContainerAttempts: 1,
+                },
+            ),
+        ).rejects.toThrow('Container stopped')
+        const stored = await bucket.get(targetKey)
+        expect(stored && new Uint8Array(await stored.arrayBuffer())).toEqual(publishedBytes)
+    })
+
+    it('does not delete published NSFW targets when a duplicate attempt fails', async () => {
+        const {bucket, candidate} = await createRegenerationFixture('nsfw')
+
+        if (!candidate.targetBlurKey) throw new Error('Expected an NSFW regeneration candidate')
+        const previewKey = characterMediaPreviewImageObjectKey(
+            userId,
+            characterId,
+            mediaId,
+            candidate.targetPreviewKey,
+            'nsfw',
+            'image/avif',
+        )
+        const blurKey = characterMediaNsfwBlurImageObjectKey(userId, characterId, mediaId, candidate.targetBlurKey, 'image/avif')
+        const publishedBytes = createAvifBytes(100, 80)
+        await Promise.all([bucket.put(previewKey, publishedBytes), bucket.put(blurKey, publishedBytes)])
+        await db
+            .prepare(
+                `UPDATE character_media
+                 SET nsfw_preview_image_key = ?,
+                     nsfw_preview_content_type = 'image/avif',
+                     nsfw_blur_image_key = ?,
+                     nsfw_blur_content_type = 'image/avif'
+                 WHERE id = ?`,
+            )
+            .bind(candidate.targetPreviewKey, candidate.targetBlurKey, mediaId)
+            .run()
+
+        await expect(
+            regenerateMediaPreviewCandidate(
+                regenerationEnv(bucket, createMockPreviewContainer(new Error('Container stopped'))),
+                candidate,
+                {
+                    maxContainerAttempts: 1,
+                },
+            ),
+        ).rejects.toThrow('Container stopped')
+        await expect(bucket.get(previewKey)).resolves.not.toBeNull()
+        await expect(bucket.get(blurKey)).resolves.not.toBeNull()
     })
 
     it('records a missing original as a failed item and leaves the old preview in place', async () => {
@@ -269,17 +317,18 @@ describe('media preview regeneration', () => {
     })
 
     it('removes newly written objects when NSFW blur generation fails', async () => {
-        await seedPreviewMedia()
-        const bucket = createMockR2Bucket()
-        await bucket.put(characterMediaImageObjectKey(userId, characterId, mediaId, 'nsfw-source', 'nsfw', 'image/png'), await pngBytes())
-        const candidate = (await getMediaPreviewRegenerationCandidates(db, null))[1]
+        const {bucket, candidate} = await createRegenerationFixture('nsfw')
 
-        if (!candidate?.targetBlurKey) {
+        if (!candidate.targetBlurKey) {
             throw new Error('Expected an NSFW regeneration candidate')
         }
 
-        await expect(regenerateMediaPreviewCandidate(regenerationEnv(bucket, null as unknown as ImagesBinding), candidate)).rejects.toThrow(
-            'Cloudflare Images binding is not configured.',
+        const container = createMockPreviewContainer([
+            new Response(createAvifBytes(100, 80), {headers: {'content-type': 'image/avif'}}),
+            new Response(null, {status: 400}),
+        ])
+        await expect(regenerateMediaPreviewCandidate(regenerationEnv(bucket, container), candidate)).rejects.toThrow(
+            'Container blur failed with 400',
         )
         await expect(
             bucket.get(characterMediaPreviewImageObjectKey(userId, characterId, mediaId, candidate.targetPreviewKey, 'nsfw', 'image/avif')),

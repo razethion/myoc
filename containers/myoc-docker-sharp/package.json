@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check server.mjs && node --test preview.test.mjs",
+    "check": "node --check server.mjs && node --test preview.test.mjs server.test.mjs",
     "start": "node server.mjs"
   },
   "engines": {

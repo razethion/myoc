@@ -4188,6 +4188,49 @@ describe('GET /admin', () => {
         expect(errorHtml).toContain('No job runs')
     })
 
+    it('shows dead-letter errors to admins and escapes their messages', async () => {
+        const pageDb = await seedPageDatabase({
+            currentUser: {...createCurrentUserRecord('admin_user'), role: 'admin'},
+        })
+        const ack = vi.fn()
+        const retry = vi.fn()
+        const failureBody = {
+            version: 1,
+            taskId: 'preview-task',
+            runId: 'preview-run',
+            containerSlot: 0,
+            error: '<script>console.log(1)</script>',
+        }
+        await app.queue(
+            {
+                queue: workerEnv.MEDIA_PREVIEW_REGENERATION_DLQ_NAME,
+                messages: [
+                    {
+                        id: 'admin-log-message',
+                        timestamp: new Date(),
+                        attempts: 1,
+                        ack,
+                        retry,
+                        body: failureBody,
+                    },
+                ],
+            } as unknown as MessageBatch,
+            {...workerEnv, DB: pageDb},
+            {} as ExecutionContext,
+        )
+
+        const response = await getAppPath('/admin/admin-options', pageDb, {cookie: 'myoc_session=session-token'})
+        const html = await response.text()
+        expect(ack).toHaveBeenCalledOnce()
+        expect(retry).not.toHaveBeenCalled()
+        expect(response.status).toBe(200)
+        expect(html).toContain('Error Log')
+        expect(html).toContain('preview_generation_failed')
+        expect(html).toContain('preview-run')
+        expect(html).toContain('&lt;script&gt;console.log(1)&lt;/script&gt;')
+        expect(html).not.toContain('<script>console.log(1)</script>')
+    })
+
     it('renders admin job run status, source, duration, and summary variants', async () => {
         const response = await getAppPath(
             '/admin/admin-options',

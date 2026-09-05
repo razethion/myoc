@@ -985,7 +985,7 @@ function CharacterManagementScript({
         async function createCroppedCharacterProfileDataUrl() {
             if (!characterProfileCropperInstance) throw new Error('Choose a profile image first.');
             const canvas = await createProfileCropCanvas(characterProfileCropperInstance);
-            return canvas.toDataURL('image/webp', 0.9);
+            return canvas.toDataURL('image/png');
         }
 
         function resetCharacterProfileCropper() {
@@ -1040,13 +1040,13 @@ function CharacterManagementScript({
 
         async function createCroppedFolderImageDataUrl(kind) {
             const canvas = await createCroppedFolderImageCanvas(kind);
-            return canvas.toDataURL('image/webp', 0.9);
+            return canvas.toDataURL('image/png');
         }
 
         async function createCroppedFolderImageBlob(kind) {
             const canvas = await createCroppedFolderImageCanvas(kind);
             return await new Promise((resolve, reject) => {
-                canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Could not prepare folder image.')), 'image/webp', 0.9);
+                canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Could not prepare folder image.')), 'image/png');
             });
         }
 
@@ -1068,19 +1068,32 @@ function CharacterManagementScript({
         async function uploadEditFolderImage(folder) {
             const blob = await createCroppedFolderImageBlob('edit');
             const form = new FormData();
-            const extension = blob.type === 'image/png' ? 'png' : blob.type === 'image/jpeg' ? 'jpg' : 'webp';
-            form.append('folderImage', blob, 'folder.' + extension);
-            const response = await fetch('/api/characters/folders/' + encodeURIComponent(folder.id) + '/image', {
+            form.set('kind', 'folder-image');
+            form.set('targetId', folder.id);
+            form.set('source', blob, 'folder.png');
+            const response = await fetch('/api/image-uploads', {
                 method: 'POST',
                 headers: {
+                    'idempotency-key': crypto.randomUUID(),
                     'x-csrf-token': csrfToken,
                 },
                 body: form,
             });
             const body = await response.json().catch(() => ({}));
             if (!response.ok) throw new Error(body.error || 'Folder image could not be saved.');
-            folder.folderImageKey = body.folderImageKey || null;
-            folder.folderImageUrl = body.folderImageUrl || null;
+            window.myocUploadCenter?.track(body, {
+                label: folder.name + ' folder image',
+                csrfToken,
+                onReady(result) {
+                    folder.folderImageKey = result.key || null;
+                    folder.folderImageUrl = result.url || null;
+                    renderAll();
+                    showToast('Folder image updated.');
+                },
+                onFailed(error) {
+                    showToast(error.message || 'Folder image could not be processed.', true);
+                }
+            });
         }
 
         async function removeFolderImage(folder) {

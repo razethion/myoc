@@ -130,6 +130,14 @@ type ChallengeSeed = {
 }
 
 const TEST_DATA_TABLES = [
+    'admin_error_logs',
+    'image_processing_attempts',
+    'image_queue_outbox',
+    'image_cleanup_tasks',
+    'image_upload_parts',
+    'image_processing_tasks',
+    'image_upload_sources',
+    'image_upload_jobs',
     'character_gallery_row_media',
     'character_gallery_rows',
     'character_gallery_tabs',

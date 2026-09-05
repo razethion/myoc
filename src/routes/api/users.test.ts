@@ -7,6 +7,7 @@ import {APP_VERSION} from '../../lib/releases'
 import {expectSessionCookie} from '../../test/assertions'
 import {queryAll, queryOne, seedAuthenticatedUser, seedUser, useTestDatabase, withFailingTrigger} from '../../test/d1'
 import {
+    createAvifBytes,
     createGifFile,
     createJpegFile,
     createMalformedWebpFile,
@@ -14,7 +15,6 @@ import {
     createPngFile,
     createWebpFile,
 } from '../../test/imageFixtures'
-import {createMockImagesBinding} from '../../test/mockImages'
 import {createMockR2Bucket} from '../../test/mockR2'
 import {createAllowingAuthRateLimits} from '../../test/mockRateLimit'
 import {createRequestHeaders, type TestRequestOptions} from '../../test/request'
@@ -23,7 +23,23 @@ import {authPageActionRoutes} from '../page-actions/auth'
 import {settingsPageActionRoutes} from '../page-actions/settings'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
-const profilePhotoKeyPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+const profilePhotoKeyPattern = /^avif-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+
+function createSquareImageContainer(
+    response: Response | Error = new Response(createAvifBytes(512, 512), {headers: {'content-type': 'image/avif'}}),
+) {
+    const fetch = vi.fn(async () => {
+        if (response instanceof Error) throw response
+        return response.clone()
+    })
+    return {
+        fetch,
+        namespace: {
+            idFromName: vi.fn(() => 'image-container-id'),
+            get: vi.fn(() => ({fetch})),
+        } as unknown as DurableObjectNamespace,
+    }
+}
 
 type CreateUserResponse = {
     user: {
@@ -173,7 +189,7 @@ async function postRawPasskeyPromptResponse(body: BodyInit, db: D1Database, sess
 async function postProfilePhoto(
     db: D1Database,
     mediaBucket: R2Bucket,
-    options: {sessionToken: string; csrfToken: string; file?: File; imagesBinding?: ImagesBinding},
+    options: {sessionToken: string; csrfToken: string; file?: File; previewContainer?: DurableObjectNamespace},
 ): Promise<Response> {
     const form = new FormData()
     form.set('csrfToken', options.csrfToken)
@@ -194,7 +210,9 @@ async function postProfilePhoto(
         },
         {
             DB: db,
-            IMAGES: options.imagesBinding ?? createMockImagesBinding(),
+            MYOC_DOCKER_SHARP_CONTAINER: options.previewContainer ?? createSquareImageContainer().namespace,
+            MEDIA_PREVIEW_OVERFLOW_ENABLED: 'false',
+            PREVIEW_PROCESSOR_TOKEN: 'preview-token',
             MEDIA_BUCKET: mediaBucket,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         },
@@ -1028,7 +1046,7 @@ describe('POST /users/me/profile-photo', () => {
         expect(mediaBucket.put).not.toHaveBeenCalled()
     })
 
-    it('uploads a validated 512x512 WebP profile photo to R2', async () => {
+    it('uploads a validated 512x512 AVIF profile photo to R2', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
         await seedCurrentUser({profilePhotoKey: 'old-profile-photo-key'}, sessionToken)
@@ -1043,12 +1061,12 @@ describe('POST /users/me/profile-photo', () => {
 
         const body = (await response.json()) as {profilePhotoKey: string; profilePhotoUrl: string}
         expect(body.profilePhotoKey).toMatch(profilePhotoKeyPattern)
-        expect(body.profilePhotoUrl).toBe(`${mediaPublicBaseUrl}/users/current-user/profile/${body.profilePhotoKey}.webp`)
+        expect(body.profilePhotoUrl).toBe(`${mediaPublicBaseUrl}/users/current-user/profile/${body.profilePhotoKey}.avif`)
         expect(mediaBucket.put).toHaveBeenCalledTimes(1)
-        expect(mediaBucket.put).toHaveBeenCalledWith(`users/current-user/profile/${body.profilePhotoKey}.webp`, expect.any(Uint8Array), {
+        expect(mediaBucket.put).toHaveBeenCalledWith(`users/current-user/profile/${body.profilePhotoKey}.avif`, expect.any(Uint8Array), {
             httpMetadata: {
                 cacheControl: 'public, max-age=300, must-revalidate',
-                contentType: 'image/webp',
+                contentType: 'image/avif',
             },
         })
         expect(mediaBucket.delete).toHaveBeenCalledWith('users/current-user/profile/old-profile-photo-key.webp')
@@ -1082,8 +1100,8 @@ describe('POST /users/me/profile-photo', () => {
 
             expect(response.status).toBe(500)
             const uploadedKey = vi.mocked(mediaBucket.put).mock.calls[0]?.[0]
-            expect(uploadedKey).toMatch(/^users\/current-user\/profile\/.+\.webp$/)
-            expect((uploadedKey as string).slice('users/current-user/profile/'.length, -'.webp'.length)).toMatch(profilePhotoKeyPattern)
+            expect(uploadedKey).toMatch(/^users\/current-user\/profile\/.+\.avif$/)
+            expect((uploadedKey as string).slice('users/current-user/profile/'.length, -'.avif'.length)).toMatch(profilePhotoKeyPattern)
             expect(mediaBucket.delete).toHaveBeenCalledWith(uploadedKey)
         } finally {
             error.mockRestore()
@@ -1130,49 +1148,39 @@ describe('POST /users/me/profile-photo', () => {
         expect(mediaBucket.put).not.toHaveBeenCalled()
     })
 
-    it('converts PNG profile photos to WebP before storing', async () => {
+    it('converts PNG profile photos to AVIF before storing', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const imagesBinding = createMockImagesBinding()
         await seedCurrentUser({}, sessionToken)
 
         const response = await postProfilePhoto(db, mediaBucket, {
             sessionToken,
             csrfToken: await createCsrfToken(sessionToken),
             file: createPngFile(512, 512, 'image/png', 'profile-photo.png'),
-            imagesBinding,
         })
 
         expect(response.status).toBe(200)
-        expect(imagesBinding.input).toHaveBeenCalledTimes(1)
-        const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
-        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 90})
         const body = (await response.json()) as {profilePhotoKey: string}
-        expect(mediaBucket.put).toHaveBeenCalledWith(`users/current-user/profile/${body.profilePhotoKey}.webp`, expect.any(Uint8Array), {
+        expect(mediaBucket.put).toHaveBeenCalledWith(`users/current-user/profile/${body.profilePhotoKey}.avif`, expect.any(Uint8Array), {
             httpMetadata: {
                 cacheControl: 'public, max-age=300, must-revalidate',
-                contentType: 'image/webp',
+                contentType: 'image/avif',
             },
         })
     })
 
-    it('converts JPEG profile photos to WebP before storing', async () => {
+    it('converts JPEG profile photos to AVIF before storing', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
-        const imagesBinding = createMockImagesBinding()
         await seedCurrentUser({}, sessionToken)
 
         const response = await postProfilePhoto(db, mediaBucket, {
             sessionToken,
             csrfToken: await createCsrfToken(sessionToken),
             file: createJpegFile(512, 512, 'profile-photo.jpg'),
-            imagesBinding,
         })
 
         expect(response.status).toBe(200)
-        expect(imagesBinding.input).toHaveBeenCalledTimes(1)
-        const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
-        expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/webp', quality: 90})
     })
 
     it('rejects profile photos that cannot be normalized', async () => {

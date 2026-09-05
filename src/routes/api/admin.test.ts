@@ -10,7 +10,7 @@ import {
     useTestDatabase,
     withFailingTrigger,
 } from '../../test/d1'
-import {createMockImagesBinding} from '../../test/mockImages'
+import {createAvifBytes, createWebpBytes} from '../../test/imageFixtures'
 import {createMockKVNamespace} from '../../test/mockKV'
 import {createMockR2Bucket} from '../../test/mockR2'
 import {apiRoutes} from '../api'
@@ -58,36 +58,32 @@ function createMockWorkflowBinding(initialStatuses: Record<string, string> = {})
 
 function requestEnv(
     mediaBucket = createMockR2Bucket(),
-    imagesBinding = createMockImagesBinding(),
     previewWorkflow = createMockWorkflowBinding(),
+    previewContainer = createMockPreviewContainer(),
 ) {
     return {
         CACHE: createMockKVNamespace(),
         DB: db,
         DB_BACKUP_BUCKET: createMockR2Bucket(),
         MEDIA_BUCKET: mediaBucket,
-        IMAGES: imagesBinding,
         MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
+        MYOC_DOCKER_SHARP_CONTAINER: previewContainer.namespace,
+        PREVIEW_PROCESSOR_TOKEN: 'preview-token',
         REGENERATE_MEDIA_PREVIEWS_WORKFLOW: previewWorkflow,
     }
 }
 
-function expectNsfwBlurTransform(imagesBinding: ImagesBinding): void {
-    const imageTransformer = vi.mocked(imagesBinding.input).mock.results[0]?.value as ImageTransformer
-    expect(imageTransformer.transform).toHaveBeenCalledWith({width: 960, fit: 'scale-down'})
-    expect(imageTransformer.transform).toHaveBeenCalledWith({blur: 250})
-    expect(imageTransformer.output).toHaveBeenCalledWith({format: 'image/avif', quality: 60})
-}
-
-function createImagesBindingWithResponse(response: Response): ImagesBinding {
-    const transformer = {
-        transform: vi.fn(() => transformer),
-        output: vi.fn(async () => ({response: () => response})),
+function createMockPreviewContainer(response = new Response(createAvifBytes(800, 600), {headers: {'content-type': 'image/avif'}})) {
+    const fetch = vi.fn(async () => response.clone())
+    const namespace = {
+        idFromName: vi.fn(() => 'preview-container-id'),
+        get: vi.fn(() => ({fetch})),
     }
 
     return {
-        input: vi.fn(() => transformer),
-    } as unknown as ImagesBinding
+        fetch,
+        namespace: namespace as unknown as DurableObjectNamespace,
+    }
 }
 
 function expectBucketDeletes(mediaBucket: R2Bucket, keys: readonly string[]): void {
@@ -140,8 +136,8 @@ async function postImageApproval(
     id: string,
     body: unknown,
     mediaBucket: R2Bucket,
-    imagesBinding = createMockImagesBinding(),
     sessionToken = 'session-token',
+    previewContainer = createMockPreviewContainer(),
 ): Promise<Response> {
     return apiRoutes.request(
         `https://example.com/admin/image-approvals/${id}`,
@@ -154,7 +150,7 @@ async function postImageApproval(
                 'x-csrf-token': await createCsrfToken(sessionToken),
             },
         },
-        requestEnv(mediaBucket, imagesBinding),
+        requestEnv(mediaBucket, createMockWorkflowBinding(), previewContainer),
     )
 }
 
@@ -201,7 +197,7 @@ async function postAdminJobRun(
                 'x-csrf-token': await createCsrfToken(sessionToken),
             },
         },
-        requestEnv(mediaBucket, createMockImagesBinding(), previewWorkflow),
+        requestEnv(mediaBucket, previewWorkflow),
     )
 }
 
@@ -353,6 +349,31 @@ describe('POST /admin/admin-options/jobs/:jobName/run', () => {
 
         expect(response.status).toBe(200)
         expect(body.run).toMatchObject({runId: 'continued-run', status: 'running'})
+        expect(workflow.create).not.toHaveBeenCalled()
+    })
+
+    it('reuses a job while queue dispatch or item processing remains active', async () => {
+        await seedCurrentUser()
+        await seedPreviewRegenerationRun('queued-run', '2026-01-01 00:00:00', JSON.stringify({processedVariants: 0}))
+        await db
+            .prepare(
+                `INSERT INTO media_preview_regeneration_runs (run_id, dispatch_complete, enqueued_items)
+                 VALUES ('queued-run', 0, 0)`,
+            )
+            .run()
+        const workflow = createMockWorkflowBinding({'queued-run': 'complete'})
+
+        const response = await postAdminJobRun(
+            'media-preview-regeneration',
+            createMockR2Bucket(),
+            'session-token',
+            'application/json',
+            workflow,
+        )
+        const body = (await response.json()) as {ok: true; run: {runId: string; status: string}}
+
+        expect(response.status).toBe(200)
+        expect(body.run).toMatchObject({runId: 'queued-run', status: 'running'})
         expect(workflow.create).not.toHaveBeenCalled()
     })
 
@@ -833,10 +854,11 @@ describe('POST /admin/image-approvals/:mediaId', () => {
             sfwPreviewContentType: 'image/avif',
         })
         const mediaBucket = createMockR2Bucket()
-        const imagesBinding = createMockImagesBinding()
+        const previewContainer = createMockPreviewContainer()
         await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png', new Uint8Array([1, 2, 3]))
-        await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.avif', new Uint8Array([4, 5, 6]))
-        const response = await postImageApproval(mediaId, {sfwAction: 'mark_nsfw'}, mediaBucket, imagesBinding)
+        const previewBytes = createAvifBytes(800, 600)
+        await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.avif', previewBytes)
+        const response = await postImageApproval(mediaId, {sfwAction: 'mark_nsfw'}, mediaBucket, 'session-token', previewContainer)
         const media = await queryOne<{
             sfw_image_key: string | null
             nsfw_image_key: string | null
@@ -852,12 +874,8 @@ describe('POST /admin/image-approvals/:mediaId', () => {
         )
         expect(response.status).toBe(200)
         await expectStoredBytes(mediaBucket, 'characters/owner-1/character-1/media/media-1/nsfw/sfw-key.png', new Uint8Array([1, 2, 3]))
-        await expectStoredBytes(
-            mediaBucket,
-            'characters/owner-1/character-1/media/media-1/nsfw/preview/sfw-preview-key.avif',
-            new Uint8Array([4, 5, 6]),
-        )
-        expectNsfwBlurTransform(imagesBinding)
+        await expectStoredBytes(mediaBucket, 'characters/owner-1/character-1/media/media-1/nsfw/preview/sfw-preview-key.avif', previewBytes)
+        expect(previewContainer.fetch).toHaveBeenCalledOnce()
         expect(media).toMatchObject({
             sfw_image_key: null,
             nsfw_image_key: 'sfw-key',
@@ -911,7 +929,7 @@ describe('POST /admin/image-approvals/:mediaId', () => {
         await seedApprovalMedia()
         const mediaBucket = createMockR2Bucket()
         await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png', new Uint8Array([1, 2, 3]))
-        await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp', new Uint8Array([4, 5, 6]))
+        await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp', createWebpBytes(800, 600))
         const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
         try {
@@ -919,7 +937,8 @@ describe('POST /admin/image-approvals/:mediaId', () => {
                 mediaId,
                 {sfwAction: 'mark_nsfw'},
                 mediaBucket,
-                createImagesBindingWithResponse(blurResponse),
+                'session-token',
+                createMockPreviewContainer(blurResponse),
             )
             const media = await queryOne<{sfw_image_key: string | null; nsfw_image_key: string | null}>(
                 'SELECT sfw_image_key, nsfw_image_key FROM character_media WHERE id = ?',
@@ -932,6 +951,32 @@ describe('POST /admin/image-approvals/:mediaId', () => {
             await expect(
                 mediaBucket.get('characters/owner-1/character-1/media/media-1/nsfw/preview/sfw-preview-key.webp'),
             ).resolves.toBeNull()
+        } finally {
+            error.mockRestore()
+        }
+    })
+
+    it.each([
+        ['missing', null],
+        ['invalid', new Uint8Array([4, 5, 6])],
+    ] as const)('keeps the SFW image in place when its preview object is %s', async (_state, previewBytes) => {
+        await seedApprovalMedia()
+        const mediaBucket = createMockR2Bucket()
+        await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png', new Uint8Array([1, 2, 3]))
+        if (previewBytes) {
+            await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp', previewBytes)
+        }
+        const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+        try {
+            const response = await postImageApproval(mediaId, {sfwAction: 'mark_nsfw'}, mediaBucket)
+            expect(response.status).toBe(500)
+            expect(
+                await queryOne<{sfw_image_key: string | null; nsfw_image_key: string | null}>(
+                    'SELECT sfw_image_key, nsfw_image_key FROM character_media WHERE id = ?',
+                    [mediaId],
+                ),
+            ).toEqual({sfw_image_key: 'sfw-key', nsfw_image_key: null})
         } finally {
             error.mockRestore()
         }
@@ -1003,7 +1048,7 @@ describe('POST /admin/image-approvals/:mediaId', () => {
         const sourceKey = 'characters/owner-1/character-1/media/media-1/sfw/sfw-key.png'
         const targetKey = 'characters/owner-1/character-1/media/media-1/nsfw/sfw-key.png'
         await mediaBucket.put(sourceKey, new Uint8Array([1, 2, 3]))
-        await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp', new Uint8Array([4, 5, 6]))
+        await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp', createWebpBytes(800, 600))
         vi.mocked(mediaBucket.delete).mockRejectedValueOnce(new Error('delete failed'))
         try {
             const response = await postImageApproval(mediaId, {sfwAction: 'mark_nsfw'}, mediaBucket)

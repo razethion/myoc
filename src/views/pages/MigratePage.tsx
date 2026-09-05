@@ -972,7 +972,7 @@ function ToyhouseImportReviewScript({csrfToken}: {csrfToken: string}) {
         return '/migrate/toyhouse-image?url=' + encodeURIComponent(url);
     }
 
-    function canvasToWebp(canvas) {
+    function canvasToPng(canvas) {
         return new Promise((resolve, reject) => {
             canvas.toBlob((blob) => {
                 if (blob) {
@@ -980,7 +980,7 @@ function ToyhouseImportReviewScript({csrfToken}: {csrfToken: string}) {
                     return;
                 }
                 reject(new Error('Could not prepare profile image.'));
-            }, 'image/webp', 0.9);
+            }, 'image/png');
         });
     }
 
@@ -1009,7 +1009,7 @@ function ToyhouseImportReviewScript({csrfToken}: {csrfToken: string}) {
             bitmap.close();
         }
 
-        return await canvasToWebp(canvas);
+        return await canvasToPng(canvas);
     }
 
     function selectedImageIndexesByCharacter(selector, characterDatasetKey) {
@@ -1047,7 +1047,7 @@ function ToyhouseImportReviewScript({csrfToken}: {csrfToken: string}) {
         const body = new FormData();
         body.set('name', character.name);
         body.set('folderId', '');
-        body.set('profileImage', new File([profileImage], 'profile.webp', {type: 'image/webp'}));
+        body.set('profileImage', new File([profileImage], 'profile.png', {type: 'image/png'}));
 
         const response = await fetch('/api/characters', {
             method: 'POST',

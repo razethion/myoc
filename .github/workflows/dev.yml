@@ -273,6 +273,8 @@ jobs:
               'container/Dockerfile',
               'container/package-lock.json',
               'container/package.json',
+              'container/preview.mjs',
+              'container/server.mjs',
               'manifest.sha256',
               'seeds/development.sql',
               'worker/index.js',
@@ -381,7 +383,18 @@ jobs:
           echo "database=myoc-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "cache=myoc-pr-${PR_NUMBER}-cache" >> "$GITHUB_OUTPUT"
           echo "media_bucket=myoc-pr-${PR_NUMBER}-media" >> "$GITHUB_OUTPUT"
+          echo "source_bucket=myoc-pr-${PR_NUMBER}-image-sources" >> "$GITHUB_OUTPUT"
+          echo "recent_bucket=myoc-pr-${PR_NUMBER}-recent-feed" >> "$GITHUB_OUTPUT"
           echo "backup_bucket=myoc-pr-${PR_NUMBER}-backups" >> "$GITHUB_OUTPUT"
+          echo "preview_workflow=myoc-regenerate-media-previews-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "preview_queue_0=myoc-pr-${PR_NUMBER}-preview-0" >> "$GITHUB_OUTPUT"
+          echo "preview_queue_1=myoc-pr-${PR_NUMBER}-preview-1" >> "$GITHUB_OUTPUT"
+          echo "preview_queue_2=myoc-pr-${PR_NUMBER}-preview-2" >> "$GITHUB_OUTPUT"
+          echo "preview_dlq=myoc-pr-${PR_NUMBER}-preview-dlq" >> "$GITHUB_OUTPUT"
+          echo "image_queue_0=myoc-pr-${PR_NUMBER}-image-processing-0" >> "$GITHUB_OUTPUT"
+          echo "image_queue_1=myoc-pr-${PR_NUMBER}-image-processing-1" >> "$GITHUB_OUTPUT"
+          echo "image_queue_2=myoc-pr-${PR_NUMBER}-image-processing-2" >> "$GITHUB_OUTPUT"
+          echo "image_dlq=myoc-pr-${PR_NUMBER}-image-processing-dlq" >> "$GITHUB_OUTPUT"
 
       - name: Provision isolated dev storage
         id: resources
@@ -392,6 +405,16 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           DB_NAME: ${{ steps.names.outputs.database }}
           MEDIA_BUCKET: ${{ steps.names.outputs.media_bucket }}
+          SOURCE_BUCKET: ${{ steps.names.outputs.source_bucket }}
+          RECENT_BUCKET: ${{ steps.names.outputs.recent_bucket }}
+          PREVIEW_QUEUE_0: ${{ steps.names.outputs.preview_queue_0 }}
+          PREVIEW_QUEUE_1: ${{ steps.names.outputs.preview_queue_1 }}
+          PREVIEW_QUEUE_2: ${{ steps.names.outputs.preview_queue_2 }}
+          PREVIEW_DLQ: ${{ steps.names.outputs.preview_dlq }}
+          IMAGE_QUEUE_0: ${{ steps.names.outputs.image_queue_0 }}
+          IMAGE_QUEUE_1: ${{ steps.names.outputs.image_queue_1 }}
+          IMAGE_QUEUE_2: ${{ steps.names.outputs.image_queue_2 }}
+          IMAGE_DLQ: ${{ steps.names.outputs.image_dlq }}
           WRANGLER: ${{ steps.wrangler.outputs.path }}
         working-directory: ${{ runner.temp }}/myoc-dev-control
         run: |
@@ -448,7 +471,7 @@ jobs:
             exit 1
           fi
 
-          for bucket in "$MEDIA_BUCKET" "$BACKUP_BUCKET"; do
+          for bucket in "$MEDIA_BUCKET" "$SOURCE_BUCKET" "$RECENT_BUCKET" "$BACKUP_BUCKET"; do
             if ! "$WRANGLER" r2 bucket info "$bucket" > /dev/null 2>&1; then
               "$WRANGLER" r2 bucket create "$bucket" --location enam
             fi
@@ -472,9 +495,30 @@ jobs:
             exit 1
           fi
 
+          "$WRANGLER" r2 bucket dev-url enable "$RECENT_BUCKET" --force
+          "$WRANGLER" r2 bucket dev-url get "$RECENT_BUCKET" > recent-r2-dev-url.txt
+          recent_base_url="$(node -e "
+            const fs = require('node:fs');
+            const output = fs.readFileSync('recent-r2-dev-url.txt', 'utf8');
+            const url = output.match(/https:\/\/[a-z0-9.-]+\.r2\.dev/i)?.[0];
+            const domain = output.match(/[a-z0-9.-]+\.r2\.dev/i)?.[0];
+            process.stdout.write(url || (domain ? 'https://' + domain : ''));
+          ")"
+
+          if [ -z "$recent_base_url" ]; then
+            echo "::error::The isolated recent-feed bucket did not return an r2.dev URL."
+            exit 1
+          fi
+
+          for queue in "$PREVIEW_QUEUE_0" "$PREVIEW_QUEUE_1" "$PREVIEW_QUEUE_2" "$PREVIEW_DLQ" \
+            "$IMAGE_QUEUE_0" "$IMAGE_QUEUE_1" "$IMAGE_QUEUE_2" "$IMAGE_DLQ"; do
+            "$WRANGLER" queues info "$queue" > /dev/null 2>&1 || "$WRANGLER" queues create "$queue"
+          done
+
           echo "db_id=$db_id" >> "$GITHUB_OUTPUT"
           echo "cache_id=$cache_id" >> "$GITHUB_OUTPUT"
           echo "media_base_url=$media_base_url" >> "$GITHUB_OUTPUT"
+          echo "recent_base_url=$recent_base_url" >> "$GITHUB_OUTPUT"
 
       - name: Write trusted Wrangler config
         env:
@@ -486,6 +530,18 @@ jobs:
           DB_NAME: ${{ steps.names.outputs.database }}
           MEDIA_BASE_URL: ${{ steps.resources.outputs.media_base_url }}
           MEDIA_BUCKET: ${{ steps.names.outputs.media_bucket }}
+          SOURCE_BUCKET: ${{ steps.names.outputs.source_bucket }}
+          RECENT_BUCKET: ${{ steps.names.outputs.recent_bucket }}
+          RECENT_BASE_URL: ${{ steps.resources.outputs.recent_base_url }}
+          PREVIEW_WORKFLOW: ${{ steps.names.outputs.preview_workflow }}
+          PREVIEW_QUEUE_0: ${{ steps.names.outputs.preview_queue_0 }}
+          PREVIEW_QUEUE_1: ${{ steps.names.outputs.preview_queue_1 }}
+          PREVIEW_QUEUE_2: ${{ steps.names.outputs.preview_queue_2 }}
+          PREVIEW_DLQ: ${{ steps.names.outputs.preview_dlq }}
+          IMAGE_QUEUE_0: ${{ steps.names.outputs.image_queue_0 }}
+          IMAGE_QUEUE_1: ${{ steps.names.outputs.image_queue_1 }}
+          IMAGE_QUEUE_2: ${{ steps.names.outputs.image_queue_2 }}
+          IMAGE_DLQ: ${{ steps.names.outputs.image_dlq }}
           PR_NUMBER: ${{ needs.validate.outputs.pull_request }}
           WORKER_NAME: ${{ steps.names.outputs.worker }}
         working-directory: ${{ runner.temp }}/myoc-dev-control
@@ -510,8 +566,8 @@ jobs:
                 class_name: 'MyocDockerSharpContainer',
                 image: './artifact/container/Dockerfile',
                 image_build_context: './artifact/container',
-                instance_type: 'standard-1',
-                max_instances: 1,
+                instance_type: 'standard-4',
+                max_instances: 8,
               },
             ],
             durable_objects: {
@@ -519,6 +575,62 @@ jobs:
                 {
                   name: 'MYOC_DOCKER_SHARP_CONTAINER',
                   class_name: 'MyocDockerSharpContainer',
+                },
+              ],
+            },
+            workflows: [
+              {
+                name: process.env.PREVIEW_WORKFLOW,
+                binding: 'REGENERATE_MEDIA_PREVIEWS_WORKFLOW',
+                class_name: 'RegenerateMediaPreviewsWorkflow',
+                limits: { steps: 25000 },
+              },
+            ],
+            queues: {
+              producers: [
+                { binding: 'MEDIA_PREVIEW_REGENERATION_QUEUE_0', queue: process.env.PREVIEW_QUEUE_0 },
+                { binding: 'MEDIA_PREVIEW_REGENERATION_QUEUE_1', queue: process.env.PREVIEW_QUEUE_1 },
+                { binding: 'MEDIA_PREVIEW_REGENERATION_QUEUE_2', queue: process.env.PREVIEW_QUEUE_2 },
+                { binding: 'MEDIA_PREVIEW_REGENERATION_DLQ', queue: process.env.PREVIEW_DLQ },
+                { binding: 'IMAGE_PROCESSING_QUEUE_0', queue: process.env.IMAGE_QUEUE_0 },
+                { binding: 'IMAGE_PROCESSING_QUEUE_1', queue: process.env.IMAGE_QUEUE_1 },
+                { binding: 'IMAGE_PROCESSING_QUEUE_2', queue: process.env.IMAGE_QUEUE_2 },
+                { binding: 'IMAGE_PROCESSING_DLQ', queue: process.env.IMAGE_DLQ },
+              ],
+              consumers: [
+                ...[process.env.PREVIEW_QUEUE_0, process.env.PREVIEW_QUEUE_1, process.env.PREVIEW_QUEUE_2].map((queue) => ({
+                  queue,
+                  max_batch_size: 1,
+                  max_batch_timeout: 0,
+                  max_retries: 2,
+                  dead_letter_queue: process.env.PREVIEW_DLQ,
+                  max_concurrency: 3,
+                  retry_delay: 1,
+                })),
+                ...[process.env.IMAGE_QUEUE_0, process.env.IMAGE_QUEUE_1, process.env.IMAGE_QUEUE_2].map((queue) => ({
+                  queue,
+                  max_batch_size: 1,
+                  max_batch_timeout: 0,
+                  max_retries: 10,
+                  dead_letter_queue: process.env.IMAGE_DLQ,
+                  max_concurrency: 8,
+                  retry_delay: 1,
+                })),
+                {
+                  queue: process.env.PREVIEW_DLQ,
+                  max_batch_size: 10,
+                  max_batch_timeout: 5,
+                  max_retries: 10,
+                  max_concurrency: 1,
+                  retry_delay: 1,
+                },
+                {
+                  queue: process.env.IMAGE_DLQ,
+                  max_batch_size: 10,
+                  max_batch_timeout: 5,
+                  max_retries: 10,
+                  max_concurrency: 1,
+                  retry_delay: 1,
                 },
               ],
             },
@@ -531,17 +643,22 @@ jobs:
             assets: {
               directory: './artifact/public',
             },
-            images: {
-              binding: 'IMAGES',
-              remote: true,
-            },
             vars: {
               CLOUDFLARE_ACCOUNT_ID: process.env.ACCOUNT_ID,
               D1_DATABASE_ID: process.env.DB_ID,
+              IMAGE_PROCESSING_DLQ_NAME: process.env.IMAGE_DLQ,
+              IMAGE_UPLOAD_ASYNC_ENABLED: 'true',
+              MEDIA_PREVIEW_REGENERATION_DLQ_NAME: process.env.PREVIEW_DLQ,
+              MEDIA_PREVIEW_OVERFLOW_ENABLED: 'true',
               MEDIA_PUBLIC_BASE_URL: process.env.MEDIA_BASE_URL,
+              RECENT_FEED_CLEANUP_ENABLED: 'true',
+              RECENT_FEED_BLOCK_ITEMS: '96',
+              RECENT_FEED_PUBLISH_ENABLED: 'true',
+              RECENT_FEED_PUBLIC_BASE_URL: process.env.RECENT_BASE_URL,
+              RECENT_FEED_RETENTION_DAYS: '30',
             },
             secrets: {
-              required: ['PREVIEW_PROCESSOR_TOKEN'],
+              required: ['PREVIEW_PROCESSOR_TOKEN', 'RECENT_FEED_CURSOR_SECRET'],
             },
             d1_databases: [
               {
@@ -581,6 +698,10 @@ jobs:
             ],
             r2_buckets: [
               {
+                binding: 'IMAGE_SOURCE_BUCKET',
+                bucket_name: process.env.SOURCE_BUCKET,
+              },
+              {
                 binding: 'MEDIA_BUCKET',
                 bucket_name: process.env.MEDIA_BUCKET,
               },
@@ -588,7 +709,14 @@ jobs:
                 binding: 'DB_BACKUP_BUCKET',
                 bucket_name: process.env.BACKUP_BUCKET,
               },
+              {
+                binding: 'RECENT_FEED_BUCKET',
+                bucket_name: process.env.RECENT_BUCKET,
+              },
             ],
+            triggers: {
+              crons: ['* * * * *'],
+            },
           }
 
           fs.writeFileSync('wrangler.preview.jsonc', `${JSON.stringify(config, null, 2)}\n`)
@@ -645,16 +773,23 @@ jobs:
         working-directory: ${{ runner.temp }}/myoc-dev-control
         run: |
           set -euo pipefail
-          trap 'rm -f processor-token.txt preview-secrets.json' EXIT
+          trap 'rm -f processor-token.txt cursor-secret.txt preview-secrets.json' EXIT
 
           openssl rand -hex 32 > processor-token.txt
+          openssl rand -hex 32 > cursor-secret.txt
           processor_token="$(tr -d '\n' < processor-token.txt)"
+          cursor_secret="$(tr -d '\n' < cursor-secret.txt)"
           echo "::add-mask::$processor_token"
+          echo "::add-mask::$cursor_secret"
 
           node -e "
             const fs = require('node:fs');
             const token = fs.readFileSync('processor-token.txt', 'utf8').trim();
-            fs.writeFileSync('preview-secrets.json', JSON.stringify({ PREVIEW_PROCESSOR_TOKEN: token }));
+            const cursorSecret = fs.readFileSync('cursor-secret.txt', 'utf8').trim();
+            fs.writeFileSync('preview-secrets.json', JSON.stringify({
+              PREVIEW_PROCESSOR_TOKEN: token,
+              RECENT_FEED_CURSOR_SECRET: cursorSecret,
+            }));
           "
 
           "$WRANGLER" deploy --config wrangler.preview.jsonc --secrets-file preview-secrets.json --no-bundle --message "Approved dev preview $HEAD_SHA" 2>&1 | tee wrangler-preview.log

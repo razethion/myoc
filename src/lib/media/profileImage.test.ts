@@ -1,127 +1,75 @@
 import {describe, expect, it, vi} from 'vitest'
-import {createPngFile, createWebpBytes, createWebpFile} from '../../test/imageFixtures'
+import {createAvifBytes, createPngFile} from '../../test/imageFixtures'
+import type {Bindings} from '../../types/bindings'
 import {normalizeProfileImagePayload} from './profileImage'
 
 describe('normalizeProfileImagePayload', () => {
-    it('accepts valid WebP profile images without Cloudflare Images', async () => {
-        const file = createWebpFile()
-        const bytes = new Uint8Array(await file.arrayBuffer())
-
-        await expect(normalizeProfileImagePayload({contentType: file.type, bytes}, 'Profile photo', undefined)).resolves.toEqual({
-            bytes,
-            contentType: 'image/webp',
-        })
-    })
-
-    it('converts PNG profile images and accepts result.contentType when the response header is missing', async () => {
+    it('converts a valid 512 pixel PNG to AVIF in the Sharp container', async () => {
         const file = createPngFile(512, 512)
         const bytes = new Uint8Array(await file.arrayBuffer())
-        const images = createImagesBinding({
-            contentType: 'image/webp',
-            responseBytes: createWebpBytes(512, 512),
-            responseHeaders: {},
-        })
+        const output = createAvifBytes(512, 512)
 
-        const result = await normalizeProfileImagePayload({contentType: file.type, bytes}, 'Profile photo', images)
-
-        expect(result).toEqual({
-            bytes: createWebpBytes(512, 512),
-            contentType: 'image/webp',
-        })
+        await expect(normalizeProfileImagePayload({contentType: file.type, bytes}, 'Profile photo', containerEnv(output))).resolves.toEqual(
+            {
+                bytes: output,
+                contentType: 'image/avif',
+            },
+        )
     })
 
-    it('rejects converted profile images when Cloudflare Images does not return WebP', async () => {
-        const file = createPngFile(512, 512)
-        const bytes = new Uint8Array(await file.arrayBuffer())
-        const images = createImagesBinding({
-            contentType: 'image/png',
-            responseBytes: createWebpBytes(512, 512),
-            responseHeaders: {'content-type': 'image/png'},
-        })
-
-        await expect(normalizeProfileImagePayload({contentType: file.type, bytes}, 'Profile photo', images)).resolves.toEqual({
+    it('rejects an unsupported source type', async () => {
+        const bytes = new Uint8Array(await createPngFile(512, 512).arrayBuffer())
+        await expect(normalizeProfileImagePayload({contentType: 'image/gif', bytes}, 'Profile photo', containerEnv())).resolves.toEqual({
             error: 'Unexpected media, contact support',
             status: 400,
         })
     })
 
-    it('rejects profile images when Cloudflare Images conversion fails', async () => {
-        const file = createPngFile(512, 512)
+    it('rejects a PNG with the wrong dimensions', async () => {
+        const file = createPngFile(511, 512)
         const bytes = new Uint8Array(await file.arrayBuffer())
-        const images = createImagesBinding({
-            outputError: new Error('conversion failed'),
-        })
-
-        await expect(normalizeProfileImagePayload({contentType: file.type, bytes}, 'Profile photo', images)).resolves.toEqual({
-            error: 'Unexpected media, contact support',
+        await expect(normalizeProfileImagePayload({contentType: file.type, bytes}, 'Profile photo', containerEnv())).resolves.toEqual({
+            error: 'Profile photo must be exactly 512x512 pixels',
             status: 400,
         })
     })
 
-    it('rejects converted profile images when the returned WebP bytes are malformed', async () => {
-        const file = createPngFile(512, 512)
-        const bytes = new Uint8Array(await file.arrayBuffer())
-        const images = createImagesBinding({
-            contentType: 'image/webp',
-            responseBytes: new Uint8Array([0, 1, 2, 3]),
-            responseHeaders: {'content-type': 'image/webp'},
-        })
-
-        await expect(normalizeProfileImagePayload({contentType: file.type, bytes}, 'Profile photo', images)).resolves.toEqual({
-            error: 'Unexpected media, contact support',
-            status: 400,
-        })
+    it('rejects malformed PNG data', async () => {
+        await expect(
+            normalizeProfileImagePayload({contentType: 'image/png', bytes: new Uint8Array([1, 2, 3])}, 'Profile photo', containerEnv()),
+        ).resolves.toEqual({error: 'Unexpected media, contact support', status: 400})
     })
 
-    it('rejects oversized source bytes before invoking the Images binding', async () => {
-        const images = createImagesBinding({})
+    it('maps a container failure to the stable media error', async () => {
+        const file = createPngFile(512, 512)
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        await expect(
+            normalizeProfileImagePayload({contentType: file.type, bytes}, 'Profile photo', containerEnv(new Error('failed'))),
+        ).resolves.toEqual({error: 'Unexpected media, contact support', status: 400})
+    })
+
+    it('rejects oversized source bytes before invoking the container', async () => {
+        const env = containerEnv()
         const bytes = new Uint8Array(3 * 1024 * 1024 + 1)
-
-        await expect(normalizeProfileImagePayload({contentType: 'image/png', bytes}, 'Profile photo', images)).resolves.toEqual({
+        await expect(normalizeProfileImagePayload({contentType: 'image/png', bytes}, 'Profile photo', env)).resolves.toEqual({
             error: 'Profile photo upload is too large',
             status: 413,
         })
-        expect(images.input).not.toHaveBeenCalled()
+        expect(env.MYOC_DOCKER_SHARP_CONTAINER.get).not.toHaveBeenCalled()
     })
 })
 
-function createImagesBinding({
-    contentType = 'image/webp',
-    outputError,
-    responseBytes = createWebpBytes(512, 512),
-    responseHeaders = {'content-type': contentType},
-}: {
-    contentType?: string
-    outputError?: Error
-    responseBytes?: Uint8Array
-    responseHeaders?: HeadersInit
-}): ImagesBinding {
-    const transformer = {
-        draw: vi.fn(() => transformer),
-        output: vi.fn(async () => {
-            if (outputError) {
-                throw outputError
-            }
-
-            return {
-                contentType: () => contentType,
-                image: () => new ReadableStream<Uint8Array>(),
-                response: () =>
-                    new Response(responseBytes, {
-                        headers: responseHeaders,
-                    }),
-            }
-        }),
-        transform: vi.fn(() => transformer),
-    }
-
+function containerEnv(response: Uint8Array | Error = createAvifBytes(512, 512)) {
+    const fetch = vi.fn(async () => {
+        if (response instanceof Error) throw response
+        return new Response(response, {headers: {'content-type': 'image/avif'}})
+    })
     return {
-        hosted: {
-            image: vi.fn(),
-            list: vi.fn(),
-            upload: vi.fn(),
-        },
-        info: vi.fn(),
-        input: vi.fn(() => transformer),
-    } as unknown as ImagesBinding
+        MEDIA_PREVIEW_OVERFLOW_ENABLED: 'false' as const,
+        MYOC_DOCKER_SHARP_CONTAINER: {
+            idFromName: vi.fn(() => 'container-id'),
+            get: vi.fn(() => ({fetch})),
+        } as unknown as Bindings['MYOC_DOCKER_SHARP_CONTAINER'],
+        PREVIEW_PROCESSOR_TOKEN: 'test-token',
+    }
 }

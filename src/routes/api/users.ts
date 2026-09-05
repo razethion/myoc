@@ -102,14 +102,14 @@ userRoutes.post('/me/profile-photo', async (c) => {
             bytes: new Uint8Array(await file.arrayBuffer()),
         },
         'Profile photo',
-        c.env.IMAGES,
+        c.env,
     )
 
     if ('error' in image) {
         return jsonResponse(c, ErrorResponseSchema, {error: image.error}, image.status)
     }
 
-    const profilePhotoKey = crypto.randomUUID()
+    const profilePhotoKey = `avif-${crypto.randomUUID()}`
     const objectKey = profilePhotoObjectKey(currentUser.id, profilePhotoKey)
 
     await c.env.MEDIA_BUCKET.put(objectKey, image.bytes, {
