@@ -4,7 +4,7 @@ import {getImageApprovalData, getImageApprovalHistory, getImageApprovalPendingCo
 import {getAdminJobLabel, getAdminOptionsData, parseAdminJobName} from '../lib/admin/jobs'
 import {getAdminReportsData} from '../lib/admin/reports'
 import {listUserPasskeys, listUserSessions, toPasskeySummary} from '../lib/auth/passkeys'
-import {type CurrentUser, canModerateImages, getCurrentUser, isAdminUser, toSqlTimestamp} from '../lib/auth/session'
+import {type CurrentUser, canModerateImages, getCurrentUser, isAdminUser, isValidCsrfTokenValue, toSqlTimestamp} from '../lib/auth/session'
 import {chunkGalleryItems, shouldForceGalleryRowFullWidth} from '../lib/gallery'
 import {issuePreAuthCsrfToken} from '../lib/http/csrf'
 import {safeLocalRedirectPath} from '../lib/http/redirect'
@@ -453,24 +453,12 @@ pageRoutes.post('/migrate/import/confirm', async (c) => {
         migrationError = 'Sign in to MyOC, then submit the Toyhou.se import again.'
     } else {
         try {
-            const formData = await readToyhouseImportForm(c.req.raw)
-            const payload = formData.get('toyhousePayload')
-
-            if (typeof payload !== 'string') {
-                migrationError = 'Toyhou.se data was missing. Run the bookmarklet again from the Toyhou.se character page.'
-            } else {
-                const migrationResult = parseToyhouseMigrationPayload(payload)
-
-                if (migrationResult.myocUserId && migrationResult.myocUserId !== currentUser.id) {
-                    migrationError =
-                        'Toyhou.se import was verified for a different MyOC account. Sign in to that account or create a fresh bookmarklet.'
-                } else {
-                    const reviewed = await buildToyhouseMigrationReview(c.env.DB, migrationResult, currentUser.id)
-                    const selection = parseToyhouseImportSelection(formData, reviewed)
-                    clientImportPlan = await prepareToyhouseClientImportPlan(c.env.DB, currentUser.id, reviewed, selection)
-                }
-            }
+            clientImportPlan = await prepareToyhouseImportConfirmation(c, currentUser)
         } catch (error) {
+            if (error instanceof InvalidCsrfTokenError) {
+                return c.json({error: 'Invalid CSRF token'}, 403)
+            }
+
             migrationError = error instanceof Error ? error.message : 'Toyhou.se import could not be completed.'
         }
     }
@@ -488,6 +476,35 @@ pageRoutes.post('/migrate/import/confirm', async (c) => {
         />,
     )
 })
+
+class InvalidCsrfTokenError extends Error {}
+
+async function prepareToyhouseImportConfirmation(c: PageRouteContext, currentUser: CurrentUser): Promise<ToyhouseClientImportPlan> {
+    const formData = await readToyhouseImportForm(c.req.raw)
+    const csrfToken = c.req.header('x-csrf-token') ?? formData.get('csrfToken')
+
+    if (!isValidCsrfTokenValue(currentUser.csrfToken, csrfToken)) {
+        throw new InvalidCsrfTokenError()
+    }
+
+    const payload = formData.get('toyhousePayload')
+
+    if (typeof payload !== 'string') {
+        throw new Error('Toyhou.se data was missing. Run the bookmarklet again from the Toyhou.se character page.')
+    }
+
+    const migrationResult = parseToyhouseMigrationPayload(payload)
+
+    if (migrationResult.myocUserId && migrationResult.myocUserId !== currentUser.id) {
+        throw new Error(
+            'Toyhou.se import was verified for a different MyOC account. Sign in to that account or create a fresh bookmarklet.',
+        )
+    }
+
+    const reviewed = await buildToyhouseMigrationReview(c.env.DB, migrationResult, currentUser.id)
+    const selection = parseToyhouseImportSelection(formData, reviewed)
+    return await prepareToyhouseClientImportPlan(c.env.DB, currentUser.id, reviewed, selection)
+}
 
 pageRoutes.get('/characters', async (c) => {
     const currentUser = await getCurrentUser(c)
