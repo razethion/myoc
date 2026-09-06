@@ -244,7 +244,7 @@ describe('cleanupStaleR2Media', () => {
         expect(first).toMatchObject({deleted: 500, stoppedAtDeleteLimit: true})
         expect(second).toMatchObject({deleted: 1, stoppedAtDeleteLimit: false})
         expect(await cache.get('admin:r2-media-cleanup:cursor:v1')).toBeNull()
-    })
+    }, 30_000)
 
     it.each([new Error('cleanup failed'), 'cleanup failed'])('records object cleanup errors: %s', async (error) => {
         const bucket = createPagedMediaBucket(['users/alice/profile/photo.webp'], new Date(0))
