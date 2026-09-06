@@ -1022,7 +1022,7 @@ async function expectContentAddressMatches(bucket: R2Bucket, key: string | undef
     const json = await object?.text()
     expect(json).toBeDefined()
     const digest = await sha256Hex(json ?? '')
-    expect(key).toMatch(new RegExp(`/${digest}\\.json$`))
+    expect(key?.endsWith(`/${digest}.json`)).toBe(true)
 }
 
 function recentRow(id: string): RecentMediaRow {

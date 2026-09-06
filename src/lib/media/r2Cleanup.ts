@@ -290,7 +290,9 @@ function parseUserProfileKey(key: string, parts: string[]): ManagedR2MediaKey | 
     }
 
     const [profilePhotoKey, extension] = splitFileName(fileName)
-    return isSafeSegment(profilePhotoKey) && extension === 'webp' ? {kind: 'userProfile', key, userId, profilePhotoKey} : null
+    return isSafeSegment(profilePhotoKey) && (extension === 'webp' || extension === 'avif')
+        ? {kind: 'userProfile', key, userId, profilePhotoKey}
+        : null
 }
 
 function parseCharacterProfileKey(key: string, parts: string[]): ManagedR2MediaKey | null {

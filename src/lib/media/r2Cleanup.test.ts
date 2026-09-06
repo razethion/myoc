@@ -3,6 +3,7 @@ import {seedCharacter, seedFolder, seedMedia, seedUser, useResetTestDatabase} fr
 import {createMockKVNamespace} from '../../test/mockKV'
 import {createWorkerEnv, workerEnv} from '../../test/workerBindings'
 import {cleanupStaleR2Media, parseManagedR2MediaKey} from './r2Cleanup'
+import {profilePhotoObjectKey} from './url'
 
 const staleCleanupNow = new Date(Date.now() + 25 * 60 * 60 * 1000)
 const db = useResetTestDatabase()
@@ -90,6 +91,20 @@ describe('parseManagedR2MediaKey', () => {
 })
 
 describe('cleanupStaleR2Media', () => {
+    it('keeps the current AVIF profile photo and deletes a replaced one', async () => {
+        await seedUser({id: 'alice', username: 'alice', profilePhotoKey: 'avif-current'})
+        const currentKey = profilePhotoObjectKey('alice', 'avif-current')
+        const replacedKey = profilePhotoObjectKey('alice', 'avif-replaced')
+        await workerEnv.MEDIA_BUCKET.put(currentKey, 'referenced')
+        await workerEnv.MEDIA_BUCKET.put(replacedKey, 'stale')
+
+        const summary = await cleanupStaleR2Media(workerEnv, staleCleanupNow)
+
+        expect(summary).toMatchObject({recognized: 2, keptReferenced: 1, deleted: 1, errors: 0})
+        expect(await workerEnv.MEDIA_BUCKET.head(currentKey)).not.toBeNull()
+        expect(await workerEnv.MEDIA_BUCKET.head(replacedKey)).toBeNull()
+    })
+
     it('deletes stale managed objects that are not referenced in D1', async () => {
         const heightChartJson = JSON.stringify({
             image: {

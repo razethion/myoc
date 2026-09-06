@@ -196,6 +196,7 @@ describe('image upload jobs', () => {
                       now,
                   })
         await expect(create()).rejects.toThrow('Image upload job was not created')
+        expect((await setup.mediaBucket.list()).objects).toEqual([])
         expect(await getImageUploadBatchStatus(db, 'user-1', 'missing')).toEqual([])
     })
 
@@ -1196,7 +1197,7 @@ describe('image upload jobs', () => {
         const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
         try {
-            await createSquareImageUploadJob(setup.env, {
+            const job = await createSquareImageUploadJob(setup.env, {
                 userId: 'user-1',
                 kind: 'user-profile',
                 targetId: 'user-1',
@@ -1204,6 +1205,13 @@ describe('image upload jobs', () => {
                 bytes: await pngBytes(),
                 now,
             })
+            const source = await queryOne<{object_key: string}>(
+                'SELECT object_key FROM image_upload_sources WHERE job_id = ?',
+                [job.id],
+                db,
+            )
+            expect(source).not.toBeNull()
+            expect(await setup.mediaBucket.head(source?.object_key ?? '')).not.toBeNull()
             expect(await queryOne<{state: string}>('SELECT state FROM image_queue_outbox', [], db)).toEqual({state: 'pending'})
             await reconcileImageUploads(setup.env, new Date(now.getTime() + 5_000))
             expect(await queryOne<{state: string}>('SELECT state FROM image_queue_outbox', [], db)).toEqual({state: 'sent'})

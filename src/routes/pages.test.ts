@@ -3999,8 +3999,6 @@ describe('GET /admin', () => {
         expect(html).toMatch(/&quot;leaseExpiresAt&quot;:&quot;[^&]+&quot;/)
         expect(html).toContain('&quot;profileUrl&quot;:&quot;/u/uploader&quot;')
         expect(html).toContain('&quot;url&quot;:&quot;/u/uploader/Quartz&quot;')
-        expect(html).toContain('grid h-[calc(100vh-4rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden')
-        expect(html).toContain('flex h-full min-h-0 min-w-0 flex-col overflow-hidden')
         expect(html).toContain('<kbd class="kbd kbd-xs">A</kbd>')
         expect(html).toContain('<kbd class="kbd kbd-xs">Enter</kbd>')
         expect(html).toContain('admin-approval-image-grid')

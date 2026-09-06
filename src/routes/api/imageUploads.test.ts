@@ -213,6 +213,41 @@ describe('image upload API', () => {
         expect(await batch.json()).toEqual({jobs: []})
     })
 
+    it('does not let another user retry or cancel an upload job', async () => {
+        await seedAuthenticatedUser({id: 'user-1'}, sessionToken)
+        const otherSession = 'other-session'
+        await seedAuthenticatedUser({id: 'user-2'}, otherSession)
+        const env = createEnv()
+        const created = (await (await postUpload(env)).json()) as {job: {id: string}}
+        await db
+            .prepare("UPDATE image_upload_jobs SET state = 'failed', error_code = 'processor_failed' WHERE id = ?")
+            .bind(created.job.id)
+            .run()
+
+        const headers = {
+            cookie: `myoc_session=${otherSession}`,
+            'x-csrf-token': await createCsrfToken(otherSession),
+        }
+        const retry = await apiRoutes.request(
+            `https://example.com/image-uploads/${created.job.id}/retry`,
+            {method: 'POST', headers: {...headers, 'idempotency-key': 'other-user-retry'}},
+            env,
+        )
+        const cancel = await apiRoutes.request(`https://example.com/image-uploads/${created.job.id}`, {method: 'DELETE', headers}, env)
+
+        expect(retry.status).toBe(404)
+        expect(cancel.status).toBe(404)
+        const ownerStatus = await apiRoutes.request(
+            `https://example.com/image-uploads/${created.job.id}`,
+            {
+                headers: {cookie: `myoc_session=${sessionToken}`},
+            },
+            env,
+        )
+        expect(ownerStatus.status).toBe(200)
+        expect((await ownerStatus.json()) as {job: {state: string}}).toHaveProperty('job.state', 'failed')
+    })
+
     it('retries a failed job once for each retry idempotency key', async () => {
         await seedAuthenticatedUser({id: 'user-1'}, sessionToken)
         const env = createEnv()

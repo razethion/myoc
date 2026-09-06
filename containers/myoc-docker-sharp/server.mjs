@@ -21,6 +21,8 @@ const squareImageQuality = clamp(parsePositiveInteger(process.env['SQUARE_IMAGE_
 const squareImageSize = parsePositiveInteger(process.env['SQUARE_IMAGE_SIZE'], 512)
 const squareSourceMaxBytes = parsePositiveInteger(process.env['SQUARE_SOURCE_MAX_BYTES'], 3 * 1024 * 1024)
 
+class RequestBodyTooLargeError extends Error {}
+
 const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', `https://${request.headers.host ?? 'localhost'}`)
 
@@ -110,6 +112,10 @@ async function handleBlurRequest(request, response) {
         })
         response.end(result.bytes)
     } catch (error) {
+        if (error instanceof RequestBodyTooLargeError) {
+            sendJson(response, 413, {error: 'Request body is too large'})
+            return
+        }
         console.error('Blur generation failed', {
             durationMs: Date.now() - startedAt,
             error: error instanceof Error ? error.message : String(error),
@@ -149,6 +155,10 @@ async function handleSquareRequest(request, response) {
         })
         response.end(result.bytes)
     } catch (error) {
+        if (error instanceof RequestBodyTooLargeError) {
+            sendJson(response, 413, {error: 'Request body is too large'})
+            return
+        }
         console.error('Square image generation failed', {
             durationMs: Date.now() - startedAt,
             error: error instanceof Error ? error.message : String(error),
@@ -201,6 +211,10 @@ async function handleGalleryRequest(request, response, url) {
         response.writeHead(200, headers)
         response.end(body)
     } catch (error) {
+        if (error instanceof RequestBodyTooLargeError) {
+            sendJson(response, 413, {error: 'Request body is too large'})
+            return
+        }
         console.error('Gallery image generation failed', {
             durationMs: Date.now() - startedAt,
             error: error instanceof Error ? error.message : String(error),
@@ -231,7 +245,11 @@ async function handlePreviewRequest(request, response) {
 
     try {
         payload = JSON.parse(await readRequestText(request, requestBodyMaxBytes))
-    } catch {
+    } catch (error) {
+        if (error instanceof RequestBodyTooLargeError) {
+            sendJson(response, 413, {error: 'Request body is too large'})
+            return
+        }
         sendJson(response, 400, {error: 'Invalid JSON body'})
         return
     }
@@ -401,22 +419,27 @@ async function readRequestText(request, maxBytes) {
 function readRequestBytes(request, maxBytes) {
     return new Promise((resolve, reject) => {
         const chunks = []
+        let bodyTooLarge = false
         let receivedBytes = 0
 
         request.on('data', (chunk) => {
+            if (bodyTooLarge) return
             const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
             receivedBytes += Buffer.byteLength(bytes)
 
             if (receivedBytes > maxBytes) {
-                request.destroy()
-                reject(new Error('Request body is too large'))
+                bodyTooLarge = true
+                chunks.length = 0
+                reject(new RequestBodyTooLargeError('Request body is too large'))
                 return
             }
 
             chunks.push(bytes)
         })
 
-        request.on('end', () => resolve(Buffer.concat(chunks, receivedBytes)))
+        request.on('end', () => {
+            if (!bodyTooLarge) resolve(Buffer.concat(chunks, receivedBytes))
+        })
         request.on('error', reject)
     })
 }

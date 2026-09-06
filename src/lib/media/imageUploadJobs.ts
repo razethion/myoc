@@ -14,6 +14,7 @@ import {
     PreviewContainerBusyError,
     PreviewValidationError,
 } from './previewGeneration'
+import {deleteR2Objects} from './r2Delete'
 import {retainThumbnailOriginal, thumbnailOriginalObjectKey} from './thumbnailSources'
 import {
     characterFolderImageObjectKey,
@@ -239,7 +240,14 @@ export async function createGalleryImageUploadJob(env: Bindings, input: CreateGa
     await env.DB.batch(statements)
     await dispatchImageUploadOutbox(env, now)
     const created = await getOwnedImageUploadJob(env.DB, input.userId, jobId)
-    if (!created) throw new Error('Image upload job was not created')
+    if (!created) {
+        await deleteR2Objects(
+            env.MEDIA_BUCKET,
+            input.sources.map((source) => source.objectKey),
+            'image-upload-create-race',
+        )
+        throw new Error('Image upload job was not created')
+    }
     return statusFromRow(created)
 }
 
@@ -331,7 +339,10 @@ export async function createSquareImageUploadJob(env: Bindings, input: CreateSqu
     await dispatchImageUploadOutbox(env, now)
     const created = await getOwnedImageUploadJob(env.DB, input.userId, jobId)
 
-    if (!created) throw new Error('Image upload job was not created')
+    if (!created) {
+        await deleteR2Objects(env.MEDIA_BUCKET, [sourceKey], 'image-upload-create-race')
+        throw new Error('Image upload job was not created')
+    }
 
     return statusFromRow(created)
 }
