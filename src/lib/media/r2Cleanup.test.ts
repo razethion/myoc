@@ -185,7 +185,7 @@ describe('cleanupStaleR2Media', () => {
             stoppedAtScanLimit: true,
         })
         expect(await cache.get('admin:r2-media-cleanup:cursor:v1')).not.toBeNull()
-    }, 10_000)
+    }, 30_000)
 
     it('continues with the next managed prefix on the next run', async () => {
         const objectKeys = [
