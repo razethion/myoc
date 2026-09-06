@@ -41,13 +41,13 @@ userRoutes.post('/me/recent-media-preference', async (c) => {
     let body: unknown
 
     try {
-        const parsedBody = await readJsonUpTo<unknown>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+        const result = await readJsonUpTo<unknown>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
 
-        if (parsedBody === null) {
+        if (result.tooLarge) {
             return jsonResponse(c, ErrorResponseSchema, {error: 'Request body is too large'}, 413)
         }
 
-        body = parsedBody
+        body = result.value
     } catch {
         body = null
     }

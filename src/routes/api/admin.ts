@@ -203,11 +203,13 @@ async function parseImageApprovalActions(request: Request): Promise<ParsedImageA
     let body: ImageApprovalRequest
 
     try {
-        const value = await readJsonUpTo<unknown>(request, STANDARD_JSON_REQUEST_MAX_BYTES)
+        const result = await readJsonUpTo<unknown>(request, STANDARD_JSON_REQUEST_MAX_BYTES)
 
-        if (value === null) {
+        if (result.tooLarge) {
             return {error: 'Request body is too large', status: 413}
         }
+
+        const value = result.value
 
         if (!isRecord(value)) {
             return {error: 'Invalid JSON body'}

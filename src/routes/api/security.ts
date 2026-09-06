@@ -32,6 +32,10 @@ type RecoveryPhraseRequest = {
     recoveryPhrase?: unknown
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 type SecurityUserRecord = {
     id: string
     email: string
@@ -93,13 +97,13 @@ securityRoutes.post('/passkeys/verify', async (c) => {
     let body: PasskeyVerifyRequest
 
     try {
-        const parsedBody = await readJsonUpTo<PasskeyVerifyRequest>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+        const result = await readJsonUpTo<unknown>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
 
-        if (parsedBody === null) {
+        if (result.tooLarge) {
             return jsonResponse(c, ErrorResponseSchema, {error: 'Request body is too large'}, 413)
         }
 
-        body = parsedBody
+        body = isRecord(result.value) ? result.value : {}
     } catch {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
@@ -268,13 +272,13 @@ securityRoutes.post('/recovery/confirm', async (c) => {
     let body: RecoveryPhraseRequest
 
     try {
-        const parsedBody = await readJsonUpTo<RecoveryPhraseRequest>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+        const result = await readJsonUpTo<unknown>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
 
-        if (parsedBody === null) {
+        if (result.tooLarge) {
             return jsonResponse(c, ErrorResponseSchema, {error: 'Request body is too large'}, 413)
         }
 
-        body = parsedBody
+        body = isRecord(result.value) ? result.value : {}
     } catch {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }

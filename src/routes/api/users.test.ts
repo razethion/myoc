@@ -854,6 +854,7 @@ describe('POST /users/me/recent-media-preference', () => {
 
     it.each([
         {name: 'malformed JSON', body: '{bad json'},
+        {name: 'JSON null', body: null},
         {name: 'a missing preference', body: {}},
         {name: 'a non-boolean preference', body: {showUnapproved: 'false'}},
         {name: 'an extra field', body: {showUnapproved: false, unexpected: true}},

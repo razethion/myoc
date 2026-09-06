@@ -1322,13 +1322,13 @@ characterRoutes.post('/toyhouse-import-items/:itemId/fail', async (c) => {
     let body: {error?: unknown}
 
     try {
-        const parsedBody = await readJsonUpTo<{error?: unknown}>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+        const result = await readJsonUpTo<{error?: unknown}>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
 
-        if (parsedBody === null) {
+        if (result.tooLarge) {
             return jsonResponse(c, ErrorResponseSchema, {error: 'Request body is too large'}, 413)
         }
 
-        body = parsedBody
+        body = isRecord(result.value) ? result.value : {}
     } catch {
         body = {}
     }
@@ -2207,15 +2207,15 @@ async function parseChunkedUploadInitRequest(c: CharacterRouteContext): Promise<
     return uploads
 }
 
-async function readCharacterJsonBody<T>(c: CharacterRouteContext): Promise<T | Response> {
+async function readCharacterJsonBody<T extends object>(c: CharacterRouteContext): Promise<T | Response> {
     try {
-        const body = await readJsonUpTo<T>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+        const result = await readJsonUpTo<unknown>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
 
-        if (body === null) {
+        if (result.tooLarge) {
             return jsonResponse(c, ErrorResponseSchema, {error: 'Request body is too large'}, 413)
         }
 
-        return body
+        return requireJsonObject<T>(result.value)
     } catch {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
@@ -2272,13 +2272,13 @@ async function parseChunkedMediaCompleteBody(c: CharacterRouteContext): Promise<
     let body: ChunkedMediaCompleteRequest
 
     try {
-        const parsedBody = await readJsonUpTo<ChunkedMediaCompleteRequest>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+        const result = await readJsonUpTo<ChunkedMediaCompleteRequest>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
 
-        if (parsedBody === null) {
+        if (result.tooLarge) {
             return {error: 'Request body is too large', status: 413}
         }
 
-        body = parsedBody
+        body = requireJsonObject<ChunkedMediaCompleteRequest>(result.value)
     } catch {
         return {error: 'Invalid JSON body', status: 400}
     }
@@ -3085,11 +3085,13 @@ async function parseJsonCreateCharacterRequest(
     req: Request,
 ): Promise<{name: unknown; folderId: unknown; profileImage: JsonProfileImage | null} | {error: string; status: 400 | 413}> {
     try {
-        const body = await readJsonUpTo<CreateCharacterRequest>(req, PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES)
+        const result = await readJsonUpTo<CreateCharacterRequest>(req, PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES)
 
-        if (!body) {
+        if (result.tooLarge) {
             return {error: 'Character profile image upload is too large', status: 413}
         }
+
+        const body = requireJsonObject<CreateCharacterRequest>(result.value)
 
         return {
             name: body.name ?? body['new-character-name'],
@@ -3117,11 +3119,13 @@ async function parseCreateFolderRequest(req: CharacterRouteContext['req']): Prom
 
     if (contentType.includes('application/json')) {
         try {
-            const body = await readJsonUpTo<CreateFolderRequest>(req.raw, PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES)
+            const result = await readJsonUpTo<CreateFolderRequest>(req.raw, PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES)
 
-            if (!body) {
+            if (result.tooLarge) {
                 return {error: 'Folder image upload is too large', status: 413}
             }
+
+            const body = requireJsonObject<CreateFolderRequest>(result.value)
 
             return {
                 name: body.name ?? body['new-folder-name'],
@@ -4588,6 +4592,14 @@ async function readStoredGalleryImageMetadata(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function requireJsonObject<T extends object>(value: unknown): T {
+    if (!isRecord(value)) {
+        throw new TypeError('JSON body must be an object')
+    }
+
+    return value as T
 }
 
 function galleryUploadObjectKey(objectKey: string, staged: boolean): string {

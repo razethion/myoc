@@ -802,6 +802,19 @@ describe('POST /characters/folders/tree', () => {
         })
     })
 
+    it('returns 400 for JSON null', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser(sessionToken)
+
+        const response = await postFolderTree(null, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Invalid JSON body'})
+    })
+
     it('returns 413 for an oversized JSON body', async () => {
         const sessionToken = 'session-token'
         await seedCurrentUser(sessionToken)
@@ -1316,6 +1329,19 @@ describe('POST /characters/folders', () => {
         expect(await response.json()).toEqual({
             error: 'Invalid JSON body',
         })
+    })
+
+    it('returns 400 for JSON null', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser(sessionToken)
+
+        const response = await postFolder(null, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Invalid JSON body'})
     })
 
     it('returns 400 when the folder name is missing', async () => {
@@ -2045,6 +2071,19 @@ describe('POST /characters', () => {
         expect(await response.json()).toEqual({
             error: 'Invalid JSON body',
         })
+    })
+
+    it('returns 400 for JSON null', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser(sessionToken)
+
+        const response = await postCharacter(null, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Invalid JSON body'})
     })
 
     it('returns 400 when the character name is missing', async () => {
@@ -3561,6 +3600,21 @@ describe('PUT /characters/:id/height-chart', () => {
 })
 
 describe('character media uploads', () => {
+    it('returns 400 for a JSON null gallery completion body', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+
+        const response = await completeChunkedMedia(character.id, null, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Invalid JSON body'})
+    })
+
     it('rejects an oversized gallery completion body', async () => {
         const sessionToken = 'session-token'
         const character = createCharacterRecord()
@@ -5561,6 +5615,24 @@ describe('character media uploads', () => {
         expect(
             await queryOne<{status: string}>('SELECT status FROM toyhouse_import_jobs WHERE id = ?', ['toyhouse-import-job'], db),
         ).toEqual({status: 'failed'})
+    })
+
+    it('uses the default Toyhou.se import error for JSON null', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord()
+        await seedToyhouseImport()
+
+        const response = await failToyhouseImportItem('toyhouse-import-item', null, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ok: true})
+        expect(
+            await queryOne<{error: string}>('SELECT error FROM toyhouse_import_items WHERE id = ?', ['toyhouse-import-item'], db),
+        ).toEqual({error: 'Import item failed'})
     })
 
     it('rejects an oversized Toyhou.se import failure body', async () => {

@@ -223,6 +223,16 @@ describe('POST /security/passkeys/verify', () => {
         expect(verifyRegistrationResponse).not.toHaveBeenCalled()
     })
 
+    it('returns 400 for JSON null', async () => {
+        await seedCurrentUser()
+
+        const response = await securityRequest('/passkeys/verify', db, {body: null})
+
+        expect(response.status).toBe(400)
+        await expect(response.json()).resolves.toEqual({error: 'Challenge and passkey response are required'})
+        expect(verifyRegistrationResponse).not.toHaveBeenCalled()
+    })
+
     it('returns 400 when the challenge is missing', async () => {
         await seedCurrentUser()
 
@@ -442,6 +452,15 @@ describe('POST /security/recovery/confirm', () => {
 
         expect(response.status).toBe(413)
         expect(await response.json()).toEqual({error: 'Request body is too large'})
+    })
+
+    it('returns 400 for JSON null', async () => {
+        await seedCurrentUser()
+
+        const response = await securityRequest('/recovery/confirm', db, {body: null})
+
+        expect(response.status).toBe(400)
+        await expect(response.json()).resolves.toEqual({error: 'Recovery phrase is required'})
     })
 
     it('returns 429 when the user identity limit is exhausted', async () => {
