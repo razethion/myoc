@@ -58,7 +58,7 @@ Authenticate Wrangler if you are running the full Worker locally or deploying:
 npx wrangler login
 ```
 
-Prepare the local D1 database and seed development data:
+Prepare local D1 and R2 data from the selected production galleries:
 
 ```sh
 npm run db:prepare:local
@@ -72,13 +72,14 @@ npm run dev
 
 Wrangler prints the local URL, usually `http://localhost:8787`.
 
-Seeded local accounts:
+This command reads four production galleries. It clears local D1 and R2 data before it copies the selected content. Set
+`CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` in your environment before you run it.
 
-| Username    | Email                    | Password      |
-|-------------|--------------------------|---------------|
-| `demo`      | `demo@example.test`      | `password123` |
-| `artist`    | `artist@example.test`    | `password123` |
-| `collector` | `collector@example.test` | `password123` |
+The production profiles are view-only. The only development login is:
+
+| Username | Email               | Password      |
+|----------|---------------------|---------------|
+| `demo`   | `demo@example.test` | `password123` |
 
 ### Try It
 

@@ -386,8 +386,8 @@ export function createDisabledPasswordHash(): string {
     return `${PASSWORD_UNSET_PREFIX}${createBase64UrlToken(32)}`
 }
 
-export function hasUsablePassword(passwordHash: string): boolean {
-    return !passwordHash.startsWith(PASSWORD_UNSET_PREFIX)
+export function hasUsablePassword(passwordHash: string | null | undefined): passwordHash is string {
+    return typeof passwordHash === 'string' && !passwordHash.startsWith(PASSWORD_UNSET_PREFIX)
 }
 
 export function generateRecoveryPhrase(): string {

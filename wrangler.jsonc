@@ -152,9 +152,7 @@
   "r2_buckets": [
     {
       "binding": "MEDIA_BUCKET",
-      "bucket_name": "myoc",
-      "preview_bucket_name": "myoc-dev",
-      "remote": true
+      "bucket_name": "myoc"
     },
     {
       "binding": "DB_BACKUP_BUCKET",

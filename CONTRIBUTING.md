@@ -65,8 +65,8 @@ should not be committed unless the project intentionally changes that policy.
 
 Add new numbered migrations in [`migrations`](./migrations). Do not edit migrations that may already be applied.
 
-Update [`seeds/development.sql`](./seeds/development.sql) when schema or workflow changes would otherwise break local
-setup.
+Update [`seeds/development.sql`](./seeds/development.sql) when a schema change affects the fake demo login. Update the
+development seed script when a schema change affects the cloned public gallery graph.
 
 Media objects are stored in R2. Be careful with changes that affect object-key shape, previews, NSFW blur objects,
 height-chart images, or cleanup behavior.

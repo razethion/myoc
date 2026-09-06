@@ -518,6 +518,21 @@ describe('POST /login', () => {
         })
     })
 
+    it('does not sign in a display-only development clone', async () => {
+        await seedUser({
+            id: 'cloned-user',
+            email: 'clone@example.invalid',
+            username: 'cloned_user',
+            passwordHash: 'passkey-only:development-clone',
+        })
+
+        const response = await postLogin({username: 'cloned_user', password: 'password123'})
+
+        expect(response.status).toBe(401)
+        expect(await response.json()).toEqual({error: 'Invalid username or password'})
+        expect(await queryAll('SELECT id FROM sessions WHERE user_id = ?', ['cloned-user'])).toEqual([])
+    })
+
     it('returns 403 when the account is banned', async () => {
         await seedTestUser('password123', {bannedAt: '2026-06-10 12:00:00'})
 

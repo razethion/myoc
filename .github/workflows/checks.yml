@@ -93,7 +93,7 @@ jobs:
 
           build_root="$RUNNER_TEMP/myoc-dev-build"
           artifact_root="$RUNNER_TEMP/myoc-dev-artifact"
-          mkdir -p "$build_root/worker" "$artifact_root/worker" "$artifact_root/container" "$artifact_root/seeds"
+          mkdir -p "$build_root/worker" "$artifact_root/worker" "$artifact_root/container"
 
           node <<'NODE'
           const fs = require('node:fs')
@@ -114,7 +114,7 @@ jobs:
             --minify \
             --outdir "$build_root/worker"
 
-          if find public containers/myoc-docker-sharp migrations seeds/development.sql -type l -print -quit | grep -q .; then
+          if find public containers/myoc-docker-sharp migrations -type l -print -quit | grep -q .; then
             echo "::error::The deployment artifact cannot contain symbolic links."
             exit 1
           fi
@@ -122,7 +122,6 @@ jobs:
           cp "$build_root/worker/index.js" "$artifact_root/worker/index.js"
           cp -R public "$artifact_root/public"
           cp -R migrations "$artifact_root/migrations"
-          cp seeds/development.sql "$artifact_root/seeds/development.sql"
           cp containers/myoc-docker-sharp/Dockerfile "$artifact_root/container/Dockerfile"
           cp containers/myoc-docker-sharp/package.json "$artifact_root/container/package.json"
           cp containers/myoc-docker-sharp/package-lock.json "$artifact_root/container/package-lock.json"
