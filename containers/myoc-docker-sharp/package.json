@@ -7,7 +7,7 @@
     "start": "node server.mjs"
   },
   "engines": {
-    "node": ">=24 <25"
+    "node": ">=26 <27"
   },
   "dependencies": {
     "sharp": "^0.35.4"
