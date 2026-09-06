@@ -1147,11 +1147,18 @@ function RecentMediaScript() {
             const pendingEntries = recentState.entries.slice(recentState.renderedEntryCount);
             const pendingNodes = recentLayoutNodes(pendingEntries);
             const minimumRowSize = recentMinimumTilesPerRow();
-            if (!force && !recentCanFillRows(pendingNodes.length, minimumRowSize)) return;
+            const lastGroup = recentState.layoutGroups.at(-1);
+            const lastGroupRows = lastGroup
+                ? Array.from(recentFeed.querySelectorAll(':scope > [data-recent-row]'))
+                    .filter((row) => row.dataset.recentLayoutGroup === lastGroup.id)
+                : [];
+            const lastRowSize = lastGroupRows.at(-1)?.childElementCount || 0;
+            const mergeWithLastGroup = Boolean(lastGroup) && lastRowSize > 0 && lastRowSize < minimumRowSize;
+            const availableNodeCount = pendingNodes.length + (mergeWithLastGroup ? lastRowSize : 0);
+            if (!force && !recentCanFillRows(availableNodeCount, minimumRowSize)) return;
 
             if (pendingEntries.length > 0) {
-                const lastGroup = recentState.layoutGroups.at(-1);
-                if (force && !recentCanFillRows(pendingNodes.length, minimumRowSize) && lastGroup) {
+                if (mergeWithLastGroup || (force && !recentCanFillRows(pendingNodes.length, minimumRowSize) && lastGroup)) {
                     lastGroup.entries.push(...pendingEntries);
                     renderRecentLayoutGroup(lastGroup);
                 } else {
