@@ -1024,6 +1024,64 @@ describe('image upload jobs', () => {
         expect(await queryOne<{id: string}>(`SELECT id FROM character_media WHERE id = 'media-1'`, [], db)).toEqual({id: 'media-1'})
     })
 
+    it('expires and cleans an abandoned gallery capacity failure', async () => {
+        await seedUser({id: 'user-1'})
+        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        const setup = createEnv()
+        const created = await createSingleGalleryJob(setup, 'nsfw')
+        await seedGalleryMedia(500)
+        await consumeQueued(setup.env, created.queued)
+        const task = await queryOne<{output_json: string}>(
+            `SELECT output_json FROM image_processing_tasks WHERE job_id = ? AND state = 'ready'`,
+            [created.job.id],
+            db,
+        )
+        const output = JSON.parse(task?.output_json ?? '{}') as {
+            imageObjectKey: string
+            previewObjectKey: string
+            blurObjectKey: string
+        }
+        const generatedKeys = [output.imageObjectKey, output.previewObjectKey, output.blurObjectKey]
+
+        await reconcileImageUploads(setup.env, new Date(now.getTime() + 24 * 60 * 60 * 1_000 - 1_000))
+
+        expect(await getImageUploadStatus(db, 'user-1', created.job.id)).toMatchObject({state: 'failed'})
+        expect(await queryAll<{id: string}>('SELECT id FROM image_cleanup_tasks', [], db)).toEqual([])
+
+        await reconcileImageUploads(setup.env, new Date(now.getTime() + 24 * 60 * 60 * 1_000))
+
+        expect(await getImageUploadStatus(db, 'user-1', created.job.id)).toMatchObject({state: 'canceled'})
+        await expect(retryImageUploadJob(setup.env, 'user-1', created.job.id, 'late-capacity-retry', now)).rejects.toThrow(
+            'Only a failed upload can be retried',
+        )
+        expect(
+            await queryAll<{bucket: string; object_key: string}>(
+                'SELECT bucket, object_key FROM image_cleanup_tasks ORDER BY bucket, object_key',
+                [],
+                db,
+            ),
+        ).toEqual(
+            [
+                ...generatedKeys.map((objectKey) => ({bucket: 'media', object_key: objectKey})),
+                {bucket: 'source', object_key: created.sourceKey},
+            ].sort((left, right) => left.bucket.localeCompare(right.bucket) || left.object_key.localeCompare(right.object_key)),
+        )
+        expect(await setup.mediaBucket.head(created.sourceKey)).not.toBeNull()
+
+        await reconcileImageUploads(setup.env, new Date(now.getTime() + 25 * 60 * 60 * 1_000))
+
+        expect(await setup.mediaBucket.head(created.sourceKey)).toBeNull()
+        for (const key of generatedKeys) {
+            expect(await setup.mediaBucket.head(key)).toBeNull()
+        }
+        expect(await queryAll<{state: string}>('SELECT state FROM image_cleanup_tasks', [], db)).toEqual([
+            {state: 'done'},
+            {state: 'done'},
+            {state: 'done'},
+            {state: 'done'},
+        ])
+    })
+
     it('fails a gallery task if its source disappears during processing', async () => {
         await seedUser({id: 'user-1'})
         await seedCharacter({id: 'character-1', userId: 'user-1'})

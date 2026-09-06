@@ -28,6 +28,7 @@ import {
 } from './url'
 
 const IMAGE_UPLOAD_DEADLINE_MS = 15 * 60 * 1_000
+const IMAGE_FAILED_GALLERY_RETRY_RETENTION_MS = 24 * 60 * 60 * 1_000
 const IMAGE_UPLOAD_RECONCILE_LIMIT = 50
 const IMAGE_TASK_LEASE_MS = 2 * 60 * 1_000
 const IMAGE_TASK_MAX_SHARP_ATTEMPTS = 3
@@ -384,20 +385,7 @@ export async function cancelImageUploadJob(db: D1Database, userId: string, jobId
                    )`,
             )
             .bind(nowText, jobId, userId),
-        db
-            .prepare(
-                `INSERT OR IGNORE INTO image_cleanup_tasks (
-                     id, job_id, bucket, object_key, state, not_before, created_at, updated_at
-                 )
-                 SELECT lower(hex(randomblob(16))), sources.job_id, 'source', sources.object_key,
-                        'pending', ?, ?, ?
-                 FROM image_upload_sources AS sources
-                 JOIN image_upload_jobs AS jobs ON jobs.id = sources.job_id
-                 WHERE sources.job_id = ?
-                   AND jobs.user_id = ?
-                   AND jobs.state = 'canceled'`,
-            )
-            .bind(notBefore, nowText, nowText, jobId, userId),
+        canceledSourceCleanupStatement(db, jobId, notBefore, nowText, userId),
     ])
     return (results as [D1Result, ...D1Result[]])[0].meta.changes > 0
 }
@@ -682,6 +670,7 @@ export async function reconcileImageUploads(env: Bindings, now = new Date()): Pr
         ).bind(nowText, nowText),
     ])
     await reportPendingImageTaskFailures(env)
+    await expireAbandonedCapacityJobs(env.DB, now)
 
     const cleanup = await env.DB.prepare(
         `SELECT id, bucket, object_key, attempts
@@ -707,6 +696,46 @@ export async function reconcileImageUploads(env: Bindings, now = new Date()): Pr
                 .bind(errorMessage(error), nowText, task.id)
                 .run()
         }
+    }
+}
+
+async function expireAbandonedCapacityJobs(db: D1Database, now: Date): Promise<void> {
+    const nowText = toSqlTimestamp(now)
+    const abandonedBefore = toSqlTimestamp(new Date(now.getTime() - IMAGE_FAILED_GALLERY_RETRY_RETENTION_MS))
+    const notBefore = toSqlTimestamp(new Date(now.getTime() + IMAGE_CLEANUP_GRACE_MS))
+    const jobs = await db
+        .prepare(
+            `SELECT id
+             FROM image_upload_jobs
+             WHERE state = 'failed'
+               AND error_code = 'gallery_capacity_exceeded'
+               AND updated_at <= ?
+             ORDER BY updated_at, id
+             LIMIT ?`,
+        )
+        .bind(abandonedBefore, IMAGE_UPLOAD_RECONCILE_LIMIT)
+        .all<{id: string}>()
+
+    for (const job of jobs.results) {
+        const tasks = await db
+            .prepare(`SELECT output_json FROM image_processing_tasks WHERE job_id = ? AND state = 'ready' AND output_json IS NOT NULL`)
+            .bind(job.id)
+            .all<{output_json: string}>()
+        const outputs = tasks.results.map((task) => JSON.parse(task.output_json) as GalleryTaskOutput)
+        await db.batch([
+            db
+                .prepare(
+                    `UPDATE image_upload_jobs
+                     SET state = 'canceled', error_code = NULL, error_message = NULL, updated_at = ?
+                     WHERE id = ?
+                       AND state = 'failed'
+                       AND error_code = 'gallery_capacity_exceeded'
+                       AND updated_at <= ?`,
+                )
+                .bind(nowText, job.id, abandonedBefore),
+            canceledSourceCleanupStatement(db, job.id, notBefore, nowText),
+            ...outputs.flatMap((output) => canceledGalleryOutputCleanupStatements(db, job.id, output, notBefore, nowText)),
+        ])
     }
 }
 
@@ -1266,18 +1295,54 @@ function galleryPublicVariant(baseUrl: string, job: JobRow, mediaId: string, out
 }
 
 async function queueGalleryOutputCleanup(db: D1Database, jobId: string, output: GalleryTaskOutput, now: Date): Promise<void> {
-    const keys = [output.imageObjectKey, output.previewObjectKey, output.blurObjectKey].filter((key): key is string => Boolean(key))
     const notBefore = toSqlTimestamp(new Date(now.getTime() + IMAGE_CLEANUP_GRACE_MS))
-    await db.batch(
-        keys.map((key) =>
-            db
-                .prepare(
-                    `INSERT OR IGNORE INTO image_cleanup_tasks (
+    const nowText = toSqlTimestamp(now)
+    await db.batch(canceledGalleryOutputCleanupStatements(db, jobId, output, notBefore, nowText))
+}
+
+function canceledSourceCleanupStatement(
+    db: D1Database,
+    jobId: string,
+    notBefore: string,
+    nowText: string,
+    userId?: string,
+): D1PreparedStatement {
+    return db
+        .prepare(
+            `INSERT OR IGNORE INTO image_cleanup_tasks (
+                 id, job_id, bucket, object_key, state, not_before, created_at, updated_at
+             )
+             SELECT lower(hex(randomblob(16))), sources.job_id, 'source', sources.object_key,
+                    'pending', ?, ?, ?
+             FROM image_upload_sources AS sources
+             JOIN image_upload_jobs AS jobs ON jobs.id = sources.job_id
+             WHERE sources.job_id = ?
+               AND jobs.state = 'canceled'
+               AND (? IS NULL OR jobs.user_id = ?)`,
+        )
+        .bind(notBefore, nowText, nowText, jobId, userId ?? null, userId ?? null)
+}
+
+function canceledGalleryOutputCleanupStatements(
+    db: D1Database,
+    jobId: string,
+    output: GalleryTaskOutput,
+    notBefore: string,
+    nowText: string,
+): D1PreparedStatement[] {
+    const keys = [output.imageObjectKey, output.previewObjectKey, output.blurObjectKey].filter((key): key is string => Boolean(key))
+    return keys.map((key) =>
+        db
+            .prepare(
+                `INSERT OR IGNORE INTO image_cleanup_tasks (
                      id, job_id, bucket, object_key, state, not_before, created_at, updated_at
-                 ) VALUES (?, ?, 'media', ?, 'pending', ?, ?, ?)`,
-                )
-                .bind(crypto.randomUUID(), jobId, key, notBefore, toSqlTimestamp(now), toSqlTimestamp(now)),
-        ),
+                 )
+                 SELECT ?, ?, 'media', ?, 'pending', ?, ?, ?
+                 WHERE EXISTS (
+                     SELECT 1 FROM image_upload_jobs WHERE id = ? AND state = 'canceled'
+                 )`,
+            )
+            .bind(crypto.randomUUID(), jobId, key, notBefore, nowText, nowText, jobId),
     )
 }
 
