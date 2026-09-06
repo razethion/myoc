@@ -137,6 +137,23 @@ describe('generated recent media reader', () => {
         })
     })
 
+    it('continues paging through the D1 fallback', async () => {
+        await seedFallbackMedia()
+        const env = readerEnvironment(createMockR2Bucket())
+
+        const first = await getGeneratedRecentMediaPage(env, {limit: 1, showNsfw: true, showUnapproved: true})
+        const second = await getGeneratedRecentMediaPage(env, {
+            cursor: first.nextCursor,
+            limit: 1,
+            showNsfw: true,
+            showUnapproved: true,
+        })
+
+        expect(first.items.map((item) => item.id)).toEqual(['nsfw-only'])
+        expect(first.nextCursor).not.toBeNull()
+        expect(second.items.map((item) => item.id)).toEqual(['safe-pending'])
+    })
+
     it('bounds the D1 fallback when excluded media fills its scan budget', async () => {
         await seedUser({id: 'bounded-user'})
         await seedCharacter({id: 'bounded-character', userId: 'bounded-user'})
@@ -172,7 +189,16 @@ describe('generated recent media reader', () => {
         })
 
         expect(page.items).toEqual([])
-        expect(page.nextCursor).toBeNull()
+        expect(page.nextCursor).not.toBeNull()
+
+        const continued = await getGeneratedRecentMediaPage(readerEnvironment(createMockR2Bucket()), {
+            cursor: page.nextCursor,
+            limit: 1,
+            showNsfw: false,
+            showUnapproved: false,
+        })
+
+        expect(continued.items.map((item) => item.id)).toEqual(['eligible-after-scan-budget'])
     })
 
     it('reports an expired feed when a requested generation is not retained', async () => {

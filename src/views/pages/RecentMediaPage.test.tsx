@@ -104,6 +104,14 @@ describe('RecentMediaPage', () => {
         expect(html).toContain('Load more')
     })
 
+    it('keeps fallback pagination available', () => {
+        const html = renderRecentMediaPage({page: recentPage({nextCursor: 'signed-fallback-cursor'})})
+
+        expect(html).toContain('data-has-more="true"')
+        expect(html).toContain('data-next-cursor="signed-fallback-cursor"')
+        expect(html).toContain('Load more')
+    })
+
     it('renders media links, dimensions, and image and fallback credit avatars', () => {
         const item = mediaItem('solo', undefined, {
             height: 600,

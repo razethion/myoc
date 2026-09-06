@@ -13,12 +13,22 @@ import {type RecentFeedPointer, type RecentFeedRoot, RecentFeedRootSchema, type 
 import {getRecentFeedPointer} from './publisher'
 import {RecentFeedTreeError, readRecentFeedTreeItems} from './tree'
 
-const RecentFeedCursorPayloadSchema = z.object({
+const GeneratedRecentFeedCursorPayloadSchema = z.object({
     version: z.literal(1),
     generation: z.string().min(1).max(128),
     variant: z.enum(RECENT_FEED_VARIANTS),
     position: z.number().int().nonnegative(),
 })
+const FallbackRecentFeedCursorPayloadSchema = z.object({
+    version: z.literal(2),
+    variant: z.enum(RECENT_FEED_VARIANTS),
+    createdAt: z.string().min(1).max(64),
+    id: z.string().min(1).max(128),
+})
+const RecentFeedCursorPayloadSchema = z.discriminatedUnion('version', [
+    GeneratedRecentFeedCursorPayloadSchema,
+    FallbackRecentFeedCursorPayloadSchema,
+])
 const RECENT_MEDIA_FALLBACK_MAX_BATCHES = 10
 
 type RecentFeedReaderEnv = {
@@ -34,6 +44,7 @@ type RecentFeedReaderEnv = {
 }
 
 type RecentFeedCursorPayload = z.infer<typeof RecentFeedCursorPayloadSchema>
+type FallbackRecentFeedCursorPayload = z.infer<typeof FallbackRecentFeedCursorPayloadSchema>
 
 export class InvalidRecentFeedCursorError extends Error {
     constructor() {
@@ -87,6 +98,10 @@ export async function getGeneratedRecentMediaPage(
     const request = await resolveRecentFeedRequest(options, config.cursorSecret)
     const limit = normalizeRecentMediaLimit(options.limit)
 
+    if (request.cursor?.version === 2) {
+        return await getRecentMediaFallbackPage(env, options, limit, request.cursor, config.cursorSecret)
+    }
+
     try {
         const loaded = await loadRecentFeed(env, request)
         const collected = await collectRecentMedia(env, request, loaded, limit)
@@ -112,7 +127,7 @@ export async function getGeneratedRecentMediaPage(
             throw error
         }
 
-        return await getRecentMediaFallbackPage(env, options, limit)
+        return await getRecentMediaFallbackPage(env, options, limit, null, config.cursorSecret)
     }
 }
 
@@ -130,28 +145,50 @@ function isRecoverableGeneratedFeedError(error: unknown): boolean {
     )
 }
 
-async function getRecentMediaFallbackPage(env: RecentFeedReaderEnv, options: RecentMediaOptions, limit: number): Promise<RecentMediaPage> {
+async function getRecentMediaFallbackPage(
+    env: RecentFeedReaderEnv,
+    options: RecentMediaOptions,
+    limit: number,
+    fallbackCursor: FallbackRecentFeedCursorPayload | null,
+    cursorSecret: string,
+): Promise<RecentMediaPage> {
     const showNsfw = options.showNsfw === true
     const showUnapproved = options.showUnapproved !== false
+    const variant = recentFeedVariant(showNsfw, showUnapproved)
     const items: RecentMediaItem[] = []
     const batchSize = Math.max(limit * 2, 30)
-    let cursor: RecentMediaSourceCursor | null = null
+    let cursor: RecentMediaSourceCursor | null = fallbackCursor ? {createdAt: fallbackCursor.createdAt, id: fallbackCursor.id} : null
     let batchCount = 0
+    let hasMore = false
 
     while (items.length < limit && batchCount < RECENT_MEDIA_FALLBACK_MAX_BATCHES) {
         const rows = await queryRecentMediaSourceRowsPage(env.DB, cursor, batchSize)
         batchCount += 1
-        items.push(...recentMediaItemsFromRows(rows, env.MEDIA_PUBLIC_BASE_URL, showNsfw, showUnapproved))
+        hasMore = false
 
-        const lastRow = rows.at(-1)
-        if (rows.length < batchSize || !lastRow) break
+        for (const [index, row] of rows.entries()) {
+            cursor = {createdAt: row.created_at, id: row.id}
+            items.push(...recentMediaItemsFromRows([row], env.MEDIA_PUBLIC_BASE_URL, showNsfw, showUnapproved))
 
-        cursor = {createdAt: lastRow.created_at, id: lastRow.id}
+            if (items.length === limit) {
+                hasMore = index < rows.length - 1 || rows.length === batchSize
+                break
+            }
+        }
+
+        if (items.length === limit) break
+        if (rows.length < batchSize) break
+        hasMore = true
     }
 
+    const nextCursor =
+        hasMore && cursor
+            ? await encodeRecentFeedCursor({version: 2, variant, createdAt: cursor.createdAt, id: cursor.id}, cursorSecret)
+            : null
+
     return {
-        items: items.slice(0, limit),
-        nextCursor: null,
+        items,
+        nextCursor,
         nextPosition: null,
         publicRootUrl: null,
         generation: null,
@@ -169,14 +206,17 @@ async function resolveRecentFeedRequest(
     if (cursor && cursor.variant !== variant) {
         throw new InvalidRecentFeedCursorError()
     }
-    if (cursor && options.generation && cursor.generation !== options.generation) {
+    if (cursor?.version === 2 && options.generation) {
+        throw new InvalidRecentFeedCursorError()
+    }
+    if (cursor?.version === 1 && options.generation && cursor.generation !== options.generation) {
         throw new InvalidRecentFeedCursorError()
     }
 
     return {
         cursor,
-        generation: cursor?.generation ?? options.generation?.trim() ?? null,
-        position: cursor?.position ?? 0,
+        generation: cursor?.version === 1 ? cursor.generation : (options.generation?.trim() ?? null),
+        position: cursor?.version === 1 ? cursor.position : 0,
         variant,
     }
 }

@@ -340,6 +340,7 @@ function RecentMediaScript() {
             directPosition: readRecentDirectPosition(recentFeed?.dataset.nextPosition),
             directRoot: null,
             directRootUrl: readRecentRootUrl(recentFeed?.dataset.publicRootUrl),
+            pageCursor: readRecentCursor(recentFeed?.dataset.nextCursor),
             entries: [],
             expandGroupsByDefault: readRecentStackDefault(),
             generation: recentFeed?.dataset.generation || '',
@@ -372,6 +373,10 @@ function RecentMediaScript() {
             if (typeof value !== 'number' && (typeof value !== 'string' || !/^\\d+$/.test(value))) return null;
             const position = Number(value);
             return Number.isSafeInteger(position) && position >= 0 ? position : null;
+        }
+
+        function readRecentCursor(value) {
+            return typeof value === 'string' && value.length > 0 && value.length <= 512 ? value : '';
         }
 
         function readRecentRootUrl(value) {
@@ -1315,12 +1320,14 @@ function RecentMediaScript() {
             });
         }
 
-        async function requestRecentMediaPage(showNsfw, showUnapproved) {
+        async function requestRecentMediaPage(showNsfw, showUnapproved, cursor = '', generation = '') {
             const params = new URLSearchParams({
                 limit: '24',
                 nsfw: showNsfw ? 'true' : 'false',
                 unapproved: showUnapproved ? 'true' : 'false',
             });
+            if (cursor) params.set('cursor', cursor);
+            if (generation) params.set('generation', generation);
             const response = await fetch('/api/recent-media?' + params.toString(), {headers: {accept: 'application/json'}});
             const body = await response.json().catch(() => ({}));
 
@@ -1363,11 +1370,13 @@ function RecentMediaScript() {
             const hasDirectPage = Boolean(recentState.generation && rootUrl && position !== null);
             recentState.directRootUrl = hasDirectPage ? rootUrl : '';
             recentState.directPosition = hasDirectPage ? position : null;
-            recentState.hasMore = hasDirectPage;
+            recentState.pageCursor = hasDirectPage ? '' : readRecentCursor(body.nextCursor);
+            recentState.hasMore = hasDirectPage || Boolean(recentState.pageCursor);
 
             if (recentFeed) {
                 recentFeed.dataset.generation = recentState.generation;
                 recentFeed.dataset.nextPosition = recentState.directPosition === null ? '' : String(recentState.directPosition);
+                recentFeed.dataset.nextCursor = recentState.pageCursor;
                 recentFeed.dataset.publicRootUrl = recentState.directRootUrl;
             }
         }
@@ -1384,6 +1393,22 @@ function RecentMediaScript() {
                     ? ''
                     : String(recentState.directPosition);
             }
+            return renderedLayoutChanged;
+        }
+
+        async function appendRecentApiPage() {
+            if (!recentState.pageCursor) throw new Error('Could not load uploads.');
+            const body = await requestRecentMediaPage(
+                recentState.showNsfw,
+                recentState.showUnapproved,
+                recentState.pageCursor,
+                recentState.generation,
+            );
+            const renderedLayoutChanged = appendRecentItems(body.items);
+            recentState.pageCursor = readRecentCursor(body.nextCursor);
+            recentState.hasMore = Boolean(recentState.pageCursor);
+
+            if (recentFeed) recentFeed.dataset.nextCursor = recentState.pageCursor;
             return renderedLayoutChanged;
         }
 
@@ -1515,14 +1540,15 @@ function RecentMediaScript() {
 
         async function loadRecentMedia() {
             if (recentState.inFlight || !recentState.hasMore) return;
-            if (!recentState.directRootUrl || recentState.directPosition === null) return;
+            const hasDirectPage = Boolean(recentState.directRootUrl && recentState.directPosition !== null);
+            if (!hasDirectPage && !recentState.pageCursor) return;
             let loaded = false;
             setRecentLoading(true);
             recentError?.classList.add('hidden');
 
             try {
-                await verifyRecentDirectState();
-                const renderedLayoutChanged = await appendRecentDirectPage();
+                if (hasDirectPage) await verifyRecentDirectState();
+                const renderedLayoutChanged = hasDirectPage ? await appendRecentDirectPage() : await appendRecentApiPage();
                 commitRecentPendingRows(!recentState.hasMore);
                 if (renderedLayoutChanged) reconcileRecentRows();
                 updateRecentEndState();
@@ -1699,9 +1725,18 @@ export function RecentMediaUnavailablePage({
     )
 }
 
+function recentMediaPageHasDirectSource(page: RecentMediaPageData): boolean {
+    return Boolean(page.generation && page.publicRootUrl && page.nextPosition !== null)
+}
+
+function recentMediaPageHasMore(page: RecentMediaPageData): boolean {
+    return recentMediaPageHasDirectSource(page) || page.nextCursor !== null
+}
+
 export function RecentMediaPage({currentUser, guestInitial, mediaBaseUrl, page, showNsfw, showUnapproved}: RecentMediaPageProps) {
     const rows = chunkRecentMediaGroups(groupSequentialRecentMediaItems(page.items))
-    const hasMore = Boolean(page.generation && page.publicRootUrl && page.nextPosition !== null)
+    const hasDirectPage = recentMediaPageHasDirectSource(page)
+    const hasMore = recentMediaPageHasMore(page)
 
     return (
         <BaseLayout title="Recently uploaded media | MyOC">
@@ -1732,6 +1767,7 @@ export function RecentMediaPage({currentUser, guestInitial, mediaBaseUrl, page, 
                     data-has-more={hasMore ? 'true' : 'false'}
                     data-generation={page.generation ?? ''}
                     data-media-origin={mediaBaseUrl}
+                    data-next-cursor={hasDirectPage ? '' : (page.nextCursor ?? '')}
                     data-next-position={page.nextPosition ?? ''}
                     data-public-root-url={page.publicRootUrl ?? ''}
                     data-csrf-token={currentUser?.csrfToken ?? ''}
