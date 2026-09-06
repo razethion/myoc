@@ -11,6 +11,10 @@ let server
 before(async () => {
     process.env.PORT = '0'
     process.env.PREVIEW_PROCESSOR_TOKEN = processorToken
+    process.env.REQUEST_BODY_MAX_BYTES = '64'
+    process.env.BLUR_SOURCE_MAX_BYTES = String(32 * 1024)
+    process.env.SOURCE_IMAGE_MAX_BYTES = String(32 * 1024)
+    process.env.SQUARE_SOURCE_MAX_BYTES = String(32 * 1024)
 
     const serverModule = await import('./server.mjs')
     server = serverModule.server
@@ -27,6 +31,10 @@ before(async () => {
 after(async () => {
     delete process.env.PORT
     delete process.env.PREVIEW_PROCESSOR_TOKEN
+    delete process.env.REQUEST_BODY_MAX_BYTES
+    delete process.env.BLUR_SOURCE_MAX_BYTES
+    delete process.env.SOURCE_IMAGE_MAX_BYTES
+    delete process.env.SQUARE_SOURCE_MAX_BYTES
 
     if (server?.listening) {
         await new Promise((resolve, reject) => {
@@ -66,6 +74,17 @@ test('requires the processor token for blur requests', async () => {
     assert.deepEqual(await response.json(), {error: 'Unauthorized'})
 })
 
+test('rejects a processor token with extra text', async () => {
+    const response = await fetch(`${baseUrl}/images/blur`, {
+        body: new Uint8Array([1]),
+        headers: {authorization: `Bearer ${processorToken}-extra`},
+        method: 'POST',
+    })
+
+    assert.equal(response.status, 401)
+    assert.deepEqual(await response.json(), {error: 'Unauthorized'})
+})
+
 test('rejects invalid preview request JSON', async () => {
     const response = await fetch(`${baseUrl}/images/preview`, {
         body: '{',
@@ -79,6 +98,51 @@ test('rejects invalid preview request JSON', async () => {
     assert.equal(response.status, 400)
     assert.deepEqual(await response.json(), {error: 'Invalid JSON body'})
 })
+
+for (const imageUrl of ['http://m.myoc.art/image.png', 'file:///etc/passwd', 'not-a-url']) {
+    test(`rejects unsafe preview URL ${imageUrl}`, async () => {
+        const response = await fetch(`${baseUrl}/images/preview`, {
+            body: JSON.stringify({imageUrl}),
+            headers: {
+                authorization: `Bearer ${processorToken}`,
+                'content-type': 'application/json',
+            },
+            method: 'POST',
+        })
+
+        assert.equal(response.status, 400)
+        assert.deepEqual(await response.json(), {error: 'imageUrl must be a valid HTTPS URL'})
+    })
+}
+
+test('returns 413 for an oversized preview request', async () => {
+    const response = await fetch(`${baseUrl}/images/preview`, {
+        body: JSON.stringify({imageUrl: 'https://m.myoc.art/image.png', padding: 'x'.repeat(64)}),
+        headers: {
+            authorization: `Bearer ${processorToken}`,
+            'content-type': 'application/json',
+        },
+        method: 'POST',
+    })
+
+    assert.equal(response.status, 413)
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+    assert.deepEqual(await response.json(), {error: 'Request body is too large'})
+})
+
+for (const endpoint of ['blur', 'square', 'gallery']) {
+    test(`returns 413 for an oversized ${endpoint} request`, async () => {
+        const response = await fetch(`${baseUrl}/images/${endpoint}`, {
+            body: new Uint8Array(32 * 1024 + 1),
+            headers: {authorization: `Bearer ${processorToken}`},
+            method: 'POST',
+        })
+
+        assert.equal(response.status, 413)
+        assert.equal(response.headers.get('cache-control'), 'no-store')
+        assert.deepEqual(await response.json(), {error: 'Request body is too large'})
+    })
+}
 
 test('creates a bounded AVIF blur through the HTTP interface', async () => {
     /** @type {Buffer} */

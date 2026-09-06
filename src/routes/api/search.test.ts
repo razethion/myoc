@@ -122,9 +122,9 @@ describe('GET /api/search', () => {
 
     it('normalizes long character searches before querying D1', async () => {
         const longQuery = 'Razeth '.repeat(20)
-        const normalizedQuery = longQuery.replace(/\s+/g, ' ').trim().slice(0, 80)
+        const expectedQuery = 'Razeth Razeth Razeth Razeth Razeth Razeth Razeth Razeth Razeth Razeth Razeth Raz'
         await seedUser({id: 'owner-1', username: 'Alice'})
-        await seedCharacter({id: 'character-1', userId: 'owner-1', name: normalizedQuery, profileImageKey: 'profile-key'})
+        await seedCharacter({id: 'character-1', userId: 'owner-1', name: expectedQuery, profileImageKey: 'profile-key'})
 
         const response = await requestSearch(`/search?type=characters&q=${encodeURIComponent(longQuery)}`)
         const body = (await response.json()) as {
@@ -135,13 +135,13 @@ describe('GET /api/search', () => {
         }
 
         expect(response.status).toBe(200)
-        expect(body.query).toBe(normalizedQuery)
+        expect(body.query).toBe(expectedQuery)
         expect(body.wasTruncated).toBe(true)
         expect(body.total).toBe(1)
         expect(body.items).toEqual([
             expect.objectContaining({
                 id: 'character-1',
-                name: normalizedQuery,
+                name: expectedQuery,
                 ownerUsername: 'Alice',
                 profileImageUrl: `${mediaPublicBaseUrl}/characters/owner-1/character-1/profile/profile-key.webp`,
             }),
@@ -304,12 +304,14 @@ describe('GET /api/search/size-chart-characters/by-id', () => {
     it('limits ID lookups to the first 99 normalized IDs', async () => {
         const ids = Array.from({length: 100}, (_, index) => `character-${index}`)
         await seedUser({id: 'owner-id', username: 'owner'})
+        await seedCharacter({id: 'character-0', userId: 'owner-id', name: 'Included Character'})
         await seedCharacter({id: 'character-99', userId: 'owner-id', name: 'Excluded Character'})
 
         const response = await requestSearch(`/search/size-chart-characters/by-id?ids=${ids.join(',')}`)
 
         expect(response.status).toBe(200)
-        expect(await response.json()).toEqual({items: []})
+        const body = (await response.json()) as {items: Array<{id: string}>}
+        expect(body.items.map((item) => item.id)).toEqual(['character-0'])
     })
 
     it('handles 99 packed IDs without exceeding the D1 parameter limit', async () => {

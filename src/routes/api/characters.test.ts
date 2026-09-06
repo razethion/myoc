@@ -1,8 +1,10 @@
 import {env} from 'cloudflare:workers'
 import {describe, expect, it, vi} from 'vitest'
 import {createCsrfToken} from '../../lib/auth/session'
+import {STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
 import {PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/profileImage'
 import {thumbnailOriginalObjectKey} from '../../lib/media/thumbnailSources'
+import {characterMediaImageObjectKey} from '../../lib/media/url'
 import {
     queryAll,
     queryOne,
@@ -800,6 +802,32 @@ describe('POST /characters/folders/tree', () => {
         })
     })
 
+    it('returns 400 for JSON null', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser(sessionToken)
+
+        const response = await postFolderTree(null, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Invalid JSON body'})
+    })
+
+    it('returns 413 for an oversized JSON body', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser(sessionToken)
+
+        const response = await postFolderTree({padding: 'x'.repeat(STANDARD_JSON_REQUEST_MAX_BYTES)}, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(413)
+        expect(await response.json()).toEqual({error: 'Request body is too large'})
+    })
+
     it('returns 400 when folder tree items are not an array', async () => {
         const sessionToken = 'session-token'
         await seedCurrentUser(sessionToken)
@@ -1301,6 +1329,19 @@ describe('POST /characters/folders', () => {
         expect(await response.json()).toEqual({
             error: 'Invalid JSON body',
         })
+    })
+
+    it('returns 400 for JSON null', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser(sessionToken)
+
+        const response = await postFolder(null, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Invalid JSON body'})
     })
 
     it('returns 400 when the folder name is missing', async () => {
@@ -2030,6 +2071,19 @@ describe('POST /characters', () => {
         expect(await response.json()).toEqual({
             error: 'Invalid JSON body',
         })
+    })
+
+    it('returns 400 for JSON null', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser(sessionToken)
+
+        const response = await postCharacter(null, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Invalid JSON body'})
     })
 
     it('returns 400 when the character name is missing', async () => {
@@ -3546,6 +3600,36 @@ describe('PUT /characters/:id/height-chart', () => {
 })
 
 describe('character media uploads', () => {
+    it('returns 400 for a JSON null gallery completion body', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+
+        const response = await completeChunkedMedia(character.id, null, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Invalid JSON body'})
+    })
+
+    it('rejects an oversized gallery completion body', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+
+        const response = await completeChunkedMedia(character.id, {padding: 'x'.repeat(STANDARD_JSON_REQUEST_MAX_BYTES)}, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(413)
+        expect(await response.json()).toEqual({error: 'Request body is too large'})
+    })
+
     it('queues a completed gallery source when asynchronous uploads are enabled', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
@@ -4852,6 +4936,83 @@ describe('character media uploads', () => {
         expect(await queryOne<{id: string}>('SELECT id FROM character_media WHERE id = ?', ['media-id'], db)).toBeNull()
     })
 
+    it('rejects a gallery insert if the final media slot is taken during upload completion', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        await seedMediaRecords(499)
+        const csrfToken = await createCsrfToken(sessionToken)
+        const initResponse = await initChunkedMedia(character.id, {ratings: [{rating: 'sfw', contentType: 'image/png'}]}, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+        const initBody = (await initResponse.json()) as ChunkedSfwInitBody
+        const uploadedPart = (await (
+            await putChunkedMediaPart(
+                character.id,
+                initBody.mediaId,
+                'sfw',
+                initBody.uploads.sfw.uploadId,
+                1,
+                initBody.uploads.sfw.imageKey,
+                createPngFile(800, 600),
+                db,
+                {mediaBucket, sessionToken, csrfToken},
+            )
+        ).json()) as R2UploadedPart
+        const imageObjectKey = characterMediaImageObjectKey(
+            currentUserRecord.id,
+            character.id,
+            initBody.mediaId,
+            initBody.uploads.sfw.imageKey,
+            'sfw',
+            'image/png',
+        )
+        const upload = mediaBucket.resumeMultipartUpload(imageObjectKey, initBody.uploads.sfw.uploadId)
+        vi.mocked(mediaBucket.resumeMultipartUpload).mockReturnValueOnce({
+            ...upload,
+            complete: vi.fn(async (parts) => {
+                await db
+                    .prepare(
+                        `INSERT INTO character_media (
+                             id, user_id, character_id, sfw_image_key, sfw_content_type, sfw_width, sfw_height, sfw_byte_size
+                         ) VALUES ('competing-media', ?, ?, 'competing-sfw', 'image/png', 800, 600, 1024)`,
+                    )
+                    .bind(currentUserRecord.id, character.id)
+                    .run()
+                return await upload.complete(parts)
+            }),
+        } as R2MultipartUpload)
+
+        const response = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/png',
+                    parts: [uploadedPart],
+                },
+                sfwPreview: createPreviewPayload(800, 600),
+            },
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+
+        expect(response.status).toBe(409)
+        expect(await response.json()).toEqual({error: 'Characters can contain 500 gallery images or fewer'})
+        expect(
+            await queryOne<{count: number}>('SELECT COUNT(*) AS count FROM character_media WHERE character_id = ?', [character.id], db),
+        ).toEqual({count: 500})
+        expect(await queryOne<{id: string}>('SELECT id FROM character_media WHERE id = ?', [initBody.mediaId], db)).toBeNull()
+        const losingMediaPrefix = imageObjectKey.slice(0, imageObjectKey.indexOf('/sfw/') + 1)
+        expect((await mediaBucket.list({prefix: losingMediaPrefix})).objects).toEqual([])
+    }, 12_000)
+
     it('generates and stores blurred variants for NSFW gallery previews', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
@@ -5456,6 +5617,37 @@ describe('character media uploads', () => {
         ).toEqual({status: 'failed'})
     })
 
+    it('uses the default Toyhou.se import error for JSON null', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord()
+        await seedToyhouseImport()
+
+        const response = await failToyhouseImportItem('toyhouse-import-item', null, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ok: true})
+        expect(
+            await queryOne<{error: string}>('SELECT error FROM toyhouse_import_items WHERE id = ?', ['toyhouse-import-item'], db),
+        ).toEqual({error: 'Import item failed'})
+    })
+
+    it('rejects an oversized Toyhou.se import failure body', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser(sessionToken)
+
+        const response = await failToyhouseImportItem('toyhouse-import-item', {padding: 'x'.repeat(STANDARD_JSON_REQUEST_MAX_BYTES)}, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(413)
+        expect(await response.json()).toEqual({error: 'Request body is too large'})
+    })
+
     it('completes Toyhou.se import items through chunked gallery media upload', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
@@ -5582,6 +5774,78 @@ describe('character media uploads', () => {
             await queryOne<{status: string}>('SELECT status FROM toyhouse_import_jobs WHERE id = ?', ['toyhouse-import-job'], db),
         ).toEqual({status: 'complete'})
     })
+
+    it('rejects a Toyhou.se media insert if the final slot is taken during completion', async () => {
+        const {sessionToken, mediaBucket, character, csrfToken, initBody} = await createChunkedSfwUploadTestContext()
+        await seedToyhouseImport()
+        await seedMediaRecords(499)
+        const partResponse = await putChunkedMediaPart(
+            character.id,
+            initBody.mediaId,
+            'sfw',
+            initBody.uploads.sfw.uploadId,
+            1,
+            initBody.uploads.sfw.imageKey,
+            createPngFile(800, 600),
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+        const uploadedPart = (await partResponse.json()) as R2UploadedPart
+        const imageObjectKey = characterMediaImageObjectKey(
+            currentUserRecord.id,
+            character.id,
+            initBody.mediaId,
+            initBody.uploads.sfw.imageKey,
+            'sfw',
+            'image/png',
+        )
+        const upload = mediaBucket.resumeMultipartUpload(imageObjectKey, initBody.uploads.sfw.uploadId)
+        vi.mocked(mediaBucket.resumeMultipartUpload).mockReturnValueOnce({
+            ...upload,
+            complete: vi.fn(async (parts) => {
+                await db
+                    .prepare(
+                        `INSERT INTO character_media (
+                             id, user_id, character_id, sfw_image_key, sfw_content_type, sfw_width, sfw_height, sfw_byte_size
+                         ) VALUES ('competing-media', ?, ?, 'competing-sfw', 'image/png', 800, 600, 1024)`,
+                    )
+                    .bind(currentUserRecord.id, character.id)
+                    .run()
+                return await upload.complete(parts)
+            }),
+        } as R2MultipartUpload)
+
+        const response = await completeToyhouseImportItem(
+            'toyhouse-import-item',
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/png',
+                    parts: [uploadedPart],
+                },
+                sfwPreview: createPreviewPayload(800, 600),
+            },
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+
+        expect(response.status).toBe(409)
+        expect(await response.json()).toEqual({error: 'Characters can contain 500 gallery images or fewer'})
+        expect(
+            await queryOne<{status: string; media_id: string | null}>(
+                'SELECT status, media_id FROM toyhouse_import_items WHERE id = ?',
+                ['toyhouse-import-item'],
+                db,
+            ),
+        ).toEqual({status: 'failed', media_id: null})
+        expect(
+            await queryOne<{count: number}>('SELECT COUNT(*) AS count FROM character_media WHERE character_id = ?', [character.id], db),
+        ).toEqual({count: 500})
+        const losingMediaPrefix = imageObjectKey.slice(0, imageObjectKey.indexOf('/sfw/') + 1)
+        expect((await mediaBucket.list({prefix: losingMediaPrefix})).objects).toEqual([])
+    }, 12_000)
 
     it('fails a Toyhou.se import item and removes uploaded objects when its transaction fails', async () => {
         const {sessionToken, mediaBucket, character, csrfToken, initBody} = await createChunkedSfwUploadTestContext()
@@ -6963,6 +7227,74 @@ describe('DELETE /characters/folders/:id', () => {
 })
 
 describe('DELETE /characters/:id', () => {
+    it('requires a confirmation when the request has no content type', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser(sessionToken)
+
+        const response = await apiRoutes.request(
+            'https://example.com/characters/character-id',
+            {
+                method: 'DELETE',
+                headers: {
+                    cookie: `myoc_session=${sessionToken}`,
+                    'x-csrf-token': await createCsrfToken(sessionToken),
+                },
+            },
+            requestEnv(db),
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Character name confirmation is required'})
+    })
+
+    it('parses form deletion confirmations', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord()
+        const body = new FormData()
+        body.set('confirmName', 'Wrong name')
+        body.set('permanent', 'true')
+        const response = await apiRoutes.request(
+            'https://example.com/characters/character-id',
+            {
+                method: 'DELETE',
+                body,
+                headers: createRequestHeaders(body, {
+                    sessionToken,
+                    csrfToken: await createCsrfToken(sessionToken),
+                }),
+            },
+            requestEnv(db),
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Character name confirmation does not match'})
+    })
+
+    it('rejects an oversized form deletion body', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser(sessionToken)
+        const body = new URLSearchParams({confirmName: 'Vyn', padding: 'x'.repeat(STANDARD_JSON_REQUEST_MAX_BYTES), permanent: 'true'})
+        const response = await apiRoutes.request(
+            'https://example.com/characters/character-id',
+            {
+                method: 'DELETE',
+                body,
+                headers: {
+                    ...createRequestHeaders(body, {
+                        sessionToken,
+                        csrfToken: await createCsrfToken(sessionToken),
+                    }),
+                    'content-type': 'application/x-www-form-urlencoded',
+                },
+            },
+            requestEnv(db),
+        )
+
+        expect(response.status).toBe(413)
+        expect(await response.json()).toEqual({error: 'Request body is too large'})
+    })
+
     it('returns 401 when the user is not logged in', async () => {
         const response = await deleteCharacter(
             'character-id',

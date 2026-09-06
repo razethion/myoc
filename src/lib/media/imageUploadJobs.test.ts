@@ -1,6 +1,7 @@
 import {describe, expect, it, vi} from 'vitest'
 import {queryAll, queryOne, seedCharacter, seedFolder, seedUser, useTestDatabase, withFailingTrigger} from '../../test/d1'
 import {createAvifBytes, createPngFile} from '../../test/imageFixtures'
+import {createMockKVNamespace} from '../../test/mockKV'
 import {createMockR2Bucket} from '../../test/mockR2'
 import type {Bindings} from '../../types/bindings'
 import type {ImageProcessingFailureMessage, ImageUploadProcessingMessage} from '../../types/imageProcessing'
@@ -16,6 +17,7 @@ import {
     reconcileImageUploads,
     retryImageUploadJob,
 } from './imageUploadJobs'
+import {cleanupStaleR2Media} from './r2Cleanup'
 import {thumbnailOriginalObjectKey} from './thumbnailSources'
 import {characterMediaImageObjectKey} from './url'
 
@@ -75,6 +77,7 @@ function createEnv(
     const sourceBucket = mediaBucket
     const env = {
         DB: db,
+        CACHE: createMockKVNamespace(),
         IMAGE_PROCESSING_QUEUE: processing.queue,
         IMAGE_PROCESSING_DLQ: deadLetter.queue,
         MEDIA_BUCKET: mediaBucket,
@@ -155,6 +158,23 @@ async function createSingleGalleryJob(setup: ReturnType<typeof createEnv>, ratin
     return {job, queued: firstQueuedMessage(setup.lanes), sourceKey: objectKey}
 }
 
+async function seedGalleryMedia(count: number): Promise<void> {
+    const insert = db.prepare(
+        `INSERT INTO character_media (
+             id, user_id, character_id, sfw_image_key, sfw_content_type, sfw_width, sfw_height, sfw_byte_size
+         ) VALUES (?, 'user-1', 'character-1', ?, 'image/png', 100, 80, 33)`,
+    )
+
+    for (let offset = 0; offset < count; offset += 100) {
+        await db.batch(
+            Array.from({length: Math.min(100, count - offset)}, (_, index) => {
+                const id = `existing-media-${offset + index}`
+                return insert.bind(id, `${id}-sfw`)
+            }),
+        )
+    }
+}
+
 describe('image upload jobs', () => {
     it.each(['square', 'gallery'] as const)('rejects a %s job deleted during queue dispatch', async (kind) => {
         await seedUser({id: 'user-1'})
@@ -176,6 +196,7 @@ describe('image upload jobs', () => {
                       now,
                   })
         await expect(create()).rejects.toThrow('Image upload job was not created')
+        expect((await setup.mediaBucket.list()).objects).toEqual([])
         expect(await getImageUploadBatchStatus(db, 'user-1', 'missing')).toEqual([])
     })
 
@@ -489,6 +510,26 @@ describe('image upload jobs', () => {
         expect(setup.container.fetch).not.toHaveBeenCalled()
         expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({state: 'canceled'})
         expect(await queryAll<{bucket: string}>('SELECT bucket FROM image_cleanup_tasks', [], db)).toEqual([{bucket: 'source'}])
+    })
+
+    it('does not cancel another user upload task', async () => {
+        await seedUser({id: 'user-1'})
+        await seedUser({id: 'user-2'})
+        const setup = createEnv()
+        const job = await createSquareImageUploadJob(setup.env, {
+            userId: 'user-1',
+            kind: 'user-profile',
+            targetId: 'user-1',
+            idempotencyKey: 'cross-account-cancel',
+            bytes: await pngBytes(),
+            now,
+        })
+
+        await expect(cancelImageUploadJob(db, 'user-2', job.id, now)).resolves.toBe(false)
+        await consumeQueued(setup.env, firstQueuedMessage(setup.lanes))
+
+        expect(setup.container.fetch).toHaveBeenCalledOnce()
+        expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({state: 'ready'})
     })
 
     it('does not use a Sharp attempt when all containers are busy', async () => {
@@ -919,6 +960,129 @@ describe('image upload jobs', () => {
         expect(await getImageUploadStatus(db, 'user-1', invalid.job.id)).toMatchObject({state: 'failed', error: {code: 'source_invalid'}})
     })
 
+    it('fails a gallery job if the character reaches its media limit before publication', async () => {
+        await seedUser({id: 'user-1'})
+        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        const setup = createEnv()
+        const created = await createSingleGalleryJob(setup, 'nsfw')
+        await seedGalleryMedia(500)
+
+        const delivery = await consumeQueued(setup.env, created.queued)
+
+        expect(delivery.ack).toHaveBeenCalledOnce()
+        expect(delivery.retry).not.toHaveBeenCalled()
+        expect(await getImageUploadStatus(db, 'user-1', created.job.id)).toMatchObject({
+            state: 'failed',
+            error: {
+                code: 'gallery_capacity_exceeded',
+                message: 'Characters can contain 500 gallery images or fewer',
+            },
+        })
+        expect(
+            await queryOne<{count: number}>(
+                `SELECT COUNT(*) AS count FROM character_media WHERE user_id = 'user-1' AND character_id = 'character-1'`,
+                [],
+                db,
+            ),
+        ).toEqual({count: 500})
+        expect(await queryOne<{id: string}>(`SELECT id FROM character_media WHERE id = 'media-1'`, [], db)).toBeNull()
+        const task = await queryOne<{output_json: string}>(
+            `SELECT output_json FROM image_processing_tasks WHERE job_id = ? AND state = 'ready'`,
+            [created.job.id],
+            db,
+        )
+        const output = JSON.parse(task?.output_json ?? '{}') as {
+            imageObjectKey: string
+            previewObjectKey: string
+            blurObjectKey: string
+        }
+        await cleanupStaleR2Media(setup.env, new Date('2026-09-06T12:00:00Z'))
+        expect(await setup.mediaBucket.head(output.imageObjectKey)).not.toBeNull()
+        expect(await setup.mediaBucket.head(output.previewObjectKey)).not.toBeNull()
+        expect(await setup.mediaBucket.head(output.blurObjectKey)).not.toBeNull()
+        await db.prepare(`DELETE FROM character_media WHERE id = 'existing-media-0'`).run()
+        const retries = await Promise.allSettled([
+            retryImageUploadJob(setup.env, 'user-1', created.job.id, 'capacity-retry-a', now),
+            retryImageUploadJob(setup.env, 'user-1', created.job.id, 'capacity-retry-b', now),
+        ])
+        expect(retries.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected'])
+
+        for (const result of retries) {
+            if (result.status === 'fulfilled') {
+                expect(result.value).toMatchObject({state: 'ready', error: null})
+            } else {
+                expect(result.reason).toBeInstanceOf(ImageUploadConflictError)
+            }
+        }
+
+        expect(
+            await queryOne<{count: number}>(
+                `SELECT COUNT(*) AS count FROM character_media WHERE user_id = 'user-1' AND character_id = 'character-1'`,
+                [],
+                db,
+            ),
+        ).toEqual({count: 500})
+        expect(await queryOne<{id: string}>(`SELECT id FROM character_media WHERE id = 'media-1'`, [], db)).toEqual({id: 'media-1'})
+    })
+
+    it('expires and cleans an abandoned gallery capacity failure', async () => {
+        await seedUser({id: 'user-1'})
+        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        const setup = createEnv()
+        const created = await createSingleGalleryJob(setup, 'nsfw')
+        await seedGalleryMedia(500)
+        await consumeQueued(setup.env, created.queued)
+        const task = await queryOne<{output_json: string}>(
+            `SELECT output_json FROM image_processing_tasks WHERE job_id = ? AND state = 'ready'`,
+            [created.job.id],
+            db,
+        )
+        const output = JSON.parse(task?.output_json ?? '{}') as {
+            imageObjectKey: string
+            previewObjectKey: string
+            blurObjectKey: string
+        }
+        const generatedKeys = [output.imageObjectKey, output.previewObjectKey, output.blurObjectKey]
+
+        await reconcileImageUploads(setup.env, new Date(now.getTime() + 24 * 60 * 60 * 1_000 - 1_000))
+
+        expect(await getImageUploadStatus(db, 'user-1', created.job.id)).toMatchObject({state: 'failed'})
+        expect(await queryAll<{id: string}>('SELECT id FROM image_cleanup_tasks', [], db)).toEqual([])
+
+        await reconcileImageUploads(setup.env, new Date(now.getTime() + 24 * 60 * 60 * 1_000))
+
+        expect(await getImageUploadStatus(db, 'user-1', created.job.id)).toMatchObject({state: 'canceled'})
+        await expect(retryImageUploadJob(setup.env, 'user-1', created.job.id, 'late-capacity-retry', now)).rejects.toThrow(
+            'Only a failed upload can be retried',
+        )
+        expect(
+            await queryAll<{bucket: string; object_key: string}>(
+                'SELECT bucket, object_key FROM image_cleanup_tasks ORDER BY bucket, object_key',
+                [],
+                db,
+            ),
+        ).toEqual(
+            [
+                ...generatedKeys.map((objectKey) => ({bucket: 'media', object_key: objectKey})),
+                {bucket: 'source', object_key: created.sourceKey},
+            ].sort((left, right) => left.bucket.localeCompare(right.bucket) || left.object_key.localeCompare(right.object_key)),
+        )
+        expect(await setup.mediaBucket.head(created.sourceKey)).not.toBeNull()
+
+        await reconcileImageUploads(setup.env, new Date(now.getTime() + 25 * 60 * 60 * 1_000))
+
+        expect(await setup.mediaBucket.head(created.sourceKey)).toBeNull()
+        for (const key of generatedKeys) {
+            expect(await setup.mediaBucket.head(key)).toBeNull()
+        }
+        expect(await queryAll<{state: string}>('SELECT state FROM image_cleanup_tasks', [], db)).toEqual([
+            {state: 'done'},
+            {state: 'done'},
+            {state: 'done'},
+            {state: 'done'},
+        ])
+    })
+
     it('fails a gallery task if its source disappears during processing', async () => {
         await seedUser({id: 'user-1'})
         await seedCharacter({id: 'character-1', userId: 'user-1'})
@@ -1033,7 +1197,7 @@ describe('image upload jobs', () => {
         const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
         try {
-            await createSquareImageUploadJob(setup.env, {
+            const job = await createSquareImageUploadJob(setup.env, {
                 userId: 'user-1',
                 kind: 'user-profile',
                 targetId: 'user-1',
@@ -1041,6 +1205,13 @@ describe('image upload jobs', () => {
                 bytes: await pngBytes(),
                 now,
             })
+            const source = await queryOne<{object_key: string}>(
+                'SELECT object_key FROM image_upload_sources WHERE job_id = ?',
+                [job.id],
+                db,
+            )
+            expect(source).not.toBeNull()
+            expect(await setup.mediaBucket.head(source?.object_key ?? '')).not.toBeNull()
             expect(await queryOne<{state: string}>('SELECT state FROM image_queue_outbox', [], db)).toEqual({state: 'pending'})
             await reconcileImageUploads(setup.env, new Date(now.getTime() + 5_000))
             expect(await queryOne<{state: string}>('SELECT state FROM image_queue_outbox', [], db)).toEqual({state: 'sent'})

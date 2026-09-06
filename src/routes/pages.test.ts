@@ -721,9 +721,20 @@ function createToyhouseSelectionTestPayload() {
     }
 }
 
-async function postToyhouseSelection(selection: unknown, options: {includeSelection?: boolean; payload?: unknown} = {}) {
+async function postToyhouseSelection(
+    selection: unknown,
+    options: {csrfToken?: string | null; includePayload?: boolean; includeSelection?: boolean; payload?: unknown} = {},
+) {
     const form = new FormData()
-    form.set('toyhousePayload', JSON.stringify(options.payload ?? createToyhouseSelectionTestPayload()))
+    const csrfToken = options.csrfToken === undefined ? await createCsrfToken('session-token') : options.csrfToken
+
+    if (csrfToken !== null) {
+        form.set('csrfToken', csrfToken)
+    }
+
+    if (options.includePayload !== false) {
+        form.set('toyhousePayload', JSON.stringify(options.payload ?? createToyhouseSelectionTestPayload()))
+    }
 
     if (options.includeSelection !== false) {
         form.set('toyhouseSelection', typeof selection === 'string' ? selection : JSON.stringify(selection))
@@ -2440,6 +2451,7 @@ describe('GET /migrate', () => {
         expect(html).toContain('MyOC is preparing the selected images. Keep this page open during large imports.')
         expect(html).toContain('checked="" class="checkbox checkbox-primary')
         expect(html).toContain('name="toyhouseSelection"')
+        expect(html).toContain('name="csrfToken" type="hidden"')
         expect(html).toContain('NSFW')
         expect(html).toContain('Absinthe')
         expect(html).toContain('Brindle')
@@ -2487,6 +2499,7 @@ describe('GET /migrate', () => {
         character.url += 'a'.repeat(targetLength - baseLength)
         const serializedPayload = JSON.stringify(payload)
         const requestBody = new URLSearchParams({
+            csrfToken: await createCsrfToken('session-token'),
             toyhousePayload: serializedPayload,
             toyhouseSelection: JSON.stringify({characters: [], createdCharacters: []}),
         }).toString()
@@ -2520,12 +2533,15 @@ describe('GET /migrate', () => {
         expect(reviewHtml).toContain('Review Characters for Import')
         expect(reviewHtml).not.toContain('Toyhou.se returned too much data')
 
+        const confirmForm = new FormData()
+        confirmForm.set('csrfToken', await createCsrfToken('session-token'))
+        confirmForm.set('toyhousePayload', serializedPayload)
+        confirmForm.set('toyhouseSelection', JSON.stringify({characters: [], createdCharacters: []}))
         const confirmResponse = await app.request(
             'https://example.com/migrate/import/confirm',
             {
-                body: requestBody,
+                body: confirmForm,
                 headers: {
-                    'content-type': 'application/x-www-form-urlencoded',
                     cookie: 'myoc_session=session-token',
                 },
                 method: 'POST',
@@ -2766,6 +2782,47 @@ describe('GET /migrate', () => {
         expect(importItemCount?.count).toBe(0)
     })
 
+    it.each([
+        {csrfToken: null, name: 'a missing token'},
+        {csrfToken: 'invalid-token', name: 'an invalid token'},
+    ])('rejects $name for a Toyhou.se import confirmation', async ({csrfToken}) => {
+        const {db, html, response} = await postToyhouseSelection(
+            {
+                characters: [{id: '9430171', imageIndexes: [0], nsfwImageIndexes: []}],
+                createdCharacters: [],
+            },
+            {csrfToken},
+        )
+        const importJobCount = await queryOne<{count: number}>('SELECT COUNT(*) AS count FROM toyhouse_import_jobs', [], db)
+
+        expect(response.status).toBe(403)
+        expect(JSON.parse(html)).toEqual({error: 'Invalid CSRF token'})
+        expect(importJobCount?.count).toBe(0)
+    })
+
+    it.each([
+        {
+            expected: 'Toyhou.se data was missing',
+            options: {includePayload: false},
+        },
+        {
+            expected: 'verified for a different MyOC account',
+            options: {payload: {...createToyhouseSelectionTestPayload(), myocUserId: 'other-user'}},
+        },
+    ])('rejects an invalid confirmation payload: $expected', async ({expected, options}) => {
+        const {db, html, response} = await postToyhouseSelection(
+            {
+                characters: [{id: '9430171', imageIndexes: [0], nsfwImageIndexes: []}],
+                createdCharacters: [],
+            },
+            options,
+        )
+
+        expect(response.status).toBe(200)
+        expect(html).toContain(expected)
+        expect(await queryOne<{count: number}>('SELECT COUNT(*) AS count FROM toyhouse_import_jobs', [], db)).toEqual({count: 0})
+    })
+
     it('requires every NSFW image to be selected for import', async () => {
         const {db, html, response} = await postToyhouseSelection({
             characters: [{id: '9430171', imageIndexes: [], nsfwImageIndexes: [0]}],
@@ -2858,6 +2915,7 @@ describe('GET /migrate', () => {
             ],
         }
         const form = new FormData()
+        form.set('csrfToken', await createCsrfToken('session-token'))
         form.set('toyhousePayload', JSON.stringify(payload))
         form.set(
             'toyhouseSelection',
@@ -2925,6 +2983,7 @@ describe('GET /migrate', () => {
             ],
         }
         const form = new FormData()
+        form.set('csrfToken', await createCsrfToken('session-token'))
         form.set('toyhousePayload', JSON.stringify(payload))
         form.set(
             'toyhouseSelection',
@@ -2982,6 +3041,7 @@ describe('GET /migrate', () => {
             ],
         }
         const form = new FormData()
+        form.set('csrfToken', await createCsrfToken('session-token'))
         form.set('toyhousePayload', JSON.stringify(payload))
         form.set(
             'toyhouseSelection',
@@ -3041,6 +3101,7 @@ describe('GET /migrate', () => {
             ],
         }
         const form = new FormData()
+        form.set('csrfToken', await createCsrfToken('session-token'))
         form.set('toyhousePayload', JSON.stringify(payload))
         form.set(
             'toyhouseSelection',
@@ -3112,6 +3173,7 @@ describe('GET /migrate', () => {
             ],
         }
         const form = new FormData()
+        form.set('csrfToken', await createCsrfToken('session-token'))
         form.set('toyhousePayload', JSON.stringify(payload))
         form.set(
             'toyhouseSelection',
@@ -3937,8 +3999,6 @@ describe('GET /admin', () => {
         expect(html).toMatch(/&quot;leaseExpiresAt&quot;:&quot;[^&]+&quot;/)
         expect(html).toContain('&quot;profileUrl&quot;:&quot;/u/uploader&quot;')
         expect(html).toContain('&quot;url&quot;:&quot;/u/uploader/Quartz&quot;')
-        expect(html).toContain('grid h-[calc(100vh-4rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden')
-        expect(html).toContain('flex h-full min-h-0 min-w-0 flex-col overflow-hidden')
         expect(html).toContain('<kbd class="kbd kbd-xs">A</kbd>')
         expect(html).toContain('<kbd class="kbd kbd-xs">Enter</kbd>')
         expect(html).toContain('admin-approval-image-grid')

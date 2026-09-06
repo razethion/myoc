@@ -9,6 +9,7 @@ import {
 import {requireImageModeratorApiUser} from '../../lib/auth/authorization'
 import {toSqlTimestamp} from '../../lib/auth/session'
 import {jsonResponse} from '../../lib/http/jsonResponse'
+import {readJsonUpTo, STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
 import {ErrorResponseSchema, ImageApprovalDataSchema} from '../../lib/http/responseSchemas'
 import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../../lib/media/cacheControl'
 import {readGalleryImageDimensions} from '../../lib/media/imageMetadata'
@@ -166,7 +167,7 @@ adminRoutes.post('/image-approvals/:mediaId', async (c) => {
     const actions = await parseImageApprovalActions(c.req.raw)
 
     if ('error' in actions) {
-        return jsonResponse(c, ErrorResponseSchema, {error: actions.error}, 400)
+        return jsonResponse(c, ErrorResponseSchema, {error: actions.error}, actions.status ?? 400)
     }
 
     const mediaId = c.req.param('mediaId')
@@ -198,11 +199,17 @@ adminRoutes.post('/image-approvals/:mediaId', async (c) => {
     )
 })
 
-async function parseImageApprovalActions(request: Request): Promise<ParsedImageApprovalActions | {error: string}> {
+async function parseImageApprovalActions(request: Request): Promise<ParsedImageApprovalActions | {error: string; status?: 400 | 413}> {
     let body: ImageApprovalRequest
 
     try {
-        const value = (await request.json()) as unknown
+        const result = await readJsonUpTo<unknown>(request, STANDARD_JSON_REQUEST_MAX_BYTES)
+
+        if (result.tooLarge) {
+            return {error: 'Request body is too large', status: 413}
+        }
+
+        const value = result.value
 
         if (!isRecord(value)) {
             return {error: 'Invalid JSON body'}

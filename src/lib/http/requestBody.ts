@@ -1,6 +1,12 @@
 type RequestBodyParser<T> = (response: Response) => Promise<T>
 
-async function parseRequestBodyUpTo<T>(request: Request, maxBytes: number, parse: RequestBodyParser<T>): Promise<T | null> {
+type RequestBodyReadResult<T> = {tooLarge: true} | {tooLarge: false; value: T}
+
+export type JsonBodyReadResult<T> = RequestBodyReadResult<T>
+
+export const STANDARD_JSON_REQUEST_MAX_BYTES = 1024 * 1024
+
+async function parseRequestBodyUpTo<T>(request: Request, maxBytes: number, parse: RequestBodyParser<T>): Promise<RequestBodyReadResult<T>> {
     const contentLength = request.headers.get('content-length')
     const contentType = request.headers.get('content-type')
     const headers = contentType ? {'content-type': contentType} : undefined
@@ -9,12 +15,12 @@ async function parseRequestBodyUpTo<T>(request: Request, maxBytes: number, parse
         const parsedContentLength = Number(contentLength)
 
         if (!Number.isSafeInteger(parsedContentLength) || parsedContentLength < 0 || parsedContentLength > maxBytes) {
-            return null
+            return {tooLarge: true}
         }
     }
 
     if (!request.body) {
-        return await parse(new Response(null, {headers}))
+        return {tooLarge: false, value: await parse(new Response(null, {headers}))}
     }
 
     let totalBytes = 0
@@ -37,10 +43,10 @@ async function parseRequestBodyUpTo<T>(request: Request, maxBytes: number, parse
     const limitedResponse = new Response(limitedBody, {headers})
 
     try {
-        return await parse(limitedResponse)
+        return {tooLarge: false, value: await parse(limitedResponse)}
     } catch (error) {
         if (exceededLimit) {
-            return null
+            return {tooLarge: true}
         }
 
         throw error
@@ -48,9 +54,11 @@ async function parseRequestBodyUpTo<T>(request: Request, maxBytes: number, parse
 }
 
 export async function readFormDataUpTo(request: Request, maxBytes: number): Promise<FormData | null> {
-    return await parseRequestBodyUpTo(request, maxBytes, async (limitedResponse) => await limitedResponse.formData())
+    const result = await parseRequestBodyUpTo(request, maxBytes, async (limitedResponse) => await limitedResponse.formData())
+
+    return result.tooLarge ? null : result.value
 }
 
-export async function readJsonUpTo<T>(request: Request, maxBytes: number): Promise<T | null> {
+export async function readJsonUpTo<T>(request: Request, maxBytes: number): Promise<JsonBodyReadResult<T>> {
     return await parseRequestBodyUpTo(request, maxBytes, async (limitedResponse) => await limitedResponse.json<T>())
 }

@@ -109,6 +109,10 @@ describe('worker scheduled handler', () => {
 })
 
 describe('worker queue handler', () => {
+    beforeEach(() => {
+        vi.clearAllMocks()
+    })
+
     it('acknowledges malformed work so it cannot block the queue', async () => {
         const ack = vi.fn()
         const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -158,6 +162,14 @@ describe('worker queue handler', () => {
         await worker.queue(batch, env, {} as ExecutionContext)
 
         expect(consumer).toHaveBeenCalledWith(message, body, env, expect.any(Function))
+        for (const other of [
+            consumeImageUploadProcessingMessage,
+            consumeMediaPreviewRegenerationMessage,
+            consumeThumbnailRegenerationMessage,
+        ]) {
+            if (other !== consumer) expect(other).not.toHaveBeenCalled()
+        }
+        expect(consumeImageProcessingDeadLetterQueue).not.toHaveBeenCalled()
     })
 
     it('routes the shared dead-letter queue to its consumer', async () => {
@@ -169,6 +181,9 @@ describe('worker queue handler', () => {
         await worker.queue(batch, env, {} as ExecutionContext)
 
         expect(consumeImageProcessingDeadLetterQueue).toHaveBeenCalledWith(batch, env)
+        expect(consumeImageUploadProcessingMessage).not.toHaveBeenCalled()
+        expect(consumeMediaPreviewRegenerationMessage).not.toHaveBeenCalled()
+        expect(consumeThumbnailRegenerationMessage).not.toHaveBeenCalled()
     })
 })
 

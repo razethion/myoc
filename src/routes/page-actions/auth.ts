@@ -674,7 +674,9 @@ async function parseBody<T extends object>(request: Request): Promise<T | null> 
 
     try {
         if (contentType.includes('application/json')) {
-            return await readJsonUpTo<T>(request, AUTH_REQUEST_MAX_BYTES)
+            const result = await readJsonUpTo<T>(request, AUTH_REQUEST_MAX_BYTES)
+
+            return result.tooLarge ? null : result.value
         }
 
         if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {

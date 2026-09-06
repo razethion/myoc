@@ -693,6 +693,7 @@ function ToyhouseImportReviewForm({
                 enctype="multipart/form-data"
                 method="post"
             >
+                <input name="csrfToken" type="hidden" value={csrfToken} />
                 <textarea class="hidden" name="toyhousePayload">
                     {migrationPayload}
                 </textarea>

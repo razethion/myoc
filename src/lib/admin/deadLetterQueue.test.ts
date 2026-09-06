@@ -101,12 +101,15 @@ describe('dead-letter queue consumers', () => {
     it('records an exhausted raw image upload delivery once and keeps its current task and job state', async () => {
         const {jobId, taskId} = await seedImageTask({job: 'processing', task: 'processing'})
         const delivery = createDelivery({version: 1, kind: 'upload', taskId})
+        const duplicate = createDelivery(delivery.body, 2, delivery.id)
 
         await consumeImageProcessingDeadLetterQueue(batch(delivery.message), dlqEnv, () => now)
-        await consumeImageProcessingDeadLetterQueue(batch(createDelivery(delivery.body, 2, delivery.id).message), dlqEnv, () => now)
+        await consumeImageProcessingDeadLetterQueue(batch(duplicate.message), dlqEnv, () => now)
 
         expect(delivery.ack).toHaveBeenCalledOnce()
         expect(delivery.retry).not.toHaveBeenCalled()
+        expect(duplicate.ack).toHaveBeenCalledOnce()
+        expect(duplicate.retry).not.toHaveBeenCalled()
         expect(await getAdminErrorLogs(db)).toEqual([
             expect.objectContaining({
                 source: 'image-processing',
@@ -181,15 +184,18 @@ describe('dead-letter queue consumers', () => {
             errorCode: 'preview_generation_failed',
             error: 'The old preview task failed.',
         })
+        const duplicate = createDelivery(enriched.body, 2, crypto.randomUUID())
 
         await consumeImageProcessingDeadLetterQueue(batch(raw.message), dlqEnv, () => now)
         await consumeImageProcessingDeadLetterQueue(batch(enriched.message), dlqEnv, () => now)
-        await consumeImageProcessingDeadLetterQueue(batch(createDelivery(enriched.body, 2, crypto.randomUUID()).message), dlqEnv, () => now)
+        await consumeImageProcessingDeadLetterQueue(batch(duplicate.message), dlqEnv, () => now)
 
         expect(raw.ack).toHaveBeenCalledOnce()
         expect(enriched.ack).toHaveBeenCalledOnce()
         expect(raw.retry).not.toHaveBeenCalled()
         expect(enriched.retry).not.toHaveBeenCalled()
+        expect(duplicate.ack).toHaveBeenCalledOnce()
+        expect(duplicate.retry).not.toHaveBeenCalled()
         expect(await getAdminErrorLogs(db)).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({

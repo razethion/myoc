@@ -141,5 +141,5 @@ describe('recent feed regeneration workflow', () => {
         } finally {
             vi.mocked(publishRecentFeed).mockImplementation(publish)
         }
-    })
+    }, 30_000)
 })

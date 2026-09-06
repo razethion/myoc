@@ -40,14 +40,23 @@ describe('request body limits', () => {
         const json = '{"ok":true}'
         const {request} = streamedRequest(['{"ok":', 'true}'])
 
-        await expect(readJsonUpTo(request, encoder.encode(json).byteLength)).resolves.toEqual({ok: true})
+        await expect(readJsonUpTo(request, encoder.encode(json).byteLength)).resolves.toEqual({
+            tooLarge: false,
+            value: {ok: true},
+        })
     })
 
-    it('returns null and cancels a streamed JSON body above the byte limit', async () => {
+    it('keeps valid JSON null distinct from an oversized body', async () => {
+        const {request} = streamedRequest(['null'])
+
+        await expect(readJsonUpTo(request, 4)).resolves.toEqual({tooLarge: false, value: null})
+    })
+
+    it('returns an oversized result and cancels a streamed JSON body above the byte limit', async () => {
         const json = '{"ok":true}'
         const {cancel, request} = streamedRequest([json, ' ', 'unread'])
 
-        await expect(readJsonUpTo(request, encoder.encode(json).byteLength)).resolves.toBeNull()
+        await expect(readJsonUpTo(request, encoder.encode(json).byteLength)).resolves.toEqual({tooLarge: true})
         expect(cancel).toHaveBeenCalled()
     })
 
@@ -55,7 +64,7 @@ describe('request body limits', () => {
         const json = '{"name":"é"}'
         const {request} = streamedRequest([json])
 
-        await expect(readJsonUpTo(request, json.length)).resolves.toBeNull()
+        await expect(readJsonUpTo(request, json.length)).resolves.toEqual({tooLarge: true})
     })
 
     it.each(['3', 'not-a-number', '-1', '1.5', '9007199254740992'])(
@@ -63,7 +72,7 @@ describe('request body limits', () => {
         async (contentLength) => {
             const {request} = streamedRequest(['{}'], {'content-length': contentLength})
 
-            await expect(readJsonUpTo(request, 2)).resolves.toBeNull()
+            await expect(readJsonUpTo(request, 2)).resolves.toEqual({tooLarge: true})
             expect(request.bodyUsed).toBe(false)
         },
     )
@@ -71,7 +80,7 @@ describe('request body limits', () => {
     it('parses a body whose declared content length equals the limit', async () => {
         const {request} = streamedRequest(['{}'], {'content-length': '2'})
 
-        await expect(readJsonUpTo(request, 2)).resolves.toEqual({})
+        await expect(readJsonUpTo(request, 2)).resolves.toEqual({tooLarge: false, value: {}})
     })
 
     it('preserves a JSON syntax error below the byte limit', async () => {

@@ -149,11 +149,13 @@ async function parseJsonPasskeyPromptResponse(
     let body: {choice?: unknown; returnTo?: unknown}
 
     try {
-        const parsed = await readJsonUpTo<unknown>(req, SETTINGS_REQUEST_MAX_BYTES)
+        const result = await readJsonUpTo<unknown>(req, SETTINGS_REQUEST_MAX_BYTES)
 
-        if (parsed === null) {
+        if (result.tooLarge) {
             return {tooLarge: true}
         }
+
+        const parsed = result.value
 
         body = isRecord(parsed) ? parsed : {}
     } catch {
@@ -409,11 +411,13 @@ async function parseUpdateUserRequest(req: Request): Promise<ParsedRequest<Updat
 
     if (contentType.includes('application/json')) {
         try {
-            const body = await readJsonUpTo<unknown>(req, SETTINGS_REQUEST_MAX_BYTES)
+            const result = await readJsonUpTo<unknown>(req, SETTINGS_REQUEST_MAX_BYTES)
 
-            if (body === null) {
+            if (result.tooLarge) {
                 return {tooLarge: true}
             }
+
+            const body = result.value
 
             return {body: isRecord(body) ? body : {}}
         } catch {

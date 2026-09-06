@@ -3,9 +3,14 @@ import {Hono} from 'hono'
 import {z} from 'zod'
 import {createImageReviewQueueStatement} from '../../lib/admin/imageApprovals'
 import {type CurrentUser, getCurrentUser, toSqlTimestamp} from '../../lib/auth/session'
-import {GALLERY_CHUNK_SIZE, GALLERY_MAX_IMAGES_PER_ROW, shouldForceGalleryRowFullWidth} from '../../lib/gallery'
+import {
+    GALLERY_CHUNK_SIZE,
+    GALLERY_MAX_IMAGES_PER_ROW,
+    GALLERY_MAX_MEDIA_PER_CHARACTER,
+    shouldForceGalleryRowFullWidth,
+} from '../../lib/gallery'
 import {jsonResponse} from '../../lib/http/jsonResponse'
-import {readFormDataUpTo, readJsonUpTo} from '../../lib/http/requestBody'
+import {readFormDataUpTo, readJsonUpTo, STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
 import {
     CharacterFolderSchema,
     CharacterHeightChartSchema,
@@ -204,6 +209,7 @@ class ChunkedUploadInitError extends Error {
 }
 
 class GalleryUploadValidationError extends Error {}
+class GalleryMediaCapacityError extends Error {}
 
 type JsonProfileImage = {
     data: string
@@ -299,8 +305,7 @@ const CHARACTER_DESCRIPTION_MAX_LENGTH = 255
 const ARTIST_NAME_MAX_LENGTH = 80
 const GALLERY_MAX_TABS = 20
 const GALLERY_MAX_ROWS = 100
-const GALLERY_MAX_MEDIA_PLACEMENTS = 500
-const GALLERY_MAX_MEDIA_PER_CHARACTER = GALLERY_MAX_MEDIA_PLACEMENTS
+const GALLERY_MAX_MEDIA_PLACEMENTS = GALLERY_MAX_MEDIA_PER_CHARACTER
 const TREE_MAX_ITEMS = 500
 const TREE_MAX_DEPTH = 20
 const SQL_IN_CLAUSE_CHUNK_SIZE = 50
@@ -371,12 +376,10 @@ characterRoutes.post('/folders/tree', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
-    let body: SortTreeRequest
+    const body = await readCharacterJsonBody<SortTreeRequest>(c)
 
-    try {
-        body = await c.req.json<SortTreeRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     if (!Array.isArray(body.items)) {
@@ -428,12 +431,10 @@ characterRoutes.post('/order', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
-    let body: SortCharacterOrderRequest
+    const body = await readCharacterJsonBody<SortCharacterOrderRequest>(c)
 
-    try {
-        body = await c.req.json<SortCharacterOrderRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     const orderedIds = normalizeOrderedIds(body.characterIds, 'Character order')
@@ -490,12 +491,10 @@ characterRoutes.put('/folders/:id/placements', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Folder not found'}, 404)
     }
 
-    let body: SaveFolderPlacementsRequest
+    const body = await readCharacterJsonBody<SaveFolderPlacementsRequest>(c)
 
-    try {
-        body = await c.req.json<SaveFolderPlacementsRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     const orderedIds = normalizeOrderedIds(body.characterIds, 'Folder placements')
@@ -655,12 +654,10 @@ characterRoutes.patch('/folders/:id', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Folder not found'}, 404)
     }
 
-    let body: UpdateFolderRequest
+    const body = await readCharacterJsonBody<UpdateFolderRequest>(c)
 
-    try {
-        body = await c.req.json<UpdateFolderRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     const nameResult = normalizeFolderName(body.name ?? body['edit-folder-name'])
@@ -956,12 +953,10 @@ characterRoutes.patch('/:id', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
-    let body: UpdateCharacterRequest
+    const body = await readCharacterJsonBody<UpdateCharacterRequest>(c)
 
-    try {
-        body = await c.req.json<UpdateCharacterRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     const character = await getOwnedCharacter(c.env.DB, currentUser.id, c.req.param('id') ?? '')
@@ -1327,7 +1322,13 @@ characterRoutes.post('/toyhouse-import-items/:itemId/fail', async (c) => {
     let body: {error?: unknown}
 
     try {
-        body = await c.req.json<{error?: unknown}>()
+        const result = await readJsonUpTo<{error?: unknown}>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+
+        if (result.tooLarge) {
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Request body is too large'}, 413)
+        }
+
+        body = isRecord(result.value) ? result.value : {}
     } catch {
         body = {}
     }
@@ -1706,12 +1707,10 @@ characterRoutes.put('/:id/gallery', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
-    let body: GalleryLayoutRequest
+    const body = await readCharacterJsonBody<GalleryLayoutRequest>(c)
 
-    try {
-        body = await c.req.json<GalleryLayoutRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     const character = await getOwnedCharacter(c.env.DB, currentUser.id, c.req.param('id') ?? '')
@@ -1802,7 +1801,12 @@ characterRoutes.delete('/:id', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
-    const body = await parseDeleteCharacterRequest(c.req)
+    const body = await parseDeleteCharacterRequest(c)
+
+    if (body instanceof Response) {
+        return body
+    }
+
     const confirmName = normalizeOptionalText(body.confirmName ?? body['delete-character-confirm-name'])
     const permanent = normalizePermanentConfirmation(body.permanent ?? body['delete-confirm-permanent'])
 
@@ -2188,12 +2192,10 @@ async function parseChunkedUploadInitRequest(c: CharacterRouteContext): Promise<
       }
     | Response
 > {
-    let body: ChunkedMediaInitRequest
+    const body = await readCharacterJsonBody<ChunkedMediaInitRequest>(c)
 
-    try {
-        body = await c.req.json<ChunkedMediaInitRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     const uploads = parseChunkedUploadInits(body.uploads ?? body.ratings)
@@ -2203,6 +2205,20 @@ async function parseChunkedUploadInitRequest(c: CharacterRouteContext): Promise<
     }
 
     return uploads
+}
+
+async function readCharacterJsonBody<T extends object>(c: CharacterRouteContext): Promise<T | Response> {
+    try {
+        const result = await readJsonUpTo<unknown>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+
+        if (result.tooLarge) {
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Request body is too large'}, 413)
+        }
+
+        return requireJsonObject<T>(result.value)
+    } catch {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    }
 }
 
 function parseMediaArtists(sfwValue: unknown, nsfwValue: unknown): ParsedMediaArtists | {error: string} {
@@ -2250,13 +2266,19 @@ async function parseChunkedMediaCompleteBody(c: CharacterRouteContext): Promise<
     | ParsedChunkedMediaComplete
     | {
           error: string
-          status: 400
+          status: 400 | 413
       }
 > {
     let body: ChunkedMediaCompleteRequest
 
     try {
-        body = await c.req.json<ChunkedMediaCompleteRequest>()
+        const result = await readJsonUpTo<ChunkedMediaCompleteRequest>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+
+        if (result.tooLarge) {
+            return {error: 'Request body is too large', status: 413}
+        }
+
+        body = requireJsonObject<ChunkedMediaCompleteRequest>(result.value)
     } catch {
         return {error: 'Invalid JSON body', status: 400}
     }
@@ -2468,9 +2490,13 @@ function describeError(error: unknown): string {
     }
 }
 
-function mediaCompletionFailure(error: unknown, referenceId: string): {message: string; status: 400 | 500} {
+function mediaCompletionFailure(error: unknown, referenceId: string): {message: string; status: 400 | 409 | 500} {
     if (error instanceof GalleryUploadValidationError) {
         return {message: error.message, status: 400}
+    }
+
+    if (error instanceof GalleryMediaCapacityError) {
+        return {message: `Characters can contain ${GALLERY_MAX_MEDIA_PER_CHARACTER} gallery images or fewer`, status: 409}
     }
 
     console.error(
@@ -2744,7 +2770,15 @@ async function createAndPersistCharacterMedia(
 
     const now = toSqlTimestamp(new Date())
     const media = createNewCharacterMediaRecord({id: mediaId, userId, characterId, artists, variants, now})
-    await env.DB.batch([createCharacterMediaInsertStatement(env.DB, media), createImageReviewQueueStatement(env.DB, media.id, now)])
+    const [mediaResult] = await env.DB.batch([
+        createCharacterMediaInsertStatement(env.DB, media),
+        createImageReviewQueueStatement(env.DB, media.id, now),
+    ])
+
+    if (mediaResult?.meta.changes === 0) {
+        throw new GalleryMediaCapacityError()
+    }
+
     return media
 }
 
@@ -2772,12 +2806,17 @@ async function completeToyhouseImportItem(
         variants: [variant],
         now,
     })
-    await env.DB.batch([
+    const [mediaResult] = await env.DB.batch([
         createCharacterMediaInsertStatement(env.DB, media),
-        createImportedToyhouseItemStatement(env.DB, userId, item.id, media.id, now),
+        createImportedToyhouseItemStatement(env.DB, userId, item.id, item.character_id, media.id, now),
         createImageReviewQueueStatement(env.DB, media.id, now),
         createToyhouseImportJobStatusStatement(env.DB, userId, item.job_id, now),
     ])
+
+    if (mediaResult?.meta.changes === 0) {
+        throw new GalleryMediaCapacityError()
+    }
+
     return media
 }
 
@@ -2799,6 +2838,7 @@ function createImportedToyhouseItemStatement(
     db: D1Database,
     userId: string,
     itemId: string,
+    characterId: string,
     mediaId: string,
     now: string,
 ): D1PreparedStatement {
@@ -2810,9 +2850,16 @@ function createImportedToyhouseItemStatement(
                  error    = '',
                  updated_at = ?
              WHERE id = ?
-               AND user_id = ?`,
+               AND user_id = ?
+               AND EXISTS (
+                   SELECT 1
+                   FROM character_media
+                   WHERE id = ?
+                     AND user_id = ?
+                     AND character_id = ?
+               )`,
         )
-        .bind('imported', mediaId, now, itemId, userId)
+        .bind('imported', mediaId, now, itemId, userId, mediaId, userId, characterId)
 }
 
 function createCharacterMediaInsertStatement(db: D1Database, media: CharacterMediaRecord): D1PreparedStatement {
@@ -2827,7 +2874,13 @@ function createCharacterMediaInsertStatement(db: D1Database, media: CharacterMed
                                           nsfw_preview_width, nsfw_preview_height, nsfw_preview_byte_size,
                                           nsfw_blur_image_key, nsfw_blur_content_type,
                                           created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             WHERE (
+                 SELECT COUNT(*)
+                 FROM character_media
+                 WHERE user_id = ?
+                   AND character_id = ?
+             ) < ?`,
         )
         .bind(
             media.id,
@@ -2859,6 +2912,9 @@ function createCharacterMediaInsertStatement(db: D1Database, media: CharacterMed
             media.nsfw_blur_content_type,
             media.created_at,
             media.updated_at,
+            media.user_id,
+            media.character_id,
+            GALLERY_MAX_MEDIA_PER_CHARACTER,
         )
 }
 
@@ -3029,11 +3085,13 @@ async function parseJsonCreateCharacterRequest(
     req: Request,
 ): Promise<{name: unknown; folderId: unknown; profileImage: JsonProfileImage | null} | {error: string; status: 400 | 413}> {
     try {
-        const body = await readJsonUpTo<CreateCharacterRequest>(req, PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES)
+        const result = await readJsonUpTo<CreateCharacterRequest>(req, PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES)
 
-        if (!body) {
+        if (result.tooLarge) {
             return {error: 'Character profile image upload is too large', status: 413}
         }
+
+        const body = requireJsonObject<CreateCharacterRequest>(result.value)
 
         return {
             name: body.name ?? body['new-character-name'],
@@ -3061,11 +3119,13 @@ async function parseCreateFolderRequest(req: CharacterRouteContext['req']): Prom
 
     if (contentType.includes('application/json')) {
         try {
-            const body = await readJsonUpTo<CreateFolderRequest>(req.raw, PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES)
+            const result = await readJsonUpTo<CreateFolderRequest>(req.raw, PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES)
 
-            if (!body) {
+            if (result.tooLarge) {
                 return {error: 'Folder image upload is too large', status: 413}
             }
+
+            const body = requireJsonObject<CreateFolderRequest>(result.value)
 
             return {
                 name: body.name ?? body['new-folder-name'],
@@ -3078,7 +3138,11 @@ async function parseCreateFolderRequest(req: CharacterRouteContext['req']): Prom
     }
 
     if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {
-        const form = await req.formData()
+        const form = await readFormDataUpTo(req.raw, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES)
+
+        if (!form) {
+            return {error: 'Request body is too large', status: 413}
+        }
 
         return {
             name: form.get('name') ?? form.get('new-folder-name'),
@@ -3090,19 +3154,25 @@ async function parseCreateFolderRequest(req: CharacterRouteContext['req']): Prom
     return {error: 'JSON or form data is required'}
 }
 
-async function parseDeleteCharacterRequest(req: CharacterRouteContext['req']): Promise<DeleteCharacterRequest> {
-    const contentType = req.header('content-type') ?? ''
+async function parseDeleteCharacterRequest(c: CharacterRouteContext): Promise<DeleteCharacterRequest | Response> {
+    const contentType = c.req.header('content-type') ?? ''
 
     if (contentType.includes('application/json')) {
-        try {
-            return await req.json<DeleteCharacterRequest>()
-        } catch {
-            return {}
-        }
+        return await readCharacterJsonBody<DeleteCharacterRequest>(c)
     }
 
     if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {
-        const form = await req.formData()
+        let form: FormData | null
+
+        try {
+            form = await readFormDataUpTo(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+        } catch {
+            return {}
+        }
+
+        if (!form) {
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Request body is too large'}, 413)
+        }
 
         return {
             confirmName: form.get('confirmName'),
@@ -4522,6 +4592,14 @@ async function readStoredGalleryImageMetadata(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function requireJsonObject<T extends object>(value: unknown): T {
+    if (!isRecord(value)) {
+        throw new TypeError('JSON body must be an object')
+    }
+
+    return value as T
 }
 
 function galleryUploadObjectKey(objectKey: string, staged: boolean): string {

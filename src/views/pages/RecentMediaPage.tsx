@@ -379,7 +379,7 @@ function RecentMediaScript() {
             try {
                 const url = new URL(value);
                 if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) return '';
-                if (!/^\\/generations\\/v1\\/roots\\/[A-Za-z0-9._-]+\\.json$/.test(url.pathname)) return '';
+                if (!/^\\/recent-feed\\/generations\\/v1\\/roots\\/[A-Za-z0-9._-]+\\.json$/.test(url.pathname)) return '';
                 return url.href;
             } catch {
                 return '';
@@ -497,7 +497,7 @@ function RecentMediaScript() {
                 if (!isRecentRecord(reference)
                     || !isRecentCount(reference.itemCount, false)
                     || keys.has(reference.key)
-                    || !recentFeedKeyMatches(reference.key, 'generations/v1/blocks/' + variant + '/' + hour + '/')) {
+                    || !recentFeedKeyMatches(reference.key, 'recent-feed/generations/v1/blocks/' + variant + '/' + hour + '/')) {
                     throw new Error('The recent uploads manifest was invalid.');
                 }
                 keys.add(reference.key);
@@ -577,7 +577,7 @@ function RecentMediaScript() {
                 variantRoot.years,
                 'year',
                 /^\\d{4}$/,
-                'generations/v1/manifests/' + variant + '/years/',
+                'recent-feed/generations/v1/manifests/' + variant + '/years/',
                 100,
             );
             if (count !== variantRoot.itemCount) throw new Error('The recent uploads root count was invalid.');
@@ -598,7 +598,7 @@ function RecentMediaScript() {
                 manifest.months,
                 'month',
                 new RegExp('^' + reference.year + '-(?:0[1-9]|1[0-2])$'),
-                'generations/v1/manifests/' + variant + '/months/',
+                'recent-feed/generations/v1/manifests/' + variant + '/months/',
                 12,
             );
             if (count !== manifest.itemCount) throw new Error('The recent uploads year count was invalid.');
@@ -619,7 +619,7 @@ function RecentMediaScript() {
                 manifest.days,
                 'day',
                 new RegExp('^' + reference.month + '-(?:0[1-9]|[12][0-9]|3[01])$'),
-                'generations/v1/manifests/' + variant + '/days/',
+                'recent-feed/generations/v1/manifests/' + variant + '/days/',
                 31,
             );
             if (count !== manifest.itemCount) throw new Error('The recent uploads month count was invalid.');

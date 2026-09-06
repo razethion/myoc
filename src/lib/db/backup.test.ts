@@ -11,7 +11,7 @@ const EXPORT_SQL = [
 
 describe('backupD1Database', () => {
     it('uses the global fetch implementation when no fetch option is provided', async () => {
-        const fetcher = createExportFetch()
+        const fetcher = createImmediateExportFetch()
         vi.stubGlobal('fetch', fetcher)
 
         try {
@@ -57,41 +57,6 @@ describe('backupD1Database', () => {
             rows: 2,
         })
         expect(summary.compressedBytes).toBeGreaterThan(0)
-        expect(fetcher).toHaveBeenNthCalledWith(
-            1,
-            'https://api.cloudflare.com/client/v4/accounts/account-id/d1/database/database-id/export',
-            expect.objectContaining({
-                body: JSON.stringify({
-                    output_format: 'polling',
-                    dump_options: {
-                        no_data: false,
-                        no_schema: false,
-                        tables: [],
-                    },
-                }),
-                headers: expect.objectContaining({
-                    Authorization: 'Bearer api-token',
-                    'Content-Type': 'application/json',
-                }),
-                method: 'POST',
-            }),
-        )
-        expect(fetcher).toHaveBeenNthCalledWith(
-            2,
-            'https://api.cloudflare.com/client/v4/accounts/account-id/d1/database/database-id/export',
-            expect.objectContaining({
-                body: JSON.stringify({
-                    output_format: 'polling',
-                    dump_options: {
-                        no_data: false,
-                        no_schema: false,
-                        tables: [],
-                    },
-                    current_bookmark: 'bookmark-1',
-                }),
-            }),
-        )
-        expect(fetcher).toHaveBeenNthCalledWith(3, 'https://example.test/dump.sql')
         expect(backupBucket.createMultipartUpload).toHaveBeenCalledWith(summary.key, {
             httpMetadata: {
                 cacheControl: 'private, no-store',
@@ -411,13 +376,14 @@ describe('backupD1Database', () => {
 })
 
 function createExportFetch(exportBody: BodyInit = EXPORT_SQL): typeof fetch {
-    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input)
 
         if (url.endsWith('/export')) {
-            const call = fetcher.mock.calls.length
+            assertExportRequest(url, init)
+            const payload = JSON.parse(String(init?.body)) as {current_bookmark?: string}
 
-            if (call === 1) {
+            if (payload.current_bookmark === undefined) {
                 return Response.json({
                     result: {
                         at_bookmark: 'bookmark-1',
@@ -428,23 +394,66 @@ function createExportFetch(exportBody: BodyInit = EXPORT_SQL): typeof fetch {
                 })
             }
 
-            return Response.json({
-                result: {
-                    result: {
-                        signed_url: 'https://example.test/dump.sql',
-                    },
-                    status: 'complete',
-                    success: true,
-                    type: 'export',
-                },
-                success: true,
-            })
+            if (payload.current_bookmark !== 'bookmark-1') throw new Error('Unexpected D1 export bookmark')
+            return completedExportResponse()
         }
 
+        if (url !== 'https://example.test/dump.sql') throw new Error(`Unexpected export URL: ${url}`)
         return new Response(exportBody, {status: 200})
     })
 
     return fetcher as unknown as typeof fetch
+}
+
+function createImmediateExportFetch(exportBody: BodyInit = EXPORT_SQL): typeof fetch {
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.endsWith('/export')) {
+            assertExportRequest(url, init)
+            return completedExportResponse()
+        }
+        if (url !== 'https://example.test/dump.sql') throw new Error(`Unexpected export URL: ${url}`)
+        return new Response(exportBody, {status: 200})
+    }) as unknown as typeof fetch
+}
+
+function assertExportRequest(url: string, init?: RequestInit): void {
+    if (url !== 'https://api.cloudflare.com/client/v4/accounts/account-id/d1/database/database-id/export') {
+        throw new Error(`Unexpected D1 export URL: ${url}`)
+    }
+    const headers = new Headers(init?.headers)
+    if (
+        init?.method !== 'POST' ||
+        headers.get('authorization') !== 'Bearer api-token' ||
+        headers.get('content-type') !== 'application/json'
+    ) {
+        throw new Error('Unexpected D1 export request')
+    }
+    const payload = JSON.parse(String(init.body)) as {
+        dump_options?: {no_data?: boolean; no_schema?: boolean; tables?: unknown[]}
+        output_format?: string
+    }
+    if (
+        payload.output_format !== 'polling' ||
+        payload.dump_options?.no_data !== false ||
+        payload.dump_options.no_schema !== false ||
+        !Array.isArray(payload.dump_options.tables) ||
+        payload.dump_options.tables.length !== 0
+    ) {
+        throw new Error('Unexpected D1 export options')
+    }
+}
+
+function completedExportResponse(): Response {
+    return Response.json({
+        result: {
+            result: {signed_url: 'https://example.test/dump.sql'},
+            status: 'complete',
+            success: true,
+            type: 'export',
+        },
+        success: true,
+    })
 }
 
 function createLargeExportBytes(): Uint8Array {

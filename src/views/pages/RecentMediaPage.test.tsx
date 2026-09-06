@@ -91,7 +91,7 @@ describe('RecentMediaPage', () => {
             page: recentPage({
                 generation: 'generation-7',
                 nextPosition: 24,
-                publicRootUrl: 'https://feeds.example.com/generations/v1/roots/generation-7.json',
+                publicRootUrl: 'https://feeds.example.com/recent-feed/generations/v1/roots/generation-7.json',
             }),
             showNsfw: true,
             user: currentUser,
