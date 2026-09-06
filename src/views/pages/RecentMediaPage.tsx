@@ -312,6 +312,7 @@ function RecentMediaScript() {
         const recentBlockCacheLimit = 8;
         const recentDirectPageSize = 24;
         const recentManifestCacheLimit = 256;
+        const recentAutoLoadMarginPx = 400;
         const recentDesktopMinTilesPerRow = ${RECENT_DESKTOP_MIN_TILES_PER_ROW};
         const recentMaximumTilesPerRow = ${RECENT_MAX_TILES_PER_ROW};
         const recentStateVerificationTtlMs = 5000;
@@ -352,7 +353,6 @@ function RecentMediaScript() {
             mediaOrigin: readRecentMediaOrigin(recentFeed?.dataset.mediaOrigin),
             nextLayoutGroupId: 0,
             renderedEntryCount: 0,
-            sentinelNear: false,
             stateInFlight: null,
             statePollId: 0,
             stateVerifiedAt: 0,
@@ -1109,7 +1109,7 @@ function RecentMediaScript() {
             const mergedGroupIds = new Set(groupsToMerge.map((group) => group.id));
             layoutGroup.entries = groupsToMerge.flatMap((group) => group.entries);
             layoutGroup.fixedRowSizes = targetRows
-                .slice(0, clickedRowIndex + 1)
+                .slice(0, clickedRowIndex)
                 .map((row) => row.childElementCount);
             recentFeed.querySelectorAll(':scope > [data-recent-row]').forEach((row) => {
                 if (mergedGroupIds.has(row.dataset.recentLayoutGroup)) row.dataset.recentLayoutGroup = layoutGroup.id;
@@ -1298,11 +1298,18 @@ function RecentMediaScript() {
             recentEmpty?.classList.toggle('hidden', !isEmpty || recentState.inFlight || recentState.hasMore);
         }
 
+        function recentSentinelIsNear() {
+            if (!recentSentinel || recentSentinel.classList.contains('hidden')) return false;
+            const bounds = recentSentinel.getBoundingClientRect();
+            return bounds.bottom >= -recentAutoLoadMarginPx
+                && bounds.top <= window.innerHeight + recentAutoLoadMarginPx;
+        }
+
         function scheduleRecentAutoLoad() {
-            if (recentState.autoLoadFrame || recentState.inFlight || !recentState.hasMore || !recentState.sentinelNear) return;
+            if (recentState.autoLoadFrame || recentState.inFlight || !recentState.hasMore) return;
             recentState.autoLoadFrame = window.requestAnimationFrame(() => {
                 recentState.autoLoadFrame = 0;
-                if (!recentState.inFlight && recentState.hasMore && recentState.sentinelNear) {
+                if (!recentState.inFlight && recentState.hasMore && recentSentinelIsNear()) {
                     void loadRecentMedia();
                 }
             });
@@ -1365,18 +1372,12 @@ function RecentMediaScript() {
             }
         }
 
-        async function appendRecentDirectPagesUntilRowsAreReady() {
-            let renderedLayoutChanged = false;
-            do {
-                const body = await loadRecentDirectPage();
-                if (!body) throw new Error('Could not load uploads.');
-                renderedLayoutChanged = appendRecentItems(body.items) || renderedLayoutChanged;
-                recentState.directPosition = readRecentDirectPosition(body.nextPosition);
-                recentState.hasMore = recentState.directPosition !== null;
-                const pendingEntries = recentState.entries.slice(recentState.renderedEntryCount);
-                const pendingCount = recentLayoutNodes(pendingEntries).length;
-                if (!recentState.hasMore || recentCanFillRows(pendingCount)) break;
-            } while (true);
+        async function appendRecentDirectPage() {
+            const body = await loadRecentDirectPage();
+            if (!body) throw new Error('Could not load uploads.');
+            const renderedLayoutChanged = appendRecentItems(body.items);
+            recentState.directPosition = readRecentDirectPosition(body.nextPosition);
+            recentState.hasMore = recentState.directPosition !== null;
 
             if (recentFeed) {
                 recentFeed.dataset.nextPosition = recentState.directPosition === null
@@ -1397,11 +1398,6 @@ function RecentMediaScript() {
             adoptRecentPageSource(body);
             appendRecentItems(body.items);
             commitRecentPendingRows(!recentState.hasMore);
-            if (recentFeed?.childElementCount === 0 && recentState.hasMore) {
-                const renderedLayoutChanged = await appendRecentDirectPagesUntilRowsAreReady();
-                commitRecentPendingRows(!recentState.hasMore);
-                if (renderedLayoutChanged) reconcileRecentRows();
-            }
             hideRecentUpdate();
             if (recentLoadButton) recentLoadButton.textContent = 'Load more';
             updateRecentEndState();
@@ -1494,6 +1490,7 @@ function RecentMediaScript() {
 
         async function applyRecentFilters(showNsfw, showUnapproved, persistUnapproved) {
             if (recentState.inFlight) return;
+            let applied = false;
             setRecentLoading(true);
             recentError?.classList.add('hidden');
 
@@ -1506,26 +1503,30 @@ function RecentMediaScript() {
                 await replaceRecentPage(body);
                 updateRecentFilterButtons();
                 startRecentStatePolling();
+                applied = true;
             } catch (error) {
                 if (recentErrorMessage) recentErrorMessage.textContent = error instanceof Error ? error.message : 'Could not update the feed.';
                 recentError?.classList.remove('hidden');
             } finally {
                 setRecentLoading(false);
+                if (applied) scheduleRecentAutoLoad();
             }
         }
 
         async function loadRecentMedia() {
             if (recentState.inFlight || !recentState.hasMore) return;
             if (!recentState.directRootUrl || recentState.directPosition === null) return;
+            let loaded = false;
             setRecentLoading(true);
             recentError?.classList.add('hidden');
 
             try {
                 await verifyRecentDirectState();
-                const renderedLayoutChanged = await appendRecentDirectPagesUntilRowsAreReady();
+                const renderedLayoutChanged = await appendRecentDirectPage();
                 commitRecentPendingRows(!recentState.hasMore);
                 if (renderedLayoutChanged) reconcileRecentRows();
                 updateRecentEndState();
+                loaded = true;
             } catch (error) {
                 if (error?.code === 'recent-generation-expired') {
                     recentState.hasMore = false;
@@ -1540,6 +1541,7 @@ function RecentMediaScript() {
                 if (recentLoadButton) recentLoadButton.textContent = 'Try again';
             } finally {
                 setRecentLoading(false);
+                if (loaded) scheduleRecentAutoLoad();
             }
         }
 
@@ -1602,17 +1604,20 @@ function RecentMediaScript() {
         });
         recentRefreshButton?.addEventListener('click', async () => {
             if (recentState.inFlight) return;
+            let refreshed = false;
             setRecentLoading(true);
             recentError?.classList.add('hidden');
             try {
                 const body = await requestRecentMediaPage(recentState.showNsfw, recentState.showUnapproved);
                 await replaceRecentPage(body);
                 startRecentStatePolling();
+                refreshed = true;
             } catch (error) {
                 if (recentErrorMessage) recentErrorMessage.textContent = error instanceof Error ? error.message : 'Could not refresh uploads.';
                 recentError?.classList.remove('hidden');
             } finally {
                 setRecentLoading(false);
+                if (refreshed) scheduleRecentAutoLoad();
             }
         });
         document.addEventListener('visibilitychange', () => {
@@ -1623,9 +1628,8 @@ function RecentMediaScript() {
         if ('IntersectionObserver' in window && recentSentinel) {
             const observer = new IntersectionObserver((entries) => {
                 const entry = entries.at(-1);
-                recentState.sentinelNear = Boolean(entry?.isIntersecting);
-                if (recentState.sentinelNear) scheduleRecentAutoLoad();
-            }, {rootMargin: '400px 0px'});
+                if (entry?.isIntersecting) scheduleRecentAutoLoad();
+            }, {rootMargin: recentAutoLoadMarginPx + 'px 0px'});
             observer.observe(recentSentinel);
         }
         window.addEventListener('scroll', scheduleRecentAutoLoad, {passive: true});
@@ -1636,6 +1640,7 @@ function RecentMediaScript() {
         updateRecentFilterButtons();
         updateRecentEndState();
         startRecentStatePolling();
+        scheduleRecentAutoLoad();
     `
 
     return <script dangerouslySetInnerHTML={{__html: script}}></script>
