@@ -473,56 +473,32 @@ async function isManagedR2MediaKeyReferenced(db: D1Database, parsed: ManagedR2Me
         case 'characterMedia': {
             const imageKeyColumn = parsed.rating === 'sfw' ? 'sfw_image_key' : 'nsfw_image_key'
             const contentTypeColumn = parsed.rating === 'sfw' ? 'sfw_content_type' : 'nsfw_content_type'
-            const row = await db
-                .prepare(
-                    `SELECT 1
-                 FROM character_media
-                 WHERE user_id = ?
-                   AND character_id = ?
-                   AND id = ?
-                   AND ${imageKeyColumn} = ?
-                   AND lower(coalesce(${contentTypeColumn}, 'image/png')) = ?
-                 LIMIT 1`,
-                )
-                .bind(parsed.userId, parsed.characterId, parsed.mediaId, parsed.imageKey, parsed.contentType)
-                .first()
-            return Boolean(row)
+            return await characterMediaObjectIsReferenced(db, {
+                ...parsed,
+                imageKeyColumn,
+                contentTypeColumn,
+                defaultContentType: 'image/png',
+            })
         }
 
         case 'characterMediaPreview': {
             const imageKeyColumn = parsed.rating === 'sfw' ? 'sfw_preview_image_key' : 'nsfw_preview_image_key'
             const contentTypeColumn = parsed.rating === 'sfw' ? 'sfw_preview_content_type' : 'nsfw_preview_content_type'
-            const row = await db
-                .prepare(
-                    `SELECT 1
-                 FROM character_media
-                 WHERE user_id = ?
-                   AND character_id = ?
-                   AND id = ?
-                   AND ${imageKeyColumn} = ?
-                   AND lower(coalesce(${contentTypeColumn}, 'image/webp')) = ?
-                 LIMIT 1`,
-                )
-                .bind(parsed.userId, parsed.characterId, parsed.mediaId, parsed.imageKey, parsed.contentType)
-                .first()
-            return Boolean(row)
+            return await characterMediaObjectIsReferenced(db, {
+                ...parsed,
+                imageKeyColumn,
+                contentTypeColumn,
+                defaultContentType: 'image/webp',
+            })
         }
 
         case 'characterMediaNsfwBlur': {
-            const row = await db
-                .prepare(
-                    `SELECT 1
-                 FROM character_media
-                 WHERE user_id = ?
-                   AND character_id = ?
-                   AND id = ?
-                   AND nsfw_blur_image_key = ?
-                   AND lower(nsfw_blur_content_type) = ?
-                 LIMIT 1`,
-                )
-                .bind(parsed.userId, parsed.characterId, parsed.mediaId, parsed.imageKey, parsed.contentType)
-                .first()
-            return Boolean(row)
+            return await characterMediaObjectIsReferenced(db, {
+                ...parsed,
+                imageKeyColumn: 'nsfw_blur_image_key',
+                contentTypeColumn: 'nsfw_blur_content_type',
+                defaultContentType: 'image/webp',
+            })
         }
 
         case 'characterHeightChart': {
@@ -540,6 +516,76 @@ async function isManagedR2MediaKeyReferenced(db: D1Database, parsed: ManagedR2Me
             return heightChartReferencesImage(row?.height_chart_json, parsed.imageKey, parsed.contentType)
         }
     }
+}
+
+async function characterMediaObjectIsReferenced(
+    db: D1Database,
+    input: {
+        key: string
+        userId: string
+        characterId: string
+        mediaId: string
+        imageKey: string
+        contentType: string
+        imageKeyColumn: 'sfw_image_key' | 'nsfw_image_key' | 'sfw_preview_image_key' | 'nsfw_preview_image_key' | 'nsfw_blur_image_key'
+        contentTypeColumn:
+            | 'sfw_content_type'
+            | 'nsfw_content_type'
+            | 'sfw_preview_content_type'
+            | 'nsfw_preview_content_type'
+            | 'nsfw_blur_content_type'
+        defaultContentType: 'image/png' | 'image/webp'
+    },
+): Promise<boolean> {
+    const row = await db
+        .prepare(
+            `SELECT 1
+             WHERE EXISTS (
+                 SELECT 1
+                 FROM character_media
+                 WHERE user_id = ?
+                   AND character_id = ?
+                   AND id = ?
+                   AND ${input.imageKeyColumn} = ?
+                   AND lower(coalesce(${input.contentTypeColumn}, ?)) = ?
+             )
+                OR EXISTS (
+                    SELECT 1
+                    FROM image_processing_tasks AS tasks
+                    JOIN image_upload_jobs AS jobs ON jobs.id = tasks.job_id
+                    WHERE jobs.target_type = 'gallery_create'
+                      AND jobs.user_id = ?
+                      AND jobs.target_id = ?
+                      AND json_extract(jobs.request_json, '$.mediaId') = ?
+                      AND tasks.state = 'ready'
+                      AND (
+                          jobs.state IN ('queued', 'processing', 'waiting_for_sources', 'publishing')
+                          OR (jobs.state = 'failed' AND jobs.error_code = 'gallery_capacity_exceeded')
+                      )
+                      AND (
+                          json_extract(tasks.output_json, '$.imageObjectKey') = ?
+                          OR json_extract(tasks.output_json, '$.previewObjectKey') = ?
+                          OR json_extract(tasks.output_json, '$.blurObjectKey') = ?
+                      )
+               )
+             LIMIT 1`,
+        )
+        .bind(
+            input.userId,
+            input.characterId,
+            input.mediaId,
+            input.imageKey,
+            input.defaultContentType,
+            input.contentType,
+            input.userId,
+            input.characterId,
+            input.mediaId,
+            input.key,
+            input.key,
+            input.key,
+        )
+        .first()
+    return Boolean(row)
 }
 
 function isOldEnoughToClean(object: R2Object, now: Date): boolean {

@@ -4,6 +4,7 @@ import {createCsrfToken} from '../../lib/auth/session'
 import {STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
 import {PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/profileImage'
 import {thumbnailOriginalObjectKey} from '../../lib/media/thumbnailSources'
+import {characterMediaImageObjectKey} from '../../lib/media/url'
 import {
     queryAll,
     queryOne,
@@ -4865,6 +4866,83 @@ describe('character media uploads', () => {
         ).toEqual({count: 500})
         expect(await queryOne<{id: string}>('SELECT id FROM character_media WHERE id = ?', ['media-id'], db)).toBeNull()
     })
+
+    it('rejects a gallery insert if the final media slot is taken during upload completion', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        await seedMediaRecords(499)
+        const csrfToken = await createCsrfToken(sessionToken)
+        const initResponse = await initChunkedMedia(character.id, {ratings: [{rating: 'sfw', contentType: 'image/png'}]}, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+        const initBody = (await initResponse.json()) as ChunkedSfwInitBody
+        const uploadedPart = (await (
+            await putChunkedMediaPart(
+                character.id,
+                initBody.mediaId,
+                'sfw',
+                initBody.uploads.sfw.uploadId,
+                1,
+                initBody.uploads.sfw.imageKey,
+                createPngFile(800, 600),
+                db,
+                {mediaBucket, sessionToken, csrfToken},
+            )
+        ).json()) as R2UploadedPart
+        const imageObjectKey = characterMediaImageObjectKey(
+            currentUserRecord.id,
+            character.id,
+            initBody.mediaId,
+            initBody.uploads.sfw.imageKey,
+            'sfw',
+            'image/png',
+        )
+        const upload = mediaBucket.resumeMultipartUpload(imageObjectKey, initBody.uploads.sfw.uploadId)
+        vi.mocked(mediaBucket.resumeMultipartUpload).mockReturnValueOnce({
+            ...upload,
+            complete: vi.fn(async (parts) => {
+                await db
+                    .prepare(
+                        `INSERT INTO character_media (
+                             id, user_id, character_id, sfw_image_key, sfw_content_type, sfw_width, sfw_height, sfw_byte_size
+                         ) VALUES ('competing-media', ?, ?, 'competing-sfw', 'image/png', 800, 600, 1024)`,
+                    )
+                    .bind(currentUserRecord.id, character.id)
+                    .run()
+                return await upload.complete(parts)
+            }),
+        } as R2MultipartUpload)
+
+        const response = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/png',
+                    parts: [uploadedPart],
+                },
+                sfwPreview: createPreviewPayload(800, 600),
+            },
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+
+        expect(response.status).toBe(409)
+        expect(await response.json()).toEqual({error: 'Characters can contain 500 gallery images or fewer'})
+        expect(
+            await queryOne<{count: number}>('SELECT COUNT(*) AS count FROM character_media WHERE character_id = ?', [character.id], db),
+        ).toEqual({count: 500})
+        expect(await queryOne<{id: string}>('SELECT id FROM character_media WHERE id = ?', [initBody.mediaId], db)).toBeNull()
+        const losingMediaPrefix = imageObjectKey.slice(0, imageObjectKey.indexOf('/sfw/') + 1)
+        expect((await mediaBucket.list({prefix: losingMediaPrefix})).objects).toEqual([])
+    }, 12_000)
 
     it('generates and stores blurred variants for NSFW gallery previews', async () => {
         const sessionToken = 'session-token'

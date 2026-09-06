@@ -1,6 +1,7 @@
 import {describe, expect, it, vi} from 'vitest'
 import {queryAll, queryOne, seedCharacter, seedFolder, seedUser, useTestDatabase, withFailingTrigger} from '../../test/d1'
 import {createAvifBytes, createPngFile} from '../../test/imageFixtures'
+import {createMockKVNamespace} from '../../test/mockKV'
 import {createMockR2Bucket} from '../../test/mockR2'
 import type {Bindings} from '../../types/bindings'
 import type {ImageProcessingFailureMessage, ImageUploadProcessingMessage} from '../../types/imageProcessing'
@@ -16,6 +17,7 @@ import {
     reconcileImageUploads,
     retryImageUploadJob,
 } from './imageUploadJobs'
+import {cleanupStaleR2Media} from './r2Cleanup'
 import {thumbnailOriginalObjectKey} from './thumbnailSources'
 import {characterMediaImageObjectKey} from './url'
 
@@ -75,6 +77,7 @@ function createEnv(
     const sourceBucket = mediaBucket
     const env = {
         DB: db,
+        CACHE: createMockKVNamespace(),
         IMAGE_PROCESSING_QUEUE: processing.queue,
         IMAGE_PROCESSING_DLQ: deadLetter.queue,
         MEDIA_BUCKET: mediaBucket,
@@ -153,6 +156,23 @@ async function createSingleGalleryJob(setup: ReturnType<typeof createEnv>, ratin
         now,
     })
     return {job, queued: firstQueuedMessage(setup.lanes), sourceKey: objectKey}
+}
+
+async function seedGalleryMedia(count: number): Promise<void> {
+    const insert = db.prepare(
+        `INSERT INTO character_media (
+             id, user_id, character_id, sfw_image_key, sfw_content_type, sfw_width, sfw_height, sfw_byte_size
+         ) VALUES (?, 'user-1', 'character-1', ?, 'image/png', 100, 80, 33)`,
+    )
+
+    for (let offset = 0; offset < count; offset += 100) {
+        await db.batch(
+            Array.from({length: Math.min(100, count - offset)}, (_, index) => {
+                const id = `existing-media-${offset + index}`
+                return insert.bind(id, `${id}-sfw`)
+            }),
+        )
+    }
 }
 
 describe('image upload jobs', () => {
@@ -937,6 +957,59 @@ describe('image upload jobs', () => {
         await db.prepare(`UPDATE image_upload_sources SET width = NULL WHERE job_id = ?`).bind(invalid.job.id).run()
         expect((await consumeQueued(invalidSetup.env, invalid.queued)).ack).toHaveBeenCalledOnce()
         expect(await getImageUploadStatus(db, 'user-1', invalid.job.id)).toMatchObject({state: 'failed', error: {code: 'source_invalid'}})
+    })
+
+    it('fails a gallery job if the character reaches its media limit before publication', async () => {
+        await seedUser({id: 'user-1'})
+        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        const setup = createEnv()
+        const created = await createSingleGalleryJob(setup, 'nsfw')
+        await seedGalleryMedia(500)
+
+        const delivery = await consumeQueued(setup.env, created.queued)
+
+        expect(delivery.ack).toHaveBeenCalledOnce()
+        expect(delivery.retry).not.toHaveBeenCalled()
+        expect(await getImageUploadStatus(db, 'user-1', created.job.id)).toMatchObject({
+            state: 'failed',
+            error: {
+                code: 'gallery_capacity_exceeded',
+                message: 'Characters can contain 500 gallery images or fewer',
+            },
+        })
+        expect(
+            await queryOne<{count: number}>(
+                `SELECT COUNT(*) AS count FROM character_media WHERE user_id = 'user-1' AND character_id = 'character-1'`,
+                [],
+                db,
+            ),
+        ).toEqual({count: 500})
+        expect(await queryOne<{id: string}>(`SELECT id FROM character_media WHERE id = 'media-1'`, [], db)).toBeNull()
+        const task = await queryOne<{output_json: string}>(
+            `SELECT output_json FROM image_processing_tasks WHERE job_id = ? AND state = 'ready'`,
+            [created.job.id],
+            db,
+        )
+        const output = JSON.parse(task?.output_json ?? '{}') as {
+            imageObjectKey: string
+            previewObjectKey: string
+            blurObjectKey: string
+        }
+        await cleanupStaleR2Media(setup.env, new Date('2026-09-06T12:00:00Z'))
+        expect(await setup.mediaBucket.head(output.imageObjectKey)).not.toBeNull()
+        expect(await setup.mediaBucket.head(output.previewObjectKey)).not.toBeNull()
+        expect(await setup.mediaBucket.head(output.blurObjectKey)).not.toBeNull()
+        await db.prepare(`DELETE FROM character_media WHERE id = 'existing-media-0'`).run()
+        const retried = await retryImageUploadJob(setup.env, 'user-1', created.job.id, 'capacity-retry', now)
+        expect(retried).toMatchObject({state: 'ready', error: null})
+        expect(
+            await queryOne<{count: number}>(
+                `SELECT COUNT(*) AS count FROM character_media WHERE user_id = 'user-1' AND character_id = 'character-1'`,
+                [],
+                db,
+            ),
+        ).toEqual({count: 500})
+        expect(await queryOne<{id: string}>(`SELECT id FROM character_media WHERE id = 'media-1'`, [], db)).toEqual({id: 'media-1'})
     })
 
     it('fails a gallery task if its source disappears during processing', async () => {

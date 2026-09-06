@@ -3,6 +3,7 @@ import type {Bindings} from '../../types/bindings'
 import type {ImageProcessingFailureMessage, ImageUploadProcessingMessage} from '../../types/imageProcessing'
 import {recordAdminErrorLog} from '../admin/errorLog'
 import {toSqlTimestamp} from '../auth/session'
+import {GALLERY_MAX_MEDIA_PER_CHARACTER} from '../gallery'
 import {REVOCABLE_MEDIA_CACHE_CONTROL} from './cacheControl'
 import {readGalleryImageDimensions} from './imageMetadata'
 import {
@@ -451,6 +452,31 @@ export async function retryImageUploadJob(
         .all<{id: string; run_id: string; container_slot: 0 | 1 | 2; output_json: string | null}>()
 
     if (tasks.results.length === 0) {
+        if (job.error_code === 'gallery_capacity_exceeded') {
+            const result = await env.DB.prepare(
+                `UPDATE image_upload_jobs
+                 SET state = 'queued', generation = generation + 1, last_retry_idempotency_key = ?, result_json = NULL,
+                     error_code = NULL, error_message = NULL, deadline_at = ?, updated_at = ?
+                 WHERE id = ? AND user_id = ? AND state = 'failed' AND generation = ?`,
+            )
+                .bind(
+                    idempotencyKey,
+                    toSqlTimestamp(new Date(now.getTime() + IMAGE_UPLOAD_DEADLINE_MS)),
+                    toSqlTimestamp(now),
+                    jobId,
+                    userId,
+                    job.generation,
+                )
+                .run()
+
+            if (result.meta.changes === 0) {
+                return await concurrentRetryStatus(env.DB, userId, jobId, idempotencyKey)
+            }
+
+            await publishGalleryJobIfReady(env, jobId, now)
+            return await getImageUploadStatus(env.DB, userId, jobId)
+        }
+
         return await concurrentRetryStatus(env.DB, userId, jobId, idempotencyKey, job.generation)
     }
 
@@ -1030,7 +1056,13 @@ async function publishGalleryJobIfReady(env: Bindings, jobId: string, now: Date)
              WHERE EXISTS (
                  SELECT 1 FROM image_upload_jobs
                  WHERE id = ? AND generation = ? AND state IN ('queued', 'processing', 'waiting_for_sources')
-             )`,
+             )
+               AND (
+                   SELECT COUNT(*)
+                   FROM character_media
+                   WHERE user_id = ?
+                     AND character_id = ?
+               ) < ?`,
         ).bind(
             request.mediaId,
             job.user_id,
@@ -1063,6 +1095,9 @@ async function publishGalleryJobIfReady(env: Bindings, jobId: string, now: Date)
             nowText,
             job.id,
             job.generation,
+            job.user_id,
+            job.target_id,
+            GALLERY_MAX_MEDIA_PER_CHARACTER,
         ),
         env.DB.prepare(
             `INSERT OR IGNORE INTO admin_image_review_queue (media_id, created_at, queued_at)
@@ -1071,12 +1106,48 @@ async function publishGalleryJobIfReady(env: Bindings, jobId: string, now: Date)
         env.DB.prepare(
             `UPDATE image_upload_jobs
              SET state = 'ready', result_json = ?, error_code = NULL, error_message = NULL, updated_at = ?
-             WHERE id = ? AND generation = ? AND state IN ('queued', 'processing', 'waiting_for_sources')`,
-        ).bind(JSON.stringify({media}), nowText, job.id, job.generation),
+             WHERE id = ? AND generation = ? AND state IN ('queued', 'processing', 'waiting_for_sources')
+               AND EXISTS (
+                   SELECT 1
+                   FROM character_media
+                   WHERE id = ?
+                     AND user_id = ?
+                     AND character_id = ?
+               )`,
+        ).bind(JSON.stringify({media}), nowText, job.id, job.generation, request.mediaId, job.user_id, job.target_id),
         successfulSourceCleanupStatement(env.DB, job.id, job.generation, now),
     ])
     const [mediaResult, , jobResult] = results as [D1Result, D1Result, D1Result, ...D1Result[]]
-    return mediaResult.meta.changes > 0 && jobResult.meta.changes > 0
+
+    if (mediaResult.meta.changes === 0 && jobResult.meta.changes === 0) {
+        await env.DB.prepare(
+            `UPDATE image_upload_jobs
+             SET state = 'failed', error_code = 'gallery_capacity_exceeded',
+                 error_message = ?, updated_at = ?
+             WHERE id = ?
+               AND generation = ?
+               AND state IN ('queued', 'processing', 'waiting_for_sources')
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM character_media
+                   WHERE id = ?
+                     AND user_id = ?
+                     AND character_id = ?
+               )`,
+        )
+            .bind(
+                `Characters can contain ${GALLERY_MAX_MEDIA_PER_CHARACTER} gallery images or fewer`,
+                nowText,
+                job.id,
+                job.generation,
+                request.mediaId,
+                job.user_id,
+                job.target_id,
+            )
+            .run()
+    }
+
+    return jobResult.meta.changes > 0
 }
 
 type GalleryInsertVariant = {

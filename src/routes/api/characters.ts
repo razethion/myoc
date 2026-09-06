@@ -3,7 +3,12 @@ import {Hono} from 'hono'
 import {z} from 'zod'
 import {createImageReviewQueueStatement} from '../../lib/admin/imageApprovals'
 import {type CurrentUser, getCurrentUser, toSqlTimestamp} from '../../lib/auth/session'
-import {GALLERY_CHUNK_SIZE, GALLERY_MAX_IMAGES_PER_ROW, shouldForceGalleryRowFullWidth} from '../../lib/gallery'
+import {
+    GALLERY_CHUNK_SIZE,
+    GALLERY_MAX_IMAGES_PER_ROW,
+    GALLERY_MAX_MEDIA_PER_CHARACTER,
+    shouldForceGalleryRowFullWidth,
+} from '../../lib/gallery'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {readFormDataUpTo, readJsonUpTo, STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
 import {
@@ -204,6 +209,7 @@ class ChunkedUploadInitError extends Error {
 }
 
 class GalleryUploadValidationError extends Error {}
+class GalleryMediaCapacityError extends Error {}
 
 type JsonProfileImage = {
     data: string
@@ -299,8 +305,7 @@ const CHARACTER_DESCRIPTION_MAX_LENGTH = 255
 const ARTIST_NAME_MAX_LENGTH = 80
 const GALLERY_MAX_TABS = 20
 const GALLERY_MAX_ROWS = 100
-const GALLERY_MAX_MEDIA_PLACEMENTS = 500
-const GALLERY_MAX_MEDIA_PER_CHARACTER = GALLERY_MAX_MEDIA_PLACEMENTS
+const GALLERY_MAX_MEDIA_PLACEMENTS = GALLERY_MAX_MEDIA_PER_CHARACTER
 const TREE_MAX_ITEMS = 500
 const TREE_MAX_DEPTH = 20
 const SQL_IN_CLAUSE_CHUNK_SIZE = 50
@@ -2485,9 +2490,13 @@ function describeError(error: unknown): string {
     }
 }
 
-function mediaCompletionFailure(error: unknown, referenceId: string): {message: string; status: 400 | 500} {
+function mediaCompletionFailure(error: unknown, referenceId: string): {message: string; status: 400 | 409 | 500} {
     if (error instanceof GalleryUploadValidationError) {
         return {message: error.message, status: 400}
+    }
+
+    if (error instanceof GalleryMediaCapacityError) {
+        return {message: `Characters can contain ${GALLERY_MAX_MEDIA_PER_CHARACTER} gallery images or fewer`, status: 409}
     }
 
     console.error(
@@ -2761,7 +2770,15 @@ async function createAndPersistCharacterMedia(
 
     const now = toSqlTimestamp(new Date())
     const media = createNewCharacterMediaRecord({id: mediaId, userId, characterId, artists, variants, now})
-    await env.DB.batch([createCharacterMediaInsertStatement(env.DB, media), createImageReviewQueueStatement(env.DB, media.id, now)])
+    const [mediaResult] = await env.DB.batch([
+        createCharacterMediaInsertStatement(env.DB, media),
+        createImageReviewQueueStatement(env.DB, media.id, now),
+    ])
+
+    if (mediaResult?.meta.changes === 0) {
+        throw new GalleryMediaCapacityError()
+    }
+
     return media
 }
 
@@ -2789,12 +2806,17 @@ async function completeToyhouseImportItem(
         variants: [variant],
         now,
     })
-    await env.DB.batch([
+    const [mediaResult] = await env.DB.batch([
         createCharacterMediaInsertStatement(env.DB, media),
-        createImportedToyhouseItemStatement(env.DB, userId, item.id, media.id, now),
+        createImportedToyhouseItemStatement(env.DB, userId, item.id, item.character_id, media.id, now),
         createImageReviewQueueStatement(env.DB, media.id, now),
         createToyhouseImportJobStatusStatement(env.DB, userId, item.job_id, now),
     ])
+
+    if (mediaResult?.meta.changes === 0) {
+        throw new GalleryMediaCapacityError()
+    }
+
     return media
 }
 
@@ -2816,6 +2838,7 @@ function createImportedToyhouseItemStatement(
     db: D1Database,
     userId: string,
     itemId: string,
+    characterId: string,
     mediaId: string,
     now: string,
 ): D1PreparedStatement {
@@ -2827,9 +2850,16 @@ function createImportedToyhouseItemStatement(
                  error    = '',
                  updated_at = ?
              WHERE id = ?
-               AND user_id = ?`,
+               AND user_id = ?
+               AND EXISTS (
+                   SELECT 1
+                   FROM character_media
+                   WHERE id = ?
+                     AND user_id = ?
+                     AND character_id = ?
+               )`,
         )
-        .bind('imported', mediaId, now, itemId, userId)
+        .bind('imported', mediaId, now, itemId, userId, mediaId, userId, characterId)
 }
 
 function createCharacterMediaInsertStatement(db: D1Database, media: CharacterMediaRecord): D1PreparedStatement {
@@ -2844,7 +2874,13 @@ function createCharacterMediaInsertStatement(db: D1Database, media: CharacterMed
                                           nsfw_preview_width, nsfw_preview_height, nsfw_preview_byte_size,
                                           nsfw_blur_image_key, nsfw_blur_content_type,
                                           created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             WHERE (
+                 SELECT COUNT(*)
+                 FROM character_media
+                 WHERE user_id = ?
+                   AND character_id = ?
+             ) < ?`,
         )
         .bind(
             media.id,
@@ -2876,6 +2912,9 @@ function createCharacterMediaInsertStatement(db: D1Database, media: CharacterMed
             media.nsfw_blur_content_type,
             media.created_at,
             media.updated_at,
+            media.user_id,
+            media.character_id,
+            GALLERY_MAX_MEDIA_PER_CHARACTER,
         )
 }
 
