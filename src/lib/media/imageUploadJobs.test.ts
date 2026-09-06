@@ -1000,8 +1000,20 @@ describe('image upload jobs', () => {
         expect(await setup.mediaBucket.head(output.previewObjectKey)).not.toBeNull()
         expect(await setup.mediaBucket.head(output.blurObjectKey)).not.toBeNull()
         await db.prepare(`DELETE FROM character_media WHERE id = 'existing-media-0'`).run()
-        const retried = await retryImageUploadJob(setup.env, 'user-1', created.job.id, 'capacity-retry', now)
-        expect(retried).toMatchObject({state: 'ready', error: null})
+        const retries = await Promise.allSettled([
+            retryImageUploadJob(setup.env, 'user-1', created.job.id, 'capacity-retry-a', now),
+            retryImageUploadJob(setup.env, 'user-1', created.job.id, 'capacity-retry-b', now),
+        ])
+        expect(retries.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected'])
+
+        for (const result of retries) {
+            if (result.status === 'fulfilled') {
+                expect(result.value).toMatchObject({state: 'ready', error: null})
+            } else {
+                expect(result.reason).toBeInstanceOf(ImageUploadConflictError)
+            }
+        }
+
         expect(
             await queryOne<{count: number}>(
                 `SELECT COUNT(*) AS count FROM character_media WHERE user_id = 'user-1' AND character_id = 'character-1'`,

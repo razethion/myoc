@@ -723,7 +723,7 @@ function createToyhouseSelectionTestPayload() {
 
 async function postToyhouseSelection(
     selection: unknown,
-    options: {csrfToken?: string | null; includeSelection?: boolean; payload?: unknown} = {},
+    options: {csrfToken?: string | null; includePayload?: boolean; includeSelection?: boolean; payload?: unknown} = {},
 ) {
     const form = new FormData()
     const csrfToken = options.csrfToken === undefined ? await createCsrfToken('session-token') : options.csrfToken
@@ -732,7 +732,9 @@ async function postToyhouseSelection(
         form.set('csrfToken', csrfToken)
     }
 
-    form.set('toyhousePayload', JSON.stringify(options.payload ?? createToyhouseSelectionTestPayload()))
+    if (options.includePayload !== false) {
+        form.set('toyhousePayload', JSON.stringify(options.payload ?? createToyhouseSelectionTestPayload()))
+    }
 
     if (options.includeSelection !== false) {
         form.set('toyhouseSelection', typeof selection === 'string' ? selection : JSON.stringify(selection))
@@ -2796,6 +2798,29 @@ describe('GET /migrate', () => {
         expect(response.status).toBe(403)
         expect(JSON.parse(html)).toEqual({error: 'Invalid CSRF token'})
         expect(importJobCount?.count).toBe(0)
+    })
+
+    it.each([
+        {
+            expected: 'Toyhou.se data was missing',
+            options: {includePayload: false},
+        },
+        {
+            expected: 'verified for a different MyOC account',
+            options: {payload: {...createToyhouseSelectionTestPayload(), myocUserId: 'other-user'}},
+        },
+    ])('rejects an invalid confirmation payload: $expected', async ({expected, options}) => {
+        const {db, html, response} = await postToyhouseSelection(
+            {
+                characters: [{id: '9430171', imageIndexes: [0], nsfwImageIndexes: []}],
+                createdCharacters: [],
+            },
+            options,
+        )
+
+        expect(response.status).toBe(200)
+        expect(html).toContain(expected)
+        expect(await queryOne<{count: number}>('SELECT COUNT(*) AS count FROM toyhouse_import_jobs', [], db)).toEqual({count: 0})
     })
 
     it('requires every NSFW image to be selected for import', async () => {

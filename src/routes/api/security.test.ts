@@ -433,6 +433,17 @@ describe('POST /security/recovery/regenerate', () => {
 })
 
 describe('POST /security/recovery/confirm', () => {
+    it('returns 413 for an oversized JSON body', async () => {
+        await seedCurrentUser()
+
+        const response = await securityRequest('/recovery/confirm', db, {
+            body: {padding: 'x'.repeat(STANDARD_JSON_REQUEST_MAX_BYTES)},
+        })
+
+        expect(response.status).toBe(413)
+        expect(await response.json()).toEqual({error: 'Request body is too large'})
+    })
+
     it('returns 429 when the user identity limit is exhausted', async () => {
         await seedCurrentUser()
 
