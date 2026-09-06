@@ -118,6 +118,14 @@ export const CLEAR_TABLE_ORDER = [
 
 const DISABLED_PASSWORD_HASH = 'passkey-only:development-clone'
 
+export function assertD1DatabaseIdentity(database, expectedId, expectedName) {
+    const actualId = typeof database?.uuid === 'string' ? database.uuid.toLowerCase() : ''
+    const actualName = typeof database?.name === 'string' ? database.name : ''
+    if (actualId !== expectedId.toLowerCase() || actualName !== expectedName) {
+        throw new Error(`Refusing to seed because D1 target ${expectedId} is not the database named ${expectedName}.`)
+    }
+}
+
 export function prepareCloneData(tables, approvalSeed, now = new Date()) {
     const cloned = Object.fromEntries(Object.entries(tables).map(([table, rows]) => [table, rows.map((row) => ({...row}))]))
     cloned.users = cloned.users.map(scrubUser)

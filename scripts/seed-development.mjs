@@ -6,6 +6,7 @@ import {dirname, resolve} from 'node:path'
 import process from 'node:process'
 import {fileURLToPath} from 'node:url'
 import {
+    assertD1DatabaseIdentity,
     CLEAR_TABLE_ORDER,
     CLONE_TABLE_QUERIES,
     collectMediaObjectKeys,
@@ -76,7 +77,21 @@ function assertSafeRemoteConfig() {
     if (!/^myoc-pr-[1-9][0-9]*$/.test(config.targetD1Name)) throw new Error('The remote D1 target must use the name myoc-pr-<number>.')
     if (!/^myoc-pr-[1-9][0-9]*-media$/.test(config.targetR2))
         throw new Error('The remote R2 target must use the name myoc-pr-<number>-media.')
-    if (config.targetD1Id === config.sourceD1Id) throw new Error('Refusing to seed because the D1 target matches production.')
+    if (config.targetD1Id.toLowerCase() === config.sourceD1Id.toLowerCase())
+        throw new Error('Refusing to seed because the D1 target matches production.')
+}
+
+async function verifyRemoteD1Identity() {
+    const response = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/d1/database/${config.targetD1Id}?fields=uuid,name`,
+        {headers: {authorization: `Bearer ${config.apiToken}`}},
+    )
+    const payload = await response.json()
+    if (!response.ok || payload.success !== true || !payload.result) {
+        const errors = Array.isArray(payload.errors) ? payload.errors.map((error) => error.message).join('; ') : response.statusText
+        throw new Error(`D1 identity check failed for database ${config.targetD1Id}: ${errors}`)
+    }
+    assertD1DatabaseIdentity(payload.result, config.targetD1Id, config.targetD1Name)
 }
 
 async function resolveCloudflareAuth() {
@@ -473,6 +488,7 @@ function chunks(items, size) {
 async function main() {
     await resolveCloudflareAuth()
     assertSafeConfig()
+    if (remote) await verifyRemoteD1Identity()
     console.log(`Development approval seed: ${config.approvalSeed}`)
     console.log(`Selected production accounts: ${DEVELOPMENT_CLONE_USERNAMES.join(', ')}`)
     const sourceTables = await fetchCloneTables()

@@ -1,7 +1,38 @@
 import {describe, expect, it} from 'vitest'
-import {collectMediaObjectKeys, insertStatement, prepareCloneData, randomizeMediaApprovals, scrubUser} from './seed-development-helpers.mjs'
+import {
+    assertD1DatabaseIdentity,
+    collectMediaObjectKeys,
+    insertStatement,
+    prepareCloneData,
+    randomizeMediaApprovals,
+    scrubUser,
+} from './seed-development-helpers.mjs'
 
 describe('development seed helpers', () => {
+    it('accepts a D1 database only when its UUID and name match the target', () => {
+        expect(() =>
+            assertD1DatabaseIdentity(
+                {uuid: 'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE', name: 'myoc-pr-123'},
+                'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+                'myoc-pr-123',
+            ),
+        ).not.toThrow()
+        expect(() =>
+            assertD1DatabaseIdentity(
+                {uuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', name: 'unrelated-database'},
+                'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+                'myoc-pr-123',
+            ),
+        ).toThrow('D1 target aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee is not the database named myoc-pr-123')
+        expect(() =>
+            assertD1DatabaseIdentity(
+                {uuid: '11111111-2222-3333-4444-555555555555', name: 'myoc-pr-123'},
+                'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+                'myoc-pr-123',
+            ),
+        ).toThrow('D1 target aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee is not the database named myoc-pr-123')
+    })
+
     it('removes authentication and account security data from a cloned user', () => {
         expect(
             scrubUser({
