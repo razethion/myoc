@@ -139,10 +139,9 @@ Usage:
   npm run recent-feed:backfill -- --local
   npm run recent-feed:backfill -- --production --confirm-production=DATABASE:BUCKET
 
-The default mode reads local D1 and uses the development bindings in wrangler.jsonc. In the
-current config, this writes generated objects to the preview media R2 bucket. The script
-creates a restricted temporary config and cannot use the production D1 database or production
-media bucket.
+The default mode reads local D1 and uses local development bindings. The script creates a
+restricted temporary config and cannot use the production D1 database or production media
+bucket.
 
 Production mode uses the production D1 database and media bucket. It never resets feed
 state. It requires an exact --confirm-production value based on the configured database and
@@ -222,18 +221,12 @@ function productionBackfillTarget(config, database, mediaBucket) {
 }
 
 function developmentBackfillTarget(developmentMediaBaseUrl, mediaBucket) {
-    if (!mediaBucket.preview_bucket_name) {
-        throw new Error('wrangler.jsonc must define MEDIA_BUCKET.preview_bucket_name for the dev backfill.')
-    }
-    if (mediaBucket.preview_bucket_name === mediaBucket.bucket_name) {
-        throw new Error('The media preview and production R2 bucket names must be different.')
-    }
     if (!developmentMediaBaseUrl) {
         throw new Error('.dev.vars must define MEDIA_PUBLIC_BASE_URL for the dev backfill.')
     }
 
     return {
-        bucketName: mediaBucket.preview_bucket_name,
+        bucketName: mediaBucket.bucket_name,
         mediaBaseUrl: developmentMediaBaseUrl,
         mediaBaseUrlName: '.dev.vars MEDIA_PUBLIC_BASE_URL',
     }
@@ -278,7 +271,7 @@ async function createRestrictedConfig() {
             {
                 binding: 'MEDIA_BUCKET',
                 bucket_name: selectedBucketName,
-                remote: options.production || !options.local,
+                remote: options.production,
             },
         ],
     }

@@ -72,8 +72,8 @@ npm run dev
 
 Wrangler prints the local URL, usually `http://localhost:8787`.
 
-This command reads four production galleries. It clears local D1 and R2 data before it copies the selected content. Set
-`CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` in your environment before you run it.
+This command reads four production galleries. It clears local D1 and R2 data before it copies the selected content. It
+uses your existing `wrangler login` session. GitHub deployments continue to use their configured API token.
 
 The production profiles are view-only. The only development login is:
 

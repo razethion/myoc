@@ -1,4 +1,4 @@
-import {spawn} from 'node:child_process'
+import {execFile, spawn} from 'node:child_process'
 import {randomUUID} from 'node:crypto'
 import {existsSync, readFileSync} from 'node:fs'
 import {mkdir, readdir, readFile, rm, writeFile} from 'node:fs/promises'
@@ -18,6 +18,7 @@ const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const tempDir = resolve(rootDir, '.tmp', 'development-seed')
 const localD1StateDir = resolve(rootDir, '.wrangler', 'state', 'v3', 'd1', 'miniflare-D1DatabaseObject')
 const workerSourceFile = resolve(rootDir, 'scripts', 'seed-development-r2-worker.mjs')
+const wranglerConfigFile = resolve(rootDir, 'wrangler.jsonc')
 const defaultWrangler = resolve(rootDir, 'node_modules', '.bin', 'wrangler')
 const pageSize = 500
 
@@ -26,7 +27,7 @@ loadLocalEnv('.dev.vars')
 
 const remote = process.argv.includes('--remote')
 const config = {
-    accountId: envValue('CLOUDFLARE_ACCOUNT_ID'),
+    accountId: envValue('CLOUDFLARE_ACCOUNT_ID') || readProjectAccountId(),
     apiToken: envValue('CLOUDFLARE_API_TOKEN'),
     sourceD1Id: envValue('PROD_D1_DATABASE_ID') || '909ada8f-fc57-47ad-83e1-18ffe863debb',
     sourceR2: envValue('PROD_R2_BUCKET') || 'myoc',
@@ -55,8 +56,8 @@ The command clears all data and objects in the selected development target.`)
 }
 
 function assertSafeConfig() {
-    if (!config.accountId || !config.apiToken) throw new Error('CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are required.')
-    if (!existsSync(config.wrangler)) throw new Error(`Wrangler was not found at ${config.wrangler}.`)
+    if (!config.accountId) throw new Error('The Cloudflare account ID is not configured.')
+    if (!config.apiToken) throw new Error('Cloudflare authentication is not available.')
     if (!/^[0-9a-f-]{36}$/i.test(config.sourceD1Id)) throw new Error('PROD_D1_DATABASE_ID must be a UUID.')
     if (remote) {
         if (!/^[0-9a-f-]{36}$/i.test(config.targetD1Id)) throw new Error('--target-d1-id must be a UUID for a remote seed.')
@@ -66,6 +67,42 @@ function assertSafeConfig() {
         if (config.targetD1Id === config.sourceD1Id || config.targetR2 === config.sourceR2) {
             throw new Error('Refusing to seed because a remote development target matches production.')
         }
+    }
+}
+
+async function resolveCloudflareAuth() {
+    if (!existsSync(config.wrangler)) throw new Error(`Wrangler was not found at ${config.wrangler}.`)
+    if (config.apiToken) return
+
+    const credentials = await runWranglerJson(['auth', 'token', '--json'])
+    if (!['api_token', 'oauth'].includes(credentials.type) || typeof credentials.token !== 'string' || !credentials.token) {
+        throw new Error('Wrangler must use an API token or OAuth login. Run npx wrangler login.')
+    }
+    config.apiToken = credentials.token
+}
+
+function runWranglerJson(args) {
+    return new Promise((resolvePromise, reject) => {
+        execFile(config.wrangler, args, {cwd: rootDir, env: process.env, maxBuffer: 1024 * 1024}, (error, stdout, stderr) => {
+            if (error) {
+                const detail = stderr.trim().split('\n').at(-1)
+                reject(new Error(`Wrangler authentication failed. Run npx wrangler login.${detail ? ` ${detail}` : ''}`))
+                return
+            }
+            try {
+                resolvePromise(JSON.parse(stdout))
+            } catch {
+                reject(new Error('Wrangler returned invalid authentication data.'))
+            }
+        })
+    })
+}
+
+function readProjectAccountId() {
+    try {
+        return JSON.parse(readFileSync(wranglerConfigFile, 'utf8')).vars?.CLOUDFLARE_ACCOUNT_ID ?? ''
+    } catch {
+        return ''
     }
 }
 
@@ -363,6 +400,7 @@ function delay(milliseconds) {
 }
 
 async function main() {
+    await resolveCloudflareAuth()
     assertSafeConfig()
     console.log(`Development approval seed: ${config.approvalSeed}`)
     console.log(`Selected production accounts: ${DEVELOPMENT_CLONE_USERNAMES.join(', ')}`)
