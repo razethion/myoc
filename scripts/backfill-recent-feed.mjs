@@ -242,6 +242,9 @@ async function createRestrictedConfig() {
     if (!options.production && !mediaBucket.preview_bucket_name) {
         throw new Error('wrangler.jsonc does not define the local development media bucket.')
     }
+    if (!options.production && mediaBucket.preview_bucket_name === mediaBucket.bucket_name) {
+        throw new Error('The media preview and production R2 bucket names must be different.')
+    }
 
     const target = options.production
         ? productionBackfillTarget(config, database, mediaBucket)
