@@ -408,11 +408,11 @@ function xmlTagValue(xml, tagName) {
 
 function decodeXml(value) {
     return value
-        .replaceAll('&amp;', '&')
         .replaceAll('&lt;', '<')
         .replaceAll('&gt;', '>')
         .replaceAll('&quot;', '"')
         .replaceAll('&apos;', "'")
+        .replaceAll('&amp;', '&')
 }
 
 function escapeXml(value) {
