@@ -72,8 +72,10 @@ npm run dev
 
 Wrangler prints the local URL, usually `http://localhost:8787`.
 
-This command reads four production galleries. It clears local D1 and R2 data before it copies the selected content. It
-uses your existing `wrangler login` session. GitHub deployments continue to use their configured API token.
+This command reads four production galleries. It clears local D1 and the remote `myoc-dev` R2 bucket before it copies
+the selected content. It uses your existing `wrangler login` session and the R2 credentials in `.dev.vars`. All media
+copies use native R2 `CopyObject` requests, so media stays in Cloudflare. GitHub deployments use per-PR R2 buckets.
+Configure `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` as secrets in the GitHub `development` environment.
 
 The production profiles are view-only. The only development login is:
 
