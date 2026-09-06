@@ -38,6 +38,20 @@ jobs:
       - name: Run quality checks
         run: npm run ci
 
+      - name: Setup container Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 26
+          package-manager-cache: false
+
+      - name: Install preview processor dependencies
+        working-directory: containers/myoc-docker-sharp
+        run: npm ci
+
+      - name: Test preview processor container
+        working-directory: containers/myoc-docker-sharp
+        run: npm run check
+
       - name: Upload coverage to Codecov
         if: ${{ github.event_name == 'pull_request' }}
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
