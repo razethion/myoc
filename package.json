@@ -48,7 +48,7 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10",
-    "wrangler": "^4.115.0"
+    "wrangler": "^4.127.1"
   },
   "allowScripts": {
     "@parcel/watcher": true,
