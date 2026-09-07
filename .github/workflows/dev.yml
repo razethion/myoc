@@ -303,11 +303,11 @@ jobs:
               return '/'.join(parts)
 
           def is_allowed(name, is_directory):
-            if not name:
-              return is_directory
-            if is_directory:
-              return name in {'container', 'migrations', 'public', 'seeds', 'worker'} or name.startswith(('container/', 'migrations/', 'public/'))
-            return name in required_files or name.startswith(('container/', 'migrations/', 'public/'))
+              if not name:
+                  return is_directory
+              if is_directory:
+                  return name in {'container', 'migrations', 'public', 'seeds', 'web', 'worker'} or name.startswith(('migrations/', 'public/', 'web/'))
+              return name in required_files or name.startswith(('migrations/', 'public/', 'web/'))
 
           seen = set()
           total_size = 0
@@ -354,6 +354,10 @@ jobs:
               missing = sorted(required_files - actual_files)
               raise ValueError(f'The deployment artifact is missing files: {missing!r}')
 
+          web_files = {name for name in actual_files if name.startswith('web/')}
+          if web_files and 'web/cloudflare/_worker.js' not in web_files:
+              raise ValueError('The split Worker artifact is missing web/cloudflare/_worker.js.')
+
           manifest_entries = {}
           manifest_pattern = re.compile(r'^([0-9a-f]{64})  \./(.+)$')
           for line in (artifact_root / 'manifest.sha256').read_text(encoding='utf-8').splitlines():
@@ -387,7 +391,8 @@ jobs:
           PR_NUMBER: ${{ needs.validate.outputs.pull_request }}
         working-directory: ${{ runner.temp }}/myoc-dev-control
         run: |
-          echo "worker=myoc-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "backend_worker=myoc-pr-${PR_NUMBER}-backend" >> "$GITHUB_OUTPUT"
+          echo "web_worker=myoc-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "container=myoc-docker-sharp-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "database=myoc-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "cache=myoc-pr-${PR_NUMBER}-cache" >> "$GITHUB_OUTPUT"
@@ -505,17 +510,19 @@ jobs:
           IMAGE_QUEUE: ${{ steps.names.outputs.image_queue }}
           IMAGE_DLQ: ${{ steps.names.outputs.image_dlq }}
           PR_NUMBER: ${{ needs.validate.outputs.pull_request }}
-          WORKER_NAME: ${{ steps.names.outputs.worker }}
+          BACKEND_WORKER_NAME: ${{ steps.names.outputs.backend_worker }}
+          WEB_WORKER_NAME: ${{ steps.names.outputs.web_worker }}
         working-directory: ${{ runner.temp }}/myoc-dev-control
         run: |
           node <<'NODE'
           const fs = require('node:fs')
+          const splitWorkerArtifact = fs.existsSync('./artifact/web/cloudflare/_worker.js')
 
-          const config = {
-            name: process.env.WORKER_NAME,
+          const backendConfig = {
+            name: splitWorkerArtifact ? process.env.BACKEND_WORKER_NAME : process.env.WEB_WORKER_NAME,
             main: './artifact/worker/index.js',
             compatibility_date: '2026-06-10',
-            workers_dev: true,
+            workers_dev: !splitWorkerArtifact,
             observability: {
               logs: {
                 enabled: true,
@@ -644,7 +651,32 @@ jobs:
             },
           }
 
-          fs.writeFileSync('wrangler.preview.jsonc', `${JSON.stringify(config, null, 2)}\n`)
+          const webConfig = {
+            name: process.env.WEB_WORKER_NAME,
+            main: './artifact/web/cloudflare/_worker.js',
+            compatibility_date: '2026-09-01',
+            compatibility_flags: ['nodejs_als'],
+            workers_dev: true,
+            observability: {
+              logs: {
+                enabled: true,
+                invocation_logs: true,
+              },
+            },
+            assets: {
+              binding: 'ASSETS',
+              directory: './artifact/web/cloudflare',
+            },
+            services: [
+              {
+                binding: 'HONO',
+                service: process.env.BACKEND_WORKER_NAME,
+              },
+            ],
+          }
+
+          fs.writeFileSync('wrangler.backend-preview.jsonc', `${JSON.stringify(backendConfig, null, 2)}\n`)
+          if (splitWorkerArtifact) fs.writeFileSync('wrangler.web-preview.jsonc', `${JSON.stringify(webConfig, null, 2)}\n`)
           NODE
 
       - name: Migrate isolated dev D1
@@ -654,7 +686,7 @@ jobs:
           DB_NAME: ${{ steps.names.outputs.database }}
           WRANGLER: ${{ steps.wrangler.outputs.path }}
         working-directory: ${{ runner.temp }}/myoc-dev-control
-        run: '"$WRANGLER" d1 migrations apply "$DB_NAME" --config wrangler.preview.jsonc --remote'
+        run: '"$WRANGLER" d1 migrations apply "$DB_NAME" --config wrangler.backend-preview.jsonc --remote'
 
       - name: Seed isolated development storage from production
         env:
@@ -727,7 +759,12 @@ jobs:
             fs.writeFileSync('preview-secrets.json', JSON.stringify(secrets));
           "
 
-          "$WRANGLER" deploy --config wrangler.preview.jsonc --secrets-file preview-secrets.json --no-bundle --message "Approved dev preview $HEAD_SHA" 2>&1 | tee wrangler-preview.log
+          if [ -f artifact/web/cloudflare/_worker.js ]; then
+            "$WRANGLER" deploy --config wrangler.backend-preview.jsonc --secrets-file preview-secrets.json --no-bundle --message "Approved dev preview backend $HEAD_SHA"
+            "$WRANGLER" deploy --config wrangler.web-preview.jsonc --message "Approved dev preview web $HEAD_SHA" 2>&1 | tee wrangler-preview.log
+          else
+            "$WRANGLER" deploy --config wrangler.backend-preview.jsonc --secrets-file preview-secrets.json --no-bundle --message "Approved dev preview $HEAD_SHA" 2>&1 | tee wrangler-preview.log
+          fi
 
           preview_url="$(node -e "
             const fs = require('node:fs');
