@@ -3402,6 +3402,113 @@ describe('PUT /characters/:id/height-chart', () => {
         })
     })
 
+    it('rejects a converted height chart image with changed proportions', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const previewContainer = createMockPreviewContainer(
+            new Response(createAvifBytes(900, 1600), {headers: {'content-type': 'image/avif'}}),
+        )
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const form = new FormData()
+        form.set(
+            'heightChartJson',
+            JSON.stringify({
+                version: 1,
+                height: {meters: 1.7},
+                image: null,
+                calibration: {headYPercent: 5, footYPercent: 95, footIsVirtual: false, nameTagXPercent: 50},
+            }),
+        )
+        form.set('heightChartImage', createPngFile(1600, 3200))
+
+        const response = await putHeightChart(character.id, form, db, {
+            mediaBucket,
+            previewContainer: previewContainer.namespace,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Height chart image could not be processed'})
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
+    it('does not store a height chart image when the converter is unavailable', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const previewContainer = createMockPreviewContainer([new Error('converter unavailable')])
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const form = new FormData()
+        form.set(
+            'heightChartJson',
+            JSON.stringify({
+                version: 1,
+                height: {meters: 1.7},
+                image: null,
+                calibration: {headYPercent: 5, footYPercent: 95, footIsVirtual: false, nameTagXPercent: 50},
+            }),
+        )
+        form.set('heightChartImage', createPngFile(1600, 3200))
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+        const response = await putHeightChart(character.id, form, db, {
+            mediaBucket,
+            previewContainer: previewContainer.namespace,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(500)
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+        errorSpy.mockRestore()
+    })
+
+    it.each([
+        {
+            name: 'more than 200 MB',
+            file: Object.defineProperty(createPngFile(), 'size', {value: 200 * 1024 * 1024 + 1}),
+            error: 'Height chart image must be 200 MB or smaller',
+        },
+        {
+            name: 'more than 200 million pixels',
+            file: createPngFile(20_000, 20_000),
+            error: 'Height chart image must be 200,000,000 pixels or smaller',
+        },
+    ])('rejects a height chart image with $name', async ({file, error}) => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const form = new FormData()
+        form.set(
+            'heightChartJson',
+            JSON.stringify({
+                version: 1,
+                height: {meters: 1.7},
+                image: null,
+                calibration: {headYPercent: 5, footYPercent: 95, footIsVirtual: false, nameTagXPercent: 50},
+            }),
+        )
+        form.set('heightChartImage', file)
+        const formDataSpy = vi.spyOn(Request.prototype, 'formData').mockResolvedValueOnce(form)
+
+        const response = await putHeightChart(character.id, form, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+        formDataSpy.mockRestore()
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error})
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
     it('rejects a height chart image whose dimensions cannot be read', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()

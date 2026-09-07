@@ -30,6 +30,30 @@ function renderRecentFeedSummary(summary: AdminJobSummary): string {
     })
 }
 
+function renderSizeChartSummary(summary: AdminJobSummary): string {
+    return renderAdminOptionsPage({
+        jobs: [] as unknown as AdminOptionsData['jobs'],
+        runs: [
+            {
+                id: 'size-chart-summary-run',
+                jobName: 'size-chart-image-backfill',
+                label: 'Size Chart Image Backfill',
+                triggerSource: 'manual',
+                triggeredByUserId: 'admin-user',
+                triggeredByUsername: 'admin_user',
+                cron: null,
+                status: 'running',
+                startedAt: '2026-09-05 12:00:00',
+                finishedAt: null,
+                durationMs: null,
+                summary,
+                errorMessage: null,
+            },
+        ],
+        errors: [],
+    })
+}
+
 describe('AdminOptionsPage', () => {
     it('renders the size chart backfill action and progress', () => {
         const html = renderAdminOptionsPage({
@@ -67,6 +91,27 @@ describe('AdminOptionsPage', () => {
         expect(html).toContain('5 replaced')
         expect(html).toContain('1 failed')
         expect(html).toContain('Last error: One source image is missing.')
+    })
+
+    it('renders a safe fallback for incomplete size chart progress', () => {
+        const html = renderSizeChartSummary({status: 'building'} as AdminJobSummary)
+
+        expect(html).toContain('&quot;status&quot;: &quot;building&quot;')
+    })
+
+    it('renders empty size chart progress without an error', () => {
+        const html = renderSizeChartSummary({
+            totalImages: 0,
+            processedImages: 0,
+            replacedImages: 0,
+            skippedImages: 0,
+            failedImages: 0,
+            lastError: null,
+        })
+
+        expect(html).toContain('0 of 0 images processed')
+        expect(html).not.toContain('Last error:')
+        expect(html).not.toContain('failed</span>')
     })
 
     it('renders the recent page action and publication progress', () => {

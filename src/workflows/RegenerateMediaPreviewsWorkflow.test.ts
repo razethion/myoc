@@ -1,6 +1,7 @@
 import {introspectWorkflowInstance} from 'cloudflare:test'
 import {env, type WorkflowEvent, type WorkflowStep} from 'cloudflare:workers'
 import {beforeEach, describe, expect, it, vi} from 'vitest'
+import {emptySizeChartImageBackfillSummary} from '../lib/admin/sizeChartImageBackfill'
 import {countThumbnailCandidates, getThumbnailCandidates, type ThumbnailCandidate} from '../lib/admin/thumbnailRegeneration'
 import {queryAll, queryOne, seedCharacter, seedMedia, seedUser, useTestDatabase} from '../test/d1'
 import type {Bindings} from '../types/bindings'
@@ -272,6 +273,17 @@ describe('RegenerateMediaPreviewsWorkflow', () => {
         const output = await runWorkflow({kind: 'thumbnails', runId})
 
         expect(output.output).toEqual(summary())
+        expect(await getJob(runId)).toMatchObject({status: 'success', error_message: null})
+        expect(output.queue.bodies).toEqual([])
+    })
+
+    it('dispatches an empty size chart image backfill', async () => {
+        const runId = crypto.randomUUID()
+        await seedJob(runId, 'size-chart-image-backfill')
+
+        const output = await runWorkflow({kind: 'size-chart-images', runId})
+
+        expect(output.output).toEqual(emptySizeChartImageBackfillSummary())
         expect(await getJob(runId)).toMatchObject({status: 'success', error_message: null})
         expect(output.queue.bodies).toEqual([])
     })

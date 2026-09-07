@@ -1,9 +1,10 @@
 import type {WorkflowStep} from 'cloudflare:workers'
-import {describe, expect, it} from 'vitest'
+import {describe, expect, it, vi} from 'vitest'
 import {emptySizeChartImageBackfillSummary} from '../lib/admin/sizeChartImageBackfill'
 import {queryOne, seedCharacter, seedUser, useTestDatabase} from '../test/d1'
 import {createMockR2Bucket} from '../test/mockR2'
 import {createWorkerEnv} from '../test/workerBindings'
+import type {Bindings} from '../types/bindings'
 import {runSizeChartImageBackfillWorkflow} from './sizeChartImageBackfill'
 
 const db = useTestDatabase()
@@ -69,5 +70,68 @@ describe('size chart image backfill workflow', () => {
         )
         expect(stored?.status).toBe('success')
         expect(JSON.parse(stored?.summary_json ?? 'null')).toEqual(summary)
+    })
+
+    it('does not resume a job that is no longer running', async () => {
+        const runId = crypto.randomUUID()
+        await seedJob(runId)
+        await db.prepare("UPDATE admin_job_runs SET status = 'error' WHERE id = ?").bind(runId).run()
+
+        const summary = await runSizeChartImageBackfillWorkflow(
+            createWorkerEnv({DB: db}),
+            {kind: 'size-chart-images', runId, continuation: {cursor: 'previous-chart', segment: 1}},
+            immediateStep(),
+        )
+
+        expect(summary).toEqual(emptySizeChartImageBackfillSummary())
+    })
+
+    it('starts a continuation after 250 skipped candidates', async () => {
+        const runId = crypto.randomUUID()
+        await seedJob(runId)
+        const create = vi.fn(async () => ({id: 'continuation'}))
+        let loaded = 0
+        const step = {
+            do: async (name: string, _config: unknown, callback: () => Promise<unknown>) => {
+                if (name.startsWith('load size chart batch')) {
+                    const batch = Array.from({length: 25}, (_, index) => {
+                        const characterId = `chart-${String(loaded + index + 1).padStart(3, '0')}`
+                        return {
+                            characterId,
+                            userId: 'owner',
+                            chartJson: JSON.stringify({
+                                version: 1,
+                                height: {meters: 1.7},
+                                image: {key: 'current', contentType: 'image/avif', naturalWidth: 100, naturalHeight: 200},
+                                calibration: {headYPercent: 5, footYPercent: 95, footIsVirtual: false, nameTagXPercent: 50},
+                            }),
+                            targetImageKey: `target-${characterId}`,
+                        }
+                    })
+                    loaded += batch.length
+                    return batch
+                }
+                return await callback()
+            },
+        } as unknown as WorkflowStep
+
+        const summary = await runSizeChartImageBackfillWorkflow(
+            createWorkerEnv({
+                DB: db,
+                REGENERATE_MEDIA_PREVIEWS_WORKFLOW: {create} as unknown as Bindings['REGENERATE_MEDIA_PREVIEWS_WORKFLOW'],
+            }),
+            {kind: 'size-chart-images', runId},
+            step,
+        )
+
+        expect(summary).toMatchObject({totalImages: 250, processedImages: 250, replacedImages: 0, skippedImages: 250, failedImages: 0})
+        expect(create).toHaveBeenCalledWith({
+            id: `${runId}-size-chart-segment-1`,
+            params: {
+                kind: 'size-chart-images',
+                runId,
+                continuation: {cursor: 'chart-250', segment: 1},
+            },
+        })
     })
 })

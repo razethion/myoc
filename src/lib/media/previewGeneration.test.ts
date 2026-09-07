@@ -185,6 +185,19 @@ describe('generateMediaPreviewWithContainer', () => {
 })
 
 describe('generateHeightChartImageWithContainer', () => {
+    it('rejects use without an image container binding', async () => {
+        const env = {PREVIEW_PROCESSOR_TOKEN: 'test-token'} as Pick<Bindings, 'MYOC_DOCKER_SHARP_CONTAINER' | 'PREVIEW_PROCESSOR_TOKEN'>
+
+        await expect(
+            generateHeightChartImageWithContainer(
+                env,
+                async () => new Blob([new Uint8Array([1])]).stream(),
+                {width: 100, height: 80},
+                'height-chart',
+            ),
+        ).rejects.toThrow('Image container binding is not configured.')
+    })
+
     it('streams the source and returns the proportional AVIF dimensions', async () => {
         const bytes = createAvifBytes(800, 1600)
         const fetch = vi.fn(async (_input?: RequestInfo | URL, init?: RequestInit) => {

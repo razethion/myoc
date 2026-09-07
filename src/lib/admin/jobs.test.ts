@@ -272,6 +272,57 @@ describe('size chart image backfill jobs', () => {
         })
     })
 
+    it('replaces a stopped workflow run', async () => {
+        const oldRunId = 'stopped-size-chart-run'
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (id, job_name, trigger_source, status, started_at, summary_json)
+                 VALUES (?, 'size-chart-image-backfill', 'manual', 'running', '2026-01-01 00:00:00', ?)`,
+            )
+            .bind(
+                oldRunId,
+                JSON.stringify({totalImages: 4, processedImages: 2, replacedImages: 2, skippedImages: 0, failedImages: 0, lastError: null}),
+            )
+            .run()
+        const workflow = createMockWorkflowBinding({[oldRunId]: 'complete'})
+
+        const result = await runAdminJob(thumbnailJobEnv(workflow), 'size-chart-image-backfill', {triggerSource: 'manual'})
+
+        expect(result.runId).not.toBe(oldRunId)
+        expect(result).toMatchObject({status: 'running', summary: {processedImages: 0}})
+        expect(
+            await queryOne<{status: string; error_message: string | null}>(
+                'SELECT status, error_message FROM admin_job_runs WHERE id = ?',
+                [oldRunId],
+            ),
+        ).toEqual({status: 'error', error_message: 'The size chart image backfill Workflow stopped before the job record finished.'})
+        expect(workflow.create).toHaveBeenCalledWith({
+            id: result.runId,
+            params: {kind: 'size-chart-images', runId: result.runId},
+        })
+    })
+
+    it('reports a workflow status lookup failure', async () => {
+        const runId = 'unavailable-size-chart-run'
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (id, job_name, trigger_source, status, started_at, summary_json)
+                 VALUES (?, 'size-chart-image-backfill', 'manual', 'running', '2026-01-01 00:00:00', ?)`,
+            )
+            .bind(
+                runId,
+                JSON.stringify({totalImages: 1, processedImages: 0, replacedImages: 0, skippedImages: 0, failedImages: 0, lastError: null}),
+            )
+            .run()
+        const workflow = createMockWorkflowBinding()
+        workflow.get.mockRejectedValueOnce('Workflow API unavailable')
+
+        await expect(runAdminJob(thumbnailJobEnv(workflow), 'size-chart-image-backfill', {triggerSource: 'manual'})).rejects.toThrow(
+            'Workflow API unavailable',
+        )
+        expect(workflow.create).not.toHaveBeenCalled()
+    })
+
     it('records a workflow start failure', async () => {
         const workflow = createMockWorkflowBinding()
         workflow.create.mockRejectedValueOnce(new Error('Workflow could not start'))
