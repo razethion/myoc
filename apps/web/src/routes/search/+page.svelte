@@ -11,4 +11,6 @@ let {data}: {data: PageData} = $props()
 </svelte:head>
 
 <Navbar shell={data.shell} />
-<SearchPage results={data.results} />
+{#key data.results}
+    <SearchPage results={data.results} />
+{/key}
