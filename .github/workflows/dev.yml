@@ -286,7 +286,6 @@ jobs:
               'container/server.mjs',
               'manifest.sha256',
               'seeds/development.sql',
-              'web/cloudflare/_worker.js',
               'worker/index.js',
           }
 
@@ -354,6 +353,10 @@ jobs:
           if not required_files.issubset(actual_files):
               missing = sorted(required_files - actual_files)
               raise ValueError(f'The deployment artifact is missing files: {missing!r}')
+
+          web_files = {name for name in actual_files if name.startswith('web/')}
+          if web_files and 'web/cloudflare/_worker.js' not in web_files:
+              raise ValueError('The split Worker artifact is missing web/cloudflare/_worker.js.')
 
           manifest_entries = {}
           manifest_pattern = re.compile(r'^([0-9a-f]{64})  \./(.+)$')
@@ -513,12 +516,13 @@ jobs:
         run: |
           node <<'NODE'
           const fs = require('node:fs')
+          const splitWorkerArtifact = fs.existsSync('./artifact/web/cloudflare/_worker.js')
 
           const backendConfig = {
-            name: process.env.BACKEND_WORKER_NAME,
+            name: splitWorkerArtifact ? process.env.BACKEND_WORKER_NAME : process.env.WEB_WORKER_NAME,
             main: './artifact/worker/index.js',
             compatibility_date: '2026-06-10',
-            workers_dev: false,
+            workers_dev: !splitWorkerArtifact,
             observability: {
               logs: {
                 enabled: true,
@@ -672,7 +676,7 @@ jobs:
           }
 
           fs.writeFileSync('wrangler.backend-preview.jsonc', `${JSON.stringify(backendConfig, null, 2)}\n`)
-          fs.writeFileSync('wrangler.web-preview.jsonc', `${JSON.stringify(webConfig, null, 2)}\n`)
+          if (splitWorkerArtifact) fs.writeFileSync('wrangler.web-preview.jsonc', `${JSON.stringify(webConfig, null, 2)}\n`)
           NODE
 
       - name: Migrate isolated dev D1
@@ -755,8 +759,12 @@ jobs:
             fs.writeFileSync('preview-secrets.json', JSON.stringify(secrets));
           "
 
-          "$WRANGLER" deploy --config wrangler.backend-preview.jsonc --secrets-file preview-secrets.json --no-bundle --message "Approved dev preview backend $HEAD_SHA"
-          "$WRANGLER" deploy --config wrangler.web-preview.jsonc --no-bundle --message "Approved dev preview web $HEAD_SHA" 2>&1 | tee wrangler-preview.log
+          if [ -f artifact/web/cloudflare/_worker.js ]; then
+            "$WRANGLER" deploy --config wrangler.backend-preview.jsonc --secrets-file preview-secrets.json --no-bundle --message "Approved dev preview backend $HEAD_SHA"
+            "$WRANGLER" deploy --config wrangler.web-preview.jsonc --no-bundle --message "Approved dev preview web $HEAD_SHA" 2>&1 | tee wrangler-preview.log
+          else
+            "$WRANGLER" deploy --config wrangler.backend-preview.jsonc --secrets-file preview-secrets.json --no-bundle --message "Approved dev preview $HEAD_SHA" 2>&1 | tee wrangler-preview.log
+          fi
 
           preview_url="$(node -e "
             const fs = require('node:fs');

@@ -96,7 +96,7 @@ jobs:
 
           build_root="$RUNNER_TEMP/myoc-dev-build"
           artifact_root="$RUNNER_TEMP/myoc-dev-artifact"
-          mkdir -p "$build_root/worker" "$build_root/web" "$artifact_root/worker" "$artifact_root/container" "$artifact_root/seeds"
+          mkdir -p "$build_root/worker" "$build_root/web" "$artifact_root/worker" "$artifact_root/container" "$artifact_root/seeds" "$artifact_root/web"
 
           node <<'NODE'
           const fs = require('node:fs')

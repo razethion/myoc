@@ -136,11 +136,12 @@ jobs:
 
           remove_queue_consumer() {
             local queue="$1"
+            local worker="$2"
             local consumer_output
 
-            if ! consumer_output=$("$WRANGLER" queues consumer remove "$queue" "$BACKEND_WORKER_NAME" 2>&1); then
+            if ! consumer_output=$("$WRANGLER" queues consumer remove "$queue" "$worker" 2>&1); then
               if ! grep -Eqi 'not found|does not exist|no consumer|not a consumer' <<< "$consumer_output"; then
-                record_failure "Queue consumer removal failed for $queue: $consumer_output"
+                record_failure "Queue consumer removal failed for $queue and $worker: $consumer_output"
               fi
             fi
           }
@@ -176,13 +177,18 @@ jobs:
 
           # Remove consumer links before the Worker. Deleting the Worker then
           # releases its producer bindings so the Queues can be deleted.
-          remove_queue_consumer "$IMAGE_QUEUE"
-          remove_queue_consumer "$LEGACY_PREVIEW_QUEUE_0"
-          remove_queue_consumer "$LEGACY_PREVIEW_QUEUE_1"
-          remove_queue_consumer "$LEGACY_PREVIEW_QUEUE_2"
-          remove_queue_consumer "$LEGACY_IMAGE_QUEUE_0"
-          remove_queue_consumer "$LEGACY_IMAGE_QUEUE_1"
-          remove_queue_consumer "$LEGACY_IMAGE_QUEUE_2"
+          for queue in \
+            "$IMAGE_QUEUE" \
+            "$LEGACY_PREVIEW_QUEUE_0" \
+            "$LEGACY_PREVIEW_QUEUE_1" \
+            "$LEGACY_PREVIEW_QUEUE_2" \
+            "$LEGACY_IMAGE_QUEUE_0" \
+            "$LEGACY_IMAGE_QUEUE_1" \
+            "$LEGACY_IMAGE_QUEUE_2"
+          do
+            remove_queue_consumer "$queue" "$BACKEND_WORKER_NAME"
+            remove_queue_consumer "$queue" "$WEB_WORKER_NAME"
+          done
 
           for worker in "$WEB_WORKER_NAME" "$BACKEND_WORKER_NAME"; do
             if ! worker_output=$("$WRANGLER" delete "$worker" --force 2>&1); then
