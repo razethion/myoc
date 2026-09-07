@@ -96,7 +96,7 @@ jobs:
 
           build_root="$RUNNER_TEMP/myoc-dev-build"
           artifact_root="$RUNNER_TEMP/myoc-dev-artifact"
-          mkdir -p "$build_root/worker" "$artifact_root/worker" "$artifact_root/container" "$artifact_root/seeds" "$artifact_root/web/output"
+          mkdir -p "$build_root/worker" "$build_root/web" "$artifact_root/worker" "$artifact_root/container" "$artifact_root/seeds"
 
           node <<'NODE'
           const fs = require('node:fs')
@@ -117,6 +117,12 @@ jobs:
             --minify \
             --outdir "$build_root/worker"
 
+          ./node_modules/.bin/wrangler deploy \
+            --config apps/web/wrangler.jsonc \
+            --dry-run \
+            --minify \
+            --outdir "$build_root/web"
+
           if find apps/backend/public apps/backend/containers/myoc-docker-sharp apps/backend/migrations apps/backend/seeds/development.sql apps/web/.svelte-kit -type l -print -quit | grep -q .; then
             echo "::error::The deployment artifact cannot contain symbolic links."
             exit 1
@@ -132,8 +138,7 @@ jobs:
           cp apps/backend/containers/myoc-docker-sharp/preview.mjs "$artifact_root/container/preview.mjs"
           cp apps/backend/containers/myoc-docker-sharp/server.mjs "$artifact_root/container/server.mjs"
           cp -R apps/web/.svelte-kit/cloudflare "$artifact_root/web/cloudflare"
-          cp -R apps/web/.svelte-kit/cloudflare-tmp "$artifact_root/web/cloudflare-tmp"
-          cp -R apps/web/.svelte-kit/output/server "$artifact_root/web/output/server"
+          cp "$build_root/web/_worker.js" "$artifact_root/web/cloudflare/_worker.js"
           printf '%s\n' "$HEAD_SHA" > "$artifact_root/commit.txt"
 
           (
