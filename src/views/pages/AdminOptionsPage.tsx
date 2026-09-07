@@ -37,9 +37,9 @@ export function AdminOptionsPage({csrfToken, data, feedback}: AdminOptionsPagePr
 
             <section class="rounded border border-base-300 bg-base-200 p-4">
                 <p class="mb-3 text-sm text-base-content/70">
-                    Recent page regeneration rebuilds /recent in the background. Thumbnail regeneration and character media preview
-                    regeneration run as separate background jobs. Thumbnails use saved originals. If an original is missing, the job saves
-                    the current thumbnail as its source. Starting a running job again does not create a duplicate.
+                    Recent page regeneration rebuilds /recent in the background. Thumbnail, media preview, and size chart image jobs also
+                    run in the background. The size chart backfill replaces legacy images with resized AVIF images. Starting a running job
+                    again does not create a duplicate.
                 </p>
                 <div class="flex flex-wrap gap-3">
                     {data.jobs.map((job, index) => (
@@ -196,6 +196,10 @@ function RunSummary({run}: {run: AdminJobRun}) {
         return <RecentFeedRegenerationSummary summary={run.summary} />
     }
 
+    if (run.jobName === 'size-chart-image-backfill') {
+        return <SizeChartImageBackfillSummary summary={run.summary} />
+    }
+
     return <R2CleanupSummary summary={run.summary} />
 }
 
@@ -298,6 +302,28 @@ function RecentFeedRegenerationSummary({summary}: {summary: AdminJobSummary}) {
                     ))}
                 </div>
             ) : null}
+        </div>
+    )
+}
+
+function SizeChartImageBackfillSummary({summary}: {summary: AdminJobSummary}) {
+    if (!('totalImages' in summary) || !('processedImages' in summary)) {
+        return <JsonSummary summary={summary} />
+    }
+
+    const progressMaximum = Math.max(1, summary.totalImages)
+    return (
+        <div class="grid gap-2 text-xs">
+            <progress class="progress" max={progressMaximum} value={Math.min(summary.processedImages, progressMaximum)} />
+            <div class="flex flex-wrap gap-x-3 gap-y-1">
+                <span>
+                    {summary.processedImages} of {summary.totalImages} images processed
+                </span>
+                <span>{summary.replacedImages} replaced</span>
+                <span>{summary.skippedImages} skipped</span>
+                {summary.failedImages > 0 ? <span class="text-error">{summary.failedImages} failed</span> : null}
+            </div>
+            {summary.lastError ? <p class="max-w-xl whitespace-pre-wrap break-words text-error">Last error: {summary.lastError}</p> : null}
         </div>
     )
 }

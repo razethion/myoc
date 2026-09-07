@@ -31,6 +31,44 @@ function renderRecentFeedSummary(summary: AdminJobSummary): string {
 }
 
 describe('AdminOptionsPage', () => {
+    it('renders the size chart backfill action and progress', () => {
+        const html = renderAdminOptionsPage({
+            jobs: [{name: 'size-chart-image-backfill', label: 'Size Chart Image Backfill'}] as unknown as AdminOptionsData['jobs'],
+            runs: [
+                {
+                    id: 'size-chart-run',
+                    jobName: 'size-chart-image-backfill',
+                    label: 'Size Chart Image Backfill',
+                    triggerSource: 'manual',
+                    triggeredByUserId: 'admin-user',
+                    triggeredByUsername: 'admin_user',
+                    cron: null,
+                    status: 'running',
+                    startedAt: '2026-09-06 12:00:00',
+                    finishedAt: null,
+                    durationMs: null,
+                    summary: {
+                        totalImages: 10,
+                        processedImages: 6,
+                        replacedImages: 5,
+                        skippedImages: 0,
+                        failedImages: 1,
+                        lastError: 'One source image is missing.',
+                    },
+                    errorMessage: null,
+                },
+            ],
+            errors: [],
+        })
+
+        expect(html).toContain('action="/admin/admin-options/jobs/size-chart-image-backfill/run"')
+        expect(html).toContain('Run Size Chart Image Backfill')
+        expect(html).toContain('6 of 10 images processed')
+        expect(html).toContain('5 replaced')
+        expect(html).toContain('1 failed')
+        expect(html).toContain('Last error: One source image is missing.')
+    })
+
     it('renders the recent page action and publication progress', () => {
         const html = renderAdminOptionsPage({
             jobs: [{name: 'recent-feed-regeneration', label: 'Recent Page Regeneration'}] as unknown as AdminOptionsData['jobs'],

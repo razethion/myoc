@@ -232,12 +232,13 @@ export async function generateHeightChartImageWithContainer(
     source: () => Promise<ReadableStream>,
     sourceImage: PreviewSourceImage,
     routingKey: string,
+    options: PreviewContainerRequestOptions = {priority: 'interactive'},
 ): Promise<GeneratedGalleryPreview> {
     if (!env.MYOC_DOCKER_SHARP_CONTAINER) {
         throw new Error('Image container binding is not configured.')
     }
 
-    return await withPreviewContainerRetry(env, routingKey, {priority: 'interactive'}, async (container) => {
+    return await withPreviewContainerRetry(env, routingKey, options, async (container) => {
         const response = await container.fetch('https://container/images/height-chart', {
             body: await source(),
             headers: {

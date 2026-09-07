@@ -13,6 +13,7 @@ import {
 } from '../lib/admin/mediaPreviewRegeneration'
 import type {Bindings} from '../types/bindings'
 import {type RecentFeedRegenerationWorkflowParams, runRecentFeedRegenerationWorkflow} from './recentFeedRegeneration'
+import {runSizeChartImageBackfillWorkflow, type SizeChartImageBackfillWorkflowParams} from './sizeChartImageBackfill'
 import {runThumbnailRegenerationWorkflow, type ThumbnailRegenerationWorkflowParams} from './thumbnailRegeneration'
 
 type MediaPreviewRegenerationWorkflowParams = {
@@ -30,6 +31,7 @@ export type RegenerateMediaPreviewsWorkflowParams =
     | MediaPreviewRegenerationWorkflowParams
     | ThumbnailRegenerationWorkflowParams
     | RecentFeedRegenerationWorkflowParams
+    | SizeChartImageBackfillWorkflowParams
 
 const D1_STEP_CONFIG = {
     retries: {
@@ -49,6 +51,9 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
             if (event.payload.kind === 'thumbnails') {
                 return await runThumbnailRegenerationWorkflow(this.env, event.payload, step)
             }
+            if (event.payload.kind === 'size-chart-images') {
+                return await runSizeChartImageBackfillWorkflow(this.env, event.payload, step)
+            }
 
             return await this.dispatchRegeneration(event.payload, step)
         } catch (error) {
@@ -56,7 +61,7 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
 
             await step.do('record job failure', D1_STEP_CONFIG, async () => {
                 await failAdminJobRun(this.env.DB, event.payload.runId, message)
-                if (event.payload.kind !== 'recent-feed') {
+                if (event.payload.kind !== 'recent-feed' && event.payload.kind !== 'size-chart-images') {
                     await deleteFinishedMediaPreviewRegenerationItems(this.env.DB, event.payload.runId)
                 }
                 return {recorded: true}

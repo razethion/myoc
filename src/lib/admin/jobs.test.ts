@@ -236,6 +236,58 @@ describe('getAdminOptionsData', () => {
 
         expect(data.jobs).toContainEqual({name: 'recent-feed-regeneration', label: 'Recent Page Regeneration'})
     })
+
+    it('includes the size chart image backfill job', async () => {
+        const data = await getAdminOptionsData(db)
+
+        expect(data.jobs).toContainEqual({name: 'size-chart-image-backfill', label: 'Size Chart Image Backfill'})
+    })
+})
+
+describe('size chart image backfill jobs', () => {
+    it('starts one workflow and reuses its active run', async () => {
+        const workflow = createMockWorkflowBinding()
+        const env = thumbnailJobEnv(workflow)
+
+        const first = await runAdminJob(env, 'size-chart-image-backfill', {triggerSource: 'manual'})
+        const second = await runAdminJob(env, 'size-chart-image-backfill', {triggerSource: 'manual'})
+
+        expect(second).toEqual(first)
+        expect(first).toMatchObject({
+            jobName: 'size-chart-image-backfill',
+            status: 'running',
+            summary: {
+                totalImages: 0,
+                processedImages: 0,
+                replacedImages: 0,
+                skippedImages: 0,
+                failedImages: 0,
+                lastError: null,
+            },
+        })
+        expect(workflow.create).toHaveBeenCalledOnce()
+        expect(workflow.create).toHaveBeenCalledWith({
+            id: first.runId,
+            params: {kind: 'size-chart-images', runId: first.runId},
+        })
+    })
+
+    it('records a workflow start failure', async () => {
+        const workflow = createMockWorkflowBinding()
+        workflow.create.mockRejectedValueOnce(new Error('Workflow could not start'))
+
+        await expect(runAdminJob(thumbnailJobEnv(workflow), 'size-chart-image-backfill', {triggerSource: 'manual'})).rejects.toThrow(
+            'Workflow could not start',
+        )
+
+        expect(
+            await queryOne<{status: string; error_message: string | null}>(
+                `SELECT status, error_message
+                 FROM admin_job_runs
+                 WHERE job_name = 'size-chart-image-backfill'`,
+            ),
+        ).toEqual({status: 'error', error_message: 'Workflow could not start'})
+    })
 })
 
 describe('recent page regeneration jobs', () => {

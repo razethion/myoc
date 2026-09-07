@@ -286,6 +286,17 @@ const MediaPreviewRegenerationSummarySchema = z
     })
     .strict()
 
+const SizeChartImageBackfillSummarySchema = z
+    .object({
+        totalImages: PositiveIntegerSchema,
+        processedImages: PositiveIntegerSchema,
+        replacedImages: PositiveIntegerSchema,
+        skippedImages: PositiveIntegerSchema,
+        failedImages: PositiveIntegerSchema,
+        lastError: NullableStringSchema,
+    })
+    .strict()
+
 const RecentFeedPublishSummarySchema = z
     .object({
         status: z.enum(['disabled', 'current', 'busy', 'building', 'published']),
@@ -314,6 +325,7 @@ const AdminJobSummarySchema = z.union([
     R2CleanupSummarySchema,
     LeaderboardRefreshSummarySchema,
     MediaPreviewRegenerationSummarySchema,
+    SizeChartImageBackfillSummarySchema,
     RecentFeedPublishSummarySchema,
 ])
 
@@ -326,6 +338,7 @@ export const AdminJobRunResultSchema = z
             'recent-feed-regeneration',
             'media-preview-regeneration',
             'thumbnail-regeneration',
+            'size-chart-image-backfill',
         ]),
         runId: z.string(),
         status: AdminJobStatusSchema,
