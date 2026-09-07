@@ -81,6 +81,34 @@ rules:
       - pattern: c.body(JSON.stringify(...), ...)
       - pattern: c.body(JSON.stringify(...))
 
+  - id: myoc.routes.no-unbounded-request-body
+    message: Do not buffer a request body without a byte limit. Use readJsonUpTo or readFormDataUpTo.
+    severity: ERROR
+    languages:
+      - javascript
+      - typescript
+    paths:
+      include:
+        - /src/routes/**/*.ts
+        - /src/routes/**/*.tsx
+        - /src/lib/http/csrf.ts
+        - /semgrep-tests/routes/unboundedRequestBody.ts
+      exclude:
+        - "**/*.test.ts"
+        - "**/*.test.tsx"
+    pattern-either:
+      - pattern: $C.req.json
+      - pattern: $C.req.formData
+      - pattern: $C.req.raw.json
+      - pattern: $C.req.raw.formData
+      - patterns:
+          - pattern-either:
+              - pattern: $REQUEST.json
+              - pattern: $REQUEST.formData
+          - metavariable-regex:
+              metavariable: $REQUEST
+              regex: (?i)^(?:req|request)$
+
   - id: myoc.routes.no-image-body-proxy
     message: Route handlers must not proxy body streams through the Worker; serve media from public R2 URLs or document a narrow exception.
     severity: ERROR

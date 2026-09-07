@@ -143,7 +143,7 @@ function SocialIcon({platform}: {platform: FixedSocialPlatform | 'custom'}) {
     )
 }
 
-function UserSettingsPageScript() {
+function UserSettingsPageScript({userId}: {userId: string}) {
     const script = `
         if (window.location.hostname === '127.0.0.1' || window.location.hostname === '::1') {
             const localhostUrl = new URL(window.location.href);
@@ -475,7 +475,7 @@ function UserSettingsPageScript() {
                     } else {
                         reject(new Error('Could not prepare profile photo.'));
                     }
-                }, 'image/webp', 0.9);
+                }, 'image/png');
             });
         }
 
@@ -582,23 +582,24 @@ function UserSettingsPageScript() {
 
                 const formData = new FormData();
                 formData.set('csrfToken', profilePhotoUploader.dataset.csrfToken || '');
-                const profilePhotoExtension = croppedProfilePhotoBlob.type === 'image/png'
-                    ? 'png'
-                    : croppedProfilePhotoBlob.type === 'image/jpeg'
-                        ? 'jpg'
-                        : 'webp';
-                formData.set('profilePhoto', new File([croppedProfilePhotoBlob], 'profile-photo.' + profilePhotoExtension, {
-                    type: croppedProfilePhotoBlob.type || 'image/webp',
+                formData.set('profilePhoto', new File([croppedProfilePhotoBlob], 'profile-photo.png', {
+                    type: 'image/png',
                 }));
 
                 try {
-                    const response = await fetch('/api/users/me/profile-photo', {
+                    const csrfToken = profilePhotoUploader.dataset.csrfToken || '';
+                    const uploadForm = new FormData();
+                    uploadForm.set('kind', 'user-profile');
+                    uploadForm.set('targetId', ${JSON.stringify(userId)});
+                    uploadForm.set('source', formData.get('profilePhoto'));
+                    const response = await fetch('/api/image-uploads', {
                         method: 'POST',
                         headers: {
                             accept: 'application/json',
-                            'x-csrf-token': profilePhotoUploader.dataset.csrfToken || '',
+                            'idempotency-key': crypto.randomUUID(),
+                            'x-csrf-token': csrfToken,
                         },
-                        body: formData,
+                        body: uploadForm,
                     });
 
                     const body = await response.json().catch(() => ({}));
@@ -608,17 +609,23 @@ function UserSettingsPageScript() {
                         return;
                     }
 
-                    if (body.profilePhotoUrl) {
-                        const profilePhotoUrl = body.profilePhotoUrl + '?v=' + Date.now();
-
-                        for (const image of profilePhotoImages) {
-                            image.src = profilePhotoUrl;
+                    window.myocUploadCenter?.track(body, {
+                        label: 'Profile photo',
+                        csrfToken,
+                        onReady(result) {
+                            if (!result.url) return;
+                            const profilePhotoUrl = result.url + '?v=' + Date.now();
+                            for (const image of profilePhotoImages) image.src = profilePhotoUrl;
+                            showSettingsAlert('Profile photo updated.', true);
+                        },
+                        onFailed(error) {
+                            showSettingsAlert(error.message || 'Profile photo could not be processed.');
                         }
-                    }
+                    });
 
                     profilePhotoInput.value = '';
                     resetProfilePhotoCropper();
-                    showSettingsAlert('Profile photo updated.', true);
+                    showSettingsAlert('Profile photo is processing.', true);
                 } catch {
                     showSettingsAlert('Could not reach the server. Try again.');
                 } finally {
@@ -1543,7 +1550,7 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
 
             <script src="/vendor/cropperjs/cropper.min.js"></script>
             <script src="/vendor/simplewebauthn/index.umd.min.js"></script>
-            <UserSettingsPageScript />
+            <UserSettingsPageScript userId={currentUser.id} />
         </BaseLayout>
     )
 }

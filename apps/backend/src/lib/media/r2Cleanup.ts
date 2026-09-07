@@ -55,6 +55,7 @@ type ManagedR2MediaKey =
           mediaId: string
           rating: 'sfw' | 'nsfw'
           imageKey: string
+          contentType: string
       }
     | {
           kind: 'characterMediaNsfwBlur'
@@ -63,6 +64,7 @@ type ManagedR2MediaKey =
           characterId: string
           mediaId: string
           imageKey: string
+          contentType: string
       }
     | {
           kind: 'characterHeightChart'
@@ -288,7 +290,9 @@ function parseUserProfileKey(key: string, parts: string[]): ManagedR2MediaKey | 
     }
 
     const [profilePhotoKey, extension] = splitFileName(fileName)
-    return isSafeSegment(profilePhotoKey) && extension === 'webp' ? {kind: 'userProfile', key, userId, profilePhotoKey} : null
+    return isSafeSegment(profilePhotoKey) && (extension === 'webp' || extension === 'avif')
+        ? {kind: 'userProfile', key, userId, profilePhotoKey}
+        : null
 }
 
 function parseCharacterProfileKey(key: string, parts: string[]): ManagedR2MediaKey | null {
@@ -306,7 +310,7 @@ function parseCharacterProfileKey(key: string, parts: string[]): ManagedR2MediaK
     }
 
     const [profileImageKey, extension] = splitFileName(fileName)
-    return isSafeSegment(profileImageKey) && extension === 'webp'
+    return isSafeSegment(profileImageKey) && (extension === 'webp' || extension === 'avif')
         ? {kind: 'characterProfile', key, userId, characterId, profileImageKey}
         : null
 }
@@ -327,7 +331,7 @@ function parseCharacterFolderImageKey(key: string, parts: string[]): ManagedR2Me
     }
 
     const [folderImageKey, extension] = splitFileName(fileName)
-    return isSafeSegment(folderImageKey) && extension === 'webp'
+    return isSafeSegment(folderImageKey) && (extension === 'webp' || extension === 'avif')
         ? {kind: 'characterFolderImage', key, userId, folderId, folderImageKey}
         : null
 }
@@ -373,8 +377,9 @@ function parseCharacterMediaPreviewKey(key: string, parts: string[]): ManagedR2M
     }
 
     const [imageKey, extension] = splitFileName(fileName)
-    return isSafeSegment(imageKey) && extension === 'webp'
-        ? {kind: 'characterMediaPreview', key, userId, characterId, mediaId, rating, imageKey}
+    const contentType = contentTypeForExtension(extension)
+    return isSafeSegment(imageKey) && (contentType === 'image/webp' || contentType === 'image/avif')
+        ? {kind: 'characterMediaPreview', key, userId, characterId, mediaId, rating, imageKey, contentType}
         : null
 }
 
@@ -396,8 +401,9 @@ function parseCharacterMediaBlurKey(key: string, parts: string[]): ManagedR2Medi
     }
 
     const [imageKey, extension] = splitFileName(fileName)
-    return isSafeSegment(imageKey) && extension === 'webp'
-        ? {kind: 'characterMediaNsfwBlur', key, userId, characterId, mediaId, imageKey}
+    const contentType = contentTypeForExtension(extension)
+    return isSafeSegment(imageKey) && (contentType === 'image/webp' || contentType === 'image/avif')
+        ? {kind: 'characterMediaNsfwBlur', key, userId, characterId, mediaId, imageKey, contentType}
         : null
 }
 
@@ -469,53 +475,32 @@ async function isManagedR2MediaKeyReferenced(db: D1Database, parsed: ManagedR2Me
         case 'characterMedia': {
             const imageKeyColumn = parsed.rating === 'sfw' ? 'sfw_image_key' : 'nsfw_image_key'
             const contentTypeColumn = parsed.rating === 'sfw' ? 'sfw_content_type' : 'nsfw_content_type'
-            const row = await db
-                .prepare(
-                    `SELECT 1
-                 FROM character_media
-                 WHERE user_id = ?
-                   AND character_id = ?
-                   AND id = ?
-                   AND ${imageKeyColumn} = ?
-                   AND lower(coalesce(${contentTypeColumn}, 'image/png')) = ?
-                 LIMIT 1`,
-                )
-                .bind(parsed.userId, parsed.characterId, parsed.mediaId, parsed.imageKey, parsed.contentType)
-                .first()
-            return Boolean(row)
+            return await characterMediaObjectIsReferenced(db, {
+                ...parsed,
+                imageKeyColumn,
+                contentTypeColumn,
+                defaultContentType: 'image/png',
+            })
         }
 
         case 'characterMediaPreview': {
             const imageKeyColumn = parsed.rating === 'sfw' ? 'sfw_preview_image_key' : 'nsfw_preview_image_key'
-            const row = await db
-                .prepare(
-                    `SELECT 1
-                 FROM character_media
-                 WHERE user_id = ?
-                   AND character_id = ?
-                   AND id = ?
-                   AND ${imageKeyColumn} = ?
-                 LIMIT 1`,
-                )
-                .bind(parsed.userId, parsed.characterId, parsed.mediaId, parsed.imageKey)
-                .first()
-            return Boolean(row)
+            const contentTypeColumn = parsed.rating === 'sfw' ? 'sfw_preview_content_type' : 'nsfw_preview_content_type'
+            return await characterMediaObjectIsReferenced(db, {
+                ...parsed,
+                imageKeyColumn,
+                contentTypeColumn,
+                defaultContentType: 'image/webp',
+            })
         }
 
         case 'characterMediaNsfwBlur': {
-            const row = await db
-                .prepare(
-                    `SELECT 1
-                 FROM character_media
-                 WHERE user_id = ?
-                   AND character_id = ?
-                   AND id = ?
-                   AND nsfw_blur_image_key = ?
-                 LIMIT 1`,
-                )
-                .bind(parsed.userId, parsed.characterId, parsed.mediaId, parsed.imageKey)
-                .first()
-            return Boolean(row)
+            return await characterMediaObjectIsReferenced(db, {
+                ...parsed,
+                imageKeyColumn: 'nsfw_blur_image_key',
+                contentTypeColumn: 'nsfw_blur_content_type',
+                defaultContentType: 'image/webp',
+            })
         }
 
         case 'characterHeightChart': {
@@ -533,6 +518,76 @@ async function isManagedR2MediaKeyReferenced(db: D1Database, parsed: ManagedR2Me
             return heightChartReferencesImage(row?.height_chart_json, parsed.imageKey, parsed.contentType)
         }
     }
+}
+
+async function characterMediaObjectIsReferenced(
+    db: D1Database,
+    input: {
+        key: string
+        userId: string
+        characterId: string
+        mediaId: string
+        imageKey: string
+        contentType: string
+        imageKeyColumn: 'sfw_image_key' | 'nsfw_image_key' | 'sfw_preview_image_key' | 'nsfw_preview_image_key' | 'nsfw_blur_image_key'
+        contentTypeColumn:
+            | 'sfw_content_type'
+            | 'nsfw_content_type'
+            | 'sfw_preview_content_type'
+            | 'nsfw_preview_content_type'
+            | 'nsfw_blur_content_type'
+        defaultContentType: 'image/png' | 'image/webp'
+    },
+): Promise<boolean> {
+    const row = await db
+        .prepare(
+            `SELECT 1
+             WHERE EXISTS (
+                 SELECT 1
+                 FROM character_media
+                 WHERE user_id = ?
+                   AND character_id = ?
+                   AND id = ?
+                   AND ${input.imageKeyColumn} = ?
+                   AND lower(coalesce(${input.contentTypeColumn}, ?)) = ?
+             )
+                OR EXISTS (
+                    SELECT 1
+                    FROM image_processing_tasks AS tasks
+                    JOIN image_upload_jobs AS jobs ON jobs.id = tasks.job_id
+                    WHERE jobs.target_type = 'gallery_create'
+                      AND jobs.user_id = ?
+                      AND jobs.target_id = ?
+                      AND json_extract(jobs.request_json, '$.mediaId') = ?
+                      AND tasks.state = 'ready'
+                      AND (
+                          jobs.state IN ('queued', 'processing', 'waiting_for_sources', 'publishing')
+                          OR (jobs.state = 'failed' AND jobs.error_code = 'gallery_capacity_exceeded')
+                      )
+                      AND (
+                          json_extract(tasks.output_json, '$.imageObjectKey') = ?
+                          OR json_extract(tasks.output_json, '$.previewObjectKey') = ?
+                          OR json_extract(tasks.output_json, '$.blurObjectKey') = ?
+                      )
+               )
+             LIMIT 1`,
+        )
+        .bind(
+            input.userId,
+            input.characterId,
+            input.mediaId,
+            input.imageKey,
+            input.defaultContentType,
+            input.contentType,
+            input.userId,
+            input.characterId,
+            input.mediaId,
+            input.key,
+            input.key,
+            input.key,
+        )
+        .first()
+    return Boolean(row)
 }
 
 function isOldEnoughToClean(object: R2Object, now: Date): boolean {

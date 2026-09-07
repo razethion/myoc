@@ -3,9 +3,14 @@ import {Hono} from 'hono'
 import {z} from 'zod'
 import {createImageReviewQueueStatement} from '../../lib/admin/imageApprovals'
 import {type CurrentUser, getCurrentUser, toSqlTimestamp} from '../../lib/auth/session'
-import {GALLERY_CHUNK_SIZE, GALLERY_MAX_IMAGES_PER_ROW, shouldForceGalleryRowFullWidth} from '../../lib/gallery'
+import {
+    GALLERY_CHUNK_SIZE,
+    GALLERY_MAX_IMAGES_PER_ROW,
+    GALLERY_MAX_MEDIA_PER_CHARACTER,
+    shouldForceGalleryRowFullWidth,
+} from '../../lib/gallery'
 import {jsonResponse} from '../../lib/http/jsonResponse'
-import {readFormDataUpTo, readJsonUpTo} from '../../lib/http/requestBody'
+import {readFormDataUpTo, readJsonUpTo, STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
 import {
     CharacterFolderSchema,
     CharacterHeightChartSchema,
@@ -20,7 +25,17 @@ import {
 } from '../../lib/http/responseSchemas'
 import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../../lib/media/cacheControl'
 import {type HeightChartJson, parseHeightChartJson as parseCharacterHeightChartJson} from '../../lib/media/heightChart'
-import {type GalleryImageMetadata, readGalleryImageDimensions, readGalleryImageMetadata} from '../../lib/media/imageMetadata'
+import {type GalleryImageMetadata, readGalleryImageMetadata} from '../../lib/media/imageMetadata'
+import {type CompletedGalleryJobSource, createGalleryImageUploadJob} from '../../lib/media/imageUploadJobs'
+import {
+    GALLERY_NSFW_BLUR_CONTENT_TYPE,
+    type GeneratedGalleryPreview,
+    generateHeightChartImageWithContainer,
+    generateMediaPreviewWithContainer,
+    generateNsfwBlurImage,
+    mediaPreviewContainerIndex,
+    PreviewValidationError,
+} from '../../lib/media/previewGeneration'
 import {
     isProfileImageDataUrlTooLarge,
     normalizeProfileImagePayload,
@@ -28,6 +43,7 @@ import {
     PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES,
 } from '../../lib/media/profileImage'
 import {deleteR2Objects} from '../../lib/media/r2Delete'
+import {retainThumbnailOriginal, thumbnailOriginalObjectKey} from '../../lib/media/thumbnailSources'
 import {
     characterFolderImageObjectKey,
     characterFolderImageUrl,
@@ -42,7 +58,6 @@ import {
     characterProfileImageObjectKey,
     characterProfileImageUrl,
 } from '../../lib/media/url'
-import {getWebpDimensions} from '../../lib/media/webp'
 import type {Bindings} from '../../types/bindings'
 
 type CharacterRouteContext = Context<{Bindings: Bindings}>
@@ -66,6 +81,21 @@ const ChunkedUploadInitResponseSchema = responseSchema({
     }),
 })
 const MediaResponseSchema = responseSchema({media: PublicMediaSchema})
+const QueuedMediaResponseSchema = responseSchema({
+    job: z
+        .object({
+            id: z.string(),
+            batchId: z.string().nullable(),
+            state: z.enum(['checking', 'uploading', 'waiting', 'processing', 'ready', 'failed', 'canceled']),
+            kind: z.literal('gallery'),
+            result: z.record(z.string(), z.unknown()).nullable(),
+            error: z.object({code: z.string(), message: z.string()}).strict().nullable(),
+            createdAt: z.string(),
+            updatedAt: z.string(),
+        })
+        .strict(),
+    statusUrl: z.string(),
+})
 const ToyhouseImportCompleteResponseSchema = responseSchema({
     media: PublicMediaSchema,
     skipped: z.boolean(),
@@ -160,12 +190,7 @@ type CompletedChunkedUpload = {
     parts: R2UploadedPart[]
 }
 
-type ParsedPreviewImage = {
-    bytes: Uint8Array
-    contentType: 'image/webp'
-    width: number
-    height: number
-}
+type ParsedPreviewImage = GeneratedGalleryPreview
 
 type ParsedMediaArtists = {
     sfwArtist: string
@@ -185,9 +210,8 @@ class ChunkedUploadInitError extends Error {
     }
 }
 
-class PreviewValidationError extends Error {}
-
 class GalleryUploadValidationError extends Error {}
+class GalleryMediaCapacityError extends Error {}
 
 type JsonProfileImage = {
     data: string
@@ -196,6 +220,10 @@ type JsonProfileImage = {
 type ValidatedProfileImage = {
     contentType: string
     bytes: Uint8Array
+    source: {
+        contentType: 'image/png' | 'image/jpeg' | 'image/webp'
+        bytes: Uint8Array
+    }
 }
 
 type NewFolderInput = {
@@ -236,11 +264,14 @@ type CharacterMediaRecord = {
     nsfw_height: number | null
     nsfw_byte_size: number | null
     sfw_preview_image_key: string | null
+    sfw_preview_content_type: string
     sfw_preview_width: number | null
     sfw_preview_height: number | null
     sfw_preview_byte_size: number | null
     nsfw_preview_image_key: string | null
+    nsfw_preview_content_type: string
     nsfw_blur_image_key: string | null
+    nsfw_blur_content_type: string
     nsfw_preview_width: number | null
     nsfw_preview_height: number | null
     nsfw_preview_byte_size: number | null
@@ -276,8 +307,7 @@ const CHARACTER_DESCRIPTION_MAX_LENGTH = 255
 const ARTIST_NAME_MAX_LENGTH = 80
 const GALLERY_MAX_TABS = 20
 const GALLERY_MAX_ROWS = 100
-const GALLERY_MAX_MEDIA_PLACEMENTS = 500
-const GALLERY_MAX_MEDIA_PER_CHARACTER = GALLERY_MAX_MEDIA_PLACEMENTS
+const GALLERY_MAX_MEDIA_PLACEMENTS = GALLERY_MAX_MEDIA_PER_CHARACTER
 const TREE_MAX_ITEMS = 500
 const TREE_MAX_DEPTH = 20
 const SQL_IN_CLAUSE_CHUNK_SIZE = 50
@@ -290,25 +320,11 @@ const DUPLICATE_CHARACTER_NAME_ERROR = 'Character name already exists on this ac
 const GALLERY_IMAGE_ALLOWED_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'])
 
 const GALLERY_IMAGE_CACHE_CONTROL = REVOCABLE_MEDIA_CACHE_CONTROL
+const GALLERY_STAGING_CACHE_CONTROL = 'private, no-store'
+const GALLERY_STAGING_OBJECT_KEY_PREFIX = 'image-staging/'
 const GALLERY_IMAGE_MAX_BYTES = 200 * 1024 * 1024
 const GALLERY_IMAGE_MAX_PIXELS = 200_000_000
-const GALLERY_PREVIEW_CONTENT_TYPE = 'image/webp'
-const GALLERY_PREVIEW_MAX_LONG_EDGE = 1600
-const GALLERY_PREVIEW_QUALITY = 90
-const GALLERY_PREVIEW_MAX_PIXELS = GALLERY_PREVIEW_MAX_LONG_EDGE * GALLERY_PREVIEW_MAX_LONG_EDGE
-const GALLERY_PREVIEW_MAX_BYTES_PER_PIXEL = 4
-const GALLERY_PREVIEW_MAX_CONTAINER_OVERHEAD_BYTES = 4096
-const GALLERY_PREVIEW_MAX_BYTES =
-    GALLERY_PREVIEW_MAX_PIXELS * GALLERY_PREVIEW_MAX_BYTES_PER_PIXEL + GALLERY_PREVIEW_MAX_CONTAINER_OVERHEAD_BYTES
-const GALLERY_PREVIEW_DIMENSION_TOLERANCE = 1
-const GALLERY_PREVIEW_CLOUDFLARE_IMAGES_MAX_ATTEMPTS = 6
-const GALLERY_PREVIEW_CLOUDFLARE_IMAGES_RETRY_DELAY_MS = 1_000
-const GALLERY_PREVIEW_CONTAINER_MAX_ATTEMPTS = 3
-const GALLERY_PREVIEW_CONTAINER_RETRY_DELAY_MS = 1_000
 const GALLERY_IMAGE_DIMENSION_PROBE_BYTES = 1024 * 1024
-const GALLERY_NSFW_BLUR_MAX_WIDTH = 960
-const GALLERY_NSFW_BLUR_AMOUNT = 250
-const GALLERY_NSFW_BLUR_QUALITY = 85
 const HEIGHT_CHART_JSON_MAX_LENGTH = 2048
 const HEIGHT_CHART_MIN_METERS = 0.01
 const HEIGHT_CHART_MAX_METERS = 100
@@ -327,11 +343,11 @@ type CompletedGalleryUpload = {
     displayWidth: number
     displayHeight: number
     byteSize: number
-    exifOrientation: number | null
 }
 
 type CompletedGalleryPreview = {
     imageKey: string
+    contentType: 'image/avif'
     width: number
     height: number
     byteSize: number
@@ -342,6 +358,7 @@ type CompletedMediaVariant = {
     image: CompletedGalleryUpload
     preview: CompletedGalleryPreview & {preview: ParsedPreviewImage}
     nsfwBlurImageKey: string | null
+    nsfwBlurContentType: 'image/avif' | null
 }
 
 type MediaCompletionContext = {
@@ -361,12 +378,10 @@ characterRoutes.post('/folders/tree', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
-    let body: SortTreeRequest
+    const body = await readCharacterJsonBody<SortTreeRequest>(c)
 
-    try {
-        body = await c.req.json<SortTreeRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     if (!Array.isArray(body.items)) {
@@ -418,12 +433,10 @@ characterRoutes.post('/order', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
-    let body: SortCharacterOrderRequest
+    const body = await readCharacterJsonBody<SortCharacterOrderRequest>(c)
 
-    try {
-        body = await c.req.json<SortCharacterOrderRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     const orderedIds = normalizeOrderedIds(body.characterIds, 'Character order')
@@ -480,12 +493,10 @@ characterRoutes.put('/folders/:id/placements', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Folder not found'}, 404)
     }
 
-    let body: SaveFolderPlacementsRequest
+    const body = await readCharacterJsonBody<SaveFolderPlacementsRequest>(c)
 
-    try {
-        body = await c.req.json<SaveFolderPlacementsRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     const orderedIds = normalizeOrderedIds(body.characterIds, 'Folder placements')
@@ -546,7 +557,7 @@ characterRoutes.post('/folders', async (c) => {
 
     const now = toSqlTimestamp(new Date())
     const folderId = crypto.randomUUID()
-    const folderImageKey = input.folderImage ? crypto.randomUUID() : null
+    const folderImageKey = input.folderImage ? `avif-${crypto.randomUUID()}` : null
     const folder: CharacterFolderRecord = {
         id: folderId,
         user_id: currentUser.id,
@@ -561,20 +572,22 @@ characterRoutes.post('/folders', async (c) => {
     const uploadedObjectKey =
         input.folderImage && folderImageKey ? characterFolderImageObjectKey(currentUser.id, folder.id, folderImageKey) : null
 
-    if (input.folderImage && uploadedObjectKey) {
-        await c.env.MEDIA_BUCKET.put(uploadedObjectKey, input.folderImage.bytes, {
-            httpMetadata: {
-                cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
-                contentType: input.folderImage.contentType,
-            },
-        })
-    }
-
     try {
+        if (input.folderImage && uploadedObjectKey) {
+            await retainThumbnailOriginal(c.env, uploadedObjectKey, input.folderImage.source.bytes, input.folderImage.source.contentType)
+            await c.env.MEDIA_BUCKET.put(uploadedObjectKey, input.folderImage.bytes, {
+                httpMetadata: {
+                    cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
+                    contentType: input.folderImage.contentType,
+                },
+            })
+        }
+
         await c.env.DB.prepare(
-            `INSERT INTO character_folders (id, user_id, name, parent_folder_id, folder_image_key, sort_order,
-                                            created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO character_folders (
+                 id, user_id, name, parent_folder_id, folder_image_key, folder_image_content_type,
+                 sort_order, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, 'image/avif', ?, ?, ?)`,
         )
             .bind(
                 folder.id,
@@ -589,7 +602,7 @@ characterRoutes.post('/folders', async (c) => {
             .run()
     } catch (error) {
         if (uploadedObjectKey) {
-            await c.env.MEDIA_BUCKET.delete(uploadedObjectKey)
+            await deleteThumbnailObjects(c.env, uploadedObjectKey)
         }
         throw error
     }
@@ -620,7 +633,7 @@ async function validateNewFolderInput(c: CharacterRouteContext, currentUser: Cur
         return jsonResponse(c, ErrorResponseSchema, {error: 'Parent folder not found'}, 404)
     }
 
-    const folderImage = parsed.folderImage ? await validateProfileImage(c.env.IMAGES, parsed.folderImage, 'Folder image') : null
+    const folderImage = parsed.folderImage ? await validateProfileImage(c.env, parsed.folderImage, 'Folder image') : null
 
     if (folderImage && 'error' in folderImage) {
         return jsonResponse(c, ErrorResponseSchema, {error: folderImage.error}, folderImage.status)
@@ -643,12 +656,10 @@ characterRoutes.patch('/folders/:id', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Folder not found'}, 404)
     }
 
-    let body: UpdateFolderRequest
+    const body = await readCharacterJsonBody<UpdateFolderRequest>(c)
 
-    try {
-        body = await c.req.json<UpdateFolderRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     const nameResult = normalizeFolderName(body.name ?? body['edit-folder-name'])
@@ -709,26 +720,27 @@ characterRoutes.post('/folders/:id/image', async (c) => {
     }
 
     const file = form.get('folderImage') ?? form.get('folder-image')
-    const folderImageResult = await validateProfileImage(c.env.IMAGES, file instanceof File ? file : null, 'Folder image')
+    const folderImageResult = await validateProfileImage(c.env, file instanceof File ? file : null, 'Folder image')
 
     if ('error' in folderImageResult) {
         return jsonResponse(c, ErrorResponseSchema, {error: folderImageResult.error}, folderImageResult.status)
     }
 
-    const folderImageKey = crypto.randomUUID()
+    const folderImageKey = `avif-${crypto.randomUUID()}`
     const folderImageObjectKey = characterFolderImageObjectKey(currentUser.id, folder.id, folderImageKey)
 
-    await c.env.MEDIA_BUCKET.put(folderImageObjectKey, folderImageResult.bytes, {
-        httpMetadata: {
-            cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
-            contentType: folderImageResult.contentType,
-        },
-    })
-
     try {
+        await retainThumbnailOriginal(c.env, folderImageObjectKey, folderImageResult.source.bytes, folderImageResult.source.contentType)
+        await c.env.MEDIA_BUCKET.put(folderImageObjectKey, folderImageResult.bytes, {
+            httpMetadata: {
+                cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
+                contentType: folderImageResult.contentType,
+            },
+        })
         await c.env.DB.prepare(
             `UPDATE character_folders
              SET folder_image_key = ?,
+                 folder_image_content_type = 'image/avif',
                  updated_at = ?
              WHERE id = ?
                AND user_id = ?`,
@@ -736,12 +748,12 @@ characterRoutes.post('/folders/:id/image', async (c) => {
             .bind(folderImageKey, toSqlTimestamp(new Date()), folder.id, currentUser.id)
             .run()
     } catch (error) {
-        await c.env.MEDIA_BUCKET.delete(folderImageObjectKey)
+        await deleteThumbnailObjects(c.env, folderImageObjectKey)
         throw error
     }
 
     if (folder.folder_image_key) {
-        await deleteR2Objects(c.env.MEDIA_BUCKET, [characterFolderImageObjectKey(currentUser.id, folder.id, folder.folder_image_key)])
+        await deleteThumbnailObjects(c.env, characterFolderImageObjectKey(currentUser.id, folder.id, folder.folder_image_key))
     }
 
     return jsonResponse(c, CharacterFolderImageResponseSchema, {
@@ -775,7 +787,7 @@ characterRoutes.delete('/folders/:id/image', async (c) => {
         .run()
 
     if (folder.folder_image_key) {
-        await deleteR2Objects(c.env.MEDIA_BUCKET, [characterFolderImageObjectKey(currentUser.id, folder.id, folder.folder_image_key)])
+        await deleteThumbnailObjects(c.env, characterFolderImageObjectKey(currentUser.id, folder.id, folder.folder_image_key))
     }
 
     return c.body(null, 204)
@@ -826,7 +838,7 @@ characterRoutes.delete('/folders/:id', async (c) => {
     ])
 
     if (folder.folder_image_key) {
-        await deleteR2Objects(c.env.MEDIA_BUCKET, [characterFolderImageObjectKey(currentUser.id, folder.id, folder.folder_image_key)])
+        await deleteThumbnailObjects(c.env, characterFolderImageObjectKey(currentUser.id, folder.id, folder.folder_image_key))
     }
 
     return c.body(null, 204)
@@ -862,7 +874,7 @@ characterRoutes.post('/', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Folder not found'}, 404)
     }
 
-    const profileImageResult = await validateProfileImage(c.env.IMAGES, parsed.profileImage)
+    const profileImageResult = await validateProfileImage(c.env, parsed.profileImage)
 
     if ('error' in profileImageResult) {
         return jsonResponse(c, ErrorResponseSchema, {error: profileImageResult.error}, profileImageResult.status)
@@ -870,15 +882,8 @@ characterRoutes.post('/', async (c) => {
 
     const now = new Date()
     const characterId = crypto.randomUUID()
-    const profileImageKey = crypto.randomUUID()
+    const profileImageKey = `avif-${crypto.randomUUID()}`
     const profileImageObjectKey = characterProfileImageObjectKey(currentUser.id, characterId, profileImageKey)
-
-    await c.env.MEDIA_BUCKET.put(profileImageObjectKey, profileImageResult.bytes, {
-        httpMetadata: {
-            cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
-            contentType: profileImageResult.contentType,
-        },
-    })
 
     const character: CharacterRecord = {
         id: characterId,
@@ -892,12 +897,19 @@ characterRoutes.post('/', async (c) => {
     }
 
     try {
+        await retainThumbnailOriginal(c.env, profileImageObjectKey, profileImageResult.source.bytes, profileImageResult.source.contentType)
+        await c.env.MEDIA_BUCKET.put(profileImageObjectKey, profileImageResult.bytes, {
+            httpMetadata: {
+                cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
+                contentType: profileImageResult.contentType,
+            },
+        })
         const statements: D1PreparedStatement[] = [
             c.env.DB.prepare(
-                `INSERT INTO characters (id, size_chart_id, user_id, name, profile_image_key, folder_id, sort_order,
-                                         created_at,
-                                         updated_at)
-                 VALUES (?, randomblob(6), ?, ?, ?, ?, ?, ?, ?)`,
+                `INSERT INTO characters (
+                     id, size_chart_id, user_id, name, profile_image_key, profile_image_content_type,
+                     folder_id, sort_order, created_at, updated_at
+                 ) VALUES (?, randomblob(6), ?, ?, ?, 'image/avif', ?, ?, ?, ?)`,
             ).bind(
                 character.id,
                 character.user_id,
@@ -922,7 +934,7 @@ characterRoutes.post('/', async (c) => {
         await c.env.DB.batch(statements)
     } catch (error) {
         if (profileImageKey) {
-            await c.env.MEDIA_BUCKET.delete(profileImageObjectKey)
+            await deleteThumbnailObjects(c.env, profileImageObjectKey)
         }
 
         if (isDuplicateCharacterNameError(error)) {
@@ -943,12 +955,10 @@ characterRoutes.patch('/:id', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
-    let body: UpdateCharacterRequest
+    const body = await readCharacterJsonBody<UpdateCharacterRequest>(c)
 
-    try {
-        body = await c.req.json<UpdateCharacterRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     const character = await getOwnedCharacter(c.env.DB, currentUser.id, c.req.param('id') ?? '')
@@ -1015,26 +1025,27 @@ characterRoutes.post('/:id/profile-image', async (c) => {
 
     const {currentUser, character, form} = owned
     const file = form.get('profileImage') ?? form.get('character-profile-photo')
-    const profileImageResult = await validateProfileImage(c.env.IMAGES, file instanceof File ? file : null)
+    const profileImageResult = await validateProfileImage(c.env, file instanceof File ? file : null)
 
     if ('error' in profileImageResult) {
         return jsonResponse(c, ErrorResponseSchema, {error: profileImageResult.error}, profileImageResult.status)
     }
 
-    const profileImageKey = crypto.randomUUID()
+    const profileImageKey = `avif-${crypto.randomUUID()}`
     const profileImageObjectKey = characterProfileImageObjectKey(currentUser.id, character.id, profileImageKey)
 
-    await c.env.MEDIA_BUCKET.put(profileImageObjectKey, profileImageResult.bytes, {
-        httpMetadata: {
-            cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
-            contentType: profileImageResult.contentType,
-        },
-    })
-
     try {
+        await retainThumbnailOriginal(c.env, profileImageObjectKey, profileImageResult.source.bytes, profileImageResult.source.contentType)
+        await c.env.MEDIA_BUCKET.put(profileImageObjectKey, profileImageResult.bytes, {
+            httpMetadata: {
+                cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
+                contentType: profileImageResult.contentType,
+            },
+        })
         await c.env.DB.prepare(
             `UPDATE characters
              SET profile_image_key = ?,
+                 profile_image_content_type = 'image/avif',
                  updated_at = ?
              WHERE id = ?
                AND user_id = ?`,
@@ -1042,13 +1053,16 @@ characterRoutes.post('/:id/profile-image', async (c) => {
             .bind(profileImageKey, toSqlTimestamp(new Date()), character.id, currentUser.id)
             .run()
     } catch (error) {
-        await c.env.MEDIA_BUCKET.delete(profileImageObjectKey)
+        await deleteThumbnailObjects(c.env, profileImageObjectKey)
         throw error
     }
 
     if (character.profile_image_key) {
         try {
-            await c.env.MEDIA_BUCKET.delete(characterProfileImageObjectKey(currentUser.id, character.id, character.profile_image_key))
+            await deleteThumbnailObjectsStrict(
+                c.env,
+                characterProfileImageObjectKey(currentUser.id, character.id, character.profile_image_key),
+            )
         } catch (error) {
             console.warn('Unable to delete old character profile image', error)
         }
@@ -1076,37 +1090,26 @@ characterRoutes.put('/:id/height-chart', async (c) => {
     }
 
     const existingHeightChart = parseCharacterHeightChartJson(character.height_chart_json)
+    const preliminaryHeightChart = normalizeHeightChartJson(rawJson, existingHeightChart, null)
+
+    if ('error' in preliminaryHeightChart) {
+        return jsonResponse(c, ErrorResponseSchema, {error: preliminaryHeightChart.error}, 400)
+    }
+
     const imageFileValue = form.get('heightChartImage')
     const imageFile = imageFileValue instanceof File && imageFileValue.size > 0 ? imageFileValue : null
     let uploadedImage: CompletedGalleryUpload | null = null
     let uploadedObjectKey: string | null = null
 
     if (imageFile) {
-        const imageResult = await validateGalleryImage(imageFile, 'Height chart image')
+        const upload = await uploadHeightChartImage(c.env, currentUser.id, character.id, imageFile)
 
-        if ('error' in imageResult) {
-            return jsonResponse(c, ErrorResponseSchema, {error: imageResult.error}, imageResult.status)
+        if ('error' in upload) {
+            return jsonResponse(c, ErrorResponseSchema, {error: upload.error}, upload.status)
         }
 
-        const imageKey = crypto.randomUUID()
-        uploadedImage = {
-            imageKey,
-            contentType: imageResult.contentType,
-            width: imageResult.width,
-            height: imageResult.height,
-            displayWidth: imageResult.width,
-            displayHeight: imageResult.height,
-            byteSize: imageResult.bytes.byteLength,
-            exifOrientation: null,
-        }
-        uploadedObjectKey = characterHeightChartImageObjectKey(currentUser.id, character.id, imageKey, imageResult.contentType)
-
-        await c.env.MEDIA_BUCKET.put(uploadedObjectKey, imageResult.bytes, {
-            httpMetadata: {
-                cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
-                contentType: imageResult.contentType,
-            },
-        })
+        uploadedImage = upload.image
+        uploadedObjectKey = upload.objectKey
     }
 
     const normalized = normalizeHeightChartJson(rawJson, existingHeightChart, uploadedImage)
@@ -1169,10 +1172,18 @@ characterRoutes.post('/:id/media/chunked/init', async (c) => {
     let chunkedUploads: Awaited<ReturnType<typeof createChunkedGalleryUploads>>
 
     try {
-        chunkedUploads = await createChunkedGalleryUploads(c.env.MEDIA_BUCKET, currentUser.id, character.id, mediaId, uploads.uploads, {
-            referenceId: initReferenceId,
-            operation: 'create-media',
-        })
+        chunkedUploads = await createChunkedGalleryUploads(
+            c.env.MEDIA_BUCKET,
+            currentUser.id,
+            character.id,
+            mediaId,
+            uploads.uploads,
+            {
+                referenceId: initReferenceId,
+                operation: 'create-media',
+            },
+            c.env.IMAGE_UPLOAD_ASYNC_ENABLED === 'true',
+        )
     } catch (error) {
         const referenceId = error instanceof ChunkedUploadInitError ? error.referenceId : initReferenceId
         console.error('Chunked gallery upload init route failed', {
@@ -1236,13 +1247,9 @@ characterRoutes.put('/:id/media/chunked/:mediaId/:rating/:uploadId/:partNumber',
         return jsonResponse(c, ErrorResponseSchema, {error: 'Chunk body is required'}, 400)
     }
 
-    const objectKey = characterMediaImageObjectKey(
-        currentUser.id,
-        character.id,
-        mediaId.value,
-        imageKey.value,
-        rating,
-        contentType.contentType,
+    const objectKey = galleryUploadObjectKey(
+        characterMediaImageObjectKey(currentUser.id, character.id, mediaId.value, imageKey.value, rating, contentType.contentType),
+        c.env.IMAGE_UPLOAD_ASYNC_ENABLED === 'true',
     )
     const upload = c.env.MEDIA_BUCKET.resumeMultipartUpload(objectKey, uploadId)
     const uploadedPart = await upload.uploadPart(partNumber, c.req.raw.body)
@@ -1281,13 +1288,9 @@ characterRoutes.delete('/:id/media/chunked/:mediaId/:rating/:uploadId', async (c
         return jsonResponse(c, ErrorResponseSchema, {error: contentType.error}, 400)
     }
 
-    const objectKey = characterMediaImageObjectKey(
-        currentUser.id,
-        character.id,
-        mediaId.value,
-        imageKey.value,
-        rating,
-        contentType.contentType,
+    const objectKey = galleryUploadObjectKey(
+        characterMediaImageObjectKey(currentUser.id, character.id, mediaId.value, imageKey.value, rating, contentType.contentType),
+        c.env.IMAGE_UPLOAD_ASYNC_ENABLED === 'true',
     )
     const upload = c.env.MEDIA_BUCKET.resumeMultipartUpload(objectKey, uploadId)
     await upload.abort()
@@ -1311,7 +1314,13 @@ characterRoutes.post('/toyhouse-import-items/:itemId/fail', async (c) => {
     let body: {error?: unknown}
 
     try {
-        body = await c.req.json<{error?: unknown}>()
+        const result = await readJsonUpTo<{error?: unknown}>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+
+        if (result.tooLarge) {
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Request body is too large'}, 413)
+        }
+
+        body = isRecord(result.value) ? result.value : {}
     } catch {
         body = {}
     }
@@ -1447,6 +1456,10 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
         )
     }
 
+    if (c.env.IMAGE_UPLOAD_ASYNC_ENABLED === 'true') {
+        return await completeQueuedGalleryUpload(c, currentUser, character.id, mediaId.value, complete)
+    }
+
     const completedKeys: string[] = []
     const referenceId = crypto.randomUUID()
     let media: CharacterMediaRecord
@@ -1464,6 +1477,123 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
 
     return jsonResponse(c, MediaResponseSchema, {media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, media)}, 201)
 })
+
+async function completeQueuedGalleryUpload(
+    c: CharacterRouteContext,
+    currentUser: CurrentUser,
+    characterId: string,
+    mediaId: string,
+    complete: ParsedChunkedMediaComplete,
+): Promise<Response> {
+    const idempotencyKey = c.req.header('idempotency-key')?.trim() ?? ''
+
+    if (idempotencyKey.length < 8 || idempotencyKey.length > 200) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'A valid Idempotency-Key header is required'}, 400)
+    }
+
+    const completedKeys: string[] = []
+
+    try {
+        const sources = await completeQueuedGallerySources(c.env, currentUser.id, characterId, mediaId, complete, completedKeys)
+        const job = await createGalleryImageUploadJob(c.env, {
+            userId: currentUser.id,
+            characterId,
+            mediaId,
+            idempotencyKey,
+            sfwArtist: complete.artists.sfwArtist,
+            nsfwArtist: complete.artists.nsfwArtist,
+            sources,
+        })
+        return jsonResponse(c, QueuedMediaResponseSchema, {job, statusUrl: `/api/image-uploads/${encodeURIComponent(job.id)}`}, 202)
+    } catch (error) {
+        await deleteR2Objects(c.env.MEDIA_BUCKET, completedKeys)
+        return mediaCompletionErrorResponse(c, error, crypto.randomUUID())
+    }
+}
+
+async function uploadHeightChartImage(
+    env: Bindings,
+    userId: string,
+    characterId: string,
+    file: File,
+): Promise<{image: CompletedGalleryUpload; objectKey: string} | {error: string; status: 400}> {
+    const source = await validateGalleryImage(file, 'Height chart image')
+
+    if ('error' in source) {
+        return source
+    }
+
+    const imageKey = crypto.randomUUID()
+    let converted: GeneratedGalleryPreview
+
+    try {
+        converted = await generateHeightChartImageWithContainer(
+            env,
+            async () => file.stream(),
+            {
+                width: source.width,
+                height: source.height,
+                displayWidth: source.displayWidth,
+                displayHeight: source.displayHeight,
+            },
+            imageKey,
+        )
+    } catch (error) {
+        if (error instanceof PreviewValidationError) {
+            return {error: 'Height chart image could not be processed', status: 400}
+        }
+
+        throw error
+    }
+
+    const objectKey = characterHeightChartImageObjectKey(userId, characterId, imageKey, converted.contentType)
+    await env.MEDIA_BUCKET.put(objectKey, converted.bytes, {
+        httpMetadata: {
+            cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
+            contentType: converted.contentType,
+        },
+    })
+
+    return {
+        image: {
+            imageKey,
+            contentType: converted.contentType,
+            width: converted.width,
+            height: converted.height,
+            displayWidth: converted.width,
+            displayHeight: converted.height,
+            byteSize: converted.bytes.byteLength,
+        },
+        objectKey,
+    }
+}
+
+async function completeQueuedGallerySources(
+    env: Bindings,
+    userId: string,
+    characterId: string,
+    mediaId: string,
+    complete: ParsedChunkedMediaComplete,
+    completedKeys: string[],
+): Promise<CompletedGalleryJobSource[]> {
+    const sources: CompletedGalleryJobSource[] = []
+
+    for (const [rating, upload, label] of [
+        ['sfw', complete.sfwUpload, 'SFW image'],
+        ['nsfw', complete.nsfwUpload, 'NSFW image'],
+    ] as const) {
+        if (!upload) continue
+        const image = await completeChunkedGalleryUpload(env.MEDIA_BUCKET, userId, characterId, mediaId, upload, rating, label, true)
+        const objectKey = galleryUploadObjectKey(
+            characterMediaImageObjectKey(userId, characterId, mediaId, image.imageKey, rating, image.contentType),
+            true,
+        )
+        completedKeys.push(objectKey)
+        sources.push({rating, objectKey, ...image})
+    }
+
+    return sources
+}
 
 /* istanbul ignore next -- route behavior is covered by integration tests; remaining branches are defensive upload-init failure paths. */
 characterRoutes.post('/:id/media/:mediaId/chunked/init', async (c) => {
@@ -1626,12 +1756,10 @@ characterRoutes.put('/:id/gallery', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
-    let body: GalleryLayoutRequest
+    const body = await readCharacterJsonBody<GalleryLayoutRequest>(c)
 
-    try {
-        body = await c.req.json<GalleryLayoutRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     const character = await getOwnedCharacter(c.env.DB, currentUser.id, c.req.param('id') ?? '')
@@ -1722,7 +1850,12 @@ characterRoutes.delete('/:id', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
-    const body = await parseDeleteCharacterRequest(c.req)
+    const body = await parseDeleteCharacterRequest(c)
+
+    if (body instanceof Response) {
+        return body
+    }
+
     const confirmName = normalizeOptionalText(body.confirmName ?? body['delete-character-confirm-name'])
     const permanent = normalizePermanentConfirmation(body.permanent ?? body['delete-confirm-permanent'])
 
@@ -1772,7 +1905,10 @@ characterRoutes.delete('/:id', async (c) => {
 
     if (character.profile_image_key) {
         try {
-            await c.env.MEDIA_BUCKET.delete(characterProfileImageObjectKey(currentUser.id, character.id, character.profile_image_key))
+            await deleteThumbnailObjectsStrict(
+                c.env,
+                characterProfileImageObjectKey(currentUser.id, character.id, character.profile_image_key),
+            )
         } catch (error) {
             console.warn('Unable to delete character profile image', error)
         }
@@ -1858,13 +1994,36 @@ function toPublicMedia(baseUrl: string, media: CharacterMediaRecord) {
         nsfwPreviewImageKey: media.nsfw_preview_image_key,
         nsfwBlurImageKey: media.nsfw_blur_image_key,
         sfwPreviewImageUrl: media.sfw_preview_image_key
-            ? characterMediaPreviewImageUrl(baseUrl, media.user_id, media.character_id, media.id, media.sfw_preview_image_key, 'sfw')
+            ? characterMediaPreviewImageUrl(
+                  baseUrl,
+                  media.user_id,
+                  media.character_id,
+                  media.id,
+                  media.sfw_preview_image_key,
+                  'sfw',
+                  media.sfw_preview_content_type,
+              )
             : null,
         nsfwPreviewImageUrl: media.nsfw_preview_image_key
-            ? characterMediaPreviewImageUrl(baseUrl, media.user_id, media.character_id, media.id, media.nsfw_preview_image_key, 'nsfw')
+            ? characterMediaPreviewImageUrl(
+                  baseUrl,
+                  media.user_id,
+                  media.character_id,
+                  media.id,
+                  media.nsfw_preview_image_key,
+                  'nsfw',
+                  media.nsfw_preview_content_type,
+              )
             : null,
         nsfwBlurImageUrl: media.nsfw_blur_image_key
-            ? characterMediaNsfwBlurImageUrl(baseUrl, media.user_id, media.character_id, media.id, media.nsfw_blur_image_key)
+            ? characterMediaNsfwBlurImageUrl(
+                  baseUrl,
+                  media.user_id,
+                  media.character_id,
+                  media.id,
+                  media.nsfw_blur_image_key,
+                  media.nsfw_blur_content_type,
+              )
             : null,
         sfwArtist: media.sfw_artist,
         nsfwArtist: media.nsfw_artist,
@@ -1905,18 +2064,21 @@ async function updateCharacterMediaRecord(
              sfw_width             = ?,
              sfw_height            = ?,
              sfw_byte_size         = ?,
-             sfw_preview_image_key = ?,
-             sfw_preview_width     = ?,
+              sfw_preview_image_key = ?,
+              sfw_preview_content_type = ?,
+              sfw_preview_width     = ?,
              sfw_preview_height    = ?,
              sfw_preview_byte_size = ?,
              nsfw_width            = ?,
              nsfw_height           = ?,
              nsfw_byte_size        = ?,
-             nsfw_preview_image_key = ?,
-             nsfw_preview_width     = ?,
+              nsfw_preview_image_key = ?,
+              nsfw_preview_content_type = ?,
+              nsfw_preview_width     = ?,
              nsfw_preview_height    = ?,
              nsfw_preview_byte_size = ?,
              nsfw_blur_image_key   = ?,
+             nsfw_blur_content_type = ?,
              sfw_review_status     = CASE WHEN ? THEN 'pending' ELSE sfw_review_status END,
              sfw_reviewed_at       = CASE WHEN ? THEN NULL ELSE sfw_reviewed_at END,
              sfw_approved_at       = CASE WHEN ? THEN NULL ELSE sfw_approved_at END,
@@ -1940,6 +2102,7 @@ async function updateCharacterMediaRecord(
             media.sfw_height,
             media.sfw_byte_size,
             media.sfw_preview_image_key,
+            media.sfw_preview_content_type,
             media.sfw_preview_width,
             media.sfw_preview_height,
             media.sfw_preview_byte_size,
@@ -1947,10 +2110,12 @@ async function updateCharacterMediaRecord(
             media.nsfw_height,
             media.nsfw_byte_size,
             media.nsfw_preview_image_key,
+            media.nsfw_preview_content_type,
             media.nsfw_preview_width,
             media.nsfw_preview_height,
             media.nsfw_preview_byte_size,
             media.nsfw_blur_image_key,
+            media.nsfw_blur_content_type,
             options.sfwWasModified ? 1 : 0,
             options.sfwWasModified ? 1 : 0,
             options.sfwWasModified ? 1 : 0,
@@ -2076,12 +2241,10 @@ async function parseChunkedUploadInitRequest(c: CharacterRouteContext): Promise<
       }
     | Response
 > {
-    let body: ChunkedMediaInitRequest
+    const body = await readCharacterJsonBody<ChunkedMediaInitRequest>(c)
 
-    try {
-        body = await c.req.json<ChunkedMediaInitRequest>()
-    } catch {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    if (body instanceof Response) {
+        return body
     }
 
     const uploads = parseChunkedUploadInits(body.uploads ?? body.ratings)
@@ -2091,6 +2254,20 @@ async function parseChunkedUploadInitRequest(c: CharacterRouteContext): Promise<
     }
 
     return uploads
+}
+
+async function readCharacterJsonBody<T extends object>(c: CharacterRouteContext): Promise<T | Response> {
+    try {
+        const result = await readJsonUpTo<unknown>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+
+        if (result.tooLarge) {
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Request body is too large'}, 413)
+        }
+
+        return requireJsonObject<T>(result.value)
+    } catch {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
+    }
 }
 
 function parseMediaArtists(sfwValue: unknown, nsfwValue: unknown): ParsedMediaArtists | {error: string} {
@@ -2134,55 +2311,23 @@ function parseChunkedUploadPair(
     return {sfwUpload, nsfwUpload}
 }
 
-function maxPreviewByteSize(width: number, height: number): number {
-    return width * height * GALLERY_PREVIEW_MAX_BYTES_PER_PIXEL + GALLERY_PREVIEW_MAX_CONTAINER_OVERHEAD_BYTES
-}
-
-function expectedPreviewDimensions(original: {width: number; height: number; displayWidth?: number; displayHeight?: number}): {
-    width: number
-    height: number
-} {
-    const width = original.displayWidth ?? original.width
-    const height = original.displayHeight ?? original.height
-    const longEdge = Math.max(width, height)
-    const scale = Math.min(1, GALLERY_PREVIEW_MAX_LONG_EDGE / longEdge)
-
-    return {
-        width: Math.max(1, Math.round(width * scale)),
-        height: Math.max(1, Math.round(height * scale)),
-    }
-}
-
-function assertPreviewMatchesOriginal(
-    preview: ParsedPreviewImage,
-    original: {
-        width: number
-        height: number
-        displayWidth?: number
-        displayHeight?: number
-    },
-    label: string,
-): void {
-    const expected = expectedPreviewDimensions(original)
-    const widthDelta = Math.abs(preview.width - expected.width)
-    const heightDelta = Math.abs(preview.height - expected.height)
-
-    if (widthDelta > GALLERY_PREVIEW_DIMENSION_TOLERANCE || heightDelta > GALLERY_PREVIEW_DIMENSION_TOLERANCE) {
-        throw new PreviewValidationError(`${label} dimensions must match the uploaded image scaled to ${GALLERY_PREVIEW_MAX_LONG_EDGE}px`)
-    }
-}
-
 async function parseChunkedMediaCompleteBody(c: CharacterRouteContext): Promise<
     | ParsedChunkedMediaComplete
     | {
           error: string
-          status: 400
+          status: 400 | 413
       }
 > {
     let body: ChunkedMediaCompleteRequest
 
     try {
-        body = await c.req.json<ChunkedMediaCompleteRequest>()
+        const result = await readJsonUpTo<ChunkedMediaCompleteRequest>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+
+        if (result.tooLarge) {
+            return {error: 'Request body is too large', status: 413}
+        }
+
+        body = requireJsonObject<ChunkedMediaCompleteRequest>(result.value)
     } catch {
         return {error: 'Invalid JSON body', status: 400}
     }
@@ -2238,6 +2383,7 @@ async function createChunkedGalleryUploads(
         referenceId: string
         operation: 'create-media' | 'replace-media'
     },
+    staged = false,
 ): Promise<
     Partial<
         Record<
@@ -2279,13 +2425,9 @@ async function createChunkedGalleryUploads(
     try {
         for (const uploadInit of uploadInits) {
             const imageKey = crypto.randomUUID()
-            const objectKey = characterMediaImageObjectKey(
-                userId,
-                characterId,
-                mediaId,
-                imageKey,
-                uploadInit.rating,
-                uploadInit.contentType,
+            const objectKey = galleryUploadObjectKey(
+                characterMediaImageObjectKey(userId, characterId, mediaId, imageKey, uploadInit.rating, uploadInit.contentType),
+                staged,
             )
 
             console.log('Creating R2 multipart upload for gallery image', {
@@ -2299,7 +2441,7 @@ async function createChunkedGalleryUploads(
 
             const upload = await bucket.createMultipartUpload(objectKey, {
                 httpMetadata: {
-                    cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
+                    cacheControl: staged ? GALLERY_STAGING_CACHE_CONTROL : GALLERY_IMAGE_CACHE_CONTROL,
                     contentType: uploadInit.contentType,
                 },
             })
@@ -2397,9 +2539,13 @@ function describeError(error: unknown): string {
     }
 }
 
-function mediaCompletionFailure(error: unknown, referenceId: string): {message: string; status: 400 | 500} {
+function mediaCompletionFailure(error: unknown, referenceId: string): {message: string; status: 400 | 409 | 500} {
     if (error instanceof GalleryUploadValidationError) {
         return {message: error.message, status: 400}
+    }
+
+    if (error instanceof GalleryMediaCapacityError) {
+        return {message: `Characters can contain ${GALLERY_MAX_MEDIA_PER_CHARACTER} gallery images or fewer`, status: 409}
     }
 
     console.error(
@@ -2432,6 +2578,10 @@ function existingMediaPreviewKey(media: CharacterMediaRecord, rating: MediaRatin
     return rating === 'sfw' ? media.sfw_preview_image_key : media.nsfw_preview_image_key
 }
 
+function existingMediaPreviewContentType(media: CharacterMediaRecord, rating: MediaRating): string {
+    return rating === 'sfw' ? media.sfw_preview_content_type : media.nsfw_preview_content_type
+}
+
 /* istanbul ignore next -- deletion-key combinations are covered through higher-level replacement/delete tests. */
 function queueExistingMediaVariantDelete(
     userId: string,
@@ -2451,11 +2601,22 @@ function queueExistingMediaVariantDelete(
     const previewImageKey = existingMediaPreviewKey(media, rating)
 
     if (previewImageKey) {
-        deletedKeys.push(characterMediaPreviewImageObjectKey(userId, characterId, media.id, previewImageKey, rating))
+        deletedKeys.push(
+            characterMediaPreviewImageObjectKey(
+                userId,
+                characterId,
+                media.id,
+                previewImageKey,
+                rating,
+                existingMediaPreviewContentType(media, rating),
+            ),
+        )
     }
 
     if (rating === 'nsfw' && media.nsfw_blur_image_key) {
-        deletedKeys.push(characterMediaNsfwBlurImageObjectKey(userId, characterId, media.id, media.nsfw_blur_image_key))
+        deletedKeys.push(
+            characterMediaNsfwBlurImageObjectKey(userId, characterId, media.id, media.nsfw_blur_image_key, media.nsfw_blur_content_type),
+        )
     }
 }
 
@@ -2467,6 +2628,7 @@ function clearMediaVariant(nextMedia: CharacterMediaRecord, rating: MediaRating)
         nextMedia.sfw_height = null
         nextMedia.sfw_byte_size = null
         nextMedia.sfw_preview_image_key = null
+        nextMedia.sfw_preview_content_type = 'image/webp'
         nextMedia.sfw_preview_width = null
         nextMedia.sfw_preview_height = null
         nextMedia.sfw_preview_byte_size = null
@@ -2479,10 +2641,12 @@ function clearMediaVariant(nextMedia: CharacterMediaRecord, rating: MediaRating)
     nextMedia.nsfw_height = null
     nextMedia.nsfw_byte_size = null
     nextMedia.nsfw_preview_image_key = null
+    nextMedia.nsfw_preview_content_type = 'image/webp'
     nextMedia.nsfw_preview_width = null
     nextMedia.nsfw_preview_height = null
     nextMedia.nsfw_preview_byte_size = null
     nextMedia.nsfw_blur_image_key = null
+    nextMedia.nsfw_blur_content_type = 'image/webp'
 }
 
 /* istanbul ignore next -- variant assignment combinations are covered through route replacement tests. */
@@ -2499,6 +2663,7 @@ function assignMediaVariant(
         nextMedia.sfw_height = image.height
         nextMedia.sfw_byte_size = image.byteSize
         nextMedia.sfw_preview_image_key = preview?.imageKey ?? null
+        nextMedia.sfw_preview_content_type = preview?.contentType ?? 'image/webp'
         nextMedia.sfw_preview_width = preview?.width ?? null
         nextMedia.sfw_preview_height = preview?.height ?? null
         nextMedia.sfw_preview_byte_size = preview?.byteSize ?? null
@@ -2511,10 +2676,12 @@ function assignMediaVariant(
     nextMedia.nsfw_height = image.height
     nextMedia.nsfw_byte_size = image.byteSize
     nextMedia.nsfw_preview_image_key = preview?.imageKey ?? null
+    nextMedia.nsfw_preview_content_type = preview?.contentType ?? 'image/webp'
     nextMedia.nsfw_preview_width = preview?.width ?? null
     nextMedia.nsfw_preview_height = preview?.height ?? null
     nextMedia.nsfw_preview_byte_size = preview?.byteSize ?? null
     nextMedia.nsfw_blur_image_key = null
+    nextMedia.nsfw_blur_content_type = 'image/webp'
 }
 
 async function completeMediaVariant(
@@ -2523,6 +2690,7 @@ async function completeMediaVariant(
     rating: MediaRating,
     label: string,
 ): Promise<CompletedMediaVariant> {
+    const containerIndex = mediaPreviewContainerIndex(`${context.userId}:${context.characterId}:${context.mediaId}:${rating}`)
     const image = await completeChunkedGalleryUpload(
         context.env.MEDIA_BUCKET,
         context.userId,
@@ -2545,21 +2713,29 @@ async function completeMediaVariant(
         image,
         rating,
         context.completedKeys,
+        containerIndex,
     )
     const nsfwBlurImageKey =
         rating === 'nsfw'
             ? await putNsfwBlurImage(
-                  context.env.IMAGES,
+                  context.env,
                   context.env.MEDIA_BUCKET,
                   context.userId,
                   context.characterId,
                   context.mediaId,
                   preview.preview,
                   context.completedKeys,
+                  containerIndex,
               )
             : null
 
-    return {rating, image, preview, nsfwBlurImageKey}
+    return {
+        rating,
+        image,
+        preview,
+        nsfwBlurImageKey,
+        nsfwBlurContentType: nsfwBlurImageKey ? GALLERY_NSFW_BLUR_CONTENT_TYPE : null,
+    }
 }
 
 function applyCompletedMediaVariant(media: CharacterMediaRecord, variant: CompletedMediaVariant): void {
@@ -2567,6 +2743,7 @@ function applyCompletedMediaVariant(media: CharacterMediaRecord, variant: Comple
 
     if (variant.rating === 'nsfw') {
         media.nsfw_blur_image_key = variant.nsfwBlurImageKey
+        media.nsfw_blur_content_type = GALLERY_NSFW_BLUR_CONTENT_TYPE
     }
 }
 
@@ -2595,11 +2772,14 @@ function createNewCharacterMediaRecord(input: {
         nsfw_height: null,
         nsfw_byte_size: null,
         sfw_preview_image_key: null,
+        sfw_preview_content_type: 'image/webp',
         sfw_preview_width: null,
         sfw_preview_height: null,
         sfw_preview_byte_size: null,
         nsfw_preview_image_key: null,
+        nsfw_preview_content_type: 'image/webp',
         nsfw_blur_image_key: null,
+        nsfw_blur_content_type: 'image/webp',
         nsfw_preview_width: null,
         nsfw_preview_height: null,
         nsfw_preview_byte_size: null,
@@ -2639,7 +2819,15 @@ async function createAndPersistCharacterMedia(
 
     const now = toSqlTimestamp(new Date())
     const media = createNewCharacterMediaRecord({id: mediaId, userId, characterId, artists, variants, now})
-    await env.DB.batch([createCharacterMediaInsertStatement(env.DB, media), createImageReviewQueueStatement(env.DB, media.id, now)])
+    const [mediaResult] = await env.DB.batch([
+        createCharacterMediaInsertStatement(env.DB, media),
+        createImageReviewQueueStatement(env.DB, media.id, now),
+    ])
+
+    if (mediaResult?.meta.changes === 0) {
+        throw new GalleryMediaCapacityError()
+    }
+
     return media
 }
 
@@ -2667,12 +2855,17 @@ async function completeToyhouseImportItem(
         variants: [variant],
         now,
     })
-    await env.DB.batch([
+    const [mediaResult] = await env.DB.batch([
         createCharacterMediaInsertStatement(env.DB, media),
-        createImportedToyhouseItemStatement(env.DB, userId, item.id, media.id, now),
+        createImportedToyhouseItemStatement(env.DB, userId, item.id, item.character_id, media.id, now),
         createImageReviewQueueStatement(env.DB, media.id, now),
         createToyhouseImportJobStatusStatement(env.DB, userId, item.job_id, now),
     ])
+
+    if (mediaResult?.meta.changes === 0) {
+        throw new GalleryMediaCapacityError()
+    }
+
     return media
 }
 
@@ -2694,6 +2887,7 @@ function createImportedToyhouseItemStatement(
     db: D1Database,
     userId: string,
     itemId: string,
+    characterId: string,
     mediaId: string,
     now: string,
 ): D1PreparedStatement {
@@ -2705,9 +2899,16 @@ function createImportedToyhouseItemStatement(
                  error    = '',
                  updated_at = ?
              WHERE id = ?
-               AND user_id = ?`,
+               AND user_id = ?
+               AND EXISTS (
+                   SELECT 1
+                   FROM character_media
+                   WHERE id = ?
+                     AND user_id = ?
+                     AND character_id = ?
+               )`,
         )
-        .bind('imported', mediaId, now, itemId, userId)
+        .bind('imported', mediaId, now, itemId, userId, mediaId, userId, characterId)
 }
 
 function createCharacterMediaInsertStatement(db: D1Database, media: CharacterMediaRecord): D1PreparedStatement {
@@ -2716,13 +2917,19 @@ function createCharacterMediaInsertStatement(db: D1Database, media: CharacterMed
             `INSERT INTO character_media (id, user_id, character_id,
                                           sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type,
                                           sfw_artist, nsfw_artist,
-                                          sfw_width, sfw_height, sfw_byte_size, sfw_preview_image_key,
+                                          sfw_width, sfw_height, sfw_byte_size, sfw_preview_image_key, sfw_preview_content_type,
                                           sfw_preview_width, sfw_preview_height, sfw_preview_byte_size,
-                                          nsfw_width, nsfw_height, nsfw_byte_size, nsfw_preview_image_key,
+                                          nsfw_width, nsfw_height, nsfw_byte_size, nsfw_preview_image_key, nsfw_preview_content_type,
                                           nsfw_preview_width, nsfw_preview_height, nsfw_preview_byte_size,
-                                          nsfw_blur_image_key,
+                                          nsfw_blur_image_key, nsfw_blur_content_type,
                                           created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             WHERE (
+                 SELECT COUNT(*)
+                 FROM character_media
+                 WHERE user_id = ?
+                   AND character_id = ?
+             ) < ?`,
         )
         .bind(
             media.id,
@@ -2738,6 +2945,7 @@ function createCharacterMediaInsertStatement(db: D1Database, media: CharacterMed
             media.sfw_height,
             media.sfw_byte_size,
             media.sfw_preview_image_key,
+            media.sfw_preview_content_type,
             media.sfw_preview_width,
             media.sfw_preview_height,
             media.sfw_preview_byte_size,
@@ -2745,12 +2953,17 @@ function createCharacterMediaInsertStatement(db: D1Database, media: CharacterMed
             media.nsfw_height,
             media.nsfw_byte_size,
             media.nsfw_preview_image_key,
+            media.nsfw_preview_content_type,
             media.nsfw_preview_width,
             media.nsfw_preview_height,
             media.nsfw_preview_byte_size,
             media.nsfw_blur_image_key,
+            media.nsfw_blur_content_type,
             media.created_at,
             media.updated_at,
+            media.user_id,
+            media.character_id,
+            GALLERY_MAX_MEDIA_PER_CHARACTER,
         )
 }
 
@@ -2792,7 +3005,7 @@ async function putMediaPreviewImage(
     uploadedKeys: string[],
 ): Promise<CompletedGalleryPreview> {
     const imageKey = crypto.randomUUID()
-    const objectKey = characterMediaPreviewImageObjectKey(userId, characterId, mediaId, imageKey, rating)
+    const objectKey = characterMediaPreviewImageObjectKey(userId, characterId, mediaId, imageKey, rating, preview.contentType)
 
     await bucket.put(objectKey, preview.bytes, {
         httpMetadata: {
@@ -2805,6 +3018,7 @@ async function putMediaPreviewImage(
 
     return {
         imageKey,
+        contentType: preview.contentType,
         width: preview.width,
         height: preview.height,
         byteSize: preview.bytes.byteLength,
@@ -2822,8 +3036,9 @@ async function generateAndPutMediaPreviewImage(
     image: CompletedGalleryUpload,
     rating: MediaRating,
     uploadedKeys: string[],
+    containerIndex: number,
 ): Promise<CompletedGalleryPreview & {preview: ParsedPreviewImage}> {
-    const preview = await generateMediaPreviewImage(env, mediaPublicBaseUrl, userId, characterId, mediaId, image, rating)
+    const preview = await generateMediaPreviewImage(env, mediaPublicBaseUrl, userId, characterId, mediaId, image, rating, containerIndex)
     const stored = await putMediaPreviewImage(bucket, userId, characterId, mediaId, preview, rating, uploadedKeys)
 
     return {
@@ -2840,236 +3055,37 @@ async function generateMediaPreviewImage(
     mediaId: string,
     image: CompletedGalleryUpload,
     rating: MediaRating,
+    containerIndex: number,
 ): Promise<ParsedPreviewImage> {
-    const sourceObjectKey = characterMediaImageObjectKey(userId, characterId, mediaId, image.imageKey, rating, image.contentType)
     const sourceUrl = characterMediaImageUrl(mediaPublicBaseUrl, userId, characterId, mediaId, image.imageKey, rating, image.contentType)
-
-    try {
-        return await generateMediaPreviewWithCloudflareImages(sourceUrl, image)
-    } catch (error) {
-        /* istanbul ignore next -- logging-only fallback for non-Error throw values. */
-        const previewErrorMessage = error instanceof Error ? error.message : String(error)
-
-        console.warn('Cloudflare Images preview generation failed, falling back to container', {
-            error: previewErrorMessage,
-            exifOrientation: image.exifOrientation,
-            sourceObjectKey,
-        })
-    }
-
-    return await generateMediaPreviewWithContainer(env, sourceUrl, image)
-}
-
-async function generateMediaPreviewWithCloudflareImages(sourceUrl: string, image: CompletedGalleryUpload): Promise<ParsedPreviewImage> {
-    for (let attempt = 1; attempt <= GALLERY_PREVIEW_CLOUDFLARE_IMAGES_MAX_ATTEMPTS; attempt += 1) {
-        const previewUrl = cacheBustedUrl(sourceUrl)
-
-        try {
-            const response = await fetch(previewUrl, {
-                cf: {
-                    cacheTtlByStatus: {'404': 0, '500-599': 0},
-                    image: {
-                        anim: false,
-                        fit: 'scale-down',
-                        format: 'webp',
-                        height: GALLERY_PREVIEW_MAX_LONG_EDGE,
-                        quality: GALLERY_PREVIEW_QUALITY,
-                        ...cloudflareExifOrientationTransform(image.exifOrientation),
-                        width: GALLERY_PREVIEW_MAX_LONG_EDGE,
-                    },
-                },
-                headers: {
-                    accept: 'image/webp,image/*,*/*;q=0.8',
-                    'cache-control': 'no-cache',
-                },
-            })
-
-            return await previewFromResponse(response, image, 'Cloudflare Images preview')
-        } catch (error) {
-            if (error instanceof PreviewValidationError) {
-                throw error
-            }
-
-            if (attempt === GALLERY_PREVIEW_CLOUDFLARE_IMAGES_MAX_ATTEMPTS) {
-                throw error
-            }
-
-            await sleep(GALLERY_PREVIEW_CLOUDFLARE_IMAGES_RETRY_DELAY_MS)
-        }
-    }
-
-    /* istanbul ignore next -- maxAttempts is positive, and the loop either returns or throws from the catch block. */
-    throw new Error('Cloudflare Images preview failed unexpectedly.')
-}
-
-function cacheBustedUrl(sourceUrl: string): string {
-    const url = new URL(sourceUrl)
-    url.searchParams.set('preview_cache_bust', crypto.randomUUID())
-
-    return url.toString()
-}
-
-function sleep(milliseconds: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, milliseconds))
-}
-
-function cloudflareExifOrientationTransform(orientation: number | null): {flip?: 'h' | 'v' | 'hv'; rotate?: 90 | 180 | 270} {
-    switch (orientation) {
-        case 2:
-            return {flip: 'h'}
-        case 3:
-            return {rotate: 180}
-        case 4:
-            return {flip: 'v'}
-        case 5:
-            return {flip: 'h', rotate: 270}
-        case 6:
-            return {rotate: 90}
-        case 7:
-            return {flip: 'h', rotate: 90}
-        case 8:
-            return {rotate: 270}
-        default:
-            return {}
-    }
-}
-
-/* istanbul ignore next -- retry behavior is directly tested; remaining branch gaps are defensive logging fallback types. */
-async function generateMediaPreviewWithContainer(
-    env: Bindings,
-    sourceUrl: string,
-    image: CompletedGalleryUpload,
-): Promise<ParsedPreviewImage> {
-    if (!env.MYOC_DOCKER_SHARP_CONTAINER) {
-        throw new Error('Preview container binding is not configured.')
-    }
-
-    const id = env.MYOC_DOCKER_SHARP_CONTAINER.idFromName('myoc-docker-sharp')
-    const container = env.MYOC_DOCKER_SHARP_CONTAINER.get(id)
-
-    for (let attempt = 1; attempt <= GALLERY_PREVIEW_CONTAINER_MAX_ATTEMPTS; attempt += 1) {
-        try {
-            const response = await container.fetch('https://container/images/preview', {
-                body: JSON.stringify({imageUrl: sourceUrl}),
-                headers: {
-                    authorization: `Bearer ${env.PREVIEW_PROCESSOR_TOKEN}`,
-                    'content-type': 'application/json',
-                },
-                method: 'POST',
-            })
-
-            return await previewFromResponse(response, image, 'Container preview')
-        } catch (error) {
-            if (error instanceof PreviewValidationError || attempt === GALLERY_PREVIEW_CONTAINER_MAX_ATTEMPTS) {
-                throw error
-            }
-
-            console.warn('Container preview generation failed transiently, retrying', {
-                attempt,
-                error: error instanceof Error ? error.message : String(error),
-            })
-            await sleep(GALLERY_PREVIEW_CONTAINER_RETRY_DELAY_MS)
-        }
-    }
-
-    /* istanbul ignore next -- maxAttempts is positive, and the loop either returns or throws from the catch block. */
-    throw new Error('Container preview failed unexpectedly.')
-}
-
-/* istanbul ignore next -- validation branches are directly tested; remaining gaps are defensive message-format combinations. */
-async function previewFromResponse(response: Response, image: CompletedGalleryUpload, label: string): Promise<ParsedPreviewImage> {
-    const bytes = new Uint8Array(await response.arrayBuffer())
-    const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.toLowerCase() ?? ''
-
-    assertPreviewResponse(response, bytes, contentType, label)
-
-    const dimensions = getWebpDimensions(bytes)
-
-    if (!dimensions) {
-        throw new Error(`${label} returned an invalid WebP image`)
-    }
-
-    const preview = {
-        bytes,
-        contentType: GALLERY_PREVIEW_CONTENT_TYPE,
-        width: dimensions.width,
-        height: dimensions.height,
-    } satisfies ParsedPreviewImage
-
-    assertPreviewMatchesOriginal(preview, image, label)
-
-    if (bytes.byteLength > maxPreviewByteSize(preview.width, preview.height)) {
-        throw new Error(`${label} is too large for its dimensions`)
-    }
-
-    return preview
-}
-
-function assertPreviewResponse(response: Response, bytes: Uint8Array, contentType: string, label: string): void {
-    if (!response.ok) {
-        throw new Error(`${label} failed with ${response.status}`)
-    }
-
-    if (contentType !== GALLERY_PREVIEW_CONTENT_TYPE) {
-        const details = contentType ? ` (${contentType})` : ''
-        throw new PreviewValidationError(`${label} returned an unexpected content type${details}`)
-    }
-
-    if (bytes.byteLength <= 0) {
-        throw new Error(`${label} is empty`)
-    }
-
-    /* istanbul ignore if -- exercising this would require allocating an 800MB+ response in a Worker test. */
-    if (bytes.byteLength > GALLERY_PREVIEW_MAX_BYTES) {
-        throw new Error(`${label} is too large`)
-    }
+    return await generateMediaPreviewWithContainer(env, sourceUrl, image, {containerIndex})
 }
 
 /* istanbul ignore next -- blur generation is route-tested; remaining branch is a defensive content-type fallback. */
 async function putNsfwBlurImage(
-    images: ImagesBinding | undefined,
+    env: Pick<Bindings, 'MYOC_DOCKER_SHARP_CONTAINER' | 'PREVIEW_PROCESSOR_TOKEN'>,
     bucket: R2Bucket,
     userId: string,
     characterId: string,
     mediaId: string,
     preview: ParsedPreviewImage,
     uploadedKeys: string[],
+    containerIndex: number,
 ): Promise<string> {
-    if (!images) {
-        throw new Error('Cloudflare Images binding is not configured.')
-    }
-
     const imageKey = crypto.randomUUID()
-    const objectKey = characterMediaNsfwBlurImageObjectKey(userId, characterId, mediaId, imageKey)
-    const result = await images
-        .input(streamFromBytes(preview.bytes))
-        .transform({width: GALLERY_NSFW_BLUR_MAX_WIDTH, fit: 'scale-down'})
-        .transform({blur: GALLERY_NSFW_BLUR_AMOUNT})
-        .output({format: 'image/webp', quality: GALLERY_NSFW_BLUR_QUALITY})
+    const objectKey = characterMediaNsfwBlurImageObjectKey(userId, characterId, mediaId, imageKey, GALLERY_NSFW_BLUR_CONTENT_TYPE)
+    const blur = await generateNsfwBlurImage(env, preview, {containerIndex})
 
-    const response = result.response()
-    const bytes = new Uint8Array(await response.arrayBuffer())
-    const contentType = response.headers.get('content-type') ?? GALLERY_PREVIEW_CONTENT_TYPE
-
-    await bucket.put(objectKey, bytes, {
+    await bucket.put(objectKey, blur.bytes, {
         httpMetadata: {
             cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
-            contentType,
+            contentType: blur.contentType,
         },
     })
 
     uploadedKeys.push(objectKey)
 
     return imageKey
-}
-
-function streamFromBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
-    return new ReadableStream<Uint8Array>({
-        start(controller) {
-            controller.enqueue(bytes)
-            controller.close()
-        },
-    })
 }
 
 /* istanbul ignore next -- parser behavior is route/helper-tested; remaining branch gaps are alternate form-field compatibility aliases. */
@@ -3118,11 +3134,13 @@ async function parseJsonCreateCharacterRequest(
     req: Request,
 ): Promise<{name: unknown; folderId: unknown; profileImage: JsonProfileImage | null} | {error: string; status: 400 | 413}> {
     try {
-        const body = await readJsonUpTo<CreateCharacterRequest>(req, PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES)
+        const result = await readJsonUpTo<CreateCharacterRequest>(req, PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES)
 
-        if (!body) {
+        if (result.tooLarge) {
             return {error: 'Character profile image upload is too large', status: 413}
         }
+
+        const body = requireJsonObject<CreateCharacterRequest>(result.value)
 
         return {
             name: body.name ?? body['new-character-name'],
@@ -3150,11 +3168,13 @@ async function parseCreateFolderRequest(req: CharacterRouteContext['req']): Prom
 
     if (contentType.includes('application/json')) {
         try {
-            const body = await readJsonUpTo<CreateFolderRequest>(req.raw, PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES)
+            const result = await readJsonUpTo<CreateFolderRequest>(req.raw, PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES)
 
-            if (!body) {
+            if (result.tooLarge) {
                 return {error: 'Folder image upload is too large', status: 413}
             }
+
+            const body = requireJsonObject<CreateFolderRequest>(result.value)
 
             return {
                 name: body.name ?? body['new-folder-name'],
@@ -3167,7 +3187,11 @@ async function parseCreateFolderRequest(req: CharacterRouteContext['req']): Prom
     }
 
     if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {
-        const form = await req.formData()
+        const form = await readFormDataUpTo(req.raw, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES)
+
+        if (!form) {
+            return {error: 'Request body is too large', status: 413}
+        }
 
         return {
             name: form.get('name') ?? form.get('new-folder-name'),
@@ -3179,19 +3203,25 @@ async function parseCreateFolderRequest(req: CharacterRouteContext['req']): Prom
     return {error: 'JSON or form data is required'}
 }
 
-async function parseDeleteCharacterRequest(req: CharacterRouteContext['req']): Promise<DeleteCharacterRequest> {
-    const contentType = req.header('content-type') ?? ''
+async function parseDeleteCharacterRequest(c: CharacterRouteContext): Promise<DeleteCharacterRequest | Response> {
+    const contentType = c.req.header('content-type') ?? ''
 
     if (contentType.includes('application/json')) {
-        try {
-            return await req.json<DeleteCharacterRequest>()
-        } catch {
-            return {}
-        }
+        return await readCharacterJsonBody<DeleteCharacterRequest>(c)
     }
 
     if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {
-        const form = await req.formData()
+        let form: FormData | null
+
+        try {
+            form = await readFormDataUpTo(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+        } catch {
+            return {}
+        }
+
+        if (!form) {
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Request body is too large'}, 413)
+        }
 
         return {
             confirmName: form.get('confirmName'),
@@ -3989,11 +4019,14 @@ async function getOwnedCharacterMedia(
                 nsfw_height,
                 nsfw_byte_size,
                 sfw_preview_image_key,
+                sfw_preview_content_type,
                 sfw_preview_width,
                 sfw_preview_height,
                 sfw_preview_byte_size,
                 nsfw_preview_image_key,
+                nsfw_preview_content_type,
                 nsfw_blur_image_key,
+                nsfw_blur_content_type,
                 nsfw_preview_width,
                 nsfw_preview_height,
                 nsfw_preview_byte_size,
@@ -4109,11 +4142,14 @@ async function getCharacterMedia(db: D1Database, userId: string, characterId: st
                     nsfw_height,
                     nsfw_byte_size,
                     sfw_preview_image_key,
+                    sfw_preview_content_type,
                     sfw_preview_width,
                     sfw_preview_height,
                     sfw_preview_byte_size,
                     nsfw_preview_image_key,
+                    nsfw_preview_content_type,
                     nsfw_blur_image_key,
+                    nsfw_blur_content_type,
                     nsfw_preview_width,
                     nsfw_preview_height,
                     nsfw_preview_byte_size,
@@ -4158,10 +4194,10 @@ async function validateGalleryImage(
     label: string,
 ): Promise<
     | {
-          bytes: Uint8Array
-          contentType: string
           width: number
           height: number
+          displayWidth: number
+          displayHeight: number
       }
     | {
           error: string
@@ -4174,28 +4210,31 @@ async function validateGalleryImage(
         return {error: contentType.error, status: 400}
     }
 
+    if (file.size > GALLERY_IMAGE_MAX_BYTES) {
+        return {error: `${label} must be 200 MB or smaller`, status: 400}
+    }
+
     const bytes = new Uint8Array(await file.arrayBuffer())
 
     if (bytes.byteLength <= 0) {
         return {error: `${label} is empty`, status: 400}
     }
 
-    const dimensions =
-        readGalleryImageDimensions(bytes, contentType.contentType) ??
-        normalizeGalleryImageDimensions(
-            'width' in file ? (file as File & {width?: unknown}).width : undefined,
-            'height' in file ? (file as File & {height?: unknown}).height : undefined,
-        )
+    const dimensions = readGalleryImageMetadata(bytes, contentType.contentType)
 
-    if ('error' in dimensions) {
+    if (!dimensions) {
         return {error: `${label} dimensions are required`, status: 400}
     }
 
+    if (dimensions.width * dimensions.height > GALLERY_IMAGE_MAX_PIXELS) {
+        return {error: `${label} must be ${GALLERY_IMAGE_MAX_PIXELS.toLocaleString('en-US')} pixels or smaller`, status: 400}
+    }
+
     return {
-        bytes,
-        contentType: contentType.contentType,
         width: dimensions.width,
         height: dimensions.height,
+        displayWidth: dimensions.displayWidth,
+        displayHeight: dimensions.displayHeight,
     }
 }
 
@@ -4211,7 +4250,14 @@ async function deleteCharacterMediaObjects(bucket: R2Bucket, media: CharacterMed
 
     if (media.sfw_preview_image_key) {
         objectKeys.push(
-            characterMediaPreviewImageObjectKey(media.user_id, media.character_id, media.id, media.sfw_preview_image_key, 'sfw'),
+            characterMediaPreviewImageObjectKey(
+                media.user_id,
+                media.character_id,
+                media.id,
+                media.sfw_preview_image_key,
+                'sfw',
+                media.sfw_preview_content_type,
+            ),
         )
     }
 
@@ -4230,12 +4276,27 @@ async function deleteCharacterMediaObjects(bucket: R2Bucket, media: CharacterMed
 
     if (media.nsfw_preview_image_key) {
         objectKeys.push(
-            characterMediaPreviewImageObjectKey(media.user_id, media.character_id, media.id, media.nsfw_preview_image_key, 'nsfw'),
+            characterMediaPreviewImageObjectKey(
+                media.user_id,
+                media.character_id,
+                media.id,
+                media.nsfw_preview_image_key,
+                'nsfw',
+                media.nsfw_preview_content_type,
+            ),
         )
     }
 
     if (media.nsfw_blur_image_key) {
-        objectKeys.push(characterMediaNsfwBlurImageObjectKey(media.user_id, media.character_id, media.id, media.nsfw_blur_image_key))
+        objectKeys.push(
+            characterMediaNsfwBlurImageObjectKey(
+                media.user_id,
+                media.character_id,
+                media.id,
+                media.nsfw_blur_image_key,
+                media.nsfw_blur_content_type,
+            ),
+        )
     }
 
     await deleteR2Objects(bucket, objectKeys)
@@ -4248,14 +4309,11 @@ async function deleteR2ObjectIfPresent(bucket: R2Bucket, objectKey: string | nul
 }
 
 async function validateProfileImage(
-    images: ImagesBinding | undefined,
+    env: Pick<Bindings, 'MYOC_DOCKER_SHARP_CONTAINER' | 'PREVIEW_PROCESSOR_TOKEN'>,
     file: File | JsonProfileImage | null,
     label = 'Character profile image',
 ): Promise<
-    | {
-          contentType: string
-          bytes: Uint8Array
-      }
+    | ValidatedProfileImage
     | {
           error: string
           status: 400 | 413
@@ -4271,7 +4329,7 @@ async function validateProfileImage(
         return profileImage
     }
 
-    const normalized = await normalizeProfileImagePayload(profileImage, label, images)
+    const normalized = await normalizeProfileImagePayload(profileImage, label, env)
 
     if ('error' in normalized) {
         return normalized
@@ -4280,7 +4338,16 @@ async function validateProfileImage(
     return {
         contentType: normalized.contentType,
         bytes: normalized.bytes,
+        source: normalized.source,
     }
+}
+
+async function deleteThumbnailObjects(env: Pick<Bindings, 'MEDIA_BUCKET'>, objectKey: string): Promise<void> {
+    await deleteR2Objects(env.MEDIA_BUCKET, [objectKey, thumbnailOriginalObjectKey(objectKey)])
+}
+
+async function deleteThumbnailObjectsStrict(env: Pick<Bindings, 'MEDIA_BUCKET'>, objectKey: string): Promise<void> {
+    await Promise.all([env.MEDIA_BUCKET.delete(objectKey), env.MEDIA_BUCKET.delete(thumbnailOriginalObjectKey(objectKey))])
 }
 
 async function readProfileImageFile(file: File): Promise<{contentType: string; bytes: Uint8Array}> {
@@ -4390,25 +4457,6 @@ function normalizeGalleryImageContentType(value: unknown): {contentType: string}
     return {contentType}
 }
 
-function normalizeGalleryImageDimensions(
-    widthValue: unknown,
-    heightValue: unknown,
-):
-    | {
-          width: number
-          height: number
-      }
-    | {error: string} {
-    const width = Number(widthValue)
-    const height = Number(heightValue)
-
-    if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0) {
-        return {error: 'Image dimensions are required'}
-    }
-
-    return {width, height}
-}
-
 /* istanbul ignore next -- upload init parsing is route/helper-tested; remaining branch is duplicate-rating suppression. */
 function parseChunkedUploadInits(value: unknown): {uploads: ChunkedUploadInit[]} | {error: string} {
     if (!Array.isArray(value)) {
@@ -4514,8 +4562,12 @@ async function completeChunkedGalleryUpload(
     upload: CompletedChunkedUpload,
     rating: 'sfw' | 'nsfw',
     label: string,
+    staged = false,
 ): Promise<CompletedGalleryUpload> {
-    const objectKey = characterMediaImageObjectKey(userId, characterId, mediaId, upload.imageKey, rating, upload.contentType)
+    const objectKey = galleryUploadObjectKey(
+        characterMediaImageObjectKey(userId, characterId, mediaId, upload.imageKey, rating, upload.contentType),
+        staged,
+    )
     const multipartUpload = bucket.resumeMultipartUpload(objectKey, upload.uploadId)
     const completedObject = await multipartUpload.complete(upload.parts)
 
@@ -4549,7 +4601,6 @@ async function completeChunkedGalleryUpload(
         displayWidth: metadata.displayWidth,
         displayHeight: metadata.displayHeight,
         byteSize: completedObject.size,
-        exifOrientation: metadata.exifOrientation,
     }
 }
 
@@ -4574,4 +4625,16 @@ async function readStoredGalleryImageMetadata(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function requireJsonObject<T extends object>(value: unknown): T {
+    if (!isRecord(value)) {
+        throw new TypeError('JSON body must be an object')
+    }
+
+    return value as T
+}
+
+function galleryUploadObjectKey(objectKey: string, staged: boolean): string {
+    return staged ? `${GALLERY_STAGING_OBJECT_KEY_PREFIX}${objectKey}` : objectKey
 }

@@ -6,7 +6,7 @@ function mediaUrlForKey(baseUrl: string, key: string): string {
 }
 
 export function profilePhotoObjectKey(userId: string, profilePhotoKey: string): string {
-    return `users/${userId}/profile/${profilePhotoKey}.webp`
+    return `users/${userId}/profile/${generatedImageFileName(profilePhotoKey)}`
 }
 
 export function profilePhotoUrl(baseUrl: string, userId: string, profilePhotoKey: string): string {
@@ -14,7 +14,7 @@ export function profilePhotoUrl(baseUrl: string, userId: string, profilePhotoKey
 }
 
 export function characterProfileImageObjectKey(userId: string, characterId: string, profileImageKey: string): string {
-    return `characters/${userId}/${characterId}/profile/${profileImageKey}.webp`
+    return `characters/${userId}/${characterId}/profile/${generatedImageFileName(profileImageKey)}`
 }
 
 export function characterProfileImageUrl(baseUrl: string, userId: string, characterId: string, profileImageKey: string): string {
@@ -22,7 +22,7 @@ export function characterProfileImageUrl(baseUrl: string, userId: string, charac
 }
 
 export function characterFolderImageObjectKey(userId: string, folderId: string, folderImageKey: string): string {
-    return `characters/${userId}/folders/${folderId}/image/${folderImageKey}.webp`
+    return `characters/${userId}/folders/${folderId}/image/${generatedImageFileName(folderImageKey)}`
 }
 
 export function characterFolderImageUrl(baseUrl: string, userId: string, folderId: string, folderImageKey: string): string {
@@ -46,12 +46,19 @@ export function characterMediaPreviewImageObjectKey(
     mediaId: string,
     imageKey: string,
     rating: 'sfw' | 'nsfw',
+    contentType: string | null | undefined = 'image/webp',
 ): string {
-    return `characters/${userId}/${characterId}/media/${mediaId}/${rating}/preview/${imageKey}.webp`
+    return `characters/${userId}/${characterId}/media/${mediaId}/${rating}/preview/${imageKey}.${extensionForImageContentType(contentType)}`
 }
 
-export function characterMediaNsfwBlurImageObjectKey(userId: string, characterId: string, mediaId: string, imageKey: string): string {
-    return `characters/${userId}/${characterId}/media/${mediaId}/nsfw/blur/${imageKey}.webp`
+export function characterMediaNsfwBlurImageObjectKey(
+    userId: string,
+    characterId: string,
+    mediaId: string,
+    imageKey: string,
+    contentType: string | null | undefined = 'image/webp',
+): string {
+    return `characters/${userId}/${characterId}/media/${mediaId}/nsfw/blur/${imageKey}.${extensionForImageContentType(contentType)}`
 }
 
 export function characterHeightChartImageObjectKey(
@@ -92,8 +99,9 @@ export function characterMediaPreviewImageUrl(
     mediaId: string,
     imageKey: string,
     rating: 'sfw' | 'nsfw',
+    contentType: string | null | undefined = 'image/webp',
 ): string {
-    return mediaUrlForKey(baseUrl, characterMediaPreviewImageObjectKey(userId, characterId, mediaId, imageKey, rating))
+    return mediaUrlForKey(baseUrl, characterMediaPreviewImageObjectKey(userId, characterId, mediaId, imageKey, rating, contentType))
 }
 
 export function characterMediaNsfwBlurImageUrl(
@@ -102,8 +110,9 @@ export function characterMediaNsfwBlurImageUrl(
     characterId: string,
     mediaId: string,
     imageKey: string,
+    contentType: string | null | undefined = 'image/webp',
 ): string {
-    return mediaUrlForKey(baseUrl, characterMediaNsfwBlurImageObjectKey(userId, characterId, mediaId, imageKey))
+    return mediaUrlForKey(baseUrl, characterMediaNsfwBlurImageObjectKey(userId, characterId, mediaId, imageKey, contentType))
 }
 
 function extensionForImageContentType(contentType: string | null | undefined): string {
@@ -119,4 +128,8 @@ function extensionForImageContentType(contentType: string | null | undefined): s
         default:
             return 'png'
     }
+}
+
+function generatedImageFileName(key: string): string {
+    return key.startsWith('avif-') ? `${key}.avif` : `${key}.webp`
 }

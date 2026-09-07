@@ -37,6 +37,8 @@ type ReportedMediaRow = {
     nsfw_image_key: string | null
     sfw_preview_image_key: string | null
     nsfw_preview_image_key: string | null
+    sfw_preview_content_type: string
+    nsfw_preview_content_type: string
     sfw_content_type: string | null
     nsfw_content_type: string | null
     sfw_review_status: string
@@ -61,6 +63,8 @@ export async function getAdminReportsData(db: D1Database, mediaBaseUrl: string):
                 character_media.nsfw_image_key,
                 character_media.sfw_preview_image_key,
                 character_media.nsfw_preview_image_key,
+                character_media.sfw_preview_content_type,
+                character_media.nsfw_preview_content_type,
                 character_media.sfw_content_type,
                 character_media.nsfw_content_type,
                 character_media.sfw_review_status,
@@ -125,6 +129,7 @@ function toImageReports(row: ReportedMediaRow, mediaBaseUrl: string): AdminImage
                 'sfw',
                 row.sfw_image_key,
                 row.sfw_preview_image_key,
+                row.sfw_preview_content_type,
                 row.sfw_content_type,
                 row.sfw_reviewed_at,
                 row.sfw_reported_by_username,
@@ -140,6 +145,7 @@ function toImageReports(row: ReportedMediaRow, mediaBaseUrl: string): AdminImage
                 'nsfw',
                 row.nsfw_image_key,
                 row.nsfw_preview_image_key,
+                row.nsfw_preview_content_type,
                 row.nsfw_content_type,
                 row.nsfw_reviewed_at,
                 row.nsfw_reported_by_username,
@@ -156,6 +162,7 @@ function toImageReport(
     rating: 'sfw' | 'nsfw',
     imageKey: string,
     previewImageKey: string | null,
+    previewContentType: string,
     contentType: string | null,
     reportedAt: string | null,
     reportedByUsername: string | null,
@@ -167,7 +174,15 @@ function toImageReport(
         rating,
         imageUrl: characterMediaImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, imageKey, rating, contentType),
         previewImageUrl: previewImageKey
-            ? characterMediaPreviewImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, previewImageKey, rating)
+            ? characterMediaPreviewImageUrl(
+                  mediaBaseUrl,
+                  row.user_id,
+                  row.character_id,
+                  row.id,
+                  previewImageKey,
+                  rating,
+                  previewContentType,
+              )
             : null,
         objectKey: characterMediaImageObjectKey(row.user_id, row.character_id, row.id, imageKey, rating, contentType),
         reviewStatus: 'reported',

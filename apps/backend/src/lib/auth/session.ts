@@ -164,11 +164,11 @@ export async function createCsrfToken(sessionToken: string): Promise<string> {
 }
 
 export async function isValidCsrfToken(sessionToken: string, csrfToken: string | null): Promise<boolean> {
-    if (!csrfToken) {
-        return false
-    }
+    return isValidCsrfTokenValue(await createCsrfToken(sessionToken), csrfToken)
+}
 
-    return timingSafeEqual(await createCsrfToken(sessionToken), csrfToken)
+export function isValidCsrfTokenValue(expectedCsrfToken: string, csrfToken: unknown): boolean {
+    return typeof csrfToken === 'string' && timingSafeEqual(expectedCsrfToken, csrfToken)
 }
 
 export function normalizeCredential(value: unknown): string | null {

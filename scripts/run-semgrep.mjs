@@ -13,6 +13,7 @@ const semgrepTestTargets = [
     'semgrep-tests/routes/directImageResponse.ts',
     'semgrep-tests/routes/directJsonResponse.ts',
     'semgrep-tests/routes/imageBodyProxy.ts',
+    'semgrep-tests/routes/unboundedRequestBody.ts',
     'semgrep-tests/scriptJson.semgrep-test.tsx',
 ]
 const semgrepCustomArgs = ['scan', '--config', '.semgrep.yml', '--error', '.']

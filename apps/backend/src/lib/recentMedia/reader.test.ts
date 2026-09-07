@@ -1,17 +1,17 @@
 import {describe, expect, it} from 'vitest'
-import {useTestDatabase} from '../../test/d1'
+import {seedCharacter, seedMedia, seedUser, useTestDatabase} from '../../test/d1'
 import {createMockR2Bucket} from '../../test/mockR2'
 import type {RecentMediaItem} from '../recentMedia'
 import {getGeneratedRecentMediaPage, InvalidRecentFeedCursorError, RecentFeedGenerationExpiredError} from './reader'
 
 const db = useTestDatabase()
-const rootKey = 'generations/v1/roots/r7-demo.json'
-const yearKey = 'generations/v1/manifests/n0-u0/years/2026/year.json'
-const monthKey = 'generations/v1/manifests/n0-u0/months/2026-08/month.json'
-const dayKey = 'generations/v1/manifests/n0-u0/days/2026-08-25/day.json'
-const previousDayKey = 'generations/v1/manifests/n0-u0/days/2026-08-24/day.json'
-const blockKey = 'generations/v1/blocks/n0-u0/2026-08-25T12/block.json'
-const previousBlockKey = 'generations/v1/blocks/n0-u0/2026-08-24T12/block.json'
+const rootKey = 'recent-feed/generations/v1/roots/r7-demo.json'
+const yearKey = 'recent-feed/generations/v1/manifests/n0-u0/years/2026/year.json'
+const monthKey = 'recent-feed/generations/v1/manifests/n0-u0/months/2026-08/month.json'
+const dayKey = 'recent-feed/generations/v1/manifests/n0-u0/days/2026-08-25/day.json'
+const previousDayKey = 'recent-feed/generations/v1/manifests/n0-u0/days/2026-08-24/day.json'
+const blockKey = 'recent-feed/generations/v1/blocks/n0-u0/2026-08-25T12/block.json'
+const previousBlockKey = 'recent-feed/generations/v1/blocks/n0-u0/2026-08-24T12/block.json'
 const pointer = {
     generation: 'r7-demo',
     rootKey,
@@ -47,7 +47,7 @@ describe('generated recent media reader', () => {
         expect(second.items.map((item) => item.id)).toEqual(['media-2'])
         expect(first).toMatchObject({
             generation: 'r7-demo',
-            publicRootUrl: 'https://feed-data.myoc.art/generations/v1/roots/r7-demo.json',
+            publicRootUrl: 'https://m.myoc.art/recent-feed/generations/v1/roots/r7-demo.json',
             nextPosition: 1,
         })
         expect(second).toMatchObject({generation: 'r7-demo', nextPosition: null, nextCursor: null})
@@ -119,10 +119,86 @@ describe('generated recent media reader', () => {
         )
     })
 
-    it('reports an unavailable feed when no generation was published', async () => {
-        await expect(getGeneratedRecentMediaPage(readerEnvironment(createMockR2Bucket()))).rejects.toThrow(
-            'The generated recent media feed is unavailable',
-        )
+    it('reads the first page from D1 when no generation was published', async () => {
+        await seedFallbackMedia()
+
+        const page = await getGeneratedRecentMediaPage(readerEnvironment(createMockR2Bucket()), {
+            limit: 1,
+            showUnapproved: false,
+        })
+
+        expect(page.items.map((item) => item.id)).toEqual(['safe-approved'])
+        expect(page).toMatchObject({
+            generation: null,
+            nextCursor: null,
+            nextPosition: null,
+            publicRootUrl: null,
+            publishedAt: null,
+        })
+    })
+
+    it('continues paging through the D1 fallback', async () => {
+        await seedFallbackMedia()
+        const env = readerEnvironment(createMockR2Bucket())
+
+        const first = await getGeneratedRecentMediaPage(env, {limit: 1, showNsfw: true, showUnapproved: true})
+        const second = await getGeneratedRecentMediaPage(env, {
+            cursor: first.nextCursor,
+            limit: 1,
+            showNsfw: true,
+            showUnapproved: true,
+        })
+
+        expect(first.items.map((item) => item.id)).toEqual(['nsfw-only'])
+        expect(first.nextCursor).not.toBeNull()
+        expect(second.items.map((item) => item.id)).toEqual(['safe-pending'])
+    })
+
+    it('bounds the D1 fallback when excluded media fills its scan budget', async () => {
+        await seedUser({id: 'bounded-user'})
+        await seedCharacter({id: 'bounded-character', userId: 'bounded-user'})
+        await seedMedia({
+            id: 'eligible-after-scan-budget',
+            userId: 'bounded-user',
+            characterId: 'bounded-character',
+            sfwPreviewImageKey: 'eligible-preview',
+            sfwReviewStatus: 'approved',
+            sfwApprovedAt: '2026-08-25 12:00:00',
+            createdAt: '2026-08-25 12:00:00',
+            updatedAt: '2026-08-25 12:00:00',
+        })
+        for (let index = 0; index < 301; index += 1) {
+            await seedMedia({
+                id: `excluded-nsfw-${index.toString().padStart(3, '0')}`,
+                userId: 'bounded-user',
+                characterId: 'bounded-character',
+                sfwImageKey: null,
+                nsfwImageKey: `nsfw-${index}`,
+                nsfwPreviewImageKey: `nsfw-preview-${index}`,
+                nsfwReviewStatus: 'approved',
+                nsfwApprovedAt: '2026-08-25 13:00:00',
+                createdAt: '2026-08-25 13:00:00',
+                updatedAt: '2026-08-25 13:00:00',
+            })
+        }
+
+        const page = await getGeneratedRecentMediaPage(readerEnvironment(createMockR2Bucket()), {
+            limit: 1,
+            showNsfw: false,
+            showUnapproved: false,
+        })
+
+        expect(page.items).toEqual([])
+        expect(page.nextCursor).not.toBeNull()
+
+        const continued = await getGeneratedRecentMediaPage(readerEnvironment(createMockR2Bucket()), {
+            cursor: page.nextCursor,
+            limit: 1,
+            showNsfw: false,
+            showUnapproved: false,
+        })
+
+        expect(continued.items.map((item) => item.id)).toEqual(['eligible-after-scan-budget'])
     })
 
     it('reports an expired feed when a requested generation is not retained', async () => {
@@ -145,49 +221,98 @@ describe('generated recent media reader', () => {
         ).rejects.toBeInstanceOf(RecentFeedGenerationExpiredError)
     })
 
-    it('reports an unavailable feed when the current root object is missing', async () => {
+    it('reads the first page from D1 when the current root object is missing', async () => {
         await seedPointer()
+        await seedFallbackMedia()
 
-        await expect(getGeneratedRecentMediaPage(readerEnvironment(createMockR2Bucket()))).rejects.toThrow(
-            'The generated recent media feed is unavailable',
-        )
+        const page = await getGeneratedRecentMediaPage(readerEnvironment(createMockR2Bucket()), {
+            showUnapproved: false,
+        })
+
+        expect(page.items.map((item) => item.id)).toEqual(['safe-approved'])
+        expect(page.generation).toBeNull()
+    })
+
+    it.each(['{invalid json', JSON.stringify({schemaVersion: 1})])(
+        'reads the first page from D1 when the current root is malformed',
+        async (root) => {
+            const bucket = createMockR2Bucket()
+            await bucket.put(rootKey, root)
+            await seedPointer()
+            await seedFallbackMedia()
+
+            const page = await getGeneratedRecentMediaPage(readerEnvironment(bucket), {showUnapproved: false})
+
+            expect(page.items.map((item) => item.id)).toEqual(['safe-approved'])
+            expect(page.generation).toBeNull()
+        },
+    )
+
+    it('reads the first page from D1 when a current manifest is missing', async () => {
+        const bucket = createMockR2Bucket()
+        await putFeedRoot(bucket, [recentItem('generated-media')])
+        await seedPointer()
+        await seedFallbackMedia()
+
+        const page = await getGeneratedRecentMediaPage(readerEnvironment(bucket), {showUnapproved: false})
+
+        expect(page.items.map((item) => item.id)).toEqual(['safe-approved'])
+        expect(page.generation).toBeNull()
     })
 
     it.each([
         {name: 'generation', changes: {generation: 'different-generation'}},
         {name: 'revision', changes: {throughRevision: pointer.throughRevision + 1}},
-    ])('rejects a root whose $name does not match its pointer', async ({changes}) => {
+    ])('uses the D1 fallback when the current root $name does not match its pointer', async ({changes}) => {
         const bucket = createMockR2Bucket()
         await seedFeed(bucket, [recentItem('media-1')])
         await putFeedRoot(bucket, [recentItem('media-1')], changes)
         await seedPointer()
 
-        await expect(getGeneratedRecentMediaPage(readerEnvironment(bucket), {showUnapproved: false})).rejects.toBeInstanceOf(
-            RecentFeedGenerationExpiredError,
-        )
+        const page = await getGeneratedRecentMediaPage(readerEnvironment(bucket), {showUnapproved: false})
+
+        expect(page).toMatchObject({items: [], generation: null, nextCursor: null})
+        await expect(
+            getGeneratedRecentMediaPage(readerEnvironment(bucket), {
+                generation: pointer.generation,
+                showUnapproved: false,
+            }),
+        ).rejects.toBeInstanceOf(RecentFeedGenerationExpiredError)
     })
 
-    it('rejects a variant whose item total does not match its year references', async () => {
+    it('uses the D1 fallback when the current variant total does not match its year references', async () => {
         const bucket = createMockR2Bucket()
         const item = recentItem('media-1')
         await seedFeed(bucket, [item])
         await putFeedRoot(bucket, [item], {variantItemCount: 2})
         await seedPointer()
 
-        await expect(getGeneratedRecentMediaPage(readerEnvironment(bucket), {showUnapproved: false})).rejects.toThrow(
-            'Recent feed variant does not match its root',
-        )
+        const page = await getGeneratedRecentMediaPage(readerEnvironment(bucket), {showUnapproved: false})
+
+        expect(page).toMatchObject({items: [], generation: null, nextCursor: null})
+        await expect(
+            getGeneratedRecentMediaPage(readerEnvironment(bucket), {
+                generation: pointer.generation,
+                showUnapproved: false,
+            }),
+        ).rejects.toThrow('Recent feed variant does not match its root')
     })
 
-    it('rejects embedded items that exceed the variant item total', async () => {
+    it('uses the D1 fallback when current embedded items exceed the variant total', async () => {
         const bucket = createMockR2Bucket()
         await seedFeed(bucket, [])
         await putFeedRoot(bucket, [], {initialItems: [recentItem('unexpected-media')]})
         await seedPointer()
 
-        await expect(getGeneratedRecentMediaPage(readerEnvironment(bucket), {showUnapproved: false})).rejects.toThrow(
-            'Recent feed initial items do not match its root',
-        )
+        const page = await getGeneratedRecentMediaPage(readerEnvironment(bucket), {showUnapproved: false})
+
+        expect(page).toMatchObject({items: [], generation: null, nextCursor: null})
+        await expect(
+            getGeneratedRecentMediaPage(readerEnvironment(bucket), {
+                generation: pointer.generation,
+                showUnapproved: false,
+            }),
+        ).rejects.toThrow('Recent feed initial items do not match its root')
     })
 
     it('rejects a cursor past the end of its retained generation', async () => {
@@ -283,10 +408,46 @@ describe('generated recent media reader', () => {
 function readerEnvironment(bucket: R2Bucket, includePublicBaseUrl = false) {
     return {
         DB: db,
-        RECENT_FEED_BUCKET: bucket,
+        MEDIA_BUCKET: bucket,
+        MEDIA_PUBLIC_BASE_URL: 'https://m.myoc.art',
         RECENT_FEED_CURSOR_SECRET: cursorSecret,
-        ...(includePublicBaseUrl ? {RECENT_FEED_PUBLIC_BASE_URL: 'https://feed-data.myoc.art'} : {}),
+        ...(includePublicBaseUrl ? {RECENT_FEED_PUBLIC_BASE_URL: 'https://m.myoc.art'} : {}),
     }
+}
+
+async function seedFallbackMedia(): Promise<void> {
+    await seedUser({id: 'fallback-user'})
+    await seedCharacter({id: 'fallback-character', userId: 'fallback-user'})
+    await seedMedia({
+        id: 'nsfw-only',
+        userId: 'fallback-user',
+        characterId: 'fallback-character',
+        sfwImageKey: null,
+        nsfwImageKey: 'nsfw-original',
+        nsfwPreviewImageKey: 'nsfw-preview',
+        nsfwReviewStatus: 'approved',
+        nsfwApprovedAt: '2026-08-25 14:00:00',
+        createdAt: '2026-08-25 14:00:00',
+        updatedAt: '2026-08-25 14:00:00',
+    })
+    await seedMedia({
+        id: 'safe-pending',
+        userId: 'fallback-user',
+        characterId: 'fallback-character',
+        sfwPreviewImageKey: 'pending-preview',
+        createdAt: '2026-08-25 13:00:00',
+        updatedAt: '2026-08-25 13:00:00',
+    })
+    await seedMedia({
+        id: 'safe-approved',
+        userId: 'fallback-user',
+        characterId: 'fallback-character',
+        sfwPreviewImageKey: 'approved-preview',
+        sfwReviewStatus: 'approved',
+        sfwApprovedAt: '2026-08-25 12:00:00',
+        createdAt: '2026-08-25 12:00:00',
+        updatedAt: '2026-08-25 12:00:00',
+    })
 }
 
 async function seedPointer(): Promise<void> {

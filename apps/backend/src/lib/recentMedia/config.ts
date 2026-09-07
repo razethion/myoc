@@ -61,7 +61,7 @@ export function recentFeedVariantOptions(variant: RecentFeedVariant): {showNsfw:
 }
 
 export function recentFeedPublicObjectUrl(baseUrl: string | null, key: string): string | null {
-    if (!baseUrl || !/^generations\/v1\/[A-Za-z0-9/_-]+\.json$/.test(key) || key.includes('..')) {
+    if (!baseUrl || !/^recent-feed\/generations\/v1\/[A-Za-z0-9/_-]+\.json$/.test(key) || key.includes('..')) {
         return null
     }
 

@@ -91,7 +91,7 @@ describe('RecentMediaPage', () => {
             page: recentPage({
                 generation: 'generation-7',
                 nextPosition: 24,
-                publicRootUrl: 'https://feeds.example.com/generations/v1/roots/generation-7.json',
+                publicRootUrl: 'https://feeds.example.com/recent-feed/generations/v1/roots/generation-7.json',
             }),
             showNsfw: true,
             user: currentUser,
@@ -101,6 +101,14 @@ describe('RecentMediaPage', () => {
         expect(html).toMatch(/<button(?=[^>]*aria-pressed="true")[^>]*>Hide unapproved<\/button>/)
         expect(html).toContain('Hide NSFW media')
         expect(html).toContain('Hide unapproved')
+        expect(html).toContain('Load more')
+    })
+
+    it('keeps fallback pagination available', () => {
+        const html = renderRecentMediaPage({page: recentPage({nextCursor: 'signed-fallback-cursor'})})
+
+        expect(html).toContain('data-has-more="true"')
+        expect(html).toContain('data-next-cursor="signed-fallback-cursor"')
         expect(html).toContain('Load more')
     })
 
@@ -130,7 +138,8 @@ describe('RecentMediaPage', () => {
     })
 
     it('stacks sequential uploads and safely embeds the remaining item data', () => {
-        const unsafeText = '</script><script>alert(1)</script>&'
+        const scriptInjection = ['</scr', 'ipt><scr', 'ipt>alert(1)</scr', 'ipt>'].join('')
+        const unsafeText = `${scriptInjection}&`
         const items = [
             mediaItem('stack-1', 'shared-group'),
             mediaItem('stack-2', 'shared-group', {alt: unsafeText}),
@@ -145,7 +154,7 @@ describe('RecentMediaPage', () => {
         const remainingItems = JSON.parse(decodedPayload ?? '[]') as RecentMediaItem[]
         expect(remainingItems.map((item) => item.alt)).toEqual([unsafeText, 'stack-3 character art'])
         expect(html).not.toContain('type="application/json"')
-        expect(html).not.toContain('<script>alert(1)</script>')
+        expect(html).not.toContain(scriptInjection.slice('</script>'.length))
     })
 
     it('uses a singular upload label for a two-item stack', () => {

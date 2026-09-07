@@ -180,7 +180,7 @@ function findOpaqueBounds(alpha, width, height) {
 }
 
 function requestChartRender() {
-    window.requestAnimationFrame(() => {
+    document.defaultView?.requestAnimationFrame(() => {
         renderChart();
     });
 }
@@ -575,19 +575,25 @@ els.removeImage.addEventListener('click', () => {
 });
 
 document.addEventListener('input', (event) => {
-    if (event.target.matches('[data-height-marker]')) {
-        setCalibration(event.target.dataset.heightMarker, Number(event.target.value));
+    const target = event.target;
+    const browser = document.defaultView;
+    if (!browser || !(target instanceof browser.HTMLInputElement)) return;
+    if (target.matches('[data-height-marker]')) {
+        setCalibration(target.dataset['heightMarker'], Number(target.value));
         renderChart();
         updateCalibrationUi();
-    } else if (event.target.matches('[data-nametag-marker]')) {
-        setNameTagX(Number(event.target.value));
+    } else if (target.matches('[data-nametag-marker]')) {
+        setNameTagX(Number(target.value));
         updateCalibrationUi();
     }
 });
 
 document.addEventListener('change', (event) => {
-    if (event.target.matches('[data-cropped-feet]')) {
-        state.croppedFeet = event.target.checked;
+    const target = event.target;
+    const browser = document.defaultView;
+    if (!browser || !(target instanceof browser.HTMLInputElement)) return;
+    if (target.matches('[data-cropped-feet]')) {
+        state.croppedFeet = target.checked;
         if (state.croppedFeet) {
             state.bottomPct = Math.max(state.bottomPct, VIRTUAL_FOOT_START_PCT);
         } else {
@@ -599,8 +605,11 @@ document.addEventListener('change', (event) => {
 });
 
 document.addEventListener('pointerdown', (event) => {
-    const marker = event.target.closest('[data-marker]');
-    const frame = event.target.closest('#height-chart-calibration-frame');
+    const target = event.target;
+    const browser = document.defaultView;
+    if (!browser || !(target instanceof browser.Element)) return;
+    const marker = target['closest']('[data-marker]');
+    const frame = target['closest']('#height-chart-calibration-frame');
     if (!marker || !frame || !state.image) return;
 
     event.preventDefault();
@@ -656,7 +665,7 @@ els.saveButton.addEventListener('click', async () => {
     }
 });
 
-window.addEventListener('resize', () => {
+document.defaultView?.addEventListener('resize', () => {
     renderChart();
     updateCalibrationUi();
 });

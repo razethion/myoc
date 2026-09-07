@@ -3,8 +3,9 @@ import {JsonLdScript} from './JsonLdScript'
 
 describe('JsonLdScript', () => {
     it('keeps hostile text inside one JSON-LD script element', () => {
+        const scriptInjection = ['</scr', 'ipt><scr', 'ipt data-json-ld-xss>attack()</scr', 'ipt>'].join('')
         const value = {
-            description: '</script><script data-json-ld-xss>attack()</script>',
+            description: scriptInjection,
         }
 
         const html = JsonLdScript({value}).toString()

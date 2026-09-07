@@ -44,12 +44,13 @@ const RECENT_FEED_BOOTSTRAP_HOUR_BUDGET = 24
 const RECENT_FEED_MAX_BLOCKS_PER_HOUR = 4096
 const RECENT_FEED_BOOTSTRAP_MAX_ROOTS_BYTES = 1024 * 1024
 const RECENT_FEED_BOOTSTRAP_IMMEDIATE_DELETE_LIMIT = 1000
+const RECENT_FEED_CONTENT_ADDRESS_ATTEMPTS = 16
 
 type RecentFeedPublisherEnv = {
     DB: D1Database
     MEDIA_PUBLIC_BASE_URL: string
     RECENT_FEED_BLOCK_ITEMS?: string
-    RECENT_FEED_BUCKET: R2Bucket
+    MEDIA_BUCKET: R2Bucket
     RECENT_FEED_CLEANUP_ENABLED?: string
     RECENT_FEED_CURSOR_SECRET?: string
     RECENT_FEED_PUBLISH_ENABLED?: string
@@ -88,6 +89,10 @@ export type RecentFeedPublishSummary = {
     objectsWritten?: number
     bytesWritten?: number
     bootstrapRows?: number
+}
+
+export type RecentFeedRegenerationRequest = {
+    status: 'requested' | 'busy' | 'closed'
 }
 
 type WriteMetrics = {
@@ -159,6 +164,10 @@ class RecentFeedChangedDuringPublishError extends Error {
     }
 }
 
+type BrokenRecentFeedRoot = {
+    reason: 'missing' | 'invalid-json' | 'invalid-schema' | 'pointer-mismatch'
+}
+
 export async function publishRecentFeed(
     env: RecentFeedPublisherEnv,
     options: {force?: boolean; now?: Date} = {},
@@ -211,13 +220,105 @@ async function publishAcquiredRecentFeed(
         return continueRecentFeedBootstrap(env, config, state, leaseOwner, startedAt, now)
     }
 
-    const previousRoot = await readJson(env.RECENT_FEED_BUCKET, state.root_key, RecentFeedRootSchema)
+    const loadedRoot = await loadPublishedRecentFeedRoot(env.MEDIA_BUCKET, state.root_key, state)
 
-    if (state.requested_revision <= state.published_revision && previousRoot.initialItems) {
+    if ('reason' in loadedRoot) {
+        const recoveredState = await resetBrokenRecentFeed(env.DB, leaseOwner, state.root_key)
+        console.error(
+            JSON.stringify({
+                event: 'recent-feed-broken-regenerating',
+                message: 'Publisher recent feed is broken, regenerating it',
+                rootKey: state.root_key,
+                reason: loadedRoot.reason,
+            }),
+        )
+        return continueRecentFeedBootstrap(env, config, recoveredState, leaseOwner, startedAt, now)
+    }
+
+    const previousRoot = loadedRoot.root
+
+    if (state.requested_revision <= state.published_revision && previousRoot.initialItems && isNamespacedRecentFeedRoot(state.root_key)) {
         return {status: 'current', generation: state.generation ?? undefined, revision: state.published_revision}
     }
 
     return publishIncrementalRecentFeed(env, config, state, previousRoot, leaseOwner, startedAt, now)
+}
+
+async function loadPublishedRecentFeedRoot(
+    bucket: R2Bucket,
+    rootKey: string,
+    state: RecentFeedStateRow,
+): Promise<{root: RecentFeedRoot} | BrokenRecentFeedRoot> {
+    const object = await bucket.get(rootKey)
+    if (!object) return {reason: 'missing'}
+
+    let value: unknown
+    try {
+        value = await object.json<unknown>()
+    } catch (error) {
+        if (error instanceof SyntaxError) return {reason: 'invalid-json'}
+        throw error
+    }
+
+    const parsed = RecentFeedRootSchema.safeParse(value)
+    if (!parsed.success) return {reason: 'invalid-schema'}
+    if (parsed.data.generation !== state.generation || parsed.data.throughRevision !== state.published_revision) {
+        return {reason: 'pointer-mismatch'}
+    }
+
+    return {root: parsed.data}
+}
+
+async function resetBrokenRecentFeed(db: D1Database, leaseOwner: string, expectedRootKey: string): Promise<RecentFeedStateRow> {
+    await db.batch([
+        db
+            .prepare(
+                `UPDATE recent_feed_state
+                 SET requested_revision = MAX(requested_revision, published_revision) + 1,
+                     generation = NULL,
+                     root_key = NULL,
+                     published_at = NULL,
+                     bootstrap_revision = NULL,
+                     bootstrap_cursor_created_at = NULL,
+                     bootstrap_cursor_id = NULL,
+                     bootstrap_variant_roots_json = NULL,
+                     bootstrap_active_key = NULL,
+                     bootstrap_objects_written = 0,
+                     bootstrap_bytes_written = 0,
+                     bootstrap_started_at = NULL,
+                     last_error = NULL,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE singleton = 1
+                   AND root_key = ?
+                   AND lease_owner = ?
+                   AND lease_expires_at > CURRENT_TIMESTAMP`,
+            )
+            .bind(expectedRootKey, leaseOwner),
+        db
+            .prepare(
+                `INSERT INTO recent_feed_dirty_hours (dirty_hour, revision, reason, urgent, updated_at)
+                 SELECT '*', requested_revision, 'publisher-recovery', 1, CURRENT_TIMESTAMP
+                 FROM recent_feed_state
+                 WHERE singleton = 1
+                   AND root_key IS NULL
+                   AND bootstrap_revision IS NULL
+                   AND lease_owner = ?
+                   AND lease_expires_at > CURRENT_TIMESTAMP
+                 ON CONFLICT(dirty_hour) DO UPDATE SET
+                     revision = excluded.revision,
+                     reason = excluded.reason,
+                     urgent = 1,
+                     updated_at = excluded.updated_at`,
+            )
+            .bind(leaseOwner),
+    ])
+
+    const state = await getRecentFeedState(db)
+    if (state.root_key !== null || state.lease_owner !== leaseOwner) {
+        throw new RecentFeedChangedDuringPublishError()
+    }
+
+    return state
 }
 
 async function publishIncrementalRecentFeed(
@@ -231,7 +332,7 @@ async function publishIncrementalRecentFeed(
 ): Promise<RecentFeedPublishSummary> {
     const targetRevision = state.requested_revision
     const dirtyRows = await getDirtyHours(env.DB, targetRevision)
-    const fullBuild = dirtyRows.some((row) => row.dirty_hour === '*')
+    const fullBuild = dirtyRows.some((row) => row.dirty_hour === '*') || !isNamespacedRecentFeedRoot(state.root_key)
     const dirtyHours = fullBuild ? [] : dirtyRows.map((row) => row.dirty_hour)
     await renewPublicationLease(env.DB, leaseOwner)
     const sourceRowsByHour = await loadSourceRowsByHour(env.DB, dirtyHours, fullBuild)
@@ -242,7 +343,7 @@ async function publishIncrementalRecentFeed(
     for (const variant of RECENT_FEED_VARIANTS) {
         await renewPublicationLease(env.DB, leaseOwner)
         variantRoots[variant] = await buildRecentFeedVariantTree(
-            env.RECENT_FEED_BUCKET,
+            env.MEDIA_BUCKET,
             variant,
             fullBuild ? emptyVariantRoot() : previousRoot.variants[variant],
             sourceRowsByHour,
@@ -256,7 +357,7 @@ async function publishIncrementalRecentFeed(
         await renewPublicationLease(env.DB, leaseOwner)
     }
 
-    const pointer = await writeRecentFeedRoot(env.RECENT_FEED_BUCKET, variantRoots, targetRevision, now, config, metrics, () =>
+    const pointer = await writeRecentFeedRoot(env.MEDIA_BUCKET, variantRoots, targetRevision, now, config, metrics, () =>
         renewPublicationLease(env.DB, leaseOwner),
     )
     await checkpointPublication(env.DB, leaseOwner, targetRevision, pointer, variantRoots, metrics)
@@ -286,6 +387,10 @@ async function publishIncrementalRecentFeed(
     }
 }
 
+function isNamespacedRecentFeedRoot(key: string | null): boolean {
+    return key?.startsWith('recent-feed/generations/v1/roots/') === true
+}
+
 async function writeRecentFeedRoot(
     bucket: R2Bucket,
     variantRoots: RecentFeedRoot['variants'],
@@ -302,7 +407,7 @@ async function writeRecentFeedRoot(
         JSON.stringify({throughRevision: targetRevision, publishedAt, variants: variantRoots, initialItems}),
     )
     const generation = `r${targetRevision}-${generationDigest.slice(0, 16)}`
-    const rootKey = `generations/v1/roots/${generation}-${generationDigest.slice(16, 48)}.json`
+    const rootKey = `recent-feed/generations/v1/roots/${generation}-${generationDigest.slice(16, 48)}.json`
     const existingRoot = await bucket.get(rootKey)
     const root = existingRoot
         ? RecentFeedRootSchema.parse(await existingRoot.json<unknown>())
@@ -340,6 +445,158 @@ export async function getRecentFeedPointer(db: D1Database): Promise<RecentFeedPo
               throughRevision: state.published_revision,
           }
         : null
+}
+
+export async function requestRecentFeedRegeneration(env: {DB: D1Database}, runId: string): Promise<RecentFeedRegenerationRequest> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(runId)) {
+        throw new Error('Recent feed regeneration run ID is invalid')
+    }
+
+    const leaseOwner = crypto.randomUUID()
+    const leaseAcquired = await acquirePublicationLease(env.DB, leaseOwner)
+
+    if (!leaseAcquired) {
+        return {status: 'busy'}
+    }
+
+    try {
+        const job = await getRecentFeedRegenerationJob(env.DB, runId)
+
+        if (job.requested) {
+            return {status: 'requested'}
+        }
+
+        if (job.status !== 'running') {
+            return {status: 'closed'}
+        }
+
+        const reason = `admin-regeneration:${runId}`
+        await env.DB.batch([
+            env.DB.prepare(
+                `UPDATE recent_feed_state
+                     SET requested_revision = MAX(requested_revision, published_revision) + 1,
+                         generation = NULL,
+                         root_key = NULL,
+                         published_at = NULL,
+                         bootstrap_revision = NULL,
+                         bootstrap_cursor_created_at = NULL,
+                         bootstrap_cursor_id = NULL,
+                         bootstrap_variant_roots_json = NULL,
+                         bootstrap_active_key = NULL,
+                         bootstrap_objects_written = 0,
+                         bootstrap_bytes_written = 0,
+                         bootstrap_started_at = NULL,
+                         last_error = NULL,
+                         updated_at = CURRENT_TIMESTAMP
+                     WHERE singleton = 1
+                       AND lease_owner = ?
+                       AND lease_expires_at > CURRENT_TIMESTAMP
+                       AND EXISTS (
+                           SELECT 1
+                           FROM admin_job_runs
+                           WHERE id = ?
+                             AND job_name = 'recent-feed-regeneration'
+                             AND status = 'running'
+                       )`,
+            ).bind(leaseOwner, runId),
+            env.DB.prepare(
+                `INSERT INTO recent_feed_dirty_hours (dirty_hour, revision, reason, urgent, updated_at)
+                     SELECT '*', requested_revision, ?, 1, CURRENT_TIMESTAMP
+                     FROM recent_feed_state
+                     WHERE singleton = 1
+                       AND root_key IS NULL
+                       AND bootstrap_revision IS NULL
+                       AND lease_owner = ?
+                       AND lease_expires_at > CURRENT_TIMESTAMP
+                       AND EXISTS (
+                           SELECT 1
+                           FROM admin_job_runs
+                           WHERE id = ?
+                             AND job_name = 'recent-feed-regeneration'
+                             AND status = 'running'
+                       )
+                     ON CONFLICT(dirty_hour) DO UPDATE SET
+                         revision = excluded.revision,
+                         reason = excluded.reason,
+                         urgent = 1,
+                         updated_at = excluded.updated_at`,
+            ).bind(reason, leaseOwner, runId),
+            env.DB.prepare(
+                `UPDATE admin_job_runs
+                     SET summary_json = json_set(
+                         CASE
+                             WHEN json_valid(summary_json) AND substr(ltrim(summary_json), 1, 1) = '{' THEN summary_json
+                             ELSE '{}'
+                         END,
+                         '$.regenerationRequested', json('true'),
+                         '$.regenerationRequestedRevision', (
+                             SELECT requested_revision
+                             FROM recent_feed_state
+                             WHERE singleton = 1
+                         )
+                     )
+                     WHERE id = ?
+                       AND job_name = 'recent-feed-regeneration'
+                       AND status = 'running'
+                       AND EXISTS (
+                           SELECT 1
+                           FROM recent_feed_state AS state
+                           JOIN recent_feed_dirty_hours AS dirty
+                             ON dirty.dirty_hour = '*'
+                            AND dirty.revision = state.requested_revision
+                            AND dirty.reason = ?
+                           WHERE state.singleton = 1
+                             AND state.root_key IS NULL
+                             AND state.bootstrap_revision IS NULL
+                             AND state.lease_owner = ?
+                             AND state.lease_expires_at > CURRENT_TIMESTAMP
+                       )`,
+            ).bind(runId, reason, leaseOwner),
+        ])
+
+        const updatedJob = await getRecentFeedRegenerationJob(env.DB, runId)
+        if (updatedJob.requested) {
+            return {status: 'requested'}
+        }
+
+        if (updatedJob.status !== 'running') {
+            return {status: 'closed'}
+        }
+
+        const state = await getRecentFeedState(env.DB)
+        if (state.lease_owner !== leaseOwner) {
+            return {status: 'busy'}
+        }
+
+        throw new Error('Recent feed regeneration request was rejected')
+    } finally {
+        await releasePublicationLease(env.DB, leaseOwner)
+    }
+}
+
+async function getRecentFeedRegenerationJob(db: D1Database, runId: string): Promise<{status: string | null; requested: boolean}> {
+    const row = await db
+        .prepare(
+            `SELECT status, summary_json
+             FROM admin_job_runs
+             WHERE id = ?
+               AND job_name = 'recent-feed-regeneration'`,
+        )
+        .bind(runId)
+        .first<{status: string; summary_json: string | null}>()
+
+    if (!row) {
+        return {status: null, requested: false}
+    }
+
+    try {
+        const summary = row.summary_json ? (JSON.parse(row.summary_json) as unknown) : null
+        const requested =
+            typeof summary === 'object' && summary !== null && 'regenerationRequested' in summary && summary.regenerationRequested === true
+        return {status: row.status, requested}
+    } catch {
+        return {status: row.status, requested: false}
+    }
 }
 
 async function buildRecentFeedInitialItems(
@@ -692,7 +949,7 @@ async function writeBootstrapActiveSegment(bucket: R2Bucket, revision: number, a
     })
     const json = JSON.stringify(segment)
     const digest = await sha256Hex(json)
-    const key = `generations/v1/bootstrap/r${revision}/${active.hour}/${digest}.json`
+    const key = `recent-feed/generations/v1/bootstrap/r${revision}/${active.hour}/${digest}.json`
 
     if (!(await bucket.head(key))) {
         await bucket.put(key, json, {
@@ -1043,7 +1300,7 @@ async function writeYearManifest(
     }
     const key = await putContentAddressedManifest(
         bucket,
-        `generations/v1/manifests/${variant}/years/${year}`,
+        `recent-feed/generations/v1/manifests/${variant}/years/${year}`,
         manifest,
         cacheControl,
         metrics,
@@ -1069,7 +1326,7 @@ async function writeMonthManifest(
     }
     const key = await putContentAddressedManifest(
         bucket,
-        `generations/v1/manifests/${variant}/months/${month}`,
+        `recent-feed/generations/v1/manifests/${variant}/months/${month}`,
         manifest,
         cacheControl,
         metrics,
@@ -1095,7 +1352,7 @@ async function writeDayManifest(
     }
     const key = await putContentAddressedManifest(
         bucket,
-        `generations/v1/manifests/${variant}/days/${day}`,
+        `recent-feed/generations/v1/manifests/${variant}/days/${day}`,
         manifest,
         cacheControl,
         metrics,
@@ -1114,7 +1371,7 @@ async function continueRecentFeedBootstrap(
     const {state, targetRevision} = await ensureBootstrapState(env.DB, leaseOwner, initialState)
     const variantRoots = parseBootstrapVariantRoots(state.bootstrap_variant_roots_json)
     const activeHour = state.bootstrap_active_key
-        ? await loadBootstrapActiveHour(env.RECENT_FEED_BUCKET, state.bootstrap_active_key, config.blockItems)
+        ? await loadBootstrapActiveHour(env.MEDIA_BUCKET, state.bootstrap_active_key, config.blockItems)
         : null
     const cursor = bootstrapCursor(state)
     const sourceRows = await queryRecentMediaSourceRowsPage(env.DB, cursor, RECENT_FEED_BOOTSTRAP_ROW_BUDGET + 1)
@@ -1183,13 +1440,13 @@ async function processBootstrapPageRows(
         const hour = recentMediaHour(row)
 
         if (result.activeHour && result.activeHour.hour !== hour) {
-            await completeBootstrapHour(env.RECENT_FEED_BUCKET, config, result, metrics)
+            await completeBootstrapHour(env.MEDIA_BUCKET, config, result, metrics)
             if (result.completedHours >= RECENT_FEED_BOOTSTRAP_HOUR_BUDGET) break
         }
 
         result.activeHour ??= emptyBootstrapActiveHour(hour)
         await addBootstrapRow(
-            env.RECENT_FEED_BUCKET,
+            env.MEDIA_BUCKET,
             result.activeHour,
             row,
             env.MEDIA_PUBLIC_BASE_URL,
@@ -1203,7 +1460,7 @@ async function processBootstrapPageRows(
 
     result.nextUnprocessedRow = sourceRows[result.processedRows]
     if (result.activeHour && (!result.nextUnprocessedRow || recentMediaHour(result.nextUnprocessedRow) !== result.activeHour.hour)) {
-        await completeBootstrapHour(env.RECENT_FEED_BUCKET, config, result, metrics)
+        await completeBootstrapHour(env.MEDIA_BUCKET, config, result, metrics)
     }
     return result
 }
@@ -1239,7 +1496,7 @@ async function applyCompletedBootstrapHours(
     for (const variant of RECENT_FEED_VARIANTS) {
         if (completedReferences[variant].size === 0) continue
         variantRoots[variant] = await applyRecentFeedVariantHours(
-            env.RECENT_FEED_BUCKET,
+            env.MEDIA_BUCKET,
             variant,
             variantRoots[variant],
             completedReferences[variant],
@@ -1267,10 +1524,10 @@ async function checkpointBootstrapProgress(
     leaseOwner: string,
     startedAt: number,
 ): Promise<RecentFeedPublishSummary> {
-    const activeKey = page.activeHour ? await writeBootstrapActiveSegment(env.RECENT_FEED_BUCKET, targetRevision, page.activeHour) : null
+    const activeKey = page.activeHour ? await writeBootstrapActiveSegment(env.MEDIA_BUCKET, targetRevision, page.activeHour) : null
     if (!page.nextCursor) throw new Error('Recent feed bootstrap cursor is invalid')
     await checkpointRecentFeedBootstrap(env.DB, leaseOwner, targetRevision, page.nextCursor, variantRoots, activeKey, totalMetrics)
-    await deleteBootstrapCheckpointKeys(env.RECENT_FEED_BUCKET, page.checkpointKeysToDelete)
+    await deleteBootstrapCheckpointKeys(env.MEDIA_BUCKET, page.checkpointKeysToDelete)
     console.log(
         JSON.stringify({
             event: 'recent-feed-bootstrap-progress',
@@ -1305,14 +1562,14 @@ async function publishCompletedBootstrap(
     startedAt: number,
     now: Date,
 ): Promise<RecentFeedPublishSummary> {
-    const initialItems = await buildRecentFeedInitialItems(env.RECENT_FEED_BUCKET, variantRoots)
+    const initialItems = await buildRecentFeedInitialItems(env.MEDIA_BUCKET, variantRoots)
     await renewPublicationLease(env.DB, leaseOwner)
     const publishedAt = now.toISOString()
     const generationDigest = await sha256Hex(
         JSON.stringify({throughRevision: targetRevision, publishedAt, variants: variantRoots, initialItems}),
     )
     const generation = `r${targetRevision}-${generationDigest.slice(0, 16)}`
-    const rootKey = `generations/v1/roots/${generation}-${generationDigest.slice(16, 48)}.json`
+    const rootKey = `recent-feed/generations/v1/roots/${generation}-${generationDigest.slice(16, 48)}.json`
     const root: RecentFeedRoot = {
         schemaVersion: RECENT_FEED_SCHEMA_VERSION,
         generation,
@@ -1321,13 +1578,13 @@ async function publishCompletedBootstrap(
         variants: variantRoots,
         initialItems,
     }
-    await putJsonIfMissing(env.RECENT_FEED_BUCKET, rootKey, JSON.stringify(root), config.immutableCacheControl, metrics)
+    await putJsonIfMissing(env.MEDIA_BUCKET, rootKey, JSON.stringify(root), config.immutableCacheControl, metrics)
     const completedMetrics = combinedBootstrapMetrics(state, metrics)
     totalMetrics.objectsWritten = completedMetrics.objectsWritten
     totalMetrics.bytesWritten = completedMetrics.bytesWritten
     const pointer: RecentFeedPointer = {generation, rootKey, publishedAt, throughRevision: targetRevision}
     await checkpointInitialPublication(env.DB, leaseOwner, pointer, variantRoots, totalMetrics)
-    await deleteBootstrapCheckpointKeys(env.RECENT_FEED_BUCKET, page.checkpointKeysToDelete)
+    await deleteBootstrapCheckpointKeys(env.MEDIA_BUCKET, page.checkpointKeysToDelete)
     const itemCounts = recentFeedItemCounts(variantRoots)
 
     console.log(
@@ -1371,10 +1628,7 @@ async function writeRecentFeedBlock(
         items,
     }
     const json = JSON.stringify(block)
-    const digest = await sha256Hex(json)
-    const key = `generations/v1/blocks/${variant}/${hour}/${digest}.json`
-
-    await putJsonIfMissing(bucket, key, json, cacheControl, metrics)
+    const key = await putContentAddressedJson(bucket, `recent-feed/generations/v1/blocks/${variant}/${hour}`, json, cacheControl, metrics)
     return {key, itemCount: items.length}
 }
 
@@ -1474,10 +1728,7 @@ async function putContentAddressedManifest(
     metrics: WriteMetrics,
 ): Promise<string> {
     const json = JSON.stringify(manifest)
-    const digest = await sha256Hex(json)
-    const key = `${prefix}/${digest}.json`
-    await putJsonIfMissing(bucket, key, json, cacheControl, metrics)
-    return key
+    return putContentAddressedJson(bucket, prefix, json, cacheControl, metrics)
 }
 
 function sumItemCounts(values: Array<{itemCount: number}>): number {
@@ -1485,10 +1736,55 @@ function sumItemCounts(values: Array<{itemCount: number}>): number {
 }
 
 async function putJsonIfMissing(bucket: R2Bucket, key: string, json: string, cacheControl: string, metrics: WriteMetrics): Promise<void> {
-    if (await bucket.head(key)) {
+    const byteLength = new TextEncoder().encode(json).byteLength
+    const existing = await bucket.get(key)
+
+    if (existing?.size === byteLength && (await existing.text()) === json) {
         return
     }
 
+    await putJson(bucket, key, json, cacheControl, metrics, byteLength)
+}
+
+async function putContentAddressedJson(
+    bucket: R2Bucket,
+    prefix: string,
+    json: string,
+    cacheControl: string,
+    metrics: WriteMetrics,
+): Promise<string> {
+    let candidateJson = json
+
+    for (let attempt = 0; attempt < RECENT_FEED_CONTENT_ADDRESS_ATTEMPTS; attempt += 1) {
+        // JSON parsers ignore trailing spaces. Each space changes the hash and creates a new immutable URL.
+        const digest = await sha256Hex(candidateJson)
+        const key = `${prefix}/${digest}.json`
+        const byteLength = new TextEncoder().encode(candidateJson).byteLength
+        const existing = await bucket.get(key)
+
+        if (!existing) {
+            await putJson(bucket, key, candidateJson, cacheControl, metrics, byteLength)
+            return key
+        }
+
+        if (existing.size === byteLength && (await existing.text()) === candidateJson) {
+            return key
+        }
+
+        candidateJson += ' '
+    }
+
+    throw new Error(`Recent feed content address attempts were exhausted: ${prefix}`)
+}
+
+async function putJson(
+    bucket: R2Bucket,
+    key: string,
+    json: string,
+    cacheControl: string,
+    metrics: WriteMetrics,
+    byteLength: number,
+): Promise<void> {
     await bucket.put(key, json, {
         httpMetadata: {
             cacheControl,
@@ -1499,7 +1795,7 @@ async function putJsonIfMissing(bucket: R2Bucket, key: string, json: string, cac
         },
     })
     metrics.objectsWritten += 1
-    metrics.bytesWritten += new TextEncoder().encode(json).byteLength
+    metrics.bytesWritten += byteLength
 }
 
 async function readJson<T>(bucket: R2Bucket, key: string, schema: {parse(value: unknown): T}): Promise<T> {
@@ -1610,12 +1906,20 @@ async function checkpointInitialPublication(
                  updated_at = CURRENT_TIMESTAMP
              WHERE singleton = 1
                AND root_key IS NULL
-               AND published_revision = 0
+               AND published_revision < ?
                AND bootstrap_revision = ?
                AND lease_owner = ?
                AND lease_expires_at > CURRENT_TIMESTAMP`,
         )
-        .bind(pointer.throughRevision, pointer.generation, pointer.rootKey, pointer.publishedAt, pointer.throughRevision, leaseOwner)
+        .bind(
+            pointer.throughRevision,
+            pointer.generation,
+            pointer.rootKey,
+            pointer.publishedAt,
+            pointer.throughRevision,
+            pointer.throughRevision,
+            leaseOwner,
+        )
     const insertGeneration = db
         .prepare(
             `INSERT INTO recent_feed_generations (

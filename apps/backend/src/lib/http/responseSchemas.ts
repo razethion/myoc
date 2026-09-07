@@ -253,11 +253,72 @@ const LeaderboardRefreshSummarySchema = z
     })
     .strict()
 
-const AdminJobSummarySchema = z.union([D1BackupSummarySchema, R2CleanupSummarySchema, LeaderboardRefreshSummarySchema])
+const MediaPreviewRegenerationSummarySchema = z
+    .object({
+        totalVariants: PositiveIntegerSchema,
+        processedVariants: PositiveIntegerSchema,
+        regeneratedPreviews: PositiveIntegerSchema,
+        regeneratedBlurs: PositiveIntegerSchema,
+        skippedVariants: PositiveIntegerSchema,
+        failedVariants: PositiveIntegerSchema,
+        lastError: NullableStringSchema,
+    })
+    .strict()
+
+const SizeChartImageBackfillSummarySchema = z
+    .object({
+        totalImages: PositiveIntegerSchema,
+        processedImages: PositiveIntegerSchema,
+        replacedImages: PositiveIntegerSchema,
+        skippedImages: PositiveIntegerSchema,
+        failedImages: PositiveIntegerSchema,
+        lastError: NullableStringSchema,
+    })
+    .strict()
+
+const RecentFeedPublishSummarySchema = z
+    .object({
+        status: z.enum(['disabled', 'current', 'busy', 'building', 'published']),
+        generation: z.string().optional(),
+        revision: PositiveIntegerSchema.optional(),
+        dirtyHours: PositiveIntegerSchema.optional(),
+        itemCounts: z
+            .object({
+                'n0-u0': PositiveIntegerSchema,
+                'n0-u1': PositiveIntegerSchema,
+                'n1-u0': PositiveIntegerSchema,
+                'n1-u1': PositiveIntegerSchema,
+            })
+            .strict()
+            .optional(),
+        objectsWritten: PositiveIntegerSchema.optional(),
+        bytesWritten: PositiveIntegerSchema.optional(),
+        bootstrapRows: PositiveIntegerSchema.optional(),
+        regenerationRequested: z.boolean().optional(),
+        regenerationRequestedRevision: PositiveIntegerSchema.optional(),
+    })
+    .strict()
+
+const AdminJobSummarySchema = z.union([
+    D1BackupSummarySchema,
+    R2CleanupSummarySchema,
+    LeaderboardRefreshSummarySchema,
+    MediaPreviewRegenerationSummarySchema,
+    SizeChartImageBackfillSummarySchema,
+    RecentFeedPublishSummarySchema,
+])
 
 export const AdminJobRunResultSchema = z
     .object({
-        jobName: z.enum(['d1-backup', 'r2-media-cleanup', 'leaderboard-refresh']),
+        jobName: z.enum([
+            'd1-backup',
+            'r2-media-cleanup',
+            'leaderboard-refresh',
+            'recent-feed-regeneration',
+            'media-preview-regeneration',
+            'thumbnail-regeneration',
+            'size-chart-image-backfill',
+        ]),
         runId: z.string(),
         status: AdminJobStatusSchema,
         summary: AdminJobSummarySchema.optional(),

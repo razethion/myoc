@@ -27,8 +27,9 @@
     "coverage": "vitest run --coverage",
     "coverage:ci": "vitest run --coverage --coverage.reporter=text --coverage.reporter=lcov --testTimeout=10000",
     "ci": "npm run lint && npm run typecheck && npm run coverage:ci && npm run deadcode && npm run containers:check",
-    "db:prepare:local": "node scripts/run-wrangler.mjs d1 migrations apply myoc-db --local -c apps/backend/wrangler.jsonc --persist-to .wrangler/state && node scripts/run-wrangler.mjs d1 execute myoc-db --local -c apps/backend/wrangler.jsonc --persist-to .wrangler/state --file apps/backend/seeds/development.sql",
-    "env:clone:prod-to-dev": "node scripts/clone-prod-to-dev.mjs",
+    "db:prepare:local": "node scripts/run-wrangler.mjs d1 migrations apply myoc-db --local --config apps/backend/wrangler.jsonc --persist-to .wrangler/state && node scripts/seed-development.mjs",
+    "env:clone:prod-to-dev": "node scripts/seed-development.mjs",
+    "seed:development": "node scripts/seed-development.mjs",
     "recent-feed:backfill": "node scripts/backfill-recent-feed.mjs",
     "deploy": "npm run build && npm run deploy --workspace @myoc/backend && npm run deploy --workspace @myoc/web"
   },
@@ -37,12 +38,12 @@
     "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@tailwindcss/cli": "^4.3.3",
     "@vitest/coverage-istanbul": "^4.1.11",
-    "daisyui": "^5.7.4",
+    "daisyui": "^5.7.22",
     "knip": "^6.32.2",
     "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10",
-    "wrangler": "^4.115.0"
+    "wrangler": "^4.127.1"
   },
   "allowScripts": {
     "@parcel/watcher": true,

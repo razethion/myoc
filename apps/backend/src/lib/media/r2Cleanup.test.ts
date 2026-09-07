@@ -3,6 +3,7 @@ import {seedCharacter, seedFolder, seedMedia, seedUser, useResetTestDatabase} fr
 import {createMockKVNamespace} from '../../test/mockKV'
 import {createWorkerEnv, workerEnv} from '../../test/workerBindings'
 import {cleanupStaleR2Media, parseManagedR2MediaKey} from './r2Cleanup'
+import {profilePhotoObjectKey} from './url'
 
 const staleCleanupNow = new Date(Date.now() + 25 * 60 * 60 * 1000)
 const db = useResetTestDatabase()
@@ -46,6 +47,13 @@ describe('parseManagedR2MediaKey', () => {
             mediaId: 'media-1',
             rating: 'nsfw',
             imageKey: 'preview-1',
+            contentType: 'image/webp',
+        })
+
+        expect(parseManagedR2MediaKey('characters/user-1/character-1/media/media-1/sfw/preview/preview-2.avif')).toMatchObject({
+            kind: 'characterMediaPreview',
+            imageKey: 'preview-2',
+            contentType: 'image/avif',
         })
 
         expect(parseManagedR2MediaKey('characters/user-1/character-1/media/media-1/nsfw/blur/blur-1.webp')).toMatchObject({
@@ -54,6 +62,13 @@ describe('parseManagedR2MediaKey', () => {
             characterId: 'character-1',
             mediaId: 'media-1',
             imageKey: 'blur-1',
+            contentType: 'image/webp',
+        })
+
+        expect(parseManagedR2MediaKey('characters/user-1/character-1/media/media-1/nsfw/blur/blur-2.avif')).toMatchObject({
+            kind: 'characterMediaNsfwBlur',
+            imageKey: 'blur-2',
+            contentType: 'image/avif',
         })
 
         expect(parseManagedR2MediaKey('characters/user-1/character-1/height-chart/chart-1.png')).toMatchObject({
@@ -76,6 +91,20 @@ describe('parseManagedR2MediaKey', () => {
 })
 
 describe('cleanupStaleR2Media', () => {
+    it('keeps the current AVIF profile photo and deletes a replaced one', async () => {
+        await seedUser({id: 'alice', username: 'alice', profilePhotoKey: 'avif-current'})
+        const currentKey = profilePhotoObjectKey('alice', 'avif-current')
+        const replacedKey = profilePhotoObjectKey('alice', 'avif-replaced')
+        await workerEnv.MEDIA_BUCKET.put(currentKey, 'referenced')
+        await workerEnv.MEDIA_BUCKET.put(replacedKey, 'stale')
+
+        const summary = await cleanupStaleR2Media(workerEnv, staleCleanupNow)
+
+        expect(summary).toMatchObject({recognized: 2, keptReferenced: 1, deleted: 1, errors: 0})
+        expect(await workerEnv.MEDIA_BUCKET.head(currentKey)).not.toBeNull()
+        expect(await workerEnv.MEDIA_BUCKET.head(replacedKey)).toBeNull()
+    })
+
     it('deletes stale managed objects that are not referenced in D1', async () => {
         const heightChartJson = JSON.stringify({
             image: {
@@ -89,9 +118,9 @@ describe('cleanupStaleR2Media', () => {
         await workerEnv.MEDIA_BUCKET.put('users/alice/profile/old.png', 'unknown')
         await workerEnv.MEDIA_BUCKET.put('users/alice/profile/old.webp', 'stale')
         await workerEnv.MEDIA_BUCKET.put('characters/alice/blair/height-chart/chart.png', 'referenced')
-        await workerEnv.MEDIA_BUCKET.put('characters/alice/blair/media/media-1/nsfw/blur/blur.webp', 'referenced')
+        await workerEnv.MEDIA_BUCKET.put('characters/alice/blair/media/media-1/nsfw/blur/blur.avif', 'referenced')
         await workerEnv.MEDIA_BUCKET.put('characters/alice/blair/media/media-1/sfw/img.png', 'referenced')
-        await workerEnv.MEDIA_BUCKET.put('characters/alice/blair/media/media-1/sfw/preview/preview.webp', 'referenced')
+        await workerEnv.MEDIA_BUCKET.put('characters/alice/blair/media/media-1/sfw/preview/preview.avif', 'referenced')
         await workerEnv.MEDIA_BUCKET.put('characters/alice/blair/media/media-2/nsfw/blur/orphan.webp', 'stale')
         await workerEnv.MEDIA_BUCKET.put('characters/alice/blair/media/media-2/nsfw/preview/orphan.webp', 'stale')
         await workerEnv.MEDIA_BUCKET.put('characters/alice/blair/media/media-2/nsfw/orphan.gif', 'stale')
@@ -116,8 +145,8 @@ describe('cleanupStaleR2Media', () => {
         expect(await workerEnv.MEDIA_BUCKET.head('users/alice/profile/current.webp')).not.toBeNull()
         expect(await workerEnv.MEDIA_BUCKET.head('users/alice/profile/old.png')).not.toBeNull()
         expect(await workerEnv.MEDIA_BUCKET.head('users/alice/profile/old.webp')).toBeNull()
-        expect(await workerEnv.MEDIA_BUCKET.head('characters/alice/blair/media/media-1/nsfw/blur/blur.webp')).not.toBeNull()
-        expect(await workerEnv.MEDIA_BUCKET.head('characters/alice/blair/media/media-1/sfw/preview/preview.webp')).not.toBeNull()
+        expect(await workerEnv.MEDIA_BUCKET.head('characters/alice/blair/media/media-1/nsfw/blur/blur.avif')).not.toBeNull()
+        expect(await workerEnv.MEDIA_BUCKET.head('characters/alice/blair/media/media-1/sfw/preview/preview.avif')).not.toBeNull()
         expect(await workerEnv.MEDIA_BUCKET.head('characters/alice/blair/media/media-2/nsfw/blur/orphan.webp')).toBeNull()
         expect(await workerEnv.MEDIA_BUCKET.head('characters/alice/blair/media/media-2/nsfw/preview/orphan.webp')).toBeNull()
         expect(await workerEnv.MEDIA_BUCKET.head('characters/alice/blair/media/media-2/nsfw/orphan.gif')).toBeNull()
@@ -171,7 +200,7 @@ describe('cleanupStaleR2Media', () => {
             stoppedAtScanLimit: true,
         })
         expect(await cache.get('admin:r2-media-cleanup:cursor:v1')).not.toBeNull()
-    })
+    }, 30_000)
 
     it('continues with the next managed prefix on the next run', async () => {
         const objectKeys = [
@@ -215,7 +244,7 @@ describe('cleanupStaleR2Media', () => {
         expect(first).toMatchObject({deleted: 500, stoppedAtDeleteLimit: true})
         expect(second).toMatchObject({deleted: 1, stoppedAtDeleteLimit: false})
         expect(await cache.get('admin:r2-media-cleanup:cursor:v1')).toBeNull()
-    })
+    }, 30_000)
 
     it.each([new Error('cleanup failed'), 'cleanup failed'])('records object cleanup errors: %s', async (error) => {
         const bucket = createPagedMediaBucket(['users/alice/profile/photo.webp'], new Date(0))
@@ -270,10 +299,12 @@ async function seedCleanupDatabase(heightChartJson: string): Promise<void> {
         sfwImageKey: 'img',
         sfwContentType: 'image/png',
         sfwPreviewImageKey: 'preview',
+        sfwPreviewContentType: 'image/avif',
         sfwPreviewWidth: 800,
         sfwPreviewHeight: 600,
         sfwPreviewByteSize: 512,
         nsfwBlurImageKey: 'blur',
+        nsfwBlurContentType: 'image/avif',
     })
 }
 

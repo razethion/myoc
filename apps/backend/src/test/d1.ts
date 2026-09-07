@@ -87,14 +87,17 @@ type MediaSeed = {
     sfwContentType?: string | null
     nsfwContentType?: string | null
     sfwPreviewImageKey?: string | null
+    sfwPreviewContentType?: 'image/webp' | 'image/avif'
     sfwPreviewWidth?: number | null
     sfwPreviewHeight?: number | null
     sfwPreviewByteSize?: number | null
     nsfwPreviewImageKey?: string | null
+    nsfwPreviewContentType?: 'image/webp' | 'image/avif'
     nsfwPreviewWidth?: number | null
     nsfwPreviewHeight?: number | null
     nsfwPreviewByteSize?: number | null
     nsfwBlurImageKey?: string | null
+    nsfwBlurContentType?: 'image/webp' | 'image/avif'
     createdAt?: string
     updatedAt?: string
 }
@@ -127,6 +130,16 @@ type ChallengeSeed = {
 }
 
 const TEST_DATA_TABLES = [
+    'admin_error_logs',
+    'media_preview_regeneration_items',
+    'media_preview_regeneration_runs',
+    'image_processing_attempts',
+    'image_queue_outbox',
+    'image_cleanup_tasks',
+    'image_upload_parts',
+    'image_processing_tasks',
+    'image_upload_sources',
+    'image_upload_jobs',
     'character_gallery_row_media',
     'character_gallery_rows',
     'character_gallery_tabs',
@@ -386,14 +399,17 @@ export async function seedMedia(seed: MediaSeed, db: D1Database = testDb): Promi
         sfwContentType = sfwImageKey ? 'image/png' : null,
         nsfwContentType = nsfwImageKey ? 'image/png' : null,
         sfwPreviewImageKey = null,
+        sfwPreviewContentType = 'image/webp',
         sfwPreviewWidth = null,
         sfwPreviewHeight = null,
         sfwPreviewByteSize = null,
         nsfwPreviewImageKey = null,
+        nsfwPreviewContentType = 'image/webp',
         nsfwPreviewWidth = null,
         nsfwPreviewHeight = null,
         nsfwPreviewByteSize = null,
         nsfwBlurImageKey = null,
+        nsfwBlurContentType = 'image/webp',
         createdAt = DEFAULT_TIMESTAMP,
         updatedAt = DEFAULT_TIMESTAMP,
     } = seed
@@ -427,17 +443,20 @@ export async function seedMedia(seed: MediaSeed, db: D1Database = testDb): Promi
                 sfw_content_type,
                 nsfw_content_type,
                 sfw_preview_image_key,
+                sfw_preview_content_type,
                 sfw_preview_width,
                 sfw_preview_height,
                 sfw_preview_byte_size,
                 nsfw_preview_image_key,
+                nsfw_preview_content_type,
                 nsfw_preview_width,
                 nsfw_preview_height,
                 nsfw_preview_byte_size,
                 nsfw_blur_image_key,
+                nsfw_blur_content_type,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
             id,
@@ -463,14 +482,17 @@ export async function seedMedia(seed: MediaSeed, db: D1Database = testDb): Promi
             sfwContentType,
             nsfwContentType,
             sfwPreviewImageKey,
+            sfwPreviewContentType,
             sfwPreviewWidth,
             sfwPreviewHeight,
             sfwPreviewByteSize,
             nsfwPreviewImageKey,
+            nsfwPreviewContentType,
             nsfwPreviewWidth,
             nsfwPreviewHeight,
             nsfwPreviewByteSize,
             nsfwBlurImageKey,
+            nsfwBlurContentType,
             createdAt,
             updatedAt,
         )

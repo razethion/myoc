@@ -11,7 +11,7 @@ const EXPORT_SQL = [
 
 describe('backupD1Database', () => {
     it('uses the global fetch implementation when no fetch option is provided', async () => {
-        const fetcher = createExportFetch()
+        const fetcher = createImmediateExportFetch()
         vi.stubGlobal('fetch', fetcher)
 
         try {
@@ -32,22 +32,21 @@ describe('backupD1Database', () => {
 
     it('exports D1 through the REST API and stores a gzipped SQL backup in R2', async () => {
         const backupBucket = createMockR2Bucket()
+        const mediaBucket = createMockR2Bucket()
         const now = new Date('2026-07-12T08:00:00.000Z')
         const fetcher = createExportFetch()
+        const env = {
+            CLOUDFLARE_ACCOUNT_ID: 'account-id',
+            D1_DATABASE_ID: 'database-id',
+            D1_REST_API_TOKEN: 'api-token',
+            DB_BACKUP_BUCKET: backupBucket,
+            MEDIA_BUCKET: mediaBucket,
+        }
 
-        const summary = await backupD1Database(
-            {
-                CLOUDFLARE_ACCOUNT_ID: 'account-id',
-                D1_DATABASE_ID: 'database-id',
-                D1_REST_API_TOKEN: 'api-token',
-                DB_BACKUP_BUCKET: backupBucket,
-            },
-            now,
-            {
-                fetch: fetcher,
-                pollDelayMs: 0,
-            },
-        )
+        const summary = await backupD1Database(env, now, {
+            fetch: fetcher,
+            pollDelayMs: 0,
+        })
 
         expect(summary).toMatchObject({
             key: 'd1/myoc-db/2026/07/12/myoc-db-2026-07-12T08-00-00-000Z.sql.gz',
@@ -58,59 +57,46 @@ describe('backupD1Database', () => {
             rows: 2,
         })
         expect(summary.compressedBytes).toBeGreaterThan(0)
-        expect(fetcher).toHaveBeenNthCalledWith(
-            1,
-            'https://api.cloudflare.com/client/v4/accounts/account-id/d1/database/database-id/export',
-            expect.objectContaining({
-                body: JSON.stringify({
-                    output_format: 'polling',
-                    dump_options: {
-                        no_data: false,
-                        no_schema: false,
-                        tables: [],
-                    },
-                }),
-                headers: expect.objectContaining({
-                    Authorization: 'Bearer api-token',
-                    'Content-Type': 'application/json',
-                }),
-                method: 'POST',
-            }),
-        )
-        expect(fetcher).toHaveBeenNthCalledWith(
-            2,
-            'https://api.cloudflare.com/client/v4/accounts/account-id/d1/database/database-id/export',
-            expect.objectContaining({
-                body: JSON.stringify({
-                    output_format: 'polling',
-                    dump_options: {
-                        no_data: false,
-                        no_schema: false,
-                        tables: [],
-                    },
-                    current_bookmark: 'bookmark-1',
-                }),
-            }),
-        )
-        expect(fetcher).toHaveBeenNthCalledWith(3, 'https://example.test/dump.sql')
-        expect(backupBucket.createMultipartUpload).toHaveBeenCalledWith(
-            summary.key,
-            expect.objectContaining({
-                httpMetadata: {
-                    contentEncoding: 'gzip',
-                    contentType: 'application/sql',
-                },
-                customMetadata: {
-                    database: 'myoc-db',
-                    generatedAt: '2026-07-12T08:00:00.000Z',
-                },
-            }),
-        )
+        expect(backupBucket.createMultipartUpload).toHaveBeenCalledWith(summary.key, {
+            httpMetadata: {
+                cacheControl: 'private, no-store',
+                contentEncoding: 'gzip',
+                contentType: 'application/sql',
+            },
+            customMetadata: {
+                database: 'myoc-db',
+                generatedAt: '2026-07-12T08:00:00.000Z',
+            },
+        })
         expect(backupBucket.put).not.toHaveBeenCalled()
+        expect(mediaBucket.createMultipartUpload).not.toHaveBeenCalled()
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+        expect((await mediaBucket.list()).objects).toEqual([])
 
         const object = await backupBucket.get(summary.key)
         expect(object).not.toBeNull()
         expect(await gunzipObject(object)).toBe(EXPORT_SQL)
+    })
+
+    it('fails before export when the backup bucket is not configured', async () => {
+        const fetcher = vi.fn() as unknown as typeof fetch
+        const mediaBucket = createMockR2Bucket()
+        const env = {
+            CLOUDFLARE_ACCOUNT_ID: 'account-id',
+            D1_DATABASE_ID: 'database-id',
+            D1_REST_API_TOKEN: 'api-token',
+            MEDIA_BUCKET: mediaBucket,
+        }
+
+        await expect(
+            backupD1Database(env, new Date('2026-07-12T08:00:00.000Z'), {
+                fetch: fetcher,
+                pollDelayMs: 0,
+            }),
+        ).rejects.toThrow('DB_BACKUP_BUCKET is not configured')
+        expect(fetcher).not.toHaveBeenCalled()
+        expect(mediaBucket.createMultipartUpload).not.toHaveBeenCalled()
+        expect(mediaBucket.put).not.toHaveBeenCalled()
     })
 
     it('uploads compressed backups in valid multipart chunks', async () => {
@@ -120,7 +106,7 @@ describe('backupD1Database', () => {
         const upload = {
             abort: vi.fn(),
             complete: vi.fn(async () => ({size: completedSize})),
-            uploadPart: vi.fn(async (partNumber: number, value: Uint8Array) => {
+            uploadPart: vi.fn(async (partNumber: number, value: Uint8Array, _options?: R2UploadPartOptions) => {
                 uploadedSizes.push(value.byteLength)
                 return {partNumber, etag: `etag-${partNumber}`}
             }),
@@ -147,6 +133,7 @@ describe('backupD1Database', () => {
         const partNumbers = upload.uploadPart.mock.calls.map(([partNumber]) => partNumber)
         expect(new Set(partNumbers).size).toBe(partNumbers.length)
         expect(partNumbers.every((partNumber) => Number.isInteger(partNumber) && partNumber >= 1 && partNumber <= 10_000)).toBe(true)
+        expect(upload.uploadPart.mock.calls.every(([, , options]) => options === undefined)).toBe(true)
         expect(summary.compressedBytes).toBe(completedSize)
     })
 
@@ -389,13 +376,14 @@ describe('backupD1Database', () => {
 })
 
 function createExportFetch(exportBody: BodyInit = EXPORT_SQL): typeof fetch {
-    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input)
 
         if (url.endsWith('/export')) {
-            const call = fetcher.mock.calls.length
+            assertExportRequest(url, init)
+            const payload = JSON.parse(String(init?.body)) as {current_bookmark?: string}
 
-            if (call === 1) {
+            if (payload.current_bookmark === undefined) {
                 return Response.json({
                     result: {
                         at_bookmark: 'bookmark-1',
@@ -406,23 +394,66 @@ function createExportFetch(exportBody: BodyInit = EXPORT_SQL): typeof fetch {
                 })
             }
 
-            return Response.json({
-                result: {
-                    result: {
-                        signed_url: 'https://example.test/dump.sql',
-                    },
-                    status: 'complete',
-                    success: true,
-                    type: 'export',
-                },
-                success: true,
-            })
+            if (payload.current_bookmark !== 'bookmark-1') throw new Error('Unexpected D1 export bookmark')
+            return completedExportResponse()
         }
 
+        if (url !== 'https://example.test/dump.sql') throw new Error(`Unexpected export URL: ${url}`)
         return new Response(exportBody, {status: 200})
     })
 
     return fetcher as unknown as typeof fetch
+}
+
+function createImmediateExportFetch(exportBody: BodyInit = EXPORT_SQL): typeof fetch {
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.endsWith('/export')) {
+            assertExportRequest(url, init)
+            return completedExportResponse()
+        }
+        if (url !== 'https://example.test/dump.sql') throw new Error(`Unexpected export URL: ${url}`)
+        return new Response(exportBody, {status: 200})
+    }) as unknown as typeof fetch
+}
+
+function assertExportRequest(url: string, init?: RequestInit): void {
+    if (url !== 'https://api.cloudflare.com/client/v4/accounts/account-id/d1/database/database-id/export') {
+        throw new Error(`Unexpected D1 export URL: ${url}`)
+    }
+    const headers = new Headers(init?.headers)
+    if (
+        init?.method !== 'POST' ||
+        headers.get('authorization') !== 'Bearer api-token' ||
+        headers.get('content-type') !== 'application/json'
+    ) {
+        throw new Error('Unexpected D1 export request')
+    }
+    const payload = JSON.parse(String(init.body)) as {
+        dump_options?: {no_data?: boolean; no_schema?: boolean; tables?: unknown[]}
+        output_format?: string
+    }
+    if (
+        payload.output_format !== 'polling' ||
+        payload.dump_options?.no_data !== false ||
+        payload.dump_options.no_schema !== false ||
+        !Array.isArray(payload.dump_options.tables) ||
+        payload.dump_options.tables.length !== 0
+    ) {
+        throw new Error('Unexpected D1 export options')
+    }
+}
+
+function completedExportResponse(): Response {
+    return Response.json({
+        result: {
+            result: {signed_url: 'https://example.test/dump.sql'},
+            status: 'complete',
+            success: true,
+            type: 'export',
+        },
+        success: true,
+    })
 }
 
 function createLargeExportBytes(): Uint8Array {

@@ -28,6 +28,6 @@ For setup problems, include:
 - The command that failed.
 - Full error output.
 - Whether Wrangler is authenticated.
-- Whether the issue involves local D1, remote R2, KV, or Cloudflare Images.
+- Whether the issue involves local D1, remote R2, KV, a Queue, or the Sharp container.
 
 For licensing or commercial-use questions, start with [LICENSE](./LICENSE).

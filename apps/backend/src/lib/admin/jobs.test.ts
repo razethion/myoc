@@ -1,6 +1,7 @@
-import {describe, expect, it} from 'vitest'
+import {describe, expect, it, vi} from 'vitest'
 import {queryOne, seedUser, useTestDatabase} from '../../test/d1'
-import {type AdminJobSummary, getAdminOptionsData, recordAdminJobRun} from './jobs'
+import {createMockR2Bucket} from '../../test/mockR2'
+import {type AdminJobSummary, completeAdminJobRun, getAdminOptionsData, recordAdminJobRun, runAdminJob} from './jobs'
 
 const db = useTestDatabase()
 
@@ -13,6 +14,47 @@ const backupSummary = {
     schemaObjects: 5,
     tables: 4,
 } satisfies AdminJobSummary
+
+function createMockWorkflowBinding(initialStatuses: Record<string, string> = {}) {
+    const statuses = new Map(Object.entries(initialStatuses))
+
+    return {
+        create: vi.fn(async ({id}: {id: string}) => {
+            statuses.set(id, 'running')
+            return {id}
+        }),
+        get: vi.fn(async (id: string) => {
+            if (statuses.get(id) === 'missing') {
+                throw new Error('Workflow instance does not exist')
+            }
+
+            return {
+                id,
+                status: vi.fn(async () => ({status: statuses.get(id) ?? 'unknown'})),
+            }
+        }),
+    }
+}
+
+function thumbnailJobEnv(workflow: ReturnType<typeof createMockWorkflowBinding>): Parameters<typeof runAdminJob>[0] {
+    return {DB: db, REGENERATE_MEDIA_PREVIEWS_WORKFLOW: workflow} as unknown as Parameters<typeof runAdminJob>[0]
+}
+
+function recentFeedJobEnv(workflow: ReturnType<typeof createMockWorkflowBinding>): Parameters<typeof runAdminJob>[0] {
+    return {DB: db, REGENERATE_MEDIA_PREVIEWS_WORKFLOW: workflow} as unknown as Parameters<typeof runAdminJob>[0]
+}
+
+function emptyRegenerationSummary() {
+    return {
+        totalVariants: 0,
+        processedVariants: 0,
+        regeneratedPreviews: 0,
+        regeneratedBlurs: 0,
+        skippedVariants: 0,
+        failedVariants: 0,
+        lastError: null,
+    }
+}
 
 describe('recordAdminJobRun', () => {
     it('records successful job runs', async () => {
@@ -112,6 +154,35 @@ describe('recordAdminJobRun', () => {
     })
 })
 
+describe('D1 backup jobs', () => {
+    it('records an error without starting an export when the backup bucket is not configured', async () => {
+        const fetcher = vi.fn()
+        const mediaBucket = createMockR2Bucket()
+        vi.stubGlobal('fetch', fetcher)
+
+        try {
+            await expect(
+                runAdminJob({DB: db, MEDIA_BUCKET: mediaBucket} as unknown as Parameters<typeof runAdminJob>[0], 'd1-backup', {
+                    triggerSource: 'manual',
+                }),
+            ).rejects.toThrow('DB_BACKUP_BUCKET is not configured')
+
+            expect(fetcher).not.toHaveBeenCalled()
+            expect(mediaBucket.createMultipartUpload).not.toHaveBeenCalled()
+            expect(mediaBucket.put).not.toHaveBeenCalled()
+            expect(
+                await queryOne<{error_message: string | null; status: string}>(
+                    `SELECT status, error_message
+                     FROM admin_job_runs
+                     WHERE job_name = 'd1-backup'`,
+                ),
+            ).toEqual({status: 'error', error_message: 'DB_BACKUP_BUCKET is not configured'})
+        } finally {
+            vi.unstubAllGlobals()
+        }
+    })
+})
+
 describe('getAdminOptionsData', () => {
     it('returns known job runs with parsed summaries', async () => {
         await db.batch([
@@ -152,5 +223,408 @@ describe('getAdminOptionsData', () => {
                 summary: backupSummary,
             }),
         ])
+    })
+
+    it('includes the thumbnail regeneration job', async () => {
+        const data = await getAdminOptionsData(db)
+
+        expect(data.jobs).toContainEqual({name: 'thumbnail-regeneration', label: 'Thumbnail Regeneration'})
+    })
+
+    it('includes the recent page regeneration job', async () => {
+        const data = await getAdminOptionsData(db)
+
+        expect(data.jobs).toContainEqual({name: 'recent-feed-regeneration', label: 'Recent Page Regeneration'})
+    })
+
+    it('includes the size chart image backfill job', async () => {
+        const data = await getAdminOptionsData(db)
+
+        expect(data.jobs).toContainEqual({name: 'size-chart-image-backfill', label: 'Size Chart Image Backfill'})
+    })
+})
+
+describe('size chart image backfill jobs', () => {
+    it('starts one workflow and reuses its active run', async () => {
+        const workflow = createMockWorkflowBinding()
+        const env = thumbnailJobEnv(workflow)
+
+        const first = await runAdminJob(env, 'size-chart-image-backfill', {triggerSource: 'manual'})
+        const second = await runAdminJob(env, 'size-chart-image-backfill', {triggerSource: 'manual'})
+
+        expect(second).toEqual(first)
+        expect(first).toMatchObject({
+            jobName: 'size-chart-image-backfill',
+            status: 'running',
+            summary: {
+                totalImages: 0,
+                processedImages: 0,
+                replacedImages: 0,
+                skippedImages: 0,
+                failedImages: 0,
+                lastError: null,
+            },
+        })
+        expect(workflow.create).toHaveBeenCalledOnce()
+        expect(workflow.create).toHaveBeenCalledWith({
+            id: first.runId,
+            params: {kind: 'size-chart-images', runId: first.runId},
+        })
+    })
+
+    it('replaces a stopped workflow run', async () => {
+        const oldRunId = 'stopped-size-chart-run'
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (id, job_name, trigger_source, status, started_at, summary_json)
+                 VALUES (?, 'size-chart-image-backfill', 'manual', 'running', '2026-01-01 00:00:00', ?)`,
+            )
+            .bind(
+                oldRunId,
+                JSON.stringify({totalImages: 4, processedImages: 2, replacedImages: 2, skippedImages: 0, failedImages: 0, lastError: null}),
+            )
+            .run()
+        const workflow = createMockWorkflowBinding({[oldRunId]: 'complete'})
+
+        const result = await runAdminJob(thumbnailJobEnv(workflow), 'size-chart-image-backfill', {triggerSource: 'manual'})
+
+        expect(result.runId).not.toBe(oldRunId)
+        expect(result).toMatchObject({status: 'running', summary: {processedImages: 0}})
+        expect(
+            await queryOne<{status: string; error_message: string | null}>(
+                'SELECT status, error_message FROM admin_job_runs WHERE id = ?',
+                [oldRunId],
+            ),
+        ).toEqual({status: 'error', error_message: 'The size chart image backfill Workflow stopped before the job record finished.'})
+        expect(workflow.create).toHaveBeenCalledWith({
+            id: result.runId,
+            params: {kind: 'size-chart-images', runId: result.runId},
+        })
+    })
+
+    it('reports a workflow status lookup failure', async () => {
+        const runId = 'unavailable-size-chart-run'
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (id, job_name, trigger_source, status, started_at, summary_json)
+                 VALUES (?, 'size-chart-image-backfill', 'manual', 'running', '2026-01-01 00:00:00', ?)`,
+            )
+            .bind(
+                runId,
+                JSON.stringify({totalImages: 1, processedImages: 0, replacedImages: 0, skippedImages: 0, failedImages: 0, lastError: null}),
+            )
+            .run()
+        const workflow = createMockWorkflowBinding()
+        workflow.get.mockRejectedValueOnce('Workflow API unavailable')
+
+        await expect(runAdminJob(thumbnailJobEnv(workflow), 'size-chart-image-backfill', {triggerSource: 'manual'})).rejects.toThrow(
+            'Workflow API unavailable',
+        )
+        expect(workflow.create).not.toHaveBeenCalled()
+    })
+
+    it('records a workflow start failure', async () => {
+        const workflow = createMockWorkflowBinding()
+        workflow.create.mockRejectedValueOnce(new Error('Workflow could not start'))
+
+        await expect(runAdminJob(thumbnailJobEnv(workflow), 'size-chart-image-backfill', {triggerSource: 'manual'})).rejects.toThrow(
+            'Workflow could not start',
+        )
+
+        expect(
+            await queryOne<{status: string; error_message: string | null}>(
+                `SELECT status, error_message
+                 FROM admin_job_runs
+                 WHERE job_name = 'size-chart-image-backfill'`,
+            ),
+        ).toEqual({status: 'error', error_message: 'Workflow could not start'})
+    })
+})
+
+describe('recent page regeneration jobs', () => {
+    it('starts one workflow and reuses its active run', async () => {
+        const workflow = createMockWorkflowBinding()
+        const env = recentFeedJobEnv(workflow)
+
+        const first = await runAdminJob(env, 'recent-feed-regeneration', {triggerSource: 'manual'})
+        const second = await runAdminJob(env, 'recent-feed-regeneration', {triggerSource: 'manual'})
+
+        expect(second).toEqual(first)
+        expect(first).toMatchObject({
+            jobName: 'recent-feed-regeneration',
+            status: 'running',
+            summary: {status: 'building'},
+        })
+        expect(workflow.create).toHaveBeenCalledOnce()
+        expect(workflow.create).toHaveBeenCalledWith({
+            id: first.runId,
+            params: {kind: 'recent-feed', runId: first.runId},
+        })
+    })
+
+    it('returns saved publication progress for an active run', async () => {
+        const summary = {status: 'building', bootstrapRows: 250, objectsWritten: 12}
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (
+                    id, job_name, trigger_source, status, started_at, summary_json
+                ) VALUES (?, 'recent-feed-regeneration', 'manual', 'running', ?, ?)`,
+            )
+            .bind('active-recent-run', '2026-01-01 00:00:00', JSON.stringify(summary))
+            .run()
+        const workflow = createMockWorkflowBinding({'active-recent-run': 'running'})
+
+        const result = await runAdminJob(recentFeedJobEnv(workflow), 'recent-feed-regeneration', {triggerSource: 'manual'})
+
+        expect(result).toMatchObject({runId: 'active-recent-run', status: 'running', summary})
+        expect(workflow.create).not.toHaveBeenCalled()
+    })
+
+    it('closes a stopped workflow before it starts a replacement', async () => {
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (
+                    id, job_name, trigger_source, status, started_at, summary_json
+                ) VALUES (?, 'recent-feed-regeneration', 'manual', 'running', ?, ?)`,
+            )
+            .bind('stopped-recent-run', '2026-01-01 00:00:00', JSON.stringify({status: 'building'}))
+            .run()
+        const workflow = createMockWorkflowBinding({'stopped-recent-run': 'errored'})
+
+        const result = await runAdminJob(recentFeedJobEnv(workflow), 'recent-feed-regeneration', {triggerSource: 'manual'})
+        const stopped = await queryOne<{status: string; error_message: string | null}>(
+            'SELECT status, error_message FROM admin_job_runs WHERE id = ?',
+            ['stopped-recent-run'],
+        )
+
+        expect(result).toMatchObject({jobName: 'recent-feed-regeneration', status: 'running'})
+        expect(result.runId).not.toBe('stopped-recent-run')
+        expect(stopped).toEqual({
+            status: 'error',
+            error_message: 'The recent page regeneration Workflow stopped before the job record finished.',
+        })
+        expect(workflow.create).toHaveBeenCalledOnce()
+    })
+
+    it('shares one replacement when concurrent requests find a stopped workflow', async () => {
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (
+                    id, job_name, trigger_source, status, started_at, summary_json
+                ) VALUES (?, 'recent-feed-regeneration', 'manual', 'running', ?, ?)`,
+            )
+            .bind('concurrent-stopped-run', '2026-01-01 00:00:00', JSON.stringify({status: 'building'}))
+            .run()
+        const workflow = createMockWorkflowBinding({'concurrent-stopped-run': 'errored'})
+        const env = recentFeedJobEnv(workflow)
+
+        const [first, second] = await Promise.all([
+            runAdminJob(env, 'recent-feed-regeneration', {triggerSource: 'manual'}),
+            runAdminJob(env, 'recent-feed-regeneration', {triggerSource: 'manual'}),
+        ])
+
+        expect(second).toEqual(first)
+        expect(first.runId).not.toBe('concurrent-stopped-run')
+        expect(workflow.create).toHaveBeenCalledOnce()
+        expect(
+            await db
+                .prepare("SELECT COUNT(*) AS count FROM admin_job_runs WHERE job_name = 'recent-feed-regeneration' AND status = 'running'")
+                .first<{count: number}>(),
+        ).toEqual({count: 1})
+    })
+
+    it('uses the initial summary when an active run has an unrelated summary', async () => {
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (
+                    id, job_name, trigger_source, status, started_at, summary_json
+                ) VALUES (?, 'recent-feed-regeneration', 'manual', 'running', ?, ?)`,
+            )
+            .bind('invalid-summary-run', '2026-01-01 00:00:00', JSON.stringify({note: 'old summary'}))
+            .run()
+        const workflow = createMockWorkflowBinding({'invalid-summary-run': 'running'})
+
+        const result = await runAdminJob(recentFeedJobEnv(workflow), 'recent-feed-regeneration', {triggerSource: 'manual'})
+
+        expect(result).toMatchObject({runId: 'invalid-summary-run', summary: {status: 'building'}})
+        expect(workflow.create).not.toHaveBeenCalled()
+    })
+
+    it('returns a saved published summary while its workflow is still active', async () => {
+        const summary = {
+            status: 'published',
+            generation: 'r8-active',
+            itemCounts: {'n0-u0': 4, 'n0-u1': 3, 'n1-u0': 2, 'n1-u1': 1},
+        }
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (
+                    id, job_name, trigger_source, status, started_at, summary_json
+                ) VALUES (?, 'recent-feed-regeneration', 'manual', 'running', ?, ?)`,
+            )
+            .bind('published-summary-run', '2026-01-01 00:00:00', JSON.stringify(summary))
+            .run()
+        const workflow = createMockWorkflowBinding({'published-summary-run': 'running'})
+
+        const result = await runAdminJob(recentFeedJobEnv(workflow), 'recent-feed-regeneration', {triggerSource: 'manual'})
+
+        expect(result).toMatchObject({runId: 'published-summary-run', summary})
+        expect(workflow.create).not.toHaveBeenCalled()
+    })
+
+    it('records a workflow start failure', async () => {
+        const workflow = createMockWorkflowBinding()
+        workflow.create.mockRejectedValueOnce(new Error('Workflow could not start'))
+
+        await expect(runAdminJob(recentFeedJobEnv(workflow), 'recent-feed-regeneration', {triggerSource: 'manual'})).rejects.toThrow(
+            'Workflow could not start',
+        )
+
+        expect(
+            await queryOne<{status: string; error_message: string | null}>(
+                `SELECT status, error_message
+                 FROM admin_job_runs
+                 WHERE job_name = 'recent-feed-regeneration'`,
+            ),
+        ).toEqual({status: 'error', error_message: 'Workflow could not start'})
+    })
+
+    it('completes a running job once with the publication summary', async () => {
+        const workflow = createMockWorkflowBinding()
+        const started = await runAdminJob(recentFeedJobEnv(workflow), 'recent-feed-regeneration', {triggerSource: 'manual'})
+        const summary = {
+            status: 'published',
+            generation: 'r7-demo',
+            itemCounts: {'n0-u0': 42, 'n0-u1': 40, 'n1-u0': 38, 'n1-u1': 36},
+        } as const
+
+        await completeAdminJobRun(db, started.runId, summary)
+        await completeAdminJobRun(db, started.runId, {status: 'current'})
+
+        const stored = await queryOne<{status: string; summary_json: string | null; finished_at: string | null}>(
+            'SELECT status, summary_json, finished_at FROM admin_job_runs WHERE id = ?',
+            [started.runId],
+        )
+        expect(stored).toMatchObject({status: 'success'})
+        expect(stored?.finished_at).not.toBeNull()
+        expect(JSON.parse(stored?.summary_json ?? 'null')).toEqual(summary)
+    })
+})
+
+describe('thumbnail regeneration jobs', () => {
+    it('starts one workflow and reuses its active run', async () => {
+        const workflow = createMockWorkflowBinding()
+        const env = thumbnailJobEnv(workflow)
+
+        const first = await runAdminJob(env, 'thumbnail-regeneration', {triggerSource: 'manual'})
+        const second = await runAdminJob(env, 'thumbnail-regeneration', {triggerSource: 'manual'})
+
+        expect(second).toEqual(first)
+        expect(first).toMatchObject({jobName: 'thumbnail-regeneration', status: 'running', summary: emptyRegenerationSummary()})
+        expect(workflow.create).toHaveBeenCalledOnce()
+        expect(workflow.create).toHaveBeenCalledWith({
+            id: first.runId,
+            params: {kind: 'thumbnails', runId: first.runId},
+        })
+    })
+
+    it('reuses a thumbnail run while its durable queue item is pending', async () => {
+        const runId = 'queued-thumbnail-run'
+        await db.batch([
+            db
+                .prepare(
+                    `INSERT INTO admin_job_runs (
+                         id, job_name, trigger_source, status, started_at, summary_json
+                     ) VALUES (?, 'thumbnail-regeneration', 'manual', 'running', ?, ?)`,
+                )
+                .bind(runId, '2026-01-01 00:00:00', JSON.stringify({...emptyRegenerationSummary(), totalVariants: 1})),
+            db
+                .prepare(
+                    `INSERT INTO media_preview_regeneration_runs (run_id, dispatch_complete, enqueued_items)
+                     VALUES (?, 1, 1)`,
+                )
+                .bind(runId),
+            db
+                .prepare(
+                    `INSERT INTO media_preview_regeneration_items (
+                         task_id, run_id, media_id, rating, container_slot, candidate_json
+                     ) VALUES (?, ?, 'thumbnail:user-profile:queued-user', 'sfw', 0, '{}')`,
+                )
+                .bind(`${runId}:thumbnail:user-profile:queued-user`, runId),
+        ])
+        const workflow = createMockWorkflowBinding({[runId]: 'complete'})
+
+        const result = await runAdminJob(thumbnailJobEnv(workflow), 'thumbnail-regeneration', {triggerSource: 'manual'})
+
+        expect(result).toMatchObject({jobName: 'thumbnail-regeneration', runId, status: 'running'})
+        expect(workflow.create).not.toHaveBeenCalled()
+    })
+
+    it('closes a stopped workflow before it starts a replacement', async () => {
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (
+                    id, job_name, trigger_source, status, started_at, summary_json
+                ) VALUES (?, 'thumbnail-regeneration', 'manual', 'running', ?, ?)`,
+            )
+            .bind('stopped-thumbnail-run', '2026-01-01 00:00:00', JSON.stringify(emptyRegenerationSummary()))
+            .run()
+        const workflow = createMockWorkflowBinding({'stopped-thumbnail-run': 'terminated'})
+
+        const result = await runAdminJob(thumbnailJobEnv(workflow), 'thumbnail-regeneration', {triggerSource: 'manual'})
+        const stopped = await queryOne<{status: string; error_message: string | null}>(
+            'SELECT status, error_message FROM admin_job_runs WHERE id = ?',
+            ['stopped-thumbnail-run'],
+        )
+
+        expect(result).toMatchObject({jobName: 'thumbnail-regeneration', status: 'running'})
+        expect(result.runId).not.toBe('stopped-thumbnail-run')
+        expect(stopped).toEqual({
+            status: 'error',
+            error_message: 'The thumbnail regeneration Workflow stopped before the job record finished.',
+        })
+        expect(workflow.create).toHaveBeenCalledOnce()
+    })
+
+    it('records a workflow start failure', async () => {
+        const workflow = createMockWorkflowBinding()
+        workflow.create.mockRejectedValueOnce(new Error('Workflow could not start'))
+
+        await expect(runAdminJob(thumbnailJobEnv(workflow), 'thumbnail-regeneration', {triggerSource: 'manual'})).rejects.toThrow(
+            'Workflow could not start',
+        )
+
+        expect(
+            await queryOne<{status: string; error_message: string | null}>(
+                `SELECT status, error_message
+                 FROM admin_job_runs
+                 WHERE job_name = 'thumbnail-regeneration'`,
+            ),
+        ).toEqual({status: 'error', error_message: 'Workflow could not start'})
+    })
+
+    it('replaces an old thumbnail run when its continuation is missing', async () => {
+        const staleSummary = {...emptyRegenerationSummary(), totalVariants: 251, processedVariants: 250}
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (
+                    id, job_name, trigger_source, status, started_at, summary_json
+                ) VALUES (?, 'thumbnail-regeneration', 'manual', 'running', ?, ?)`,
+            )
+            .bind('stale-thumbnail-run', '2026-01-01 00:00:00', JSON.stringify(staleSummary))
+            .run()
+        const workflow = createMockWorkflowBinding({
+            'stale-thumbnail-run': 'complete',
+            'stale-thumbnail-run-segment-1': 'missing',
+        })
+
+        const result = await runAdminJob(thumbnailJobEnv(workflow), 'thumbnail-regeneration', {triggerSource: 'manual'})
+
+        expect(result).toMatchObject({jobName: 'thumbnail-regeneration', status: 'running'})
+        expect(result.runId).not.toBe('stale-thumbnail-run')
+        expect(await queryOne<{status: string}>('SELECT status FROM admin_job_runs WHERE id = ?', ['stale-thumbnail-run'])).toEqual({
+            status: 'error',
+        })
+        expect(workflow.create).toHaveBeenCalledOnce()
     })
 })

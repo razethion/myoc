@@ -17,6 +17,13 @@ const statusBadgeClasses: Record<AdminJobRun['status'], string> = {
     success: 'badge-success',
 }
 
+const recentFeedVariantLabels: Record<string, string> = {
+    'n0-u0': 'Approved SFW',
+    'n0-u1': 'All SFW',
+    'n1-u0': 'Approved including NSFW',
+    'n1-u1': 'All including NSFW',
+}
+
 export function AdminOptionsPage({csrfToken, data, feedback}: AdminOptionsPageProps) {
     return (
         <div class="p-4 sm:p-6">
@@ -29,16 +36,73 @@ export function AdminOptionsPage({csrfToken, data, feedback}: AdminOptionsPagePr
             {feedback ? <AdminJobFeedback feedback={feedback} /> : null}
 
             <section class="rounded border border-base-300 bg-base-200 p-4">
+                <p class="mb-3 text-sm text-base-content/70">
+                    Recent page regeneration rebuilds /recent in the background. Thumbnail, media preview, and size chart image jobs also
+                    run in the background. The size chart backfill replaces legacy images with resized AVIF images. Starting a running job
+                    again does not create a duplicate.
+                </p>
                 <div class="flex flex-wrap gap-3">
                     {data.jobs.map((job, index) => (
-                        <form action={`/admin/admin-options/jobs/${job.name}/run`} method="post">
+                        <form action={`/admin/admin-options/jobs/${job.name}/run`} class="flex flex-wrap items-center gap-2" method="post">
                             <input name="csrfToken" type="hidden" value={csrfToken} />
                             <button class={`btn ${index === 0 ? 'btn-primary' : 'btn-outline'}`} type="submit">
                                 Run {job.label}
                             </button>
+                            {job.name === 'media-preview-regeneration' ? (
+                                <button
+                                    class="btn btn-outline"
+                                    formaction={`/admin/admin-options/jobs/${job.name}/run?onlyInvalid=true`}
+                                    type="submit"
+                                >
+                                    Repair missing or non-AVIF previews and blurs
+                                </button>
+                            ) : null}
                         </form>
                     ))}
                 </div>
+            </section>
+
+            <section class="mt-6">
+                <h3 class="mb-3 text-xl font-bold">Error Log</h3>
+
+                {data.errors.length > 0 ? (
+                    <div class="overflow-x-auto rounded border border-base-300">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Recorded</th>
+                                    <th>Source</th>
+                                    <th>Code</th>
+                                    <th>Message</th>
+                                    <th>References</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {data.errors.map((entry) => (
+                                    <tr>
+                                        <td class="whitespace-nowrap font-mono text-xs">{formatTimestamp(entry.createdAt)}</td>
+                                        <td class="whitespace-nowrap">{entry.sourceLabel}</td>
+                                        <td>
+                                            <span class="badge badge-error badge-sm">{entry.errorCode}</span>
+                                        </td>
+                                        <td class="min-w-64 max-w-xl whitespace-pre-wrap break-words text-sm text-error">
+                                            {entry.errorMessage}
+                                        </td>
+                                        <td class="min-w-64 font-mono text-xs">
+                                            {entry.jobId ? <div class="break-all">Job: {entry.jobId}</div> : null}
+                                            {entry.taskId ? <div class="break-all">Task: {entry.taskId}</div> : null}
+                                            {!entry.jobId && !entry.taskId ? <span>-</span> : null}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                ) : (
+                    <div class="rounded border border-dashed border-base-300 bg-base-200 p-8 text-center">
+                        <h4 class="text-lg font-bold">No processing errors</h4>
+                    </div>
+                )}
             </section>
 
             <section class="mt-6">
@@ -124,6 +188,18 @@ function RunSummary({run}: {run: AdminJobRun}) {
         return <LeaderboardRefreshSummary summary={run.summary} />
     }
 
+    if (run.jobName === 'media-preview-regeneration' || run.jobName === 'thumbnail-regeneration') {
+        return <MediaPreviewRegenerationSummary summary={run.summary} thumbnails={run.jobName === 'thumbnail-regeneration'} />
+    }
+
+    if (run.jobName === 'recent-feed-regeneration') {
+        return <RecentFeedRegenerationSummary summary={run.summary} />
+    }
+
+    if (run.jobName === 'size-chart-image-backfill') {
+        return <SizeChartImageBackfillSummary summary={run.summary} />
+    }
+
     return <R2CleanupSummary summary={run.summary} />
 }
 
@@ -181,8 +257,83 @@ function LeaderboardRefreshSummary({summary}: {summary: AdminJobSummary}) {
     )
 }
 
+function MediaPreviewRegenerationSummary({summary, thumbnails}: {summary: AdminJobSummary; thumbnails: boolean}) {
+    if (!('totalVariants' in summary) || !('processedVariants' in summary)) {
+        return <JsonSummary summary={summary} />
+    }
+
+    const progressMaximum = Math.max(1, summary.totalVariants)
+
+    return (
+        <div class="grid gap-2 text-xs">
+            <progress class="progress" max={progressMaximum} value={Math.min(summary.processedVariants, progressMaximum)} />
+            <div class="flex flex-wrap gap-x-3 gap-y-1">
+                <span>
+                    {summary.processedVariants} of {summary.totalVariants} {thumbnails ? 'thumbnails' : 'variants'} processed
+                </span>
+                <span>
+                    {summary.regeneratedPreviews} {thumbnails ? 'thumbnails replaced' : 'previews'}
+                </span>
+                {thumbnails ? null : <span>{summary.regeneratedBlurs} blurs</span>}
+                <span>{summary.skippedVariants} skipped</span>
+                {summary.failedVariants > 0 ? <span class="text-error">{summary.failedVariants} failed</span> : null}
+            </div>
+            {summary.lastError ? <p class="max-w-xl whitespace-pre-wrap break-words text-error">Last error: {summary.lastError}</p> : null}
+        </div>
+    )
+}
+
+function RecentFeedRegenerationSummary({summary}: {summary: AdminJobSummary}) {
+    if (!('status' in summary)) {
+        return <JsonSummary summary={summary} />
+    }
+
+    return (
+        <div class="grid gap-1 text-xs">
+            <span>Status: {formatRecentFeedStatus(summary.status)}</span>
+            {summary.bootstrapRows === undefined ? null : <span>{summary.bootstrapRows} items processed</span>}
+            {summary.objectsWritten === undefined ? null : <span>{summary.objectsWritten} feed objects written</span>}
+            {summary.itemCounts ? (
+                <div class="flex flex-wrap gap-x-3 gap-y-1">
+                    {Object.entries(summary.itemCounts).map(([variant, count]) => (
+                        <span>
+                            {recentFeedVariantLabels[variant] ?? 'Unknown feed'}: {count} items
+                        </span>
+                    ))}
+                </div>
+            ) : null}
+        </div>
+    )
+}
+
+function SizeChartImageBackfillSummary({summary}: {summary: AdminJobSummary}) {
+    if (!('totalImages' in summary) || !('processedImages' in summary)) {
+        return <JsonSummary summary={summary} />
+    }
+
+    const progressMaximum = Math.max(1, summary.totalImages)
+    return (
+        <div class="grid gap-2 text-xs">
+            <progress class="progress" max={progressMaximum} value={Math.min(summary.processedImages, progressMaximum)} />
+            <div class="flex flex-wrap gap-x-3 gap-y-1">
+                <span>
+                    {summary.processedImages} of {summary.totalImages} images processed
+                </span>
+                <span>{summary.replacedImages} replaced</span>
+                <span>{summary.skippedImages} skipped</span>
+                {summary.failedImages > 0 ? <span class="text-error">{summary.failedImages} failed</span> : null}
+            </div>
+            {summary.lastError ? <p class="max-w-xl whitespace-pre-wrap break-words text-error">Last error: {summary.lastError}</p> : null}
+        </div>
+    )
+}
+
 function JsonSummary({summary}: {summary: AdminJobSummary}) {
     return <pre class="max-w-xl whitespace-pre-wrap break-words text-xs">{JSON.stringify(summary, null, 2)}</pre>
+}
+
+function formatRecentFeedStatus(status: string): string {
+    return `${status.slice(0, 1).toUpperCase()}${status.slice(1)}`
 }
 
 function formatCurrency(value: number): string {

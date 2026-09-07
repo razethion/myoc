@@ -85,6 +85,8 @@ type ImageApprovalRow = {
     nsfw_image_key: string | null
     sfw_preview_image_key: string | null
     nsfw_preview_image_key: string | null
+    sfw_preview_content_type: string
+    nsfw_preview_content_type: string
     sfw_content_type: string | null
     nsfw_content_type: string | null
     sfw_artist: string
@@ -232,6 +234,8 @@ async function getImageApprovalItem(db: D1Database, mediaBaseUrl: string, mediaI
                 character_media.nsfw_image_key,
                 character_media.sfw_preview_image_key,
                 character_media.nsfw_preview_image_key,
+                character_media.sfw_preview_content_type,
+                character_media.nsfw_preview_content_type,
                 character_media.sfw_content_type,
                 character_media.nsfw_content_type,
                 character_media.sfw_artist,
@@ -509,13 +513,29 @@ function toImageApprovalItem(row: ImageApprovalRow, mediaBaseUrl: string): Image
         ? characterMediaImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, row.sfw_image_key, 'sfw', row.sfw_content_type)
         : null
     const sfwPreviewImageUrl = row.sfw_preview_image_key
-        ? characterMediaPreviewImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, row.sfw_preview_image_key, 'sfw')
+        ? characterMediaPreviewImageUrl(
+              mediaBaseUrl,
+              row.user_id,
+              row.character_id,
+              row.id,
+              row.sfw_preview_image_key,
+              'sfw',
+              row.sfw_preview_content_type,
+          )
         : null
     const nsfwFullImageUrl = row.nsfw_image_key
         ? characterMediaImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, row.nsfw_image_key, 'nsfw', row.nsfw_content_type)
         : null
     const nsfwPreviewImageUrl = row.nsfw_preview_image_key
-        ? characterMediaPreviewImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, row.nsfw_preview_image_key, 'nsfw')
+        ? characterMediaPreviewImageUrl(
+              mediaBaseUrl,
+              row.user_id,
+              row.character_id,
+              row.id,
+              row.nsfw_preview_image_key,
+              'nsfw',
+              row.nsfw_preview_content_type,
+          )
         : null
 
     return {

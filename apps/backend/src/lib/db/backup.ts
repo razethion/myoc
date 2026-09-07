@@ -57,16 +57,18 @@ type BackupStats = {
 }
 
 export async function backupD1Database(env: D1BackupEnv, now = new Date(), options: BackupOptions = {}): Promise<D1BackupSummary> {
+    const backupBucket = requireBackupBucket(env.DB_BACKUP_BUCKET)
     const generatedAt = now.toISOString()
     const key = createBackupKey(now)
     const fetcher = options.fetch ?? fetch
     const dumpStream = await exportD1DatabaseSqlStream(env, fetcher, options)
     const statsCounter = createSqlStatsCounter()
     const gzipStream = dumpStream.pipeThrough(statsCounter.stream).pipeThrough(new CompressionStream('gzip'))
-    const backupObject = await uploadMultipartStream(env.DB_BACKUP_BUCKET, key, gzipStream, {
+    const backupObject = await uploadMultipartStream(backupBucket, key, gzipStream, {
         httpMetadata: {
-            contentType: 'application/sql',
+            cacheControl: 'private, no-store',
             contentEncoding: 'gzip',
+            contentType: 'application/sql',
         },
         customMetadata: {
             database: DATABASE_NAME,
@@ -166,6 +168,14 @@ class MultipartPartWriter {
         this.buffer = new Uint8Array(R2_MULTIPART_PART_BYTES)
         this.bufferedBytes = 0
     }
+}
+
+function requireBackupBucket(bucket: R2Bucket | undefined): R2Bucket {
+    if (!bucket) {
+        throw new Error('DB_BACKUP_BUCKET is not configured')
+    }
+
+    return bucket
 }
 
 async function abortMultipartUpload(upload: R2MultipartUpload, key: string): Promise<void> {

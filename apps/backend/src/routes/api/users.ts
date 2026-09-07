@@ -2,10 +2,11 @@ import {Hono} from 'hono'
 import {z} from 'zod'
 import {getCurrentUser} from '../../lib/auth/session'
 import {jsonResponse} from '../../lib/http/jsonResponse'
-import {readFormDataUpTo} from '../../lib/http/requestBody'
+import {readFormDataUpTo, readJsonUpTo, STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
 import {ErrorResponseSchema, responseSchema} from '../../lib/http/responseSchemas'
 import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../../lib/media/cacheControl'
 import {normalizeProfileImagePayload, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/profileImage'
+import {retainThumbnailOriginal, thumbnailOriginalObjectKey} from '../../lib/media/thumbnailSources'
 import {profilePhotoObjectKey, profilePhotoUrl} from '../../lib/media/url'
 import {APP_VERSION} from '../../lib/releases'
 import type {Bindings} from '../../types/bindings'
@@ -37,7 +38,21 @@ userRoutes.post('/me/recent-media-preference', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
-    const parsed = RecentMediaPreferenceRequestSchema.safeParse(await c.req.json().catch(() => null))
+    let body: unknown
+
+    try {
+        const result = await readJsonUpTo<unknown>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+
+        if (result.tooLarge) {
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Request body is too large'}, 413)
+        }
+
+        body = result.value
+    } catch {
+        body = null
+    }
+
+    const parsed = RecentMediaPreferenceRequestSchema.safeParse(body)
 
     if (!parsed.success) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Recent media preference is invalid'}, 400)
@@ -102,39 +117,43 @@ userRoutes.post('/me/profile-photo', async (c) => {
             bytes: new Uint8Array(await file.arrayBuffer()),
         },
         'Profile photo',
-        c.env.IMAGES,
+        c.env,
     )
 
     if ('error' in image) {
         return jsonResponse(c, ErrorResponseSchema, {error: image.error}, image.status)
     }
 
-    const profilePhotoKey = crypto.randomUUID()
+    const profilePhotoKey = `avif-${crypto.randomUUID()}`
     const objectKey = profilePhotoObjectKey(currentUser.id, profilePhotoKey)
 
-    await c.env.MEDIA_BUCKET.put(objectKey, image.bytes, {
-        httpMetadata: {
-            cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
-            contentType: image.contentType,
-        },
-    })
-
     try {
+        await retainThumbnailOriginal(c.env, objectKey, image.source.bytes, image.source.contentType)
+        await c.env.MEDIA_BUCKET.put(objectKey, image.bytes, {
+            httpMetadata: {
+                cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
+                contentType: image.contentType,
+            },
+        })
         await c.env.DB.prepare(
             `UPDATE users
-             SET profile_photo_key = ?
+             SET profile_photo_key = ?, profile_photo_content_type = 'image/avif'
              WHERE id = ?`,
         )
             .bind(profilePhotoKey, currentUser.id)
             .run()
     } catch (error) {
-        await c.env.MEDIA_BUCKET.delete(objectKey)
+        await Promise.allSettled([c.env.MEDIA_BUCKET.delete(objectKey), c.env.MEDIA_BUCKET.delete(thumbnailOriginalObjectKey(objectKey))])
         throw error
     }
 
     if (currentUser.profilePhotoKey) {
+        const oldObjectKey = profilePhotoObjectKey(currentUser.id, currentUser.profilePhotoKey)
         try {
-            await c.env.MEDIA_BUCKET.delete(profilePhotoObjectKey(currentUser.id, currentUser.profilePhotoKey))
+            await Promise.all([
+                c.env.MEDIA_BUCKET.delete(oldObjectKey),
+                c.env.MEDIA_BUCKET.delete(thumbnailOriginalObjectKey(oldObjectKey)),
+            ])
         } catch (error) {
             console.warn('Unable to delete old profile photo', error)
         }

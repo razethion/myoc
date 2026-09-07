@@ -18,6 +18,7 @@ import {
 import {enforceAuthChallengeRateLimit, enforceAuthIdentityRateLimit} from '../../lib/auth/rateLimit'
 import {getCurrentUser, normalizeCredential, toSqlTimestamp} from '../../lib/auth/session'
 import {jsonResponse} from '../../lib/http/jsonResponse'
+import {readJsonUpTo, STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
 import {ErrorResponseSchema, OkResponseSchema, responseSchema} from '../../lib/http/responseSchemas'
 import type {Bindings} from '../../types/bindings'
 
@@ -29,6 +30,10 @@ type PasskeyVerifyRequest = {
 
 type RecoveryPhraseRequest = {
     recoveryPhrase?: unknown
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 type SecurityUserRecord = {
@@ -92,7 +97,13 @@ securityRoutes.post('/passkeys/verify', async (c) => {
     let body: PasskeyVerifyRequest
 
     try {
-        body = await c.req.json<PasskeyVerifyRequest>()
+        const result = await readJsonUpTo<unknown>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+
+        if (result.tooLarge) {
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Request body is too large'}, 413)
+        }
+
+        body = isRecord(result.value) ? result.value : {}
     } catch {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }
@@ -261,7 +272,13 @@ securityRoutes.post('/recovery/confirm', async (c) => {
     let body: RecoveryPhraseRequest
 
     try {
-        body = await c.req.json<RecoveryPhraseRequest>()
+        const result = await readJsonUpTo<unknown>(c.req.raw, STANDARD_JSON_REQUEST_MAX_BYTES)
+
+        if (result.tooLarge) {
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Request body is too large'}, 413)
+        }
+
+        body = isRecord(result.value) ? result.value : {}
     } catch {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Invalid JSON body'}, 400)
     }

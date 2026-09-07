@@ -13,11 +13,11 @@
     "@myoc/contracts": "*",
     "@scure/bip39": "^2.3.0",
     "@simplewebauthn/browser": "^13.3.0",
-    "@simplewebauthn/server": "^13.3.2",
+    "@simplewebauthn/server": "^13.3.3",
     "bcryptjs": "^3.0.3",
     "cropperjs": "^2.1.1",
-    "hono": "^4.12.34",
+    "hono": "^4.13.5",
     "openseadragon": "^6.1.0",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   }
 }

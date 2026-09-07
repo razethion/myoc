@@ -68,8 +68,8 @@ Generated files such as `worker-configuration.d.ts`, `apps/backend/public/app.cs
 
 Add new numbered migrations in [`apps/backend/migrations`](./apps/backend/migrations). Do not edit migrations that may already be applied.
 
-Update [`apps/backend/seeds/development.sql`](./apps/backend/seeds/development.sql) when schema or workflow changes would otherwise break local
-setup.
+Update [`apps/backend/seeds/development.sql`](./apps/backend/seeds/development.sql) when a schema change affects the fake demo login. Update the
+development seed script when a schema change affects the cloned public gallery graph.
 
 Media objects are stored in R2. Be careful with changes that affect object-key shape, previews, NSFW blur objects,
 height-chart images, or cleanup behavior.

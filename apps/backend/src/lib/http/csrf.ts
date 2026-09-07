@@ -8,6 +8,7 @@ import {ErrorResponseSchema} from './responseSchemas'
 
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 const CSRF_FORM_MAX_BYTES = 64 * 1024
+const CSRF_MULTIPART_MAX_BYTES = 4 * 1024 * 1024
 const PRE_AUTH_CSRF_COOKIE = 'myoc_pre_auth_csrf'
 const PRE_AUTH_CSRF_TTL_SECONDS = 60 * 60
 const PRE_AUTH_CSRF_PATHS = new Set(['/login', '/recovery/login'])
@@ -147,8 +148,8 @@ async function getCsrfToken(c: Context<{Bindings: Bindings}>): Promise<string | 
 
 async function readMultipartCsrfToken(request: Request): Promise<string | null> {
     try {
-        const form = await request.formData()
-        const formToken = form.get('csrfToken')
+        const form = await readFormDataUpTo(request, CSRF_MULTIPART_MAX_BYTES)
+        const formToken = form?.get('csrfToken')
 
         return typeof formToken === 'string' ? formToken : null
     } catch {

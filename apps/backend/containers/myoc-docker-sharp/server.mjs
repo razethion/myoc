@@ -3,16 +3,27 @@ import {createHash, randomUUID, timingSafeEqual} from 'node:crypto'
 import http from 'node:http'
 import process from 'node:process'
 import timers from 'node:timers'
-import sharp from 'sharp'
+import {createAvifBlur, createAvifPreview, createGalleryAvifOutputs, createSquareAvif} from './preview.mjs'
 
 const port = Number.parseInt(process.env['PORT'] ?? '8080', 10)
 const previewLongEdge = parsePositiveInteger(process.env['PREVIEW_MAX_LONG_EDGE'], 1600)
-const previewQuality = clamp(parsePositiveInteger(process.env['PREVIEW_WEBP_QUALITY'], 90), 1, 100)
+const previewQuality = clamp(parsePositiveInteger(process.env['PREVIEW_AVIF_QUALITY'], 60), 1, 100)
+const heightChartLongEdge = parsePositiveInteger(process.env['HEIGHT_CHART_MAX_LONG_EDGE'], 1600)
+const heightChartQuality = clamp(parsePositiveInteger(process.env['HEIGHT_CHART_AVIF_QUALITY'], 75), 1, 100)
+const blurMaxWidth = parsePositiveInteger(process.env['BLUR_MAX_WIDTH'], 960)
+const blurQuality = clamp(parsePositiveInteger(process.env['BLUR_AVIF_QUALITY'], 60), 1, 100)
+const blurSigma = clamp(parsePositiveNumber(process.env['BLUR_SIGMA'], 250), 0.3, 1000)
+const blurSourceMaxBytes = parsePositiveInteger(process.env['BLUR_SOURCE_MAX_BYTES'], 16 * 1024 * 1024)
 const requestBodyMaxBytes = parsePositiveInteger(process.env['REQUEST_BODY_MAX_BYTES'], 4096)
 const sourceImageMaxBytes = parsePositiveInteger(process.env['SOURCE_IMAGE_MAX_BYTES'], 64 * 1024 * 1024)
 const sourceFetchTimeoutMs = parsePositiveInteger(process.env['SOURCE_FETCH_TIMEOUT_MS'], 30_000)
 const sourceLimitInputPixels = parsePositiveInteger(process.env['SOURCE_LIMIT_INPUT_PIXELS'], 100_000_000)
 const allowHttpSourceUrls = process.env['ALLOW_HTTP_SOURCE_URLS'] === 'true'
+const squareImageQuality = clamp(parsePositiveInteger(process.env['SQUARE_IMAGE_AVIF_QUALITY'], 75), 1, 100)
+const squareImageSize = parsePositiveInteger(process.env['SQUARE_IMAGE_SIZE'], 512)
+const squareSourceMaxBytes = parsePositiveInteger(process.env['SQUARE_SOURCE_MAX_BYTES'], 3 * 1024 * 1024)
+
+class RequestBodyTooLargeError extends Error {}
 
 const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', `https://${request.headers.host ?? 'localhost'}`)
@@ -28,8 +39,30 @@ const server = http.createServer(async (request, response) => {
         return
     }
 
+    if (url.pathname === '/images/blur') {
+        await handleBlurRequest(request, response)
+        return
+    }
+
+    if (url.pathname === '/images/square') {
+        await handleSquareRequest(request, response)
+        return
+    }
+
+    if (url.pathname === '/images/gallery') {
+        await handleGalleryRequest(request, response, url)
+        return
+    }
+
+    if (url.pathname === '/images/height-chart') {
+        await handleHeightChartRequest(request, response)
+        return
+    }
+
     sendJson(response, 404, {error: 'Not found'})
 })
+
+export {server}
 
 server.listen(port, '0.0.0.0', () => {
     console.log(`myoc-docker-sharp listening on ${port}`)
@@ -53,23 +86,222 @@ function shutdown(signal) {
         .unref()
 }
 
-async function handlePreviewRequest(request, response) {
+async function handleBlurRequest(request, response) {
+    if (!authorizePost(request, response)) return
+
+    const requestId = randomUUID()
+    const startedAt = Date.now()
+
+    try {
+        const sourceBytes = await readRequestBytes(request, blurSourceMaxBytes)
+        const result = await createAvifBlur(sourceBytes, {
+            limitInputPixels: sourceLimitInputPixels,
+            maxWidth: blurMaxWidth,
+            quality: blurQuality,
+            sigma: blurSigma,
+        })
+
+        console.log('Preview container processed blur', {
+            blurBytes: Buffer.byteLength(result.bytes),
+            blurHeight: result.height,
+            blurWidth: result.width,
+            durationMs: Date.now() - startedAt,
+            requestId,
+            sourceBytes: Buffer.byteLength(sourceBytes),
+        })
+
+        response.writeHead(200, {
+            'cache-control': 'no-store',
+            'content-length': Buffer.byteLength(result.bytes),
+            'content-type': 'image/avif',
+            'x-preview-height': result.height,
+            'x-preview-width': result.width,
+        })
+        response.end(result.bytes)
+    } catch (error) {
+        if (error instanceof RequestBodyTooLargeError) {
+            sendJson(response, 413, {error: 'Request body is too large'})
+            return
+        }
+        console.error('Blur generation failed', {
+            durationMs: Date.now() - startedAt,
+            error: error instanceof Error ? error.message : String(error),
+            requestId,
+        })
+        sendJson(response, 502, {error: 'Blur generation failed'})
+    }
+}
+
+async function handleSquareRequest(request, response) {
+    if (!authorizePost(request, response)) return
+
+    const requestId = randomUUID()
+    const startedAt = Date.now()
+
+    try {
+        const sourceBytes = await readRequestBytes(request, squareSourceMaxBytes)
+        const result = await createSquareAvif(sourceBytes, {
+            limitInputPixels: sourceLimitInputPixels,
+            quality: squareImageQuality,
+            size: squareImageSize,
+        })
+
+        console.log('Image container processed square image', {
+            durationMs: Date.now() - startedAt,
+            outputBytes: Buffer.byteLength(result.bytes),
+            requestId,
+            sourceBytes: Buffer.byteLength(sourceBytes),
+        })
+
+        response.writeHead(200, {
+            'cache-control': 'no-store',
+            'content-length': Buffer.byteLength(result.bytes),
+            'content-type': 'image/avif',
+            'x-preview-height': result.height,
+            'x-preview-width': result.width,
+        })
+        response.end(result.bytes)
+    } catch (error) {
+        if (error instanceof RequestBodyTooLargeError) {
+            sendJson(response, 413, {error: 'Request body is too large'})
+            return
+        }
+        console.error('Square image generation failed', {
+            durationMs: Date.now() - startedAt,
+            error: error instanceof Error ? error.message : String(error),
+            requestId,
+        })
+        sendJson(response, 422, {error: 'Square image generation failed'})
+    }
+}
+
+async function handleGalleryRequest(request, response, url) {
+    if (!authorizePost(request, response)) return
+
+    const requestId = randomUUID()
+    const startedAt = Date.now()
+
+    try {
+        const sourceBytes = await readRequestBytes(request, sourceImageMaxBytes)
+        const result = await createGalleryAvifOutputs(sourceBytes, {
+            blur: url.searchParams.get('blur') === '1',
+            blurMaxWidth,
+            blurQuality,
+            blurSigma,
+            limitInputPixels: sourceLimitInputPixels,
+            maxLongEdge: previewLongEdge,
+            previewQuality,
+        })
+        const body = result.blur ? Buffer.concat([result.preview.bytes, result.blur.bytes]) : result.preview.bytes
+        const headers = {
+            'cache-control': 'no-store',
+            'content-length': Buffer.byteLength(body),
+            'content-type': 'application/octet-stream',
+            'x-preview-height': result.preview.height,
+            'x-preview-length': Buffer.byteLength(result.preview.bytes),
+            'x-preview-width': result.preview.width,
+        }
+
+        if (result.blur) {
+            headers['x-blur-height'] = result.blur.height
+            headers['x-blur-length'] = Buffer.byteLength(result.blur.bytes)
+            headers['x-blur-width'] = result.blur.width
+        }
+
+        console.log('Image container processed gallery image', {
+            blurBytes: result.blur ? Buffer.byteLength(result.blur.bytes) : 0,
+            durationMs: Date.now() - startedAt,
+            previewBytes: Buffer.byteLength(result.preview.bytes),
+            requestId,
+            sourceBytes: Buffer.byteLength(sourceBytes),
+        })
+        response.writeHead(200, headers)
+        response.end(body)
+    } catch (error) {
+        if (error instanceof RequestBodyTooLargeError) {
+            sendJson(response, 413, {error: 'Request body is too large'})
+            return
+        }
+        console.error('Gallery image generation failed', {
+            durationMs: Date.now() - startedAt,
+            error: error instanceof Error ? error.message : String(error),
+            requestId,
+        })
+        sendJson(response, 422, {error: 'Gallery image generation failed'})
+    }
+}
+
+async function handleHeightChartRequest(request, response) {
+    if (!authorizePost(request, response)) return
+
+    const requestId = randomUUID()
+    const startedAt = Date.now()
+
+    try {
+        const sourceBytes = await readRequestBytes(request, sourceImageMaxBytes)
+        const result = await createAvifPreview(sourceBytes, {
+            limitInputPixels: sourceLimitInputPixels,
+            maxLongEdge: heightChartLongEdge,
+            quality: heightChartQuality,
+        })
+
+        console.log('Image container processed height chart', {
+            durationMs: Date.now() - startedAt,
+            outputBytes: Buffer.byteLength(result.bytes),
+            outputHeight: result.height,
+            outputWidth: result.width,
+            requestId,
+            sourceBytes: Buffer.byteLength(sourceBytes),
+        })
+
+        response.writeHead(200, {
+            'cache-control': 'no-store',
+            'content-length': Buffer.byteLength(result.bytes),
+            'content-type': 'image/avif',
+            'x-preview-height': result.height,
+            'x-preview-width': result.width,
+        })
+        response.end(result.bytes)
+    } catch (error) {
+        if (error instanceof RequestBodyTooLargeError) {
+            sendJson(response, 413, {error: 'Request body is too large'})
+            return
+        }
+        console.error('Height chart generation failed', {
+            durationMs: Date.now() - startedAt,
+            error: error instanceof Error ? error.message : String(error),
+            requestId,
+        })
+        sendJson(response, 422, {error: 'Height chart generation failed'})
+    }
+}
+
+function authorizePost(request, response) {
     if (request.method !== 'POST') {
         response.writeHead(405, {allow: 'POST'})
         response.end()
-        return
+        return false
     }
 
     if (!isAuthorized(request)) {
         sendJson(response, 401, {error: 'Unauthorized'})
-        return
+        return false
     }
+    return true
+}
+
+async function handlePreviewRequest(request, response) {
+    if (!authorizePost(request, response)) return
 
     let payload
 
     try {
         payload = JSON.parse(await readRequestText(request, requestBodyMaxBytes))
-    } catch {
+    } catch (error) {
+        if (error instanceof RequestBodyTooLargeError) {
+            sendJson(response, 413, {error: 'Request body is too large'})
+            return
+        }
         sendJson(response, 400, {error: 'Invalid JSON body'})
         return
     }
@@ -92,7 +324,11 @@ async function handlePreviewRequest(request, response) {
 
     try {
         const sourceBytes = await fetchImageBytes(imageUrl)
-        const result = await createWebpPreview(sourceBytes)
+        const result = await createAvifPreview(sourceBytes, {
+            limitInputPixels: sourceLimitInputPixels,
+            maxLongEdge: previewLongEdge,
+            quality: previewQuality,
+        })
 
         console.log('Preview container processed image', {
             durationMs: Date.now() - startedAt,
@@ -107,7 +343,7 @@ async function handlePreviewRequest(request, response) {
         response.writeHead(200, {
             'cache-control': 'no-store',
             'content-length': Buffer.byteLength(result.bytes),
-            'content-type': 'image/webp',
+            'content-type': 'image/avif',
             'x-preview-height': result.height,
             'x-preview-width': result.width,
         })
@@ -226,58 +462,36 @@ async function readResponseBytes(response, maxBytes) {
 }
 
 /**
- * @param {Buffer} sourceBytes
- * @returns {Promise<{bytes: Buffer, height: number, width: number}>}
- */
-async function createWebpPreview(sourceBytes) {
-    // nosemgrep: javascript.express.file.sharp-express.sharp-express -- sourceBytes is an in-memory Buffer from fetchImageBytes, not a file path.
-    const image = sharp(sourceBytes, {
-        limitInputPixels: sourceLimitInputPixels,
-    }).rotate()
-
-    const metadata = await image.metadata()
-    const width = metadata.autoOrient?.width ?? metadata.width ?? 0
-    const height = metadata.autoOrient?.height ?? metadata.height ?? 0
-
-    if (width < 1 || height < 1) {
-        throw new Error('Source image dimensions could not be read')
-    }
-
-    const longEdge = Math.max(width, height)
-    const scale = Math.min(1, previewLongEdge / longEdge)
-    const previewWidth = Math.max(1, Math.round(width * scale))
-    const previewHeight = Math.max(1, Math.round(height * scale))
-    const bytes = await image.resize(previewWidth, previewHeight, {fit: 'fill'}).webp({quality: previewQuality}).toBuffer()
-
-    return {
-        bytes,
-        height: previewHeight,
-        width: previewWidth,
-    }
-}
-
-/**
  * @returns {Promise<string>}
  */
-function readRequestText(request, maxBytes) {
+async function readRequestText(request, maxBytes) {
+    return (await readRequestBytes(request, maxBytes)).toString('utf8')
+}
+
+function readRequestBytes(request, maxBytes) {
     return new Promise((resolve, reject) => {
         const chunks = []
+        let bodyTooLarge = false
         let receivedBytes = 0
 
         request.on('data', (chunk) => {
+            if (bodyTooLarge) return
             const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
             receivedBytes += Buffer.byteLength(bytes)
 
             if (receivedBytes > maxBytes) {
-                request.destroy()
-                reject(new Error('Request body is too large'))
+                bodyTooLarge = true
+                chunks.length = 0
+                reject(new RequestBodyTooLargeError('Request body is too large'))
                 return
             }
 
             chunks.push(bytes)
         })
 
-        request.on('end', () => resolve(Buffer.concat(chunks, receivedBytes).toString('utf8')))
+        request.on('end', () => {
+            if (!bodyTooLarge) resolve(Buffer.concat(chunks, receivedBytes))
+        })
         request.on('error', reject)
     })
 }
@@ -293,6 +507,11 @@ function sendJson(response, status, body) {
 function parsePositiveInteger(value, fallback) {
     const parsed = Number.parseInt(value ?? '', 10)
     return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function parsePositiveNumber(value, fallback) {
+    const parsed = Number.parseFloat(value ?? '')
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
 function clamp(value, min, max) {

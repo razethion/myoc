@@ -1,4 +1,4 @@
-FROM node:24-slim
+FROM node:26-slim
 
 ENV NODE_ENV=production
 WORKDIR /app
@@ -6,7 +6,7 @@ WORKDIR /app
 COPY --chown=node:node package*.json ./
 RUN npm ci --omit=dev
 
-COPY --chown=node:node server.mjs .
+COPY --chown=node:node server.mjs preview.mjs ./
 
 EXPOSE 8080
 USER node
