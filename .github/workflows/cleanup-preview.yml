@@ -1,5 +1,5 @@
 name: Dev Preview Cleanup
-run-name: "Clean dev preview for PR #${{ inputs.pull_request }}"
+run-name: "Delete dev preview resources for PR #${{ inputs.pull_request }}"
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   validate:
-    name: Validate cleanup request
+    name: Validate cleanup input
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -38,7 +38,7 @@ jobs:
           fi
 
   cleanup:
-    name: Approve cleanup for PR #${{ inputs.pull_request }}
+    name: Delete PR #${{ inputs.pull_request }} preview resources
     needs: validate
     concurrency:
       group: dev-preview-${{ inputs.pull_request }}
@@ -65,7 +65,7 @@ jobs:
             exit 1
           fi
 
-      - name: Setup Node
+      - name: Set up Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: 24

@@ -1,10 +1,10 @@
-name: Dev Preview
-run-name: "Dev preview for ${{ github.event.workflow_run.head_branch }}"
+name: Dev Preview Deployment
+run-name: "Deploy dev preview for ${{ github.event.workflow_run.head_branch }}"
 
 on:
   workflow_run:
     workflows:
-      - Checks and Deploy
+      - CI
     types:
       - completed
 
@@ -14,8 +14,8 @@ permissions:
   pull-requests: read
 
 jobs:
-  validate:
-    name: Prepare deployment
+  prepare:
+    name: Validate preview deployment
     if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository }}
     permissions:
       actions: read
@@ -53,8 +53,8 @@ jobs:
               return
             }
 
-            if (workflowRun.path !== '.github/workflows/checks.yml') {
-              core.setFailed('The triggering checks run must use checks.yml.')
+            if (workflowRun.path !== '.github/workflows/ci.yml') {
+              core.setFailed('The triggering CI run must use ci.yml.')
               return
             }
 
@@ -142,12 +142,12 @@ jobs:
               auto_inactive: false,
             })
 
-  deploy:
-    name: Approve PR #${{ needs.validate.outputs.pull_request }} at ${{ needs.validate.outputs.head_sha }} from checks run ${{ needs.validate.outputs.artifact_run_id }}
+  deploy-preview:
+    name: Deploy PR #${{ needs.prepare.outputs.pull_request }} at ${{ needs.prepare.outputs.head_sha }}
     needs:
-      - validate
+      - prepare
     concurrency:
-      group: dev-preview-${{ needs.validate.outputs.pull_request }}
+      group: dev-preview-${{ needs.prepare.outputs.pull_request }}
       cancel-in-progress: false
     permissions:
       actions: read
@@ -164,8 +164,8 @@ jobs:
       - name: Revalidate pull request after approval
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
-          HEAD_SHA: ${{ needs.validate.outputs.head_sha }}
-          PR_NUMBER: ${{ needs.validate.outputs.pull_request }}
+          HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+          PR_NUMBER: ${{ needs.prepare.outputs.pull_request }}
         with:
           script: |
             const pullNumber = Number.parseInt(process.env.PR_NUMBER, 10)
@@ -186,7 +186,7 @@ jobs:
       - name: Mark PR deployment in progress
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
-          DEPLOYMENT_ID: ${{ needs.validate.outputs.deployment_id }}
+          DEPLOYMENT_ID: ${{ needs.prepare.outputs.deployment_id }}
         with:
           script: |
             const deploymentId = Number.parseInt(process.env.DEPLOYMENT_ID, 10)
@@ -223,7 +223,7 @@ jobs:
             exit 1
           fi
 
-      - name: Setup Node
+      - name: Set up Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: 24
@@ -246,15 +246,15 @@ jobs:
       - name: Download immutable deployment artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          artifact-ids: ${{ needs.validate.outputs.artifact_id }}
+          artifact-ids: ${{ needs.prepare.outputs.artifact_id }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/myoc-dev-control/download
           repository: ${{ github.repository }}
-          run-id: ${{ needs.validate.outputs.artifact_run_id }}
+          run-id: ${{ needs.prepare.outputs.artifact_run_id }}
 
       - name: Verify immutable deployment artifact
         env:
-          HEAD_SHA: ${{ needs.validate.outputs.head_sha }}
+          HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
         working-directory: ${{ runner.temp }}
         run: |
           set -euo pipefail
@@ -388,7 +388,7 @@ jobs:
       - name: Prepare resource names
         id: names
         env:
-          PR_NUMBER: ${{ needs.validate.outputs.pull_request }}
+          PR_NUMBER: ${{ needs.prepare.outputs.pull_request }}
         working-directory: ${{ runner.temp }}/myoc-dev-control
         run: |
           echo "backend_worker=myoc-pr-${PR_NUMBER}-backend" >> "$GITHUB_OUTPUT"
@@ -509,7 +509,7 @@ jobs:
           PREVIEW_WORKFLOW: ${{ steps.names.outputs.preview_workflow }}
           IMAGE_QUEUE: ${{ steps.names.outputs.image_queue }}
           IMAGE_DLQ: ${{ steps.names.outputs.image_dlq }}
-          PR_NUMBER: ${{ needs.validate.outputs.pull_request }}
+          PR_NUMBER: ${{ needs.prepare.outputs.pull_request }}
           BACKEND_WORKER_NAME: ${{ steps.names.outputs.backend_worker }}
           WEB_WORKER_NAME: ${{ steps.names.outputs.web_worker }}
         working-directory: ${{ runner.temp }}/myoc-dev-control
@@ -709,8 +709,8 @@ jobs:
       - name: Revalidate pull request before deploy
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
-          HEAD_SHA: ${{ needs.validate.outputs.head_sha }}
-          PR_NUMBER: ${{ needs.validate.outputs.pull_request }}
+          HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+          PR_NUMBER: ${{ needs.prepare.outputs.pull_request }}
         with:
           script: |
             const pullNumber = Number.parseInt(process.env.PR_NUMBER, 10)
@@ -733,8 +733,8 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          HEAD_SHA: ${{ needs.validate.outputs.head_sha }}
-          PR_NUMBER: ${{ needs.validate.outputs.pull_request }}
+          HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+          PR_NUMBER: ${{ needs.prepare.outputs.pull_request }}
           WRANGLER: ${{ steps.wrangler.outputs.path }}
         working-directory: ${{ runner.temp }}/myoc-dev-control
         run: |
@@ -791,7 +791,7 @@ jobs:
         id: deployment-status
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
-          DEPLOYMENT_ID: ${{ needs.validate.outputs.deployment_id }}
+          DEPLOYMENT_ID: ${{ needs.prepare.outputs.deployment_id }}
           PREVIEW_URL: ${{ steps.deploy-preview.outputs.preview_url }}
         with:
           script: |
@@ -808,11 +808,11 @@ jobs:
             })
 
   finalize-deployment:
-    name: Finalize failed PR deployment
-    if: ${{ always() && needs.validate.outputs.deployment_id != '' && needs.deploy.result != 'success' }}
+    name: Mark failed preview deployment
+    if: ${{ always() && needs.prepare.outputs.deployment_id != '' && needs.deploy-preview.result != 'success' }}
     needs:
-      - validate
-      - deploy
+      - prepare
+      - deploy-preview
     permissions:
       contents: read
       deployments: write
@@ -823,7 +823,7 @@ jobs:
       - name: Mark PR deployment failed
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
-          DEPLOYMENT_ID: ${{ needs.validate.outputs.deployment_id }}
+          DEPLOYMENT_ID: ${{ needs.prepare.outputs.deployment_id }}
         with:
           script: |
             const deploymentId = Number.parseInt(process.env.DEPLOYMENT_ID, 10)

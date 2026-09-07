@@ -1,0 +1,24 @@
+name: Set up Node.js
+description: Set up the project Node.js version and install locked dependencies.
+
+inputs:
+  node-version:
+    description: Node.js major version.
+    default: '24'
+  working-directory:
+    description: Directory that contains package-lock.json.
+    default: .
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+      with:
+        node-version: ${{ inputs.node-version }}
+        package-manager-cache: false
+
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npm ci

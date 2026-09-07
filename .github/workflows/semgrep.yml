@@ -1,4 +1,4 @@
-name: Semgrep
+name: Security Scan
 
 on:
   workflow_dispatch: {}
@@ -13,21 +13,26 @@ on:
     # Use an uncommon time to reduce the load on GitHub Actions.
     - cron: '12 15 * * *'
 
+permissions:
+  contents: read
+
+concurrency:
+  group: security-scan-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  semgrep:
-    name: semgrep/ci
+  test-custom-rules:
+    name: Test custom Semgrep rules
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    env:
-      SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+    timeout-minutes: 10
     container:
-      image: semgrep/semgrep
-    if: ${{ github.actor != 'dependabot[bot]' }}
+      image: semgrep/semgrep@sha256:51c9f53a4fce0d55e9abd08d7b96968654248a4b1122e77f20e0a49c0072446c
 
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
 
       - name: Test custom Semgrep rules
         run: |
@@ -45,8 +50,37 @@ jobs:
             semgrep test --config .semgrep.yml "$target"
           done
 
-      - name: Run custom Semgrep rules
+  scan-custom-rules:
+    name: Scan custom Semgrep rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: semgrep/semgrep@sha256:51c9f53a4fce0d55e9abd08d7b96968654248a4b1122e77f20e0a49c0072446c
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+
+      - name: Scan repository
         run: semgrep scan --config .semgrep.yml --error .
 
-      - name: Run Semgrep Platform checks
+  scan-platform:
+    name: Scan with Semgrep Platform
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+    container:
+      image: semgrep/semgrep@sha256:51c9f53a4fce0d55e9abd08d7b96968654248a4b1122e77f20e0a49c0072446c
+    if: ${{ github.actor != 'dependabot[bot]' && github.event_name != 'pull_request' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+
+      - name: Scan repository
         run: semgrep ci
