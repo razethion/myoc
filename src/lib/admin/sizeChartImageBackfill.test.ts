@@ -49,7 +49,7 @@ describe('size chart image backfill', () => {
         await seedCharacter({
             id: 'no-chart-image',
             userId: 'chart-owner',
-            heightChartJson: chartJson('none').replace(/"image":\{[^}]+\}/, '"image":null'),
+            heightChartJson: chartJson('none').replace(/"image":\{[^}]+}/, '"image":null'),
         })
 
         expect(await countSizeChartImageBackfillCandidates(db)).toBe(1)
