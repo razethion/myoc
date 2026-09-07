@@ -52,27 +52,6 @@ jobs:
       - name: Check TypeScript
         run: npm run typecheck
 
-  coverage:
-    name: Test coverage
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
-        with:
-          persist-credentials: false
-
-      - name: Set up project
-        uses: ./.github/actions/setup-node
-
-      - name: Generate coverage
-        run: npm run coverage:ci
-
-      - name: Upload coverage to Codecov
-        if: ${{ github.event_name == 'pull_request' }}
-        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
-
   dead-code-production:
     name: Production dead code
     runs-on: ubuntu-latest
@@ -146,7 +125,6 @@ jobs:
     name: Quality checks passed
     if: ${{ always() && !cancelled() }}
     needs:
-      - coverage
       - dead-code-all
       - dead-code-production
       - lint
@@ -159,7 +137,6 @@ jobs:
     steps:
       - name: Require successful checks
         env:
-          COVERAGE_RESULT: ${{ needs.coverage.result }}
           DEAD_CODE_ALL_RESULT: ${{ needs.dead-code-all.result }}
           DEAD_CODE_PRODUCTION_RESULT: ${{ needs.dead-code-production.result }}
           LINT_RESULT: ${{ needs.lint.result }}
@@ -168,7 +145,6 @@ jobs:
           TYPECHECK_RESULT: ${{ needs.typecheck.result }}
         run: |
           for result in \
-            "$COVERAGE_RESULT" \
             "$DEAD_CODE_ALL_RESULT" \
             "$DEAD_CODE_PRODUCTION_RESULT" \
             "$LINT_RESULT" \
