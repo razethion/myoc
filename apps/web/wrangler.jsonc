@@ -27,7 +27,7 @@
   "services": [
     {
       "binding": "HONO",
-      "service": "myoc"
+      "service": "myoc-backend"
     }
   ]
 }
