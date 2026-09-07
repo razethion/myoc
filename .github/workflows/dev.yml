@@ -215,8 +215,10 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         run: |
-          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$R2_ACCESS_KEY_ID" ] || [ -z "$R2_SECRET_ACCESS_KEY" ]; then
             echo "::error::Configure the development environment Cloudflare credentials."
             exit 1
           fi
@@ -226,6 +228,13 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
+
+      - name: Checkout trusted development seed
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: myoc-dev-control/trusted
+          persist-credentials: false
 
       - name: Install trusted Wrangler
         id: wrangler
@@ -647,14 +656,23 @@ jobs:
         working-directory: ${{ runner.temp }}/myoc-dev-control
         run: '"$WRANGLER" d1 migrations apply "$DB_NAME" --config wrangler.preview.jsonc --remote'
 
-      - name: Seed isolated dev D1
+      - name: Seed isolated development storage from production
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          DB_NAME: ${{ steps.names.outputs.database }}
+          PROD_D1_DATABASE_ID: 909ada8f-fc57-47ad-83e1-18ffe863debb
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          TARGET_D1_DATABASE: ${{ steps.names.outputs.database }}
+          TARGET_D1_DATABASE_ID: ${{ steps.resources.outputs.db_id }}
+          TARGET_R2_BUCKET: ${{ steps.names.outputs.media_bucket }}
           WRANGLER: ${{ steps.wrangler.outputs.path }}
-        working-directory: ${{ runner.temp }}/myoc-dev-control
-        run: '"$WRANGLER" d1 execute "$DB_NAME" --config wrangler.preview.jsonc --remote --file artifact/seeds/development.sql'
+        working-directory: ${{ github.workspace }}/myoc-dev-control/trusted
+        run: >-
+          node scripts/seed-development.mjs --remote
+          --target-d1-id="$TARGET_D1_DATABASE_ID"
+          --target-d1-name="$TARGET_D1_DATABASE"
+          --target-r2="$TARGET_R2_BUCKET"
 
       - name: Revalidate pull request before deploy
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3

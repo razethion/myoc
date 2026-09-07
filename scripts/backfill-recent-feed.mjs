@@ -83,15 +83,14 @@ function parseOptions(args) {
     const flags = new Set(args)
     const valueOptions = ['--confirm-production=', '--database=', '--delay-ms=', '--max-runs=', '--port=']
     const unknown = args.find(
-        (argument) =>
-            !['--help', '-h', '--local', '--production'].includes(argument) && !valueOptions.some((prefix) => argument.startsWith(prefix)),
+        (argument) => !['--help', '-h', '--production'].includes(argument) && !valueOptions.some((prefix) => argument.startsWith(prefix)),
     )
 
     if (unknown) {
         throw new Error(`Unknown option: ${unknown}`)
     }
 
-    const parsed = {
+    return {
         confirmProduction: optionValue(args, '--confirm-production'),
         database: optionValue(args, '--database') || environmentValue('RECENT_FEED_DATABASE') || 'myoc-db',
         delayMs: positiveInteger(
@@ -99,7 +98,6 @@ function parseOptions(args) {
             '--delay-ms',
         ),
         help: flags.has('--help') || flags.has('-h'),
-        local: flags.has('--local'),
         maxRuns: positiveInteger(
             optionValue(args, '--max-runs') || environmentValue('RECENT_FEED_BACKFILL_MAX_RUNS') || '10000',
             '--max-runs',
@@ -107,12 +105,6 @@ function parseOptions(args) {
         port: positiveInteger(optionValue(args, '--port') || environmentValue('RECENT_FEED_BACKFILL_PORT') || '8798', '--port'),
         production: flags.has('--production'),
     }
-
-    if (parsed.local && parsed.production) {
-        throw new Error('--local and --production cannot be used together.')
-    }
-
-    return parsed
 }
 
 function optionValue(args, name) {
@@ -136,12 +128,10 @@ function printHelp() {
 
 Usage:
   npm run recent-feed:backfill
-  npm run recent-feed:backfill -- --local
   npm run recent-feed:backfill -- --production --confirm-production=DATABASE:BUCKET
 
-The default mode reads local D1 and uses the development bindings in wrangler.jsonc. In the
-current config, this writes generated objects to the preview media R2 bucket. The script
-creates a restricted temporary config and cannot use the production D1 database or production
+The default mode reads local D1 and uses the remote myoc-dev R2 bucket. The script creates
+a restricted temporary config and cannot use the production D1 database or production
 media bucket.
 
 Production mode uses the production D1 database and media bucket. It never resets feed
@@ -149,7 +139,6 @@ state. It requires an exact --confirm-production value based on the configured d
 bucket names.
 
 Options:
-  --local               Disable remote bindings and use local D1 and R2 data.
   --production          Use remote production D1 and R2 bindings. Never reset production state.
   --confirm-production=DATABASE:BUCKET
                         Confirm the exact production resources used by --production.
@@ -222,12 +211,6 @@ function productionBackfillTarget(config, database, mediaBucket) {
 }
 
 function developmentBackfillTarget(developmentMediaBaseUrl, mediaBucket) {
-    if (!mediaBucket.preview_bucket_name) {
-        throw new Error('wrangler.jsonc must define MEDIA_BUCKET.preview_bucket_name for the dev backfill.')
-    }
-    if (mediaBucket.preview_bucket_name === mediaBucket.bucket_name) {
-        throw new Error('The media preview and production R2 bucket names must be different.')
-    }
     if (!developmentMediaBaseUrl) {
         throw new Error('.dev.vars must define MEDIA_PUBLIC_BASE_URL for the dev backfill.')
     }
@@ -256,6 +239,12 @@ async function createRestrictedConfig() {
 
     if (!database) throw new Error('wrangler.jsonc does not define the D1 binding.')
     if (!mediaBucket?.bucket_name) throw new Error('wrangler.jsonc does not define the production media bucket.')
+    if (!options.production && !mediaBucket.preview_bucket_name) {
+        throw new Error('wrangler.jsonc does not define the local development media bucket.')
+    }
+    if (!options.production && mediaBucket.preview_bucket_name === mediaBucket.bucket_name) {
+        throw new Error('The media preview and production R2 bucket names must be different.')
+    }
 
     const target = options.production
         ? productionBackfillTarget(config, database, mediaBucket)
@@ -278,7 +267,7 @@ async function createRestrictedConfig() {
             {
                 binding: 'MEDIA_BUCKET',
                 bucket_name: selectedBucketName,
-                remote: options.production || !options.local,
+                remote: true,
             },
         ],
     }
@@ -328,7 +317,6 @@ function startWorker() {
         '--show-interactive-dev-session=false',
     ]
     if (!options.production && existsSync(devVarsPath)) args.push('--env-file', devVarsPath)
-    if (options.local) args.push('--local')
     const state = {
         child: spawn(process.execPath, wranglerArgs(args), {
             cwd: rootDir,
@@ -587,7 +575,7 @@ async function main() {
     try {
         console.log(`Recent-feed backfill runner using ${scheduledEndpoint}.`)
         await createRestrictedConfig()
-        const target = options.production ? 'production D1 and production R2' : options.local ? 'all-local' : 'local D1 and dev R2'
+        const target = options.production ? 'production D1 and production R2' : 'local D1 and dev R2'
         console.log(`Starting ${target} recent-feed backfill.`)
         worker = startWorker()
         await waitForWorker(worker)
