@@ -23,6 +23,8 @@ export class MyocDockerSharpContainer extends Container<MyocDockerSharpContainer
             BLUR_MAX_WIDTH: '960',
             BLUR_SIGMA: '250',
             BLUR_SOURCE_MAX_BYTES: String(16 * 1024 * 1024),
+            HEIGHT_CHART_AVIF_QUALITY: '75',
+            HEIGHT_CHART_MAX_LONG_EDGE: '1600',
             NODE_EXTRA_CA_CERTS: '/etc/cloudflare/certs/cloudflare-containers-ca.crt',
             PREVIEW_AVIF_QUALITY: '60',
             PREVIEW_MAX_LONG_EDGE: '1600',

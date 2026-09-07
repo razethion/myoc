@@ -3266,7 +3266,7 @@ describe('PUT /characters/:id/height-chart', () => {
             }),
             expectedError: 'Foot marker must be below the head marker',
         },
-    ])('deletes an uploaded height chart image for $name', async ({heightChartJson, expectedError}) => {
+    ])('rejects an uploaded height chart image before processing for $name', async ({heightChartJson, expectedError}) => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
         const character = createCharacterRecord()
@@ -3286,13 +3286,15 @@ describe('PUT /characters/:id/height-chart', () => {
         expect(await response.json()).toEqual({
             error: expectedError,
         })
-        const uploadedKey = vi.mocked(mediaBucket.put).mock.calls[0]?.[0]
-        expect(mediaBucket.delete).toHaveBeenCalledWith(uploadedKey)
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+        expect(mediaBucket.delete).not.toHaveBeenCalled()
     })
 
-    it('saves normalized height chart data and stores the uploaded image', async () => {
+    it('resizes a height chart image to AVIF and preserves its calibration', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
+        const convertedBytes = createAvifBytes(800, 1600)
+        const previewContainer = createMockPreviewContainer(new Response(convertedBytes, {headers: {'content-type': 'image/avif'}}))
         const character = createCharacterRecord()
         await seedCurrentUser(sessionToken)
         await seedCharacterRecord(character)
@@ -3313,10 +3315,11 @@ describe('PUT /characters/:id/height-chart', () => {
                 },
             }),
         )
-        form.set('heightChartImage', createPngFile(320, 640))
+        form.set('heightChartImage', createPngFile(1600, 3200))
 
         const response = await putHeightChart(character.id, form, db, {
             mediaBucket,
+            previewContainer: previewContainer.namespace,
             sessionToken,
             csrfToken: await createCsrfToken(sessionToken),
         })
@@ -3345,24 +3348,34 @@ describe('PUT /characters/:id/height-chart', () => {
 
         expect(body.heightChart.height.meters).toBe(1.8288)
         expect(body.heightChart.image.key).toMatch(new RegExp(`^${uuidPattern}$`))
-        expect(body.heightChart.image.contentType).toBe('image/png')
-        expect(body.heightChart.image.naturalWidth).toBe(320)
-        expect(body.heightChart.image.naturalHeight).toBe(640)
+        expect(body.heightChart.image.contentType).toBe('image/avif')
+        expect(body.heightChart.image.naturalWidth).toBe(800)
+        expect(body.heightChart.image.naturalHeight).toBe(1600)
         expect(body.heightChart.image.url).toBe(
-            `${mediaPublicBaseUrl}/characters/current-user/character-id/height-chart/${body.heightChart.image.key}.png`,
+            `${mediaPublicBaseUrl}/characters/current-user/character-id/height-chart/${body.heightChart.image.key}.avif`,
         )
         expect(body.heightChart.calibration.headYPercent).toBe(4.57)
         expect(body.heightChart.calibration.footYPercent).toBe(94.32)
         expect(body.heightChart.calibration.nameTagXPercent).toBe(52.34)
         expect(mediaBucket.put).toHaveBeenCalledWith(
-            `characters/current-user/character-id/height-chart/${body.heightChart.image.key}.png`,
-            expect.any(Uint8Array),
+            `characters/current-user/character-id/height-chart/${body.heightChart.image.key}.avif`,
+            convertedBytes,
             {
                 httpMetadata: {
                     cacheControl: 'public, max-age=300, must-revalidate',
-                    contentType: 'image/png',
+                    contentType: 'image/avif',
                 },
             },
+        )
+        expect(previewContainer.fetch).toHaveBeenCalledWith(
+            'https://container/images/height-chart',
+            expect.objectContaining({
+                headers: {
+                    authorization: 'Bearer preview-token',
+                    'content-type': 'application/octet-stream',
+                },
+                method: 'POST',
+            }),
         )
         const stored = await queryOne<{height_chart_json: string}>(
             'SELECT height_chart_json FROM characters WHERE id = ?',
@@ -3376,9 +3389,9 @@ describe('PUT /characters/:id/height-chart', () => {
             },
             image: {
                 key: body.heightChart.image.key,
-                contentType: 'image/png',
-                naturalWidth: 320,
-                naturalHeight: 640,
+                contentType: 'image/avif',
+                naturalWidth: 800,
+                naturalHeight: 1600,
             },
             calibration: {
                 headYPercent: 4.57,
@@ -3389,7 +3402,7 @@ describe('PUT /characters/:id/height-chart', () => {
         })
     })
 
-    it('uses uploaded file dimensions when height chart image bytes cannot be parsed', async () => {
+    it('rejects a height chart image whose dimensions cannot be read', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
         const character = createCharacterRecord()
@@ -3397,10 +3410,6 @@ describe('PUT /characters/:id/height-chart', () => {
         await seedCharacterRecord(character)
         const form = new FormData()
         const fallbackImage = new File([new Uint8Array([1, 2, 3, 4])], 'chart.png', {type: 'image/png'})
-        Object.defineProperties(fallbackImage, {
-            width: {value: 321},
-            height: {value: 654},
-        })
         form.set(
             'heightChartJson',
             JSON.stringify({
@@ -3427,33 +3436,53 @@ describe('PUT /characters/:id/height-chart', () => {
         })
         formDataSpy.mockRestore()
 
-        const responseBody = await response.clone().json()
-        expect(response.status, JSON.stringify(responseBody)).toBe(200)
-        const body = responseBody as {
-            heightChart: {
-                image: {
-                    naturalWidth: number
-                    naturalHeight: number
-                }
-            }
-        }
-        expect(body.heightChart.image.naturalWidth).toBe(321)
-        expect(body.heightChart.image.naturalHeight).toBe(654)
-        const stored = await queryOne<{height_chart_json: string}>(
-            'SELECT height_chart_json FROM characters WHERE id = ?',
-            [character.id],
-            db,
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Height chart image dimensions are required'})
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
+    it('stores the displayed dimensions after applying JPEG orientation', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const previewContainer = createMockPreviewContainer(
+            new Response(createAvifBytes(1600, 800), {headers: {'content-type': 'image/avif'}}),
         )
-        expect(JSON.parse(stored?.height_chart_json ?? '').image).toMatchObject({naturalWidth: 321, naturalHeight: 654})
-        expect(mediaBucket.put).toHaveBeenCalledWith(
-            expect.stringMatching(/^characters\/current-user\/character-id\/height-chart\/.+\.png$/),
-            expect.any(Uint8Array),
-            expect.objectContaining({
-                httpMetadata: expect.objectContaining({
-                    contentType: 'image/png',
-                }),
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const form = new FormData()
+        form.set(
+            'heightChartJson',
+            JSON.stringify({
+                version: 1,
+                height: {meters: 1.7},
+                image: null,
+                calibration: {
+                    headYPercent: 5,
+                    footYPercent: 95,
+                    footIsVirtual: false,
+                    nameTagXPercent: 50,
+                },
             }),
         )
+        form.set('heightChartImage', createExifOrientationJpegFile(800, 1600, 6))
+
+        const response = await putHeightChart(character.id, form, db, {
+            mediaBucket,
+            previewContainer: previewContainer.namespace,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        const body = (await response.json()) as {
+            heightChart: {image: {contentType: string; naturalWidth: number; naturalHeight: number}}
+        }
+        expect(body.heightChart.image).toMatchObject({
+            contentType: 'image/avif',
+            naturalWidth: 1600,
+            naturalHeight: 800,
+        })
     })
 
     it('keeps the existing height chart image when the saved JSON references it', async () => {
@@ -3539,6 +3568,9 @@ describe('PUT /characters/:id/height-chart', () => {
     it('deletes the previous height chart image after replacing it', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
+        const previewContainer = createMockPreviewContainer(
+            new Response(createAvifBytes(320, 640), {headers: {'content-type': 'image/avif'}}),
+        )
         const character = createCharacterRecord({
             height_chart_json: JSON.stringify({
                 version: 1,
@@ -3582,6 +3614,7 @@ describe('PUT /characters/:id/height-chart', () => {
 
         const response = await putHeightChart(character.id, form, db, {
             mediaBucket,
+            previewContainer: previewContainer.namespace,
             sessionToken,
             csrfToken: await createCsrfToken(sessionToken),
         })
@@ -7873,6 +7906,9 @@ describe('remaining character route edge coverage', () => {
             }),
         )
         form.set('heightChartImage', createPngFile(16, 32))
+        const heightChartContainer = createMockPreviewContainer(
+            new Response(createAvifBytes(16, 32), {headers: {'content-type': 'image/avif'}}),
+        )
         const heightChartFailureResponse = await withFailingTrigger(
             {
                 name: 'height_chart_update_cleanup',
@@ -7880,7 +7916,13 @@ describe('remaining character route edge coverage', () => {
                 table: 'characters',
                 columns: ['height_chart_json'],
             },
-            () => putHeightChart(character.id, form, db, {mediaBucket: heightChartBucket, sessionToken, csrfToken}),
+            () =>
+                putHeightChart(character.id, form, db, {
+                    mediaBucket: heightChartBucket,
+                    previewContainer: heightChartContainer.namespace,
+                    sessionToken,
+                    csrfToken,
+                }),
             db,
         )
         expect(heightChartFailureResponse.status).toBe(500)
