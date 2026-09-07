@@ -58,13 +58,43 @@ export function activeSizeChartImageBackfillWorkflowInstanceIds(runId: string, p
 export function parseSizeChartImageBackfillSummary(value: string | null): SizeChartImageBackfillSummary {
     if (value) {
         try {
-            const parsed = JSON.parse(value) as SizeChartImageBackfillSummary
-            if ('totalImages' in parsed && 'processedImages' in parsed && 'replacedImages' in parsed) return parsed
+            const parsed = JSON.parse(value) as unknown
+            if (isSizeChartImageBackfillSummary(parsed)) return parsed
         } catch {
             // Use an empty summary if the stored job data is invalid.
         }
     }
     return emptySizeChartImageBackfillSummary()
+}
+
+function isSizeChartImageBackfillSummary(value: unknown): value is SizeChartImageBackfillSummary {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+
+    const summary = value as Record<string, unknown>
+    const keys = Object.keys(summary)
+    return (
+        keys.length === 6 &&
+        keys.every((key) => SIZE_CHART_IMAGE_BACKFILL_SUMMARY_KEYS.has(key)) &&
+        isNonnegativeInteger(summary.totalImages) &&
+        isNonnegativeInteger(summary.processedImages) &&
+        isNonnegativeInteger(summary.replacedImages) &&
+        isNonnegativeInteger(summary.skippedImages) &&
+        isNonnegativeInteger(summary.failedImages) &&
+        (typeof summary.lastError === 'string' || summary.lastError === null)
+    )
+}
+
+const SIZE_CHART_IMAGE_BACKFILL_SUMMARY_KEYS = new Set([
+    'totalImages',
+    'processedImages',
+    'replacedImages',
+    'skippedImages',
+    'failedImages',
+    'lastError',
+])
+
+function isNonnegativeInteger(value: unknown): value is number {
+    return typeof value === 'number' && Number.isInteger(value) && value >= 0
 }
 
 export async function countSizeChartImageBackfillCandidates(db: D1Database): Promise<number> {

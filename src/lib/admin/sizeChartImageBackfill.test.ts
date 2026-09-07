@@ -7,7 +7,9 @@ import type {Bindings} from '../../types/bindings'
 import {characterHeightChartImageObjectKey} from '../media/url'
 import {
     countSizeChartImageBackfillCandidates,
+    emptySizeChartImageBackfillSummary,
     getSizeChartImageBackfillCandidates,
+    parseSizeChartImageBackfillSummary,
     replaceSizeChartImage,
     type SizeChartImageBackfillCandidate,
 } from './sizeChartImageBackfill'
@@ -42,6 +44,32 @@ function backfillEnv(bucket: R2Bucket): Bindings {
 }
 
 describe('size chart image backfill', () => {
+    it('accepts only complete stored summaries', () => {
+        const valid = {
+            totalImages: 10,
+            processedImages: 6,
+            replacedImages: 4,
+            skippedImages: 1,
+            failedImages: 1,
+            lastError: 'One image failed.',
+        }
+
+        expect(parseSizeChartImageBackfillSummary(JSON.stringify(valid))).toEqual(valid)
+        expect(parseSizeChartImageBackfillSummary(JSON.stringify({totalImages: 10, processedImages: 6, replacedImages: 4}))).toEqual(
+            emptySizeChartImageBackfillSummary(),
+        )
+        expect(parseSizeChartImageBackfillSummary(JSON.stringify({...valid, failedImages: '1'}))).toEqual(
+            emptySizeChartImageBackfillSummary(),
+        )
+        expect(parseSizeChartImageBackfillSummary(JSON.stringify({...valid, skippedImages: -1}))).toEqual(
+            emptySizeChartImageBackfillSummary(),
+        )
+        expect(parseSizeChartImageBackfillSummary(JSON.stringify({...valid, unexpected: true}))).toEqual(
+            emptySizeChartImageBackfillSummary(),
+        )
+        expect(parseSizeChartImageBackfillSummary('{invalid')).toEqual(emptySizeChartImageBackfillSummary())
+    })
+
     it('selects only legacy size chart images', async () => {
         await seedUser({id: 'chart-owner'})
         await seedCharacter({id: 'legacy-chart', userId: 'chart-owner', heightChartJson: chartJson('legacy')})
