@@ -77,6 +77,77 @@ describe('recent feed publisher', () => {
         })
     })
 
+    it.each([
+        {damage: 'missing', reason: 'missing'},
+        {damage: 'invalid schema', reason: 'invalid-schema'},
+    ])('regenerates the feed when its root is $damage', async ({damage, reason}) => {
+        const bucket = createMockR2Bucket()
+        const env = publisherEnv(bucket)
+        const initial = await publishRecentFeed(env, {force: true, now: new Date('2026-08-25T13:00:00.000Z')})
+        const initialPointer = await getRecentFeedPointer(db)
+        if (!initialPointer || !initial.generation) throw new Error('The initial feed pointer is missing')
+
+        if (damage === 'missing') {
+            await bucket.delete(initialPointer.rootKey)
+        } else {
+            await bucket.put(initialPointer.rootKey, JSON.stringify({schemaVersion: 1}))
+        }
+
+        const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        try {
+            const rebuilt = await publishRecentFeed(env, {force: true, now: new Date('2026-08-25T13:01:00.000Z')})
+            const rebuiltPointer = await getRecentFeedPointer(db)
+            const state = await readFeedState()
+
+            expect(rebuilt).toMatchObject({status: 'published', revision: 2})
+            expect(rebuilt.generation).not.toBe(initial.generation)
+            expect(rebuiltPointer).toMatchObject({generation: rebuilt.generation, throughRevision: 2})
+            expect(rebuiltPointer?.rootKey).not.toBe(initialPointer.rootKey)
+            expect(state).toMatchObject({
+                requested_revision: 2,
+                published_revision: 2,
+                lease_owner: null,
+                root_key: rebuiltPointer?.rootKey,
+                bootstrap_revision: null,
+            })
+            expect(
+                await queryOne<{generation: string}>('SELECT generation FROM recent_feed_generations WHERE generation = ?', [
+                    initial.generation,
+                ]),
+            ).toEqual({generation: initial.generation})
+            expect(errorLog).toHaveBeenCalledOnce()
+            expect(JSON.parse(String(errorLog.mock.calls[0]?.[0]))).toEqual({
+                event: 'recent-feed-broken-regenerating',
+                message: 'Publisher recent feed is broken, regenerating it',
+                rootKey: initialPointer.rootKey,
+                reason,
+            })
+        } finally {
+            errorLog.mockRestore()
+        }
+    })
+
+    it('keeps the current feed when its root read fails temporarily', async () => {
+        const bucket = createMockR2Bucket()
+        const env = publisherEnv(bucket)
+        await publishRecentFeed(env, {force: true, now: new Date('2026-08-25T13:00:00.000Z')})
+        const initialPointer = await getRecentFeedPointer(db)
+        if (!initialPointer) throw new Error('The initial feed pointer is missing')
+        const getObject = vi.mocked(bucket.get).getMockImplementation()
+        if (!getObject) throw new Error('The R2 test bucket does not implement object reads')
+        vi.mocked(bucket.get).mockRejectedValueOnce(new Error('Temporary R2 failure'))
+        const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+        try {
+            await expect(publishRecentFeed(env, {force: true})).rejects.toThrow('Temporary R2 failure')
+            await expect(getRecentFeedPointer(db)).resolves.toEqual(initialPointer)
+            expect(errorLog).not.toHaveBeenCalled()
+        } finally {
+            vi.mocked(bucket.get).mockImplementation(getObject)
+            errorLog.mockRestore()
+        }
+    })
+
     it('requests a full rebuild once and reports an active publisher as busy', async () => {
         const bucket = createMockR2Bucket()
         const env = publisherEnv(bucket)

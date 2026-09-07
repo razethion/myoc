@@ -164,6 +164,10 @@ class RecentFeedChangedDuringPublishError extends Error {
     }
 }
 
+type BrokenRecentFeedRoot = {
+    reason: 'missing' | 'invalid-json' | 'invalid-schema' | 'pointer-mismatch'
+}
+
 export async function publishRecentFeed(
     env: RecentFeedPublisherEnv,
     options: {force?: boolean; now?: Date} = {},
@@ -216,13 +220,105 @@ async function publishAcquiredRecentFeed(
         return continueRecentFeedBootstrap(env, config, state, leaseOwner, startedAt, now)
     }
 
-    const previousRoot = await readJson(env.MEDIA_BUCKET, state.root_key, RecentFeedRootSchema)
+    const loadedRoot = await loadPublishedRecentFeedRoot(env.MEDIA_BUCKET, state.root_key, state)
+
+    if ('reason' in loadedRoot) {
+        const recoveredState = await resetBrokenRecentFeed(env.DB, leaseOwner, state.root_key)
+        console.error(
+            JSON.stringify({
+                event: 'recent-feed-broken-regenerating',
+                message: 'Publisher recent feed is broken, regenerating it',
+                rootKey: state.root_key,
+                reason: loadedRoot.reason,
+            }),
+        )
+        return continueRecentFeedBootstrap(env, config, recoveredState, leaseOwner, startedAt, now)
+    }
+
+    const previousRoot = loadedRoot.root
 
     if (state.requested_revision <= state.published_revision && previousRoot.initialItems && isNamespacedRecentFeedRoot(state.root_key)) {
         return {status: 'current', generation: state.generation ?? undefined, revision: state.published_revision}
     }
 
     return publishIncrementalRecentFeed(env, config, state, previousRoot, leaseOwner, startedAt, now)
+}
+
+async function loadPublishedRecentFeedRoot(
+    bucket: R2Bucket,
+    rootKey: string,
+    state: RecentFeedStateRow,
+): Promise<{root: RecentFeedRoot} | BrokenRecentFeedRoot> {
+    const object = await bucket.get(rootKey)
+    if (!object) return {reason: 'missing'}
+
+    let value: unknown
+    try {
+        value = await object.json<unknown>()
+    } catch (error) {
+        if (error instanceof SyntaxError) return {reason: 'invalid-json'}
+        throw error
+    }
+
+    const parsed = RecentFeedRootSchema.safeParse(value)
+    if (!parsed.success) return {reason: 'invalid-schema'}
+    if (parsed.data.generation !== state.generation || parsed.data.throughRevision !== state.published_revision) {
+        return {reason: 'pointer-mismatch'}
+    }
+
+    return {root: parsed.data}
+}
+
+async function resetBrokenRecentFeed(db: D1Database, leaseOwner: string, expectedRootKey: string): Promise<RecentFeedStateRow> {
+    await db.batch([
+        db
+            .prepare(
+                `UPDATE recent_feed_state
+                 SET requested_revision = MAX(requested_revision, published_revision) + 1,
+                     generation = NULL,
+                     root_key = NULL,
+                     published_at = NULL,
+                     bootstrap_revision = NULL,
+                     bootstrap_cursor_created_at = NULL,
+                     bootstrap_cursor_id = NULL,
+                     bootstrap_variant_roots_json = NULL,
+                     bootstrap_active_key = NULL,
+                     bootstrap_objects_written = 0,
+                     bootstrap_bytes_written = 0,
+                     bootstrap_started_at = NULL,
+                     last_error = NULL,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE singleton = 1
+                   AND root_key = ?
+                   AND lease_owner = ?
+                   AND lease_expires_at > CURRENT_TIMESTAMP`,
+            )
+            .bind(expectedRootKey, leaseOwner),
+        db
+            .prepare(
+                `INSERT INTO recent_feed_dirty_hours (dirty_hour, revision, reason, urgent, updated_at)
+                 SELECT '*', requested_revision, 'publisher-recovery', 1, CURRENT_TIMESTAMP
+                 FROM recent_feed_state
+                 WHERE singleton = 1
+                   AND root_key IS NULL
+                   AND bootstrap_revision IS NULL
+                   AND lease_owner = ?
+                   AND lease_expires_at > CURRENT_TIMESTAMP
+                 ON CONFLICT(dirty_hour) DO UPDATE SET
+                     revision = excluded.revision,
+                     reason = excluded.reason,
+                     urgent = 1,
+                     updated_at = excluded.updated_at`,
+            )
+            .bind(leaseOwner),
+    ])
+
+    const state = await getRecentFeedState(db)
+    if (state.root_key !== null || state.lease_owner !== leaseOwner) {
+        throw new RecentFeedChangedDuringPublishError()
+    }
+
+    return state
 }
 
 async function publishIncrementalRecentFeed(
