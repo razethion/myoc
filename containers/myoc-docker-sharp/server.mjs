@@ -8,6 +8,8 @@ import {createAvifBlur, createAvifPreview, createGalleryAvifOutputs, createSquar
 const port = Number.parseInt(process.env['PORT'] ?? '8080', 10)
 const previewLongEdge = parsePositiveInteger(process.env['PREVIEW_MAX_LONG_EDGE'], 1600)
 const previewQuality = clamp(parsePositiveInteger(process.env['PREVIEW_AVIF_QUALITY'], 60), 1, 100)
+const heightChartLongEdge = parsePositiveInteger(process.env['HEIGHT_CHART_MAX_LONG_EDGE'], 1600)
+const heightChartQuality = clamp(parsePositiveInteger(process.env['HEIGHT_CHART_AVIF_QUALITY'], 75), 1, 100)
 const blurMaxWidth = parsePositiveInteger(process.env['BLUR_MAX_WIDTH'], 960)
 const blurQuality = clamp(parsePositiveInteger(process.env['BLUR_AVIF_QUALITY'], 60), 1, 100)
 const blurSigma = clamp(parsePositiveNumber(process.env['BLUR_SIGMA'], 250), 0.3, 1000)
@@ -49,6 +51,11 @@ const server = http.createServer(async (request, response) => {
 
     if (url.pathname === '/images/gallery') {
         await handleGalleryRequest(request, response, url)
+        return
+    }
+
+    if (url.pathname === '/images/height-chart') {
+        await handleHeightChartRequest(request, response)
         return
     }
 
@@ -221,6 +228,51 @@ async function handleGalleryRequest(request, response, url) {
             requestId,
         })
         sendJson(response, 422, {error: 'Gallery image generation failed'})
+    }
+}
+
+async function handleHeightChartRequest(request, response) {
+    if (!authorizePost(request, response)) return
+
+    const requestId = randomUUID()
+    const startedAt = Date.now()
+
+    try {
+        const sourceBytes = await readRequestBytes(request, sourceImageMaxBytes)
+        const result = await createAvifPreview(sourceBytes, {
+            limitInputPixels: sourceLimitInputPixels,
+            maxLongEdge: heightChartLongEdge,
+            quality: heightChartQuality,
+        })
+
+        console.log('Image container processed height chart', {
+            durationMs: Date.now() - startedAt,
+            outputBytes: Buffer.byteLength(result.bytes),
+            outputHeight: result.height,
+            outputWidth: result.width,
+            requestId,
+            sourceBytes: Buffer.byteLength(sourceBytes),
+        })
+
+        response.writeHead(200, {
+            'cache-control': 'no-store',
+            'content-length': Buffer.byteLength(result.bytes),
+            'content-type': 'image/avif',
+            'x-preview-height': result.height,
+            'x-preview-width': result.width,
+        })
+        response.end(result.bytes)
+    } catch (error) {
+        if (error instanceof RequestBodyTooLargeError) {
+            sendJson(response, 413, {error: 'Request body is too large'})
+            return
+        }
+        console.error('Height chart generation failed', {
+            durationMs: Date.now() - startedAt,
+            error: error instanceof Error ? error.message : String(error),
+            requestId,
+        })
+        sendJson(response, 422, {error: 'Height chart generation failed'})
     }
 }
 

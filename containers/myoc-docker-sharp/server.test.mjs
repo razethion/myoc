@@ -130,7 +130,7 @@ test('returns 413 for an oversized preview request', async () => {
     assert.deepEqual(await response.json(), {error: 'Request body is too large'})
 })
 
-for (const endpoint of ['blur', 'square', 'gallery']) {
+for (const endpoint of ['blur', 'square', 'gallery', 'height-chart']) {
     test(`returns 413 for an oversized ${endpoint} request`, async () => {
         const response = await fetch(`${baseUrl}/images/${endpoint}`, {
             body: new Uint8Array(32 * 1024 + 1),
@@ -265,6 +265,40 @@ test('returns a stable error for an invalid gallery source', async () => {
 
     assert.equal(response.status, 422)
     assert.deepEqual(await response.json(), {error: 'Gallery image generation failed'})
+})
+
+test('creates a proportional AVIF height chart with transparency', async () => {
+    const source = await sharp({
+        create: {background: {alpha: 0.5, b: 20, g: 80, r: 220}, channels: 4, height: 1200, width: 600},
+    })
+        .png()
+        .toBuffer()
+    const response = await fetch(`${baseUrl}/images/height-chart`, {
+        body: /** @type {BodyInit} */ (source),
+        headers: {authorization: `Bearer ${processorToken}`},
+        method: 'POST',
+    })
+    const result = Buffer.from(await response.arrayBuffer())
+    const metadata = await sharp(result).metadata()
+
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('content-type'), 'image/avif')
+    assert.equal(response.headers.get('x-preview-width'), '600')
+    assert.equal(response.headers.get('x-preview-height'), '1200')
+    assert.equal(metadata.width, 600)
+    assert.equal(metadata.height, 1200)
+    assert.equal(metadata.hasAlpha, true)
+})
+
+test('returns a stable error for an invalid height chart source', async () => {
+    const response = await fetch(`${baseUrl}/images/height-chart`, {
+        body: new Uint8Array([1, 2, 3]),
+        headers: {authorization: `Bearer ${processorToken}`},
+        method: 'POST',
+    })
+
+    assert.equal(response.status, 422)
+    assert.deepEqual(await response.json(), {error: 'Height chart generation failed'})
 })
 
 test('rejects unsupported gallery methods and unauthorized requests', async () => {

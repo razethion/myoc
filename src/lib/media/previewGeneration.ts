@@ -227,6 +227,31 @@ export async function generateGalleryOutputsWithContainer(
     })
 }
 
+export async function generateHeightChartImageWithContainer(
+    env: PreviewGeneratorEnv,
+    source: () => Promise<ReadableStream>,
+    sourceImage: PreviewSourceImage,
+    routingKey: string,
+    options: PreviewContainerRequestOptions = {priority: 'interactive'},
+): Promise<GeneratedGalleryPreview> {
+    if (!env.MYOC_DOCKER_SHARP_CONTAINER) {
+        throw new Error('Image container binding is not configured.')
+    }
+
+    return await withPreviewContainerRetry(env, routingKey, options, async (container) => {
+        const response = await container.fetch('https://container/images/height-chart', {
+            body: await source(),
+            headers: {
+                authorization: `Bearer ${env.PREVIEW_PROCESSOR_TOKEN}`,
+                'content-type': 'application/octet-stream',
+            },
+            method: 'POST',
+        })
+
+        return await previewFromResponse(response, sourceImage, 'Container height chart image')
+    })
+}
+
 async function withPreviewContainerRetry<T>(
     env: PreviewGeneratorEnv,
     routingKey: string,

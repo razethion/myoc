@@ -3,6 +3,7 @@ import {createAvifBytes} from '../../test/imageFixtures'
 import type {Bindings} from '../../types/bindings'
 import {
     generateGalleryOutputsWithContainer,
+    generateHeightChartImageWithContainer,
     generateMediaPreviewWithContainer,
     generateNsfwBlurImage,
     generateSquareImageWithContainer,
@@ -180,6 +181,52 @@ describe('generateMediaPreviewWithContainer', () => {
         await vi.advanceTimersByTimeAsync(1_000)
 
         await expect(generation).resolves.toMatchObject({width: 100, height: 80})
+    })
+})
+
+describe('generateHeightChartImageWithContainer', () => {
+    it('rejects use without an image container binding', async () => {
+        const env = {PREVIEW_PROCESSOR_TOKEN: 'test-token'} as Pick<Bindings, 'MYOC_DOCKER_SHARP_CONTAINER' | 'PREVIEW_PROCESSOR_TOKEN'>
+
+        await expect(
+            generateHeightChartImageWithContainer(
+                env,
+                async () => new Blob([new Uint8Array([1])]).stream(),
+                {width: 100, height: 80},
+                'height-chart',
+            ),
+        ).rejects.toThrow('Image container binding is not configured.')
+    })
+
+    it('streams the source and returns the proportional AVIF dimensions', async () => {
+        const bytes = createAvifBytes(800, 1600)
+        const fetch = vi.fn(async (_input?: RequestInfo | URL, init?: RequestInit) => {
+            expect(init?.body).toBeInstanceOf(ReadableStream)
+            expect(init?.method).toBe('POST')
+            expect(new Headers(init?.headers).get('authorization')).toBe('Bearer test-token')
+            return new Response(bytes, {headers: {'content-type': 'image/avif'}})
+        })
+
+        const result = await generateHeightChartImageWithContainer(
+            previewEnvironment([], fetch),
+            async () => new Blob([new Uint8Array([1, 2, 3])]).stream(),
+            {width: 1600, height: 3200},
+            'height-chart',
+        )
+
+        expect(result).toEqual({bytes, contentType: 'image/avif', width: 800, height: 1600})
+        expect(fetch).toHaveBeenCalledWith('https://container/images/height-chart', expect.any(Object))
+    })
+
+    it('rejects output that changes the image aspect ratio', async () => {
+        await expect(
+            generateHeightChartImageWithContainer(
+                previewEnvironment([avifResponse(900, 1600)]),
+                async () => new Blob([new Uint8Array([1])]).stream(),
+                {width: 1600, height: 3200},
+                'height-chart',
+            ),
+        ).rejects.toThrow('Container height chart image dimensions must match the uploaded image scaled to 1600px')
     })
 })
 

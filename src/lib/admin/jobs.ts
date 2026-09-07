@@ -12,6 +12,12 @@ import {
     isMediaPreviewRegenerationDispatchActive,
     type MediaPreviewRegenerationSummary,
 } from './mediaPreviewRegeneration'
+import {
+    activeSizeChartImageBackfillWorkflowInstanceIds,
+    emptySizeChartImageBackfillSummary,
+    parseSizeChartImageBackfillSummary,
+    type SizeChartImageBackfillSummary,
+} from './sizeChartImageBackfill'
 
 const ADMIN_JOBS = [
     {
@@ -38,6 +44,10 @@ const ADMIN_JOBS = [
         name: 'thumbnail-regeneration',
         label: 'Thumbnail Regeneration',
     },
+    {
+        name: 'size-chart-image-backfill',
+        label: 'Size Chart Image Backfill',
+    },
 ] as const
 
 export type AdminJobName = (typeof ADMIN_JOBS)[number]['name']
@@ -51,6 +61,7 @@ export type AdminJobSummary =
     | R2CleanupSummary
     | LeaderboardRefreshSummary
     | MediaPreviewRegenerationSummary
+    | SizeChartImageBackfillSummary
     | RecentFeedPublishSummary
 
 type AdminJobEnv = Pick<
@@ -178,6 +189,10 @@ export async function runAdminJob(env: AdminJobEnv, jobName: AdminJobName, optio
         return await startRecentFeedRegenerationJob(env, options)
     }
 
+    if (jobName === 'size-chart-image-backfill') {
+        return await startSizeChartImageBackfillJob(env, options)
+    }
+
     return await recordAdminJobRun(env.DB, jobName, options, async () => runAdminJobTask(env, jobName))
 }
 
@@ -302,6 +317,45 @@ async function startRecentFeedRegenerationJob(
         status: 'running',
         summary,
     }
+}
+
+async function startSizeChartImageBackfillJob(
+    env: AdminJobEnv,
+    options: AdminJobRunOptions,
+): Promise<AdminJobRunResult<SizeChartImageBackfillSummary>> {
+    const jobName = 'size-chart-image-backfill'
+    const summary = emptySizeChartImageBackfillSummary()
+    let started = await startExclusiveAdminJobRun(env.DB, jobName, options, summary, (value) => parseSizeChartImageBackfillSummary(value))
+
+    if (!started.created) {
+        const active = await isSizeChartImageBackfillWorkflowActive(
+            env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW,
+            started.runId,
+            started.startedAt,
+            started.summary,
+        )
+        if (active) {
+            return {jobName, runId: started.runId, status: 'running', summary: started.summary}
+        }
+
+        await failAdminJobRun(env.DB, started.runId, 'The size chart image backfill Workflow stopped before the job record finished.')
+        started = await startExclusiveAdminJobRun(env.DB, jobName, options, summary, (value) => parseSizeChartImageBackfillSummary(value))
+        if (!started.created) {
+            return {jobName, runId: started.runId, status: 'running', summary: started.summary}
+        }
+    }
+
+    try {
+        await env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW.create({
+            id: started.runId,
+            params: {kind: 'size-chart-images', runId: started.runId} satisfies RegenerateMediaPreviewsWorkflowParams,
+        })
+    } catch (error) {
+        await tryFinishAdminJobRun(env.DB, started.runId, 'error', null, errorMessage(error))
+        throw error
+    }
+
+    return {jobName, runId: started.runId, status: 'running', summary}
 }
 
 async function startRegenerationWorkflowJob(
@@ -475,6 +529,28 @@ async function isMediaPreviewWorkflowActive(
         throw statusError
     }
 
+    return false
+}
+
+async function isSizeChartImageBackfillWorkflowActive(
+    workflow: Bindings['REGENERATE_MEDIA_PREVIEWS_WORKFLOW'],
+    runId: string,
+    startedAt: string,
+    summary: SizeChartImageBackfillSummary,
+): Promise<boolean> {
+    const recentlyStarted = wasWorkflowRecentlyStarted(startedAt)
+    const errors: Error[] = []
+
+    for (const instanceId of activeSizeChartImageBackfillWorkflowInstanceIds(runId, summary.processedImages)) {
+        try {
+            if ((await getWorkflowInstanceState(workflow, instanceId, recentlyStarted)) === 'active') return true
+        } catch (error) {
+            errors.push(error instanceof Error ? error : new Error(errorMessage(error)))
+        }
+    }
+
+    const [statusError] = errors
+    if (statusError) throw statusError
     return false
 }
 

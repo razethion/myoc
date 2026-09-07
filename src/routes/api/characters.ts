@@ -25,14 +25,16 @@ import {
 } from '../../lib/http/responseSchemas'
 import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../../lib/media/cacheControl'
 import {type HeightChartJson, parseHeightChartJson as parseCharacterHeightChartJson} from '../../lib/media/heightChart'
-import {type GalleryImageMetadata, readGalleryImageDimensions, readGalleryImageMetadata} from '../../lib/media/imageMetadata'
+import {type GalleryImageMetadata, readGalleryImageMetadata} from '../../lib/media/imageMetadata'
 import {type CompletedGalleryJobSource, createGalleryImageUploadJob} from '../../lib/media/imageUploadJobs'
 import {
     GALLERY_NSFW_BLUR_CONTENT_TYPE,
     type GeneratedGalleryPreview,
+    generateHeightChartImageWithContainer,
     generateMediaPreviewWithContainer,
     generateNsfwBlurImage,
     mediaPreviewContainerIndex,
+    PreviewValidationError,
 } from '../../lib/media/previewGeneration'
 import {
     isProfileImageDataUrlTooLarge,
@@ -1088,36 +1090,26 @@ characterRoutes.put('/:id/height-chart', async (c) => {
     }
 
     const existingHeightChart = parseCharacterHeightChartJson(character.height_chart_json)
+    const preliminaryHeightChart = normalizeHeightChartJson(rawJson, existingHeightChart, null)
+
+    if ('error' in preliminaryHeightChart) {
+        return jsonResponse(c, ErrorResponseSchema, {error: preliminaryHeightChart.error}, 400)
+    }
+
     const imageFileValue = form.get('heightChartImage')
     const imageFile = imageFileValue instanceof File && imageFileValue.size > 0 ? imageFileValue : null
     let uploadedImage: CompletedGalleryUpload | null = null
     let uploadedObjectKey: string | null = null
 
     if (imageFile) {
-        const imageResult = await validateGalleryImage(imageFile, 'Height chart image')
+        const upload = await uploadHeightChartImage(c.env, currentUser.id, character.id, imageFile)
 
-        if ('error' in imageResult) {
-            return jsonResponse(c, ErrorResponseSchema, {error: imageResult.error}, imageResult.status)
+        if ('error' in upload) {
+            return jsonResponse(c, ErrorResponseSchema, {error: upload.error}, upload.status)
         }
 
-        const imageKey = crypto.randomUUID()
-        uploadedImage = {
-            imageKey,
-            contentType: imageResult.contentType,
-            width: imageResult.width,
-            height: imageResult.height,
-            displayWidth: imageResult.width,
-            displayHeight: imageResult.height,
-            byteSize: imageResult.bytes.byteLength,
-        }
-        uploadedObjectKey = characterHeightChartImageObjectKey(currentUser.id, character.id, imageKey, imageResult.contentType)
-
-        await c.env.MEDIA_BUCKET.put(uploadedObjectKey, imageResult.bytes, {
-            httpMetadata: {
-                cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
-                contentType: imageResult.contentType,
-            },
-        })
+        uploadedImage = upload.image
+        uploadedObjectKey = upload.objectKey
     }
 
     const normalized = normalizeHeightChartJson(rawJson, existingHeightChart, uploadedImage)
@@ -1516,6 +1508,63 @@ async function completeQueuedGalleryUpload(
     } catch (error) {
         await deleteR2Objects(c.env.MEDIA_BUCKET, completedKeys)
         return mediaCompletionErrorResponse(c, error, crypto.randomUUID())
+    }
+}
+
+async function uploadHeightChartImage(
+    env: Bindings,
+    userId: string,
+    characterId: string,
+    file: File,
+): Promise<{image: CompletedGalleryUpload; objectKey: string} | {error: string; status: 400}> {
+    const source = await validateGalleryImage(file, 'Height chart image')
+
+    if ('error' in source) {
+        return source
+    }
+
+    const imageKey = crypto.randomUUID()
+    let converted: GeneratedGalleryPreview
+
+    try {
+        converted = await generateHeightChartImageWithContainer(
+            env,
+            async () => file.stream(),
+            {
+                width: source.width,
+                height: source.height,
+                displayWidth: source.displayWidth,
+                displayHeight: source.displayHeight,
+            },
+            imageKey,
+        )
+    } catch (error) {
+        if (error instanceof PreviewValidationError) {
+            return {error: 'Height chart image could not be processed', status: 400}
+        }
+
+        throw error
+    }
+
+    const objectKey = characterHeightChartImageObjectKey(userId, characterId, imageKey, converted.contentType)
+    await env.MEDIA_BUCKET.put(objectKey, converted.bytes, {
+        httpMetadata: {
+            cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
+            contentType: converted.contentType,
+        },
+    })
+
+    return {
+        image: {
+            imageKey,
+            contentType: converted.contentType,
+            width: converted.width,
+            height: converted.height,
+            displayWidth: converted.width,
+            displayHeight: converted.height,
+            byteSize: converted.bytes.byteLength,
+        },
+        objectKey,
     }
 }
 
@@ -4145,10 +4194,10 @@ async function validateGalleryImage(
     label: string,
 ): Promise<
     | {
-          bytes: Uint8Array
-          contentType: string
           width: number
           height: number
+          displayWidth: number
+          displayHeight: number
       }
     | {
           error: string
@@ -4161,28 +4210,31 @@ async function validateGalleryImage(
         return {error: contentType.error, status: 400}
     }
 
+    if (file.size > GALLERY_IMAGE_MAX_BYTES) {
+        return {error: `${label} must be 200 MB or smaller`, status: 400}
+    }
+
     const bytes = new Uint8Array(await file.arrayBuffer())
 
     if (bytes.byteLength <= 0) {
         return {error: `${label} is empty`, status: 400}
     }
 
-    const dimensions =
-        readGalleryImageDimensions(bytes, contentType.contentType) ??
-        normalizeGalleryImageDimensions(
-            'width' in file ? (file as File & {width?: unknown}).width : undefined,
-            'height' in file ? (file as File & {height?: unknown}).height : undefined,
-        )
+    const dimensions = readGalleryImageMetadata(bytes, contentType.contentType)
 
-    if ('error' in dimensions) {
+    if (!dimensions) {
         return {error: `${label} dimensions are required`, status: 400}
     }
 
+    if (dimensions.width * dimensions.height > GALLERY_IMAGE_MAX_PIXELS) {
+        return {error: `${label} must be ${GALLERY_IMAGE_MAX_PIXELS.toLocaleString('en-US')} pixels or smaller`, status: 400}
+    }
+
     return {
-        bytes,
-        contentType: contentType.contentType,
         width: dimensions.width,
         height: dimensions.height,
+        displayWidth: dimensions.displayWidth,
+        displayHeight: dimensions.displayHeight,
     }
 }
 
@@ -4403,25 +4455,6 @@ function normalizeGalleryImageContentType(value: unknown): {contentType: string}
     }
 
     return {contentType}
-}
-
-function normalizeGalleryImageDimensions(
-    widthValue: unknown,
-    heightValue: unknown,
-):
-    | {
-          width: number
-          height: number
-      }
-    | {error: string} {
-    const width = Number(widthValue)
-    const height = Number(heightValue)
-
-    if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0) {
-        return {error: 'Image dimensions are required'}
-    }
-
-    return {width, height}
 }
 
 /* istanbul ignore next -- upload init parsing is route/helper-tested; remaining branch is duplicate-rating suppression. */
