@@ -88,6 +88,12 @@ describe('size chart image backfill', () => {
         })
         expect(await bucket.head(oldObjectKey)).toBeNull()
         expect(await bucket.head(targetObjectKey)).not.toBeNull()
+        expect(bucket.put).toHaveBeenCalledWith(targetObjectKey, expect.any(Uint8Array), {
+            httpMetadata: {
+                cacheControl: 'public, max-age=300, must-revalidate',
+                contentType: 'image/avif',
+            },
+        })
     })
 
     it('keeps a concurrent user replacement and removes its unused AVIF', async () => {

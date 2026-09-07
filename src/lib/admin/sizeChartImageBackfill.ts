@@ -1,4 +1,5 @@
 import type {Bindings} from '../../types/bindings'
+import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../media/cacheControl'
 import {type HeightChartJson, parseHeightChartJson} from '../media/heightChart'
 import {readGalleryImageMetadata} from '../media/imageMetadata'
 import {generateHeightChartImageWithContainer} from '../media/previewGeneration'
@@ -173,7 +174,12 @@ async function publishReplacement(
     replacementJson: string,
     bytes: Uint8Array,
 ): Promise<boolean> {
-    await env.MEDIA_BUCKET.put(targetObjectKey, bytes, {httpMetadata: {contentType: 'image/avif'}})
+    await env.MEDIA_BUCKET.put(targetObjectKey, bytes, {
+        httpMetadata: {
+            cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL,
+            contentType: 'image/avif',
+        },
+    })
 
     try {
         const update = await env.DB.prepare(
