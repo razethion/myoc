@@ -57,8 +57,10 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         run: |
-          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$R2_ACCESS_KEY_ID" ] || [ -z "$R2_SECRET_ACCESS_KEY" ]; then
             echo "::error::Configure the development environment Cloudflare credentials."
             exit 1
           fi
@@ -79,6 +81,9 @@ jobs:
 
       - name: Clean isolated dev resources
         env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_DEFAULT_REGION: auto
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           CACHE_NAME: myoc-pr-${{ inputs.pull_request }}-cache
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -104,6 +109,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          R2_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
           failures=()
 
           record_failure() {
@@ -127,6 +133,17 @@ jobs:
             fi
           }
 
+          remove_queue_consumer() {
+            local queue="$1"
+            local consumer_output
+
+            if ! consumer_output=$("$WRANGLER" queues consumer remove "$queue" "$WORKER_NAME" 2>&1); then
+              if ! grep -Eqi 'not found|does not exist|no consumer|not a consumer' <<< "$consumer_output"; then
+                record_failure "Queue consumer removal failed for $queue: $consumer_output"
+              fi
+            fi
+          }
+
           delete_bucket() {
             local bucket="$1"
             local public_url="$2"
@@ -143,15 +160,28 @@ jobs:
               record_failure "The public development URL could not be disabled for $bucket."
             fi
 
-            "$WRANGLER" r2 bucket lifecycle remove "$bucket" --name preview-expiry || true
-            if ! "$WRANGLER" r2 bucket lifecycle add "$bucket" preview-expiry --expire-days 1 --abort-multipart-days 1 --force; then
-              record_failure "The one-day cleanup lifecycle could not be set for $bucket."
+            if ! aws s3 rm "s3://$bucket" --recursive --endpoint-url "$R2_ENDPOINT" --only-show-errors; then
+              record_failure "R2 object deletion failed for $bucket."
             fi
 
             if ! "$WRANGLER" r2 bucket delete "$bucket"; then
-              record_failure "$bucket is not empty. Its one-day lifecycle will remove remaining objects. Run cleanup again later."
+              "$WRANGLER" r2 bucket lifecycle remove "$bucket" --name preview-expiry || true
+              if ! "$WRANGLER" r2 bucket lifecycle add "$bucket" preview-expiry --expire-days 1 --abort-multipart-days 1 --force; then
+                record_failure "The one-day cleanup lifecycle could not be set for $bucket."
+              fi
+              record_failure "R2 bucket deletion failed for $bucket."
             fi
           }
+
+          # Remove consumer links before the Worker. Deleting the Worker then
+          # releases its producer bindings so the Queues can be deleted.
+          remove_queue_consumer "$IMAGE_QUEUE"
+          remove_queue_consumer "$LEGACY_PREVIEW_QUEUE_0"
+          remove_queue_consumer "$LEGACY_PREVIEW_QUEUE_1"
+          remove_queue_consumer "$LEGACY_PREVIEW_QUEUE_2"
+          remove_queue_consumer "$LEGACY_IMAGE_QUEUE_0"
+          remove_queue_consumer "$LEGACY_IMAGE_QUEUE_1"
+          remove_queue_consumer "$LEGACY_IMAGE_QUEUE_2"
 
           if ! worker_output=$("$WRANGLER" delete "$WORKER_NAME" --force 2>&1); then
             if ! grep -Eqi 'not found|does not exist' <<< "$worker_output"; then
@@ -159,6 +189,7 @@ jobs:
             fi
           fi
 
+          # Delete source Queues before their dead letter Queues.
           delete_queue "$IMAGE_QUEUE"
           delete_queue "$LEGACY_PREVIEW_QUEUE_0"
           delete_queue "$LEGACY_PREVIEW_QUEUE_1"
