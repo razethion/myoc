@@ -761,7 +761,7 @@ jobs:
 
           if [ -f artifact/web/cloudflare/_worker.js ]; then
             "$WRANGLER" deploy --config wrangler.backend-preview.jsonc --secrets-file preview-secrets.json --no-bundle --message "Approved dev preview backend $HEAD_SHA"
-            "$WRANGLER" deploy --config wrangler.web-preview.jsonc --message "Approved dev preview web $HEAD_SHA" 2>&1 | tee wrangler-preview.log
+            "$WRANGLER" deploy --config wrangler.web-preview.jsonc --no-bundle --message "Approved dev preview web $HEAD_SHA" 2>&1 | tee wrangler-preview.log
           else
             "$WRANGLER" deploy --config wrangler.backend-preview.jsonc --secrets-file preview-secrets.json --no-bundle --message "Approved dev preview $HEAD_SHA" 2>&1 | tee wrangler-preview.log
           fi

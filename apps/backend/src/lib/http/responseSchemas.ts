@@ -1,3 +1,4 @@
+import {SearchCharacterResultSchema, SearchUserResultSchema} from '@myoc/contracts/search'
 import {z} from 'zod'
 
 const NullableStringSchema = z.string().nullable()
@@ -166,28 +167,6 @@ export const GalleryLayoutResponseSchema = z
                 ),
             })
             .strict(),
-    })
-    .strict()
-
-const SearchUserResultSchema = z
-    .object({
-        id: z.string(),
-        username: z.string(),
-        bio: z.string(),
-        profilePhotoUrl: z.string(),
-        profileUrl: z.string(),
-        characterCount: PositiveIntegerSchema,
-    })
-    .strict()
-
-const SearchCharacterResultSchema = z
-    .object({
-        id: z.string(),
-        name: z.string(),
-        ownerId: z.string(),
-        ownerUsername: z.string(),
-        profileImageUrl: z.string(),
-        characterUrl: z.string(),
     })
     .strict()
 

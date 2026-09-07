@@ -7,25 +7,30 @@ if (runtimeProcess) runtimeProcess.env.WRANGLER_LOG ??= 'error'
 export default defineConfig({
     plugins: [
         cloudflareTest(async () => ({
-            main: './src/index.ts',
+            main: './apps/backend/src/index.ts',
             miniflare: {
                 bindings: {
-                    TEST_MIGRATIONS: await readD1Migrations('./migrations'),
+                    TEST_MIGRATIONS: await readD1Migrations('./apps/backend/migrations'),
                 },
             },
             remoteBindings: false,
             wrangler: {
-                configPath: './wrangler.jsonc',
+                configPath: './apps/backend/wrangler.jsonc',
             },
         })),
     ],
     logLevel: 'error',
     test: {
         coverage: {
-            exclude: ['src/test/**'],
+            exclude: ['apps/backend/src/test/**'],
             provider: 'istanbul',
         },
-        include: ['scripts/**/*.test.mjs', 'src/**/*.test.mjs', 'src/**/*.test.ts', 'src/**/*.test.tsx'],
+        include: [
+            'scripts/**/*.test.mjs',
+            'apps/backend/src/**/*.test.mjs',
+            'apps/backend/src/**/*.test.ts',
+            'apps/backend/src/**/*.test.tsx',
+        ],
         reporters: ['dot'],
         silent: 'passed-only',
     },

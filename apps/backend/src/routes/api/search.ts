@@ -1,10 +1,14 @@
+import {SearchPageDataSchema} from '@myoc/contracts/search'
 import {Hono} from 'hono'
 import {z} from 'zod'
+import {canModerateImages, getCurrentUser} from '../../lib/auth/session'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {ErrorResponseSchema, responseSchema, SearchResponseSchema, SizeChartSearchItemSchema} from '../../lib/http/responseSchemas'
+import {fallbackAvatarDataUrl} from '../../lib/media/avatar'
 import {parseHeightChartJson} from '../../lib/media/heightChart'
-import {characterHeightChartImageUrl, characterProfileImageUrl} from '../../lib/media/url'
-import {normalizeSearchOffset, normalizeSearchQuery, searchCharacters, searchUsers} from '../../lib/search'
+import {characterHeightChartImageUrl, characterProfileImageUrl, profilePhotoUrl} from '../../lib/media/url'
+import {APP_VERSION, RELEASE_NOTES} from '../../lib/releases'
+import {normalizeSearchOffset, normalizeSearchQuery, searchAll, searchCharacters, searchUsers} from '../../lib/search'
 import type {Bindings} from '../../types/bindings'
 
 export const searchRoutes = new Hono<{Bindings: Bindings}>()
@@ -55,6 +59,34 @@ searchRoutes.get('/', async (c) => {
         total: results.total,
         nextOffset: results.nextOffset,
         hasMore: results.hasMore,
+    })
+})
+
+searchRoutes.get('/page', async (c) => {
+    const [currentUser, results] = await Promise.all([
+        getCurrentUser(c),
+        searchAll(c.env.DB, c.env.MEDIA_PUBLIC_BASE_URL, c.req.query('q')),
+    ])
+    const currentRelease = RELEASE_NOTES.find((release) => release.version === APP_VERSION)
+
+    return jsonResponse(c, SearchPageDataSchema, {
+        shell: {
+            viewer: currentUser
+                ? {
+                      username: currentUser.username,
+                      profileUrl: `/u/${encodeURIComponent(currentUser.username)}`,
+                      avatarUrl: currentUser.profilePhotoKey
+                          ? profilePhotoUrl(c.env.MEDIA_PUBLIC_BASE_URL, currentUser.id, currentUser.profilePhotoKey)
+                          : fallbackAvatarDataUrl(currentUser.username, 'R'),
+                      csrfToken: currentUser.csrfToken,
+                      canModerateImages: canModerateImages(currentUser),
+                  }
+                : null,
+            appVersion: APP_VERSION,
+            showVersionNotification: Boolean(currentUser && currentUser.lastSeenVersion !== APP_VERSION),
+            importantRelease: Boolean(currentRelease?.important),
+        },
+        results,
     })
 })
 

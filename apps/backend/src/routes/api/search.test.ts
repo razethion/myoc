@@ -33,6 +33,26 @@ function sizeChartJson(options: {key?: string; contentType?: string} = {}) {
 }
 
 describe('GET /api/search', () => {
+    it('returns the initial SvelteKit search page data', async () => {
+        await seedUser({id: 'owner-1', username: 'Alice', bio: 'Makes tiny dragons'})
+        await seedCharacter({id: 'character-1', userId: 'owner-1', name: 'Tiny Dragon'})
+
+        const response = await requestSearch('/search/page?q=Alice')
+        const body = (await response.json()) as {
+            shell: {viewer: unknown; appVersion: string}
+            results: {query: string; users: {total: number}; characters: {total: number}}
+        }
+
+        expect(response.status).toBe(200)
+        expect(body.shell.viewer).toBeNull()
+        expect(body.shell.appVersion).toMatch(/^\d{4}\.\d{2}\.\d{2}\.\d{2}$/)
+        expect(body.results).toMatchObject({
+            query: 'Alice',
+            users: {total: 1},
+            characters: {total: 1},
+        })
+    })
+
     it('rejects unsupported search types', async () => {
         const response = await requestSearch('/search?type=folders&q=test')
 

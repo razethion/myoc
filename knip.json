@@ -3,12 +3,27 @@
   "workspaces": {
     ".": {
       "entry": ["scripts/*.mjs!"],
-      "project": ["src/**/*.{ts,tsx,css}!", "scripts/*.mjs!"]
+      "project": ["scripts/*.mjs!"]
     },
-    "containers/myoc-docker-sharp": {
+    "apps/backend": {
+      "entry": ["src/index.ts!", "scripts/*.mjs!"],
+      "project": ["src/**/*.{ts,tsx}!", "scripts/*.mjs!"]
+    },
+    "apps/web": {
+      "entry": ["src/routes/**/+*.{ts,svelte}!"],
+      "project": ["src/**/*.{ts,svelte}!"]
+    },
+    "packages/contracts": {
+      "project": ["src/**/*.ts!"]
+    },
+    "packages/ui": {
+      "entry": ["src/app.css!"],
+      "project": ["src/**/*.css!"]
+    },
+    "apps/backend/containers/myoc-docker-sharp": {
       "project": ["*.mjs!"]
     }
   },
   "ignoreBinaries": ["py"],
-  "ignoreDependencies": ["@simplewebauthn/browser", "cloudflare", "cropperjs"]
+  "ignoreDependencies": ["@simplewebauthn/browser", "cloudflare", "cropperjs", "zod"]
 }

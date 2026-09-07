@@ -10,7 +10,7 @@ updates:
     open-pull-requests-limit: 5
 
   - package-ecosystem: "npm"
-    directory: "/containers/myoc-docker-sharp"
+    directory: "/apps/backend/containers/myoc-docker-sharp"
     schedule:
       interval: "weekly"
     cooldown:
@@ -18,7 +18,7 @@ updates:
     open-pull-requests-limit: 5
 
   - package-ecosystem: "docker"
-    directory: "/containers/myoc-docker-sharp"
+    directory: "/apps/backend/containers/myoc-docker-sharp"
     schedule:
       interval: "weekly"
     cooldown:

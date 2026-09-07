@@ -1,0 +1,33 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "myoc-web",
+  "main": ".svelte-kit/cloudflare/_worker.js",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_als"],
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "myoc.art",
+      "custom_domain": true
+    }
+  ],
+  "dev": {
+    "enable_containers": false
+  },
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  },
+  "assets": {
+    "binding": "ASSETS",
+    "directory": ".svelte-kit/cloudflare"
+  },
+  "services": [
+    {
+      "binding": "HONO",
+      "service": "myoc"
+    }
+  ]
+}

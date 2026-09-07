@@ -17,7 +17,7 @@ import {
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const localD1StateDir = resolve(rootDir, '.wrangler', 'state', 'v3', 'd1', 'miniflare-D1DatabaseObject')
-const wranglerConfigFile = resolve(rootDir, 'wrangler.jsonc')
+const wranglerConfigFile = resolve(rootDir, 'apps', 'backend', 'wrangler.jsonc')
 const defaultWrangler = resolve(rootDir, 'node_modules', '.bin', 'wrangler')
 const pageSize = 500
 
@@ -205,7 +205,7 @@ async function clearTargetD1() {
 
 async function writeTargetD1(tables) {
     const statements = CLONE_TABLE_QUERIES.flatMap(({table}) => tables[table].map((row) => insertStatement(table, row)))
-    const seedSql = await readFile(resolve(rootDir, 'seeds', 'development.sql'), 'utf8')
+    const seedSql = await readFile(resolve(rootDir, 'apps', 'backend', 'seeds', 'development.sql'), 'utf8')
     const finishStatements = [
         {sql: seedSql},
         {

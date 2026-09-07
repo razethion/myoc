@@ -1,42 +1,13 @@
+import type {SearchCharacterResult, SearchCollection, SearchResults, SearchUserResult} from '@myoc/contracts/search'
 import {fallbackAvatarDataUrl} from './media/avatar'
 import {characterProfileImageUrl, profilePhotoUrl} from './media/url'
+
+export type {SearchCharacterResult, SearchCollection, SearchResults, SearchUserResult} from '@myoc/contracts/search'
 
 const SEARCH_QUERY_MAX_LENGTH = 80
 const SEARCH_USER_PAGE_SIZE = 4
 const SEARCH_CHARACTER_PAGE_SIZE = 8
 const SEARCH_MAX_OFFSET = 1000
-
-export type SearchUserResult = {
-    id: string
-    username: string
-    bio: string
-    profilePhotoUrl: string
-    profileUrl: string
-    characterCount: number
-}
-
-export type SearchCharacterResult = {
-    id: string
-    name: string
-    ownerId: string
-    ownerUsername: string
-    profileImageUrl: string
-    characterUrl: string
-}
-
-export type SearchCollection<T> = {
-    items: T[]
-    total: number
-    nextOffset: number | null
-    hasMore: boolean
-}
-
-export type SearchResults = {
-    query: string
-    wasTruncated: boolean
-    users: SearchCollection<SearchUserResult>
-    characters: SearchCollection<SearchCharacterResult>
-}
 
 type UserSearchRow = {
     id: string
