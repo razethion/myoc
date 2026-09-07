@@ -285,6 +285,7 @@ jobs:
               'container/preview.mjs',
               'container/server.mjs',
               'manifest.sha256',
+              'seeds/development.sql',
               'worker/index.js',
           }
 
@@ -305,7 +306,7 @@ jobs:
             if not name:
               return is_directory
             if is_directory:
-              return name in {'container', 'migrations', 'public', 'worker'} or name.startswith(('container/', 'migrations/', 'public/'))
+              return name in {'container', 'migrations', 'public', 'seeds', 'worker'} or name.startswith(('container/', 'migrations/', 'public/'))
             return name in required_files or name.startswith(('container/', 'migrations/', 'public/'))
 
           seen = set()
