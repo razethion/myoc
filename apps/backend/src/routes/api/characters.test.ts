@@ -252,6 +252,7 @@ type FolderResponse = {
 }
 
 type CharacterRequestOptions = TestRequestOptions & {
+    asyncImageUploads?: boolean
     mediaBucket?: R2Bucket
     previewContainer?: DurableObjectNamespace
 }
@@ -267,7 +268,7 @@ type ChunkedSfwInitBody = {
     }
 }
 
-function requestEnv(db: D1Database, mediaBucket?: R2Bucket, previewContainer?: DurableObjectNamespace) {
+function requestEnv(db: D1Database, mediaBucket?: R2Bucket, previewContainer?: DurableObjectNamespace, asyncImageUploads = false) {
     const defaultContainer = createMockPreviewContainer(
         new Response(createAvifBytes(512, 512), {headers: {'content-type': 'image/avif'}}),
     ).namespace
@@ -277,6 +278,7 @@ function requestEnv(db: D1Database, mediaBucket?: R2Bucket, previewContainer?: D
         MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         MYOC_DOCKER_SHARP_CONTAINER: previewContainer ?? defaultContainer,
         PREVIEW_PROCESSOR_TOKEN: 'preview-token',
+        IMAGE_UPLOAD_ASYNC_ENABLED: asyncImageUploads ? 'true' : 'false',
     }
 }
 
@@ -484,7 +486,7 @@ async function initChunkedMedia(
             body: JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, options.previewContainer),
+        requestEnv(db, options.mediaBucket, options.previewContainer, options.asyncImageUploads),
     )
 }
 
@@ -507,7 +509,7 @@ async function putChunkedMediaPart(
             body,
             headers: createRequestHeaders(body, options, false),
         },
-        requestEnv(db, options.mediaBucket, options.previewContainer),
+        requestEnv(db, options.mediaBucket, options.previewContainer, options.asyncImageUploads),
     )
 }
 
@@ -648,7 +650,7 @@ async function completeToyhouseImportItem(
             body: JSON.stringify(body),
             headers: createRequestHeaders(body, options),
         },
-        requestEnv(db, options.mediaBucket, previewContainerForRequest(body, options.previewContainer)),
+        requestEnv(db, options.mediaBucket, previewContainerForRequest(body, options.previewContainer), options.asyncImageUploads),
     )
 }
 
@@ -5788,132 +5790,155 @@ describe('character media uploads', () => {
         expect(await response.json()).toEqual({error: 'Request body is too large'})
     })
 
-    it('completes Toyhou.se import items through chunked gallery media upload', async () => {
-        const sessionToken = 'session-token'
-        const mediaBucket = createMockR2Bucket()
-        const character = createCharacterRecord()
-        const importItem = {
-            id: 'toyhouse-import-item',
-            job_id: 'toyhouse-import-job',
-            user_id: currentUserRecord.id,
-            character_id: character.id,
-            rating: 'sfw',
-            status: 'pending',
-            media_id: null,
-        }
-        await seedCurrentUser(sessionToken)
-        await seedCharacterRecord(character)
-        await seedToyhouseImport()
-        const csrfToken = await createCsrfToken(sessionToken)
+    it.each([false, true])(
+        'completes Toyhou.se import items through chunked gallery media upload (async: %s)',
+        async (asyncImageUploads) => {
+            const sessionToken = 'session-token'
+            const mediaBucket = createMockR2Bucket()
+            const character = createCharacterRecord()
+            const importItem = {
+                id: 'toyhouse-import-item',
+                job_id: 'toyhouse-import-job',
+                user_id: currentUserRecord.id,
+                character_id: character.id,
+                rating: 'sfw',
+                status: 'pending',
+                media_id: null,
+            }
+            await seedCurrentUser(sessionToken)
+            await seedCharacterRecord(character)
+            await seedToyhouseImport()
+            const csrfToken = await createCsrfToken(sessionToken)
 
-        const initResponse = await initChunkedMedia(
-            character.id,
-            {
-                uploads: [{rating: 'sfw', contentType: 'image/png'}],
-            },
-            db,
-            {
-                mediaBucket,
-                sessionToken,
-                csrfToken,
-            },
-        )
-        expect(initResponse.status).toBe(200)
-        const initBody = (await initResponse.json()) as {
-            mediaId: string
-            uploads: {
-                sfw: {
-                    uploadId: string
-                    imageKey: string
-                    contentType: string
-                    chunkSize: number
+            const initResponse = await initChunkedMedia(
+                character.id,
+                {
+                    uploads: [{rating: 'sfw', contentType: 'image/png'}],
+                },
+                db,
+                {
+                    asyncImageUploads,
+                    mediaBucket,
+                    sessionToken,
+                    csrfToken,
+                },
+            )
+            expect(initResponse.status).toBe(200)
+            const initBody = (await initResponse.json()) as {
+                mediaId: string
+                uploads: {
+                    sfw: {
+                        uploadId: string
+                        imageKey: string
+                        contentType: string
+                        chunkSize: number
+                    }
                 }
             }
-        }
 
-        const pngFile = createPngFile(800, 600)
-        const partResponse = await putChunkedMediaPart(
-            character.id,
-            initBody.mediaId,
-            'sfw',
-            initBody.uploads.sfw.uploadId,
-            1,
-            initBody.uploads.sfw.imageKey,
-            pngFile,
-            db,
-            {
-                mediaBucket,
-                sessionToken,
-                csrfToken,
-            },
-        )
-        expect(partResponse.status).toBe(200)
-        const uploadedPart = (await partResponse.json()) as R2UploadedPart
-
-        const completeResponse = await completeToyhouseImportItem(
-            importItem.id,
-            {
-                mediaId: initBody.mediaId,
-                sfwUpload: {
-                    uploadId: initBody.uploads.sfw.uploadId,
-                    imageKey: initBody.uploads.sfw.imageKey,
-                    contentType: 'image/png',
-                    parts: [uploadedPart],
-                },
-                sfwPreview: createPreviewPayload(800, 600),
-            },
-            db,
-            {
-                mediaBucket,
-                sessionToken,
-                csrfToken,
-            },
-        )
-
-        expect(completeResponse.status).toBe(201)
-        const body = (await completeResponse.json()) as {
-            media: {
-                id: string
-                sfwImageKey: string
-                sfwContentType: string
-                sfwWidth: number
-                sfwHeight: number
-                sfwByteSize: number
-                sfwPreviewImageKey: string
-                sfwPreviewWidth: number
-                sfwPreviewHeight: number
-            }
-            skipped: boolean
-        }
-        expect(body.skipped).toBe(false)
-        expect(body.media.id).toBe(initBody.mediaId)
-        expect(body.media.sfwImageKey).toBe(initBody.uploads.sfw.imageKey)
-        expect(body.media.sfwContentType).toBe('image/png')
-        expect(body.media.sfwWidth).toBe(800)
-        expect(body.media.sfwHeight).toBe(600)
-        expect(body.media.sfwByteSize).toBe(pngFile.size)
-        expect(body.media.sfwPreviewImageKey).toMatch(new RegExp(`^${uuidPattern}$`))
-        expect(body.media.sfwPreviewWidth).toBe(800)
-        expect(body.media.sfwPreviewHeight).toBe(600)
-        await expectStoredSfwMedia(body.media.id, {
-            sfw_content_type: 'image/png',
-            sfw_width: 800,
-            sfw_height: 600,
-            sfw_byte_size: pngFile.size,
-            sfw_preview_width: 800,
-            sfw_preview_height: 600,
-        })
-        expect(
-            await queryOne<{status: string; media_id: string; error: string}>(
-                'SELECT status, media_id, error FROM toyhouse_import_items WHERE id = ?',
-                [importItem.id],
+            const pngFile = createPngFile(800, 600)
+            const partResponse = await putChunkedMediaPart(
+                character.id,
+                initBody.mediaId,
+                'sfw',
+                initBody.uploads.sfw.uploadId,
+                1,
+                initBody.uploads.sfw.imageKey,
+                pngFile,
                 db,
-            ),
-        ).toEqual({status: 'imported', media_id: body.media.id, error: ''})
-        expect(
-            await queryOne<{status: string}>('SELECT status FROM toyhouse_import_jobs WHERE id = ?', ['toyhouse-import-job'], db),
-        ).toEqual({status: 'complete'})
-    })
+                {
+                    asyncImageUploads,
+                    mediaBucket,
+                    sessionToken,
+                    csrfToken,
+                },
+            )
+            expect(partResponse.status).toBe(200)
+            const uploadedPart = (await partResponse.json()) as R2UploadedPart
+
+            const completeResponse = await completeToyhouseImportItem(
+                importItem.id,
+                {
+                    mediaId: initBody.mediaId,
+                    sfwUpload: {
+                        uploadId: initBody.uploads.sfw.uploadId,
+                        imageKey: initBody.uploads.sfw.imageKey,
+                        contentType: 'image/png',
+                        parts: [uploadedPart],
+                    },
+                    sfwPreview: createPreviewPayload(800, 600),
+                },
+                db,
+                {
+                    asyncImageUploads,
+                    mediaBucket,
+                    sessionToken,
+                    csrfToken,
+                },
+            )
+
+            expect(completeResponse.status).toBe(201)
+            const body = (await completeResponse.json()) as {
+                media: {
+                    id: string
+                    sfwImageKey: string
+                    sfwContentType: string
+                    sfwWidth: number
+                    sfwHeight: number
+                    sfwByteSize: number
+                    sfwPreviewImageKey: string
+                    sfwPreviewWidth: number
+                    sfwPreviewHeight: number
+                }
+                skipped: boolean
+            }
+            expect(body.skipped).toBe(false)
+            expect(body.media.id).toBe(initBody.mediaId)
+            expect(body.media.sfwImageKey).toBe(initBody.uploads.sfw.imageKey)
+            expect(body.media.sfwContentType).toBe('image/png')
+            expect(body.media.sfwWidth).toBe(800)
+            expect(body.media.sfwHeight).toBe(600)
+            expect(body.media.sfwByteSize).toBe(pngFile.size)
+            expect(body.media.sfwPreviewImageKey).toMatch(new RegExp(`^${uuidPattern}$`))
+            expect(body.media.sfwPreviewWidth).toBe(800)
+            expect(body.media.sfwPreviewHeight).toBe(600)
+            await expectStoredSfwMedia(body.media.id, {
+                sfw_content_type: 'image/png',
+                sfw_width: 800,
+                sfw_height: 600,
+                sfw_byte_size: pngFile.size,
+                sfw_preview_width: 800,
+                sfw_preview_height: 600,
+            })
+            expect(
+                await queryOne<{status: string; media_id: string; error: string}>(
+                    'SELECT status, media_id, error FROM toyhouse_import_items WHERE id = ?',
+                    [importItem.id],
+                    db,
+                ),
+            ).toEqual({status: 'imported', media_id: body.media.id, error: ''})
+            expect(
+                await queryOne<{status: string}>('SELECT status FROM toyhouse_import_jobs WHERE id = ?', ['toyhouse-import-job'], db),
+            ).toEqual({status: 'complete'})
+
+            const publishedObjectKey = characterMediaImageObjectKey(
+                currentUserRecord.id,
+                character.id,
+                initBody.mediaId,
+                initBody.uploads.sfw.imageKey,
+                'sfw',
+                'image/png',
+            )
+            const uploadObjectKey = asyncImageUploads ? `image-staging/${publishedObjectKey}` : publishedObjectKey
+            expect(mediaBucket.createMultipartUpload).toHaveBeenCalledWith(uploadObjectKey, expect.any(Object))
+            expect(mediaBucket.resumeMultipartUpload).toHaveBeenCalledWith(uploadObjectKey, initBody.uploads.sfw.uploadId)
+            expect(await mediaBucket.get(publishedObjectKey)).not.toBeNull()
+
+            if (asyncImageUploads) {
+                expect(await mediaBucket.get(uploadObjectKey)).toBeNull()
+            }
+        },
+    )
 
     it('rejects a Toyhou.se media insert if the final slot is taken during completion', async () => {
         const {sessionToken, mediaBucket, character, csrfToken, initBody} = await createChunkedSfwUploadTestContext()
