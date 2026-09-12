@@ -2689,8 +2689,18 @@ async function completeMediaVariant(
     upload: CompletedChunkedUpload,
     rating: MediaRating,
     label: string,
+    staged = false,
 ): Promise<CompletedMediaVariant> {
     const containerIndex = mediaPreviewContainerIndex(`${context.userId}:${context.characterId}:${context.mediaId}:${rating}`)
+    const publishedObjectKey = characterMediaImageObjectKey(
+        context.userId,
+        context.characterId,
+        context.mediaId,
+        upload.imageKey,
+        rating,
+        upload.contentType,
+    )
+    const uploadObjectKey = galleryUploadObjectKey(publishedObjectKey, staged)
     const image = await completeChunkedGalleryUpload(
         context.env.MEDIA_BUCKET,
         context.userId,
@@ -2699,10 +2709,27 @@ async function completeMediaVariant(
         upload,
         rating,
         label,
+        staged,
     )
-    context.completedKeys.push(
-        characterMediaImageObjectKey(context.userId, context.characterId, context.mediaId, image.imageKey, rating, image.contentType),
-    )
+    context.completedKeys.push(uploadObjectKey)
+
+    if (staged) {
+        const source = await context.env.MEDIA_BUCKET.get(uploadObjectKey)
+
+        if (!source) {
+            throw new Error(`${label} staging object is not available`)
+        }
+
+        await context.env.MEDIA_BUCKET.put(publishedObjectKey, source.body, {
+            httpMetadata: {
+                cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
+                contentType: image.contentType,
+            },
+        })
+        context.completedKeys.push(publishedObjectKey)
+        await deleteR2Objects(context.env.MEDIA_BUCKET, [uploadObjectKey], 'toyhouse-import-staging-cleanup')
+    }
+
     const preview = await generateAndPutMediaPreviewImage(
         context.env,
         context.env.MEDIA_BUCKET,
@@ -2846,6 +2873,7 @@ async function completeToyhouseImportItem(
         upload,
         item.rating,
         'Toyhou.se image',
+        env.IMAGE_UPLOAD_ASYNC_ENABLED === 'true',
     )
     const media = createNewCharacterMediaRecord({
         id: mediaId,
