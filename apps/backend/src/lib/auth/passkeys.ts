@@ -1,6 +1,6 @@
 import {wordlist} from '@scure/bip39/wordlists/english.js'
 import {
-    type AuthenticatorTransportFuture,
+    type AuthenticatorTransport,
     type Base64URLString,
     generateAuthenticationOptions,
     generateRegistrationOptions,
@@ -363,11 +363,11 @@ export async function listUserSessions(db: D1Database, user: CurrentUser): Promi
     }))
 }
 
-export function serializeTransports(transports?: AuthenticatorTransportFuture[]): string | null {
+export function serializeTransports(transports?: string[]): string | null {
     return transports?.length ? transports.join(',') : null
 }
 
-function parseTransports(value: string | null | undefined): AuthenticatorTransportFuture[] | undefined {
+function parseTransports(value: string | null | undefined): AuthenticatorTransport[] | undefined {
     if (!value) {
         return undefined
     }
@@ -375,7 +375,7 @@ function parseTransports(value: string | null | undefined): AuthenticatorTranspo
     return value
         .split(',')
         .map((transport) => transport.trim())
-        .filter(Boolean) as AuthenticatorTransportFuture[]
+        .filter(Boolean) as AuthenticatorTransport[]
 }
 
 export function createCredentialPublicKeyValue(publicKey: Uint8Array): string {
