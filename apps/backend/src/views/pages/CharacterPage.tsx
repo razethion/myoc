@@ -24,7 +24,7 @@ export type CharacterPageCharacter = {
     hasHeightChart: boolean
 }
 
-export type CharacterPageMedia = {
+type CharacterPageMedia = {
     id: string
     sfwImageKey: string | null
     nsfwImageKey: string | null

@@ -34,16 +34,16 @@
     "deploy": "npm run build && npm run deploy --workspace @myoc/backend && npm run deploy --workspace @myoc/web"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.10",
+    "@biomejs/biome": "^2.5.12",
     "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@tailwindcss/cli": "^4.3.3",
     "@vitest/coverage-istanbul": "^4.1.11",
     "daisyui": "^5.7.22",
-    "knip": "^6.32.2",
+    "knip": "^6.35.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10",
-    "wrangler": "^4.127.1"
+    "wrangler": "^4.130.0"
   },
   "allowScripts": {
     "@parcel/watcher": true,
