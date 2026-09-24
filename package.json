@@ -34,7 +34,7 @@
     "deploy": "npm run build && npm run deploy --workspace @myoc/backend && npm run deploy --workspace @myoc/web"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.12",
+    "@biomejs/biome": "^2.5.14",
     "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@tailwindcss/cli": "^4.3.3",
     "@vitest/coverage-istanbul": "^4.1.11",
