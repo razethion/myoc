@@ -190,6 +190,24 @@ export async function publishRecentFeed(
     return publishWithLease(env, config, leaseOwner, startedAt, options.now ?? new Date())
 }
 
+export function scheduleRecentFeedPublication(ctx: Pick<ExecutionContext, 'waitUntil'> | undefined, env: RecentFeedPublisherEnv): void {
+    if (!ctx || typeof ctx.waitUntil !== 'function') {
+        // Without an execution context there is nothing to defer to; the recovery cron still publishes the feed.
+        return
+    }
+
+    ctx.waitUntil(
+        publishRecentFeed(env).catch((error) => {
+            console.error(
+                JSON.stringify({
+                    event: 'recent-feed-scheduled-publish-failed',
+                    message: error instanceof Error ? error.message : 'Unknown recent feed publication error',
+                }),
+            )
+        }),
+    )
+}
+
 async function publishWithLease(
     env: RecentFeedPublisherEnv,
     config: RecentFeedConfig,

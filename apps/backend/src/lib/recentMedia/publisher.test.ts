@@ -9,7 +9,13 @@ import {
     RecentFeedRootSchema,
     RecentFeedYearManifestSchema,
 } from './model'
-import {buildRecentFeedVariantTree, getRecentFeedPointer, publishRecentFeed, requestRecentFeedRegeneration} from './publisher'
+import {
+    buildRecentFeedVariantTree,
+    getRecentFeedPointer,
+    publishRecentFeed,
+    requestRecentFeedRegeneration,
+    scheduleRecentFeedPublication,
+} from './publisher'
 
 const db = useTestDatabase()
 
@@ -29,6 +35,19 @@ function afterNextMatchingWrite(bucket: R2Bucket, keyPrefix: string, action: () 
 }
 
 describe('recent feed publisher', () => {
+    it('schedules a publication on the execution context and tolerates a missing one', async () => {
+        const bucket = createMockR2Bucket()
+        const env = publisherEnv(bucket)
+        const waitUntil = vi.fn()
+
+        scheduleRecentFeedPublication({waitUntil} as unknown as ExecutionContext, env)
+
+        expect(waitUntil).toHaveBeenCalledOnce()
+        await expect(waitUntil.mock.calls[0]?.[0] as Promise<unknown>).resolves.toEqual({status: 'disabled'})
+
+        expect(() => scheduleRecentFeedPublication(undefined, env)).not.toThrow()
+    })
+
     it('stays disabled unless forced and reports an active publisher as busy', async () => {
         const bucket = createMockR2Bucket()
         const env = publisherEnv(bucket)

@@ -6,7 +6,7 @@ import {consumeMediaPreviewRegenerationMessage} from './lib/admin/mediaPreviewQu
 import {consumeThumbnailRegenerationMessage} from './lib/admin/thumbnailRegeneration'
 import {consumeImageUploadProcessingMessage, reconcileImageUploads} from './lib/media/imageUploadJobs'
 import {cleanupRecentFeed} from './lib/recentMedia/cleanup'
-import {publishRecentFeed} from './lib/recentMedia/publisher'
+import {publishRecentFeed, scheduleRecentFeedPublication} from './lib/recentMedia/publisher'
 import {createWorkerEnv} from './test/workerBindings'
 
 vi.mock('./lib/admin/jobs', async (importOriginal) => {
@@ -24,6 +24,7 @@ vi.mock('./lib/admin/jobs', async (importOriginal) => {
 
 vi.mock('./lib/recentMedia/publisher', () => ({
     publishRecentFeed: vi.fn(async () => ({status: 'disabled'})),
+    scheduleRecentFeedPublication: vi.fn(),
 }))
 
 vi.mock('./lib/recentMedia/cleanup', () => ({
@@ -133,6 +134,7 @@ describe('worker queue handler', () => {
         try {
             await worker.queue(batch, env, {} as ExecutionContext)
             expect(ack).toHaveBeenCalledOnce()
+            expect(scheduleRecentFeedPublication).toHaveBeenCalledWith(expect.anything(), env)
         } finally {
             error.mockRestore()
         }
@@ -170,6 +172,7 @@ describe('worker queue handler', () => {
             if (other !== consumer) expect(other).not.toHaveBeenCalled()
         }
         expect(consumeImageProcessingDeadLetterQueue).not.toHaveBeenCalled()
+        expect(scheduleRecentFeedPublication).toHaveBeenCalledWith(expect.anything(), env)
     })
 
     it('routes the shared dead-letter queue to its consumer', async () => {
@@ -181,6 +184,7 @@ describe('worker queue handler', () => {
         await worker.queue(batch, env, {} as ExecutionContext)
 
         expect(consumeImageProcessingDeadLetterQueue).toHaveBeenCalledWith(batch, env)
+        expect(scheduleRecentFeedPublication).not.toHaveBeenCalled()
         expect(consumeImageUploadProcessingMessage).not.toHaveBeenCalled()
         expect(consumeMediaPreviewRegenerationMessage).not.toHaveBeenCalled()
         expect(consumeThumbnailRegenerationMessage).not.toHaveBeenCalled()

@@ -9,7 +9,7 @@ import {consumeThumbnailRegenerationMessage} from './lib/admin/thumbnailRegenera
 import {securityHeaders} from './lib/http/securityHeaders'
 import {consumeImageUploadProcessingMessage, reconcileImageUploads} from './lib/media/imageUploadJobs'
 import {cleanupRecentFeed} from './lib/recentMedia/cleanup'
-import {publishRecentFeed} from './lib/recentMedia/publisher'
+import {publishRecentFeed, scheduleRecentFeedPublication} from './lib/recentMedia/publisher'
 import {apiRoutes} from './routes/api'
 import {pageRoutes, renderNotFoundPage} from './routes/pages'
 import type {Bindings} from './types/bindings'
@@ -37,13 +37,14 @@ const worker = app as typeof app & {
     scheduled: (event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) => void
 }
 
-worker.queue = async (batch, env) => {
+worker.queue = async (batch, env, ctx) => {
     if (batch.queue === env.IMAGE_PROCESSING_DLQ_NAME) {
         await consumeImageProcessingDeadLetterQueue(batch, env)
         return
     }
 
     await consumeImageProcessingQueue(batch, env)
+    scheduleRecentFeedPublication(ctx, env)
 }
 
 export async function consumeImageProcessingQueue(batch: MessageBatch, env: Bindings, now = () => new Date()): Promise<void> {
