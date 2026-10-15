@@ -45,6 +45,8 @@ const RECENT_FEED_MAX_BLOCKS_PER_HOUR = 4096
 const RECENT_FEED_BOOTSTRAP_MAX_ROOTS_BYTES = 1024 * 1024
 const RECENT_FEED_BOOTSTRAP_IMMEDIATE_DELETE_LIMIT = 1000
 const RECENT_FEED_CONTENT_ADDRESS_ATTEMPTS = 16
+const SCHEDULED_PUBLISH_MAX_ATTEMPTS = 3
+const SCHEDULED_PUBLISH_RETRY_DELAY_MS = 1_000
 
 type RecentFeedPublisherEnv = {
     DB: D1Database
@@ -190,14 +192,21 @@ export async function publishRecentFeed(
     return publishWithLease(env, config, leaseOwner, startedAt, options.now ?? new Date())
 }
 
-export function scheduleRecentFeedPublication(ctx: Pick<ExecutionContext, 'waitUntil'> | undefined, env: RecentFeedPublisherEnv): void {
+export function scheduleRecentFeedPublication(
+    ctx: Pick<ExecutionContext, 'waitUntil'> | undefined,
+    env: RecentFeedPublisherEnv,
+    options: {maxAttempts?: number; retryDelayMs?: number} = {},
+): void {
     if (!ctx || typeof ctx.waitUntil !== 'function') {
         // Without an execution context there is nothing to defer to; the recovery cron still publishes the feed.
         return
     }
 
+    const maxAttempts = Math.max(1, options.maxAttempts ?? SCHEDULED_PUBLISH_MAX_ATTEMPTS)
+    const retryDelayMs = options.retryDelayMs ?? SCHEDULED_PUBLISH_RETRY_DELAY_MS
+
     ctx.waitUntil(
-        publishRecentFeed(env).catch((error) => {
+        publishScheduledRecentFeed(env, maxAttempts, retryDelayMs).catch((error) => {
             console.error(
                 JSON.stringify({
                     event: 'recent-feed-scheduled-publish-failed',
@@ -206,6 +215,40 @@ export function scheduleRecentFeedPublication(ctx: Pick<ExecutionContext, 'waitU
             )
         }),
     )
+}
+
+// Overlapping mutations can commit while another publisher still holds the lease. Retrying a bounded number
+// of times keeps a waiting /recent reader from stalling on the every-minute recovery cron, which remains the
+// backstop when the retries run out.
+async function publishScheduledRecentFeed(
+    env: RecentFeedPublisherEnv,
+    maxAttempts: number,
+    retryDelayMs: number,
+): Promise<RecentFeedPublishSummary> {
+    let last: RecentFeedPublishSummary = {status: 'disabled'}
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        last = await publishRecentFeed(env)
+
+        if (last.status === 'disabled' || last.status === 'building') {
+            return last
+        }
+
+        if (last.status !== 'busy' && !(await isRecentFeedPublicationPending(env.DB))) {
+            return last
+        }
+
+        if (attempt < maxAttempts) {
+            await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
+        }
+    }
+
+    return last
+}
+
+async function isRecentFeedPublicationPending(db: D1Database): Promise<boolean> {
+    const state = await getRecentFeedState(db)
+    return state.requested_revision > state.published_revision
 }
 
 async function publishWithLease(
