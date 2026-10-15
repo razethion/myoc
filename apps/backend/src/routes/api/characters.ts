@@ -58,6 +58,7 @@ import {
     characterProfileImageObjectKey,
     characterProfileImageUrl,
 } from '../../lib/media/url'
+import {scheduleRecentFeedPublication} from '../../lib/recentMedia/publisher'
 import type {Bindings} from '../../types/bindings'
 
 type CharacterRouteContext = Context<{Bindings: Bindings}>
@@ -1000,6 +1001,8 @@ characterRoutes.patch('/:id', async (c) => {
         throw error
     }
 
+    scheduleRecentFeedPublication(c.executionCtx, c.env)
+
     return jsonResponse(c, CharacterResponseSchema, {
         character: toPublicCharacter(c.env.MEDIA_PUBLIC_BASE_URL, {
             ...character,
@@ -1067,6 +1070,8 @@ characterRoutes.post('/:id/profile-image', async (c) => {
             console.warn('Unable to delete old character profile image', error)
         }
     }
+
+    scheduleRecentFeedPublication(c.executionCtx, c.env)
 
     return jsonResponse(c, CharacterProfileImageResponseSchema, {
         profileImageKey,
@@ -1411,6 +1416,8 @@ characterRoutes.post('/toyhouse-import-items/:itemId/complete', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: failure.message}, failure.status)
     }
 
+    scheduleRecentFeedPublication(c.executionCtx, c.env)
+
     return jsonResponse(
         c,
         ToyhouseImportCompleteResponseSchema,
@@ -1474,6 +1481,8 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
         await deleteR2Objects(c.env.MEDIA_BUCKET, completedKeys)
         return mediaCompletionErrorResponse(c, error, referenceId)
     }
+
+    scheduleRecentFeedPublication(c.executionCtx, c.env)
 
     return jsonResponse(c, MediaResponseSchema, {media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, media)}, 201)
 })
@@ -1721,6 +1730,8 @@ characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
 
     await deleteR2Objects(c.env.MEDIA_BUCKET, deletedKeys)
 
+    scheduleRecentFeedPublication(c.executionCtx, c.env)
+
     return jsonResponse(c, MediaResponseSchema, {media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, nextMedia)})
 })
 
@@ -1744,6 +1755,8 @@ characterRoutes.delete('/:id/media/:mediaId', async (c) => {
         .run()
 
     await deleteCharacterMediaObjects(c.env.MEDIA_BUCKET, media)
+
+    scheduleRecentFeedPublication(c.executionCtx, c.env)
 
     return c.body(null, 204)
 })
@@ -1924,6 +1937,8 @@ characterRoutes.delete('/:id', async (c) => {
             characterHeightChartImageObjectKey(currentUser.id, character.id, heightChart.image.key, heightChart.image.contentType),
         ])
     }
+
+    scheduleRecentFeedPublication(c.executionCtx, c.env)
 
     return c.body(null, 204)
 })
