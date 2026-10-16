@@ -48,6 +48,8 @@ const RECENT_FEED_CONTENT_ADDRESS_ATTEMPTS = 16
 const SCHEDULED_PUBLISH_MAX_ATTEMPTS = 8
 const SCHEDULED_PUBLISH_RETRY_DELAY_MS = 1_000
 const SCHEDULED_PUBLISH_MAX_RETRY_DELAY_MS = 30_000
+// ctx.waitUntil() stops 30 seconds after the response. Keep the retry loop inside that window.
+const SCHEDULED_PUBLISH_TIME_BUDGET_MS = 25_000
 
 type RecentFeedPublisherEnv = {
     DB: D1Database
@@ -196,7 +198,7 @@ export async function publishRecentFeed(
 export function scheduleRecentFeedPublication(
     ctx: Pick<ExecutionContext, 'waitUntil'> | undefined,
     env: RecentFeedPublisherEnv,
-    options: {maxAttempts?: number; retryDelayMs?: number} = {},
+    options: {maxAttempts?: number; retryDelayMs?: number; timeBudgetMs?: number} = {},
 ): void {
     if (!ctx || typeof ctx.waitUntil !== 'function') {
         // Without an execution context there is nothing to defer to; the recovery cron still publishes the feed.
@@ -205,9 +207,10 @@ export function scheduleRecentFeedPublication(
 
     const maxAttempts = Math.max(1, options.maxAttempts ?? SCHEDULED_PUBLISH_MAX_ATTEMPTS)
     const retryDelayMs = options.retryDelayMs ?? SCHEDULED_PUBLISH_RETRY_DELAY_MS
+    const timeBudgetMs = options.timeBudgetMs ?? SCHEDULED_PUBLISH_TIME_BUDGET_MS
 
     ctx.waitUntil(
-        publishScheduledRecentFeed(env, maxAttempts, retryDelayMs).catch((error) => {
+        publishScheduledRecentFeed(env, maxAttempts, retryDelayMs, timeBudgetMs).catch((error) => {
             console.error(
                 JSON.stringify({
                     event: 'recent-feed-scheduled-publish-failed',
@@ -218,16 +221,18 @@ export function scheduleRecentFeedPublication(
     )
 }
 
-// Overlapping mutations can commit while another publisher still holds the lease. Retrying with exponential
-// backoff covers active publishes that run longer than a few seconds, so a reader is not left pinned to an
-// expired generation while a newer revision waits. The every-minute recovery cron remains the backstop when
-// the retries run out.
+// Overlapping mutations can commit while another publisher still holds the lease. This loop retries with
+// exponential backoff until the feed is current or the time budget ends. The budget stays inside the 30-second
+// ctx.waitUntil() window, so every scheduled attempt can run. The every-minute recovery cron remains the
+// backstop when a publisher holds the lease longer than the budget.
 async function publishScheduledRecentFeed(
     env: RecentFeedPublisherEnv,
     maxAttempts: number,
     retryDelayMs: number,
+    timeBudgetMs: number,
 ): Promise<RecentFeedPublishSummary> {
     let last: RecentFeedPublishSummary = {status: 'disabled'}
+    const deadline = Date.now() + timeBudgetMs
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         last = await publishRecentFeed(env)
@@ -240,10 +245,17 @@ async function publishScheduledRecentFeed(
             return last
         }
 
-        if (attempt < maxAttempts) {
-            const delayMs = Math.min(retryDelayMs * 2 ** (attempt - 1), SCHEDULED_PUBLISH_MAX_RETRY_DELAY_MS)
-            await new Promise((resolve) => setTimeout(resolve, delayMs))
+        if (attempt === maxAttempts) {
+            break
         }
+
+        const remainingMs = deadline - Date.now()
+        if (remainingMs <= 0) {
+            break
+        }
+
+        const delayMs = Math.min(retryDelayMs * 2 ** (attempt - 1), SCHEDULED_PUBLISH_MAX_RETRY_DELAY_MS, remainingMs)
+        await new Promise((resolve) => setTimeout(resolve, delayMs))
     }
 
     return last

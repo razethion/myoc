@@ -1562,20 +1562,25 @@ function RecentMediaScript() {
                 loaded = true;
             } catch (error) {
                 if (error?.code === 'recent-generation-expired') {
-                    // The pinned generation is gone; replace the list with the current head so browsing can
-                    // continue instead of dead-ending on the expired banner until a manual refresh click.
+                    // Replace the list only when a different generation exists. An unsafePending list can
+                    // expire before a new head is published; replacing it with the same head would reset
+                    // browsing again on the next load.
                     try {
+                        const pinnedGeneration = recentState.generation;
                         const body = await requestRecentMediaPage(recentState.showNsfw, recentState.showUnapproved);
-                        await replaceRecentPage(body);
-                        startRecentStatePolling();
-                        loaded = true;
-                        return;
+                        if (typeof body.generation === 'string' && body.generation && body.generation !== pinnedGeneration) {
+                            await replaceRecentPage(body);
+                            startRecentStatePolling();
+                            loaded = true;
+                            return;
+                        }
                     } catch {
-                        recentState.hasMore = false;
-                        updateRecentEndState();
-                        showRecentUpdate(true);
-                        return;
+                        // Fall through to the stopped state below.
                     }
+                    recentState.hasMore = false;
+                    updateRecentEndState();
+                    showRecentUpdate(true);
+                    return;
                 }
                 recentState.hasMore = true;
                 if (recentErrorMessage) recentErrorMessage.textContent = error instanceof Error ? error.message : 'Could not load more uploads.';
