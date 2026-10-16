@@ -50,6 +50,8 @@ const SCHEDULED_PUBLISH_RETRY_DELAY_MS = 1_000
 const SCHEDULED_PUBLISH_MAX_RETRY_DELAY_MS = 30_000
 // ctx.waitUntil() stops 30 seconds after the response. Keep the retry loop inside that window.
 const SCHEDULED_PUBLISH_TIME_BUDGET_MS = 25_000
+// Do not start a publish attempt when little budget remains. That attempt would likely miss the window.
+const SCHEDULED_PUBLISH_MIN_ATTEMPT_MS = 2_000
 
 type RecentFeedPublisherEnv = {
     DB: D1Database
@@ -235,6 +237,10 @@ async function publishScheduledRecentFeed(
     const deadline = Date.now() + timeBudgetMs
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (attempt > 1 && deadline - Date.now() < SCHEDULED_PUBLISH_MIN_ATTEMPT_MS) {
+            break
+        }
+
         last = await publishRecentFeed(env)
 
         if (last.status === 'disabled' || last.status === 'building') {

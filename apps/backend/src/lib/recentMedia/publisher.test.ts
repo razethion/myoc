@@ -142,6 +142,51 @@ describe('recent feed publisher', () => {
         }
     })
 
+    it('finishes scheduled retries when a later attempt publishes', async () => {
+        const bucket = createMockR2Bucket()
+        const env = {...publisherEnv(bucket), RECENT_FEED_PUBLISH_ENABLED: 'true'}
+        await seedSourceRows(1)
+        await publishRecentFeed(env, {now: new Date('2026-08-25T13:00:00.000Z')})
+        await seedMedia({
+            id: 'media-2',
+            userId: 'user-1',
+            characterId: 'character-1',
+            sfwReviewStatus: 'approved',
+            sfwApprovedAt: '2026-08-25 13:30:00',
+            sfwPreviewImageKey: 'media-2-preview',
+            sfwPreviewWidth: 600,
+            sfwPreviewHeight: 800,
+            sfwPreviewByteSize: 512,
+            createdAt: '2026-08-25 13:30:00',
+        })
+        await db
+            .prepare(
+                `UPDATE recent_feed_state
+                 SET lease_owner = 'other-publisher', lease_expires_at = '2099-01-01 00:00:00'
+                 WHERE singleton = 1`,
+            )
+            .run()
+        const retryDelays: number[] = []
+        const timeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: () => void, ms?: number) => {
+            retryDelays.push(ms ?? 0)
+            handler()
+            // The competing publisher releases its lease before the next attempt starts.
+            void db.prepare('UPDATE recent_feed_state SET lease_owner = NULL, lease_expires_at = NULL WHERE singleton = 1').run()
+            return 0 as unknown as ReturnType<typeof setTimeout>
+        }) as unknown as typeof setTimeout)
+
+        try {
+            const waitUntil = vi.fn()
+            scheduleRecentFeedPublication({waitUntil} as unknown as ExecutionContext, env, {retryDelayMs: 100})
+
+            await expect(waitUntil.mock.calls[0]?.[0] as Promise<unknown>).resolves.toMatchObject({status: 'published'})
+            expect(retryDelays).toEqual([100])
+        } finally {
+            timeoutSpy.mockRestore()
+            await db.prepare('UPDATE recent_feed_state SET lease_owner = NULL, lease_expires_at = NULL WHERE singleton = 1').run()
+        }
+    })
+
     it('logs a scheduled publication failure instead of rejecting the wait-until promise', async () => {
         const bucket = createMockR2Bucket()
         const env = {
