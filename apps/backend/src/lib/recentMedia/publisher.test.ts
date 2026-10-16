@@ -187,6 +187,17 @@ describe('recent feed publisher', () => {
         }
     })
 
+    it('stops scheduled retries when a bootstrap build is in progress', async () => {
+        const bucket = createMockR2Bucket()
+        const env = {...publisherEnv(bucket), RECENT_FEED_PUBLISH_ENABLED: 'true'}
+        await seedSourceRows(1001)
+
+        const waitUntil = vi.fn()
+        scheduleRecentFeedPublication({waitUntil} as unknown as ExecutionContext, env)
+
+        await expect(waitUntil.mock.calls[0]?.[0] as Promise<unknown>).resolves.toMatchObject({status: 'building'})
+    })
+
     it('logs a scheduled publication failure instead of rejecting the wait-until promise', async () => {
         const bucket = createMockR2Bucket()
         const env = {
