@@ -76,6 +76,35 @@ describe('recent feed publisher', () => {
         }
     })
 
+    it('backs off exponentially between scheduled publication retries', async () => {
+        const bucket = createMockR2Bucket()
+        const env = {...publisherEnv(bucket), RECENT_FEED_PUBLISH_ENABLED: 'true'}
+        await db
+            .prepare(
+                `UPDATE recent_feed_state
+                 SET lease_owner = 'other-publisher', lease_expires_at = '2099-01-01 00:00:00'
+                 WHERE singleton = 1`,
+            )
+            .run()
+        const retryDelays: number[] = []
+        const timeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: () => void, ms?: number) => {
+            retryDelays.push(ms ?? 0)
+            handler()
+            return 0 as unknown as ReturnType<typeof setTimeout>
+        }) as unknown as typeof setTimeout)
+
+        try {
+            const waitUntil = vi.fn()
+            scheduleRecentFeedPublication({waitUntil} as unknown as ExecutionContext, env, {maxAttempts: 4, retryDelayMs: 100})
+
+            await expect(waitUntil.mock.calls[0]?.[0] as Promise<unknown>).resolves.toEqual({status: 'busy'})
+            expect(retryDelays).toEqual([100, 200, 400])
+        } finally {
+            timeoutSpy.mockRestore()
+            await db.prepare('UPDATE recent_feed_state SET lease_owner = NULL, lease_expires_at = NULL WHERE singleton = 1').run()
+        }
+    })
+
     it('logs a scheduled publication failure instead of rejecting the wait-until promise', async () => {
         const bucket = createMockR2Bucket()
         const env = {

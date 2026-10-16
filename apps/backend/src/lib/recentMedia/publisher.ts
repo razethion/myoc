@@ -45,8 +45,9 @@ const RECENT_FEED_MAX_BLOCKS_PER_HOUR = 4096
 const RECENT_FEED_BOOTSTRAP_MAX_ROOTS_BYTES = 1024 * 1024
 const RECENT_FEED_BOOTSTRAP_IMMEDIATE_DELETE_LIMIT = 1000
 const RECENT_FEED_CONTENT_ADDRESS_ATTEMPTS = 16
-const SCHEDULED_PUBLISH_MAX_ATTEMPTS = 3
+const SCHEDULED_PUBLISH_MAX_ATTEMPTS = 8
 const SCHEDULED_PUBLISH_RETRY_DELAY_MS = 1_000
+const SCHEDULED_PUBLISH_MAX_RETRY_DELAY_MS = 30_000
 
 type RecentFeedPublisherEnv = {
     DB: D1Database
@@ -217,9 +218,10 @@ export function scheduleRecentFeedPublication(
     )
 }
 
-// Overlapping mutations can commit while another publisher still holds the lease. Retrying a bounded number
-// of times keeps a waiting /recent reader from stalling on the every-minute recovery cron, which remains the
-// backstop when the retries run out.
+// Overlapping mutations can commit while another publisher still holds the lease. Retrying with exponential
+// backoff covers active publishes that run longer than a few seconds, so a reader is not left pinned to an
+// expired generation while a newer revision waits. The every-minute recovery cron remains the backstop when
+// the retries run out.
 async function publishScheduledRecentFeed(
     env: RecentFeedPublisherEnv,
     maxAttempts: number,
@@ -239,7 +241,8 @@ async function publishScheduledRecentFeed(
         }
 
         if (attempt < maxAttempts) {
-            await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
+            const delayMs = Math.min(retryDelayMs * 2 ** (attempt - 1), SCHEDULED_PUBLISH_MAX_RETRY_DELAY_MS)
+            await new Promise((resolve) => setTimeout(resolve, delayMs))
         }
     }
 
