@@ -187,6 +187,38 @@ describe('recent feed publisher', () => {
         }
     })
 
+    it('logs and swallows scheduled publication failures', async () => {
+        let failure: unknown = new Error('database unavailable')
+        const env = {
+            ...publisherEnv(createMockR2Bucket()),
+            RECENT_FEED_PUBLISH_ENABLED: 'true',
+            DB: {
+                prepare: () => {
+                    throw failure
+                },
+            } as unknown as D1Database,
+        }
+        const waitUntil = vi.fn()
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+        try {
+            scheduleRecentFeedPublication({waitUntil} as unknown as ExecutionContext, env)
+
+            await expect(waitUntil.mock.calls[0]?.[0] as Promise<unknown>).resolves.toBeUndefined()
+            expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('recent-feed-scheduled-publish-failed'))
+            expect(errorSpy).toHaveBeenLastCalledWith(expect.stringContaining('database unavailable'))
+
+            failure = 'database unavailable'
+            const stringWaitUntil = vi.fn()
+            scheduleRecentFeedPublication({waitUntil: stringWaitUntil} as unknown as ExecutionContext, env)
+
+            await expect(stringWaitUntil.mock.calls[0]?.[0] as Promise<unknown>).resolves.toBeUndefined()
+            expect(errorSpy).toHaveBeenLastCalledWith(expect.stringContaining('Unknown recent feed publication error'))
+        } finally {
+            errorSpy.mockRestore()
+        }
+    })
+
     it('stops scheduled retries when a bootstrap build is in progress', async () => {
         const bucket = createMockR2Bucket()
         const env = {...publisherEnv(bucket), RECENT_FEED_PUBLISH_ENABLED: 'true'}

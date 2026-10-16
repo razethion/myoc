@@ -49,7 +49,7 @@ const SCHEDULED_PUBLISH_MAX_ATTEMPTS = 8
 const SCHEDULED_PUBLISH_RETRY_DELAY_MS = 1_000
 const SCHEDULED_PUBLISH_MAX_RETRY_DELAY_MS = 30_000
 // ctx.waitUntil() stops 30 seconds after the response. Keep the retry loop inside that window.
-const SCHEDULED_PUBLISH_TIME_BUDGET_MS = 25_000
+const SCHEDULED_PUBLISH_TIME_BUDGET_MS = 15_000
 // Do not start a publish attempt when little budget remains. That attempt would likely miss the window.
 const SCHEDULED_PUBLISH_MIN_ATTEMPT_MS = 2_000
 
@@ -224,9 +224,10 @@ export function scheduleRecentFeedPublication(
 }
 
 // Overlapping mutations can commit while another publisher still holds the lease. This loop retries with
-// exponential backoff until the feed is current or the time budget ends. The budget stays inside the 30-second
-// ctx.waitUntil() window, so every scheduled attempt can run. The every-minute recovery cron remains the
-// backstop when a publisher holds the lease longer than the budget.
+// exponential backoff until the feed is current or the time budget ends. The 15-second budget bounds the waits
+// and the attempt starts, so a normal publish finishes well inside the 30-second ctx.waitUntil() window. A
+// publish slower than about 17 seconds can still be cut off mid-run; the lease expiry and the every-minute
+// recovery cron then resume publication, so a cut-off attempt delays the feed without corrupting it.
 async function publishScheduledRecentFeed(
     env: RecentFeedPublisherEnv,
     maxAttempts: number,
@@ -255,11 +256,7 @@ async function publishScheduledRecentFeed(
             break
         }
 
-        const remainingMs = deadline - Date.now()
-        if (remainingMs <= 0) {
-            break
-        }
-
+        const remainingMs = Math.max(0, deadline - Date.now())
         const delayMs = Math.min(retryDelayMs * 2 ** (attempt - 1), SCHEDULED_PUBLISH_MAX_RETRY_DELAY_MS, remainingMs)
         await new Promise((resolve) => setTimeout(resolve, delayMs))
     }
