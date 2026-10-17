@@ -48,6 +48,18 @@ jobs:
       - name: Build assets
         run: npm run build
 
+      - name: Diagnose Cloudflare queue lookup
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          for version in 4.130.0 4.133.0; do
+            echo "::group::wrangler@$version queues info myoc-image-processing"
+            npx --yes "wrangler@$version" queues info myoc-image-processing || rc=$?
+            echo "exit_code=$rc"
+            echo "::endgroup::"
+          done
+
       - name: Ensure image processing queues
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

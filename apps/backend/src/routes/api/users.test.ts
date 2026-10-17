@@ -25,6 +25,7 @@ import {authPageActionRoutes} from '../page-actions/auth'
 import {settingsPageActionRoutes} from '../page-actions/settings'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
+const testExecutionContext = {waitUntil: () => {}} as unknown as ExecutionContext
 const profilePhotoKeyPattern = /^avif-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
 function createSquareImageContainer(
@@ -95,6 +96,7 @@ async function postCurrentUserSettings(body: unknown, db: D1Database, options: U
             MEDIA_BUCKET: mediaBucket,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         },
+        testExecutionContext,
     )
 }
 
@@ -116,6 +118,7 @@ async function postRawCurrentUserSettings(
             },
         },
         {DB: db},
+        testExecutionContext,
     )
 }
 
