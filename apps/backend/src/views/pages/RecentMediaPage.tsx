@@ -1654,6 +1654,14 @@ function RecentMediaScript() {
                         await new Promise((resolve) => setTimeout(resolve, recentRefreshRetryDelayMs));
                         body = await requestRecentMediaPage(recentState.showNsfw, recentState.showUnapproved);
                     }
+                    if (body.generation === pinnedGeneration) {
+                        // Still the same list. Keep the reader's position and say the newer list is
+                        // not published yet, instead of resetting the feed to the same content.
+                        if (recentErrorMessage) recentErrorMessage.textContent = 'The new upload list is still being published. Try again in a moment.';
+                        recentError?.classList.remove('hidden');
+                        showRecentUpdate(true);
+                        return;
+                    }
                 }
                 await replaceRecentPage(body);
                 startRecentStatePolling();
