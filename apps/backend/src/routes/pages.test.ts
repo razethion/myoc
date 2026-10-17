@@ -679,6 +679,7 @@ async function postPageAction(path: string, database: D1Database, mediaBucket: R
             MEDIA_BUCKET: mediaBucket,
             MEDIA_PUBLIC_BASE_URL: mediaPublicBaseUrl,
         },
+        {waitUntil: () => {}} as unknown as ExecutionContext,
     )
 }
 

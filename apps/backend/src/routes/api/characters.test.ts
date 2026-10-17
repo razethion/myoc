@@ -282,6 +282,8 @@ function requestEnv(db: D1Database, mediaBucket?: R2Bucket, previewContainer?: D
     }
 }
 
+const testExecutionContext = {waitUntil: () => {}} as unknown as ExecutionContext
+
 function createMockPreviewContainer(responses: Response | Array<Response | Error>) {
     const responseSequence = Array.isArray(responses) ? responses : [responses]
     let responseIndex = 0
@@ -394,6 +396,7 @@ async function postCharacter(body: unknown, db: D1Database, options: CharacterRe
             headers: createRequestHeaders(body, options),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
     )
 }
 
@@ -406,6 +409,7 @@ async function postFolder(body: unknown, db: D1Database, options: CharacterReque
             headers: createRequestHeaders(body, options),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
     )
 }
 
@@ -418,6 +422,7 @@ async function postFolderImage(folderId: string, body: BodyInit, db: D1Database,
             headers: createRequestHeaders(body, options),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
     )
 }
 
@@ -429,6 +434,7 @@ async function deleteFolderImage(folderId: string, db: D1Database, options: Char
             headers: createRequestHeaders(undefined, options, false),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
     )
 }
 
@@ -441,6 +447,7 @@ async function postFolderTree(body: unknown, db: D1Database, options: CharacterR
             headers: createRequestHeaders(body, options),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
     )
 }
 
@@ -453,6 +460,7 @@ async function postCharacterOrder(body: unknown, db: D1Database, options: Charac
             headers: createRequestHeaders(body, options),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
     )
 }
 
@@ -470,6 +478,7 @@ async function putFolderPlacements(
             headers: createRequestHeaders(body, options),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
     )
 }
 
@@ -487,6 +496,7 @@ async function initChunkedMedia(
             headers: createRequestHeaders(body, options),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer, options.asyncImageUploads),
+        testExecutionContext,
     )
 }
 
@@ -510,6 +520,7 @@ async function putChunkedMediaPart(
             headers: createRequestHeaders(body, options, false),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer, options.asyncImageUploads),
+        testExecutionContext,
     )
 }
 
@@ -530,6 +541,7 @@ async function deleteChunkedMediaUpload(
             headers: createRequestHeaders(undefined, options, false),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
     )
 }
 
@@ -549,6 +561,7 @@ async function completeChunkedMedia(
             headers: createRequestHeaders(body, options),
         },
         requestEnv(db, options.mediaBucket, previewContainer),
+        testExecutionContext,
     )
 }
 
@@ -605,6 +618,7 @@ async function initExistingChunkedMedia(
             headers: createRequestHeaders(body, options),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
     )
 }
 
@@ -623,6 +637,7 @@ async function completeExistingChunkedMedia(
             headers: createRequestHeaders(body, options),
         },
         requestEnv(db, options.mediaBucket, previewContainerForRequest(body, options.previewContainer)),
+        testExecutionContext,
     )
 }
 
@@ -634,6 +649,7 @@ async function deleteCharacterMedia(characterId: string, mediaId: string, db: D1
             headers: createRequestHeaders(undefined, options, false),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
     )
 }
 
@@ -651,6 +667,7 @@ async function completeToyhouseImportItem(
             headers: createRequestHeaders(body, options),
         },
         requestEnv(db, options.mediaBucket, previewContainerForRequest(body, options.previewContainer), options.asyncImageUploads),
+        testExecutionContext,
     )
 }
 
@@ -668,6 +685,7 @@ async function failToyhouseImportItem(
             headers: createRequestHeaders(body, options),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
     )
 }
 
@@ -685,6 +703,7 @@ async function postProfileImage(
             headers: createRequestHeaders(body, options),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
     )
 }
 
@@ -702,6 +721,7 @@ async function putHeightChart(
             headers: createRequestHeaders(body, options),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
     )
 }
 
@@ -714,6 +734,7 @@ async function patchFolder(folderId: string, body: unknown, db: D1Database, opti
             headers: createRequestHeaders(body, options),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
     )
 }
 
@@ -731,6 +752,7 @@ async function patchCharacter(
             headers: createRequestHeaders(body, options),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
     )
 }
 
@@ -743,6 +765,7 @@ async function putGallery(characterId: string, body: unknown, db: D1Database, op
             headers: createRequestHeaders(body, options),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
     )
 }
 
@@ -760,6 +783,7 @@ async function deleteCharacter(
             headers: createRequestHeaders(body, options),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
     )
 }
 
@@ -771,6 +795,7 @@ async function deleteFolder(folderId: string, db: D1Database, options: Character
             headers: createRequestHeaders(undefined, options, false),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
     )
 }
 
@@ -2728,6 +2753,30 @@ describe('PATCH /characters/:id', () => {
         ).toEqual({name: character.name, description: ''})
     })
 
+    it('schedules a recent feed publication after a character rename', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+        const waitUntil = vi.fn()
+
+        const body = {name: 'Renamed character', description: 'Scheduled publication check'}
+        const response = await apiRoutes.request(
+            `https://example.com/characters/${character.id}`,
+            {
+                method: 'PATCH',
+                body: JSON.stringify(body),
+                headers: createRequestHeaders(body, {sessionToken, csrfToken}),
+            },
+            requestEnv(db),
+            {waitUntil} as unknown as ExecutionContext,
+        )
+
+        expect(response.status).toBe(200)
+        expect(waitUntil).toHaveBeenCalledTimes(1)
+    })
+
     it('updates a character name with quoted text and hyphenated numbers', async () => {
         const sessionToken = 'session-token'
         const character = createCharacterRecord()
@@ -3790,12 +3839,14 @@ describe('character media uploads', () => {
             `https://example.com/characters/${character.id}/media/chunked/init`,
             {method: 'POST', body: JSON.stringify({ratings: ['sfw']}), headers: {...headers, 'content-type': 'application/json'}},
             routeEnv,
+            testExecutionContext,
         )
         const init = (await initResponse.json()) as ChunkedSfwInitBody
         const partResponse = await apiRoutes.request(
             `https://example.com/characters/${character.id}/media/chunked/${init.mediaId}/sfw/${encodeURIComponent(init.uploads.sfw.uploadId)}/1?imageKey=${init.uploads.sfw.imageKey}&contentType=image%2Fpng`,
             {method: 'PUT', body: createPngFile(800, 600), headers},
             routeEnv,
+            testExecutionContext,
         )
         const part = (await partResponse.json()) as R2UploadedPart
         const completeBody = {
@@ -3807,6 +3858,7 @@ describe('character media uploads', () => {
             `https://example.com/characters/${character.id}/media/chunked/complete`,
             {method: 'POST', body: JSON.stringify(completeBody), headers: {...headers, 'content-type': 'application/json'}},
             routeEnv,
+            testExecutionContext,
         )
         expect(missingKeyResponse.status).toBe(400)
 
@@ -3818,6 +3870,7 @@ describe('character media uploads', () => {
                 headers: {...headers, 'content-type': 'application/json', 'idempotency-key': 'gallery-route-upload'},
             },
             routeEnv,
+            testExecutionContext,
         )
 
         expect(response.status).toBe(202)
@@ -3864,6 +3917,7 @@ describe('character media uploads', () => {
                 }),
             },
             {...requestEnv(db, mediaBucket), IMAGE_UPLOAD_ASYNC_ENABLED: 'true'},
+            testExecutionContext,
         )
 
         expect(response.status).toBe(204)
@@ -3907,6 +3961,7 @@ describe('character media uploads', () => {
                 IMAGE_PROCESSING_QUEUE: {send: vi.fn()} as unknown as Queue,
                 IMAGE_UPLOAD_ASYNC_ENABLED: 'true',
             },
+            testExecutionContext,
         )
 
         expect(response.status).toBe(400)
@@ -4160,6 +4215,7 @@ describe('character media uploads', () => {
                 }),
             },
             requestEnv(db, mediaBucket),
+            testExecutionContext,
         )
 
         expect(response.status).toBe(400)
@@ -7406,6 +7462,7 @@ describe('DELETE /characters/:id', () => {
                 },
             },
             requestEnv(db),
+            testExecutionContext,
         )
 
         expect(response.status).toBe(400)
@@ -7430,6 +7487,7 @@ describe('DELETE /characters/:id', () => {
                 }),
             },
             requestEnv(db),
+            testExecutionContext,
         )
 
         expect(response.status).toBe(400)
@@ -7454,6 +7512,7 @@ describe('DELETE /characters/:id', () => {
                 },
             },
             requestEnv(db),
+            testExecutionContext,
         )
 
         expect(response.status).toBe(413)
@@ -7700,7 +7759,7 @@ describe('remaining character route edge coverage', () => {
         ]
 
         for (const [path, init] of requests) {
-            const response = await apiRoutes.request(`https://example.com${path}`, init, requestEnv(db))
+            const response = await apiRoutes.request(`https://example.com${path}`, init, requestEnv(db), testExecutionContext)
             expect(response.status, path).toBe(401)
             expect(await response.json(), path).toEqual({error: 'Authentication required'})
         }
@@ -7749,6 +7808,7 @@ describe('remaining character route edge coverage', () => {
                 headers: createRequestHeaders('{bad json', {sessionToken, csrfToken}),
             },
             requestEnv(db),
+            testExecutionContext,
         )
         expect(failImportBadJson.status).toBe(200)
 
@@ -7764,6 +7824,7 @@ describe('remaining character route edge coverage', () => {
                 headers: createRequestHeaders('{bad json', {sessionToken, csrfToken}),
             },
             requestEnv(db),
+            testExecutionContext,
         )
         expect(completeImportInvalidBody.status).toBe(400)
         expect(await completeImportInvalidBody.json()).toEqual({error: 'Invalid JSON body'})
@@ -7894,6 +7955,7 @@ describe('remaining character route edge coverage', () => {
                 headers: createRequestHeaders('{bad json', {sessionToken, csrfToken}),
             },
             requestEnv(db),
+            testExecutionContext,
         )
         expect(invalidCreateBodyResponse.status).toBe(400)
         expect(await invalidCreateBodyResponse.json()).toEqual({error: 'Invalid JSON body'})
@@ -7927,6 +7989,7 @@ describe('remaining character route edge coverage', () => {
                 headers: createRequestHeaders('{bad json', {sessionToken, csrfToken}),
             },
             requestEnv(db),
+            testExecutionContext,
         )
         expect(existingCompleteResponse.status).toBe(400)
         expect(await existingCompleteResponse.json()).toEqual({error: 'Invalid JSON body'})
@@ -7946,6 +8009,7 @@ describe('remaining character route edge coverage', () => {
                 headers: createRequestHeaders('{bad json', {sessionToken, csrfToken}),
             },
             requestEnv(db),
+            testExecutionContext,
         )
         expect(invalidJsonResponse.status).toBe(400)
         expect(await invalidJsonResponse.json()).toEqual({error: 'Invalid JSON body'})

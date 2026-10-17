@@ -132,6 +132,8 @@ async function seedApprovalMedia(
     await seedActiveLease()
 }
 
+const testExecutionContext = {waitUntil: () => {}} as unknown as ExecutionContext
+
 async function postImageApproval(
     id: string,
     body: unknown,
@@ -151,6 +153,7 @@ async function postImageApproval(
             },
         },
         requestEnv(mediaBucket, createMockWorkflowBinding(), previewContainer),
+        testExecutionContext,
     )
 }
 
@@ -175,6 +178,7 @@ async function postReportAction(
             },
         },
         requestEnv(mediaBucket),
+        testExecutionContext,
     )
 }
 

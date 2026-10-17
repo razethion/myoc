@@ -8,6 +8,7 @@ import {jsonResponse} from '../../lib/http/jsonResponse'
 import {safeLocalRedirectPath} from '../../lib/http/redirect'
 import {readFormDataUpTo, readJsonUpTo} from '../../lib/http/requestBody'
 import {ErrorResponseSchema, OkResponseSchema, responseSchema} from '../../lib/http/responseSchemas'
+import {scheduleRecentFeedPublication} from '../../lib/recentMedia/publisher'
 import {FIXED_SOCIAL_LINKS, type UserSocialLink} from '../../lib/socialLinks'
 import type {Bindings} from '../../types/bindings'
 
@@ -88,6 +89,8 @@ settingsPageActionRoutes.post('/settings', async (c) => {
 
         throw error
     }
+
+    scheduleRecentFeedPublication(c.executionCtx, c.env)
 
     return respondToUpdate(c, {ok: true})
 })
