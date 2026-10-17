@@ -313,6 +313,8 @@ function RecentMediaScript() {
         const recentDirectPageSize = 24;
         const recentManifestCacheLimit = 256;
         const recentAutoLoadMarginPx = 400;
+        const recentRefreshRetryDelayMs = 3000;
+        const recentRefreshPublishAttempts = 8;
         const recentDesktopMinTilesPerRow = ${RECENT_DESKTOP_MIN_TILES_PER_ROW};
         const recentMaximumTilesPerRow = ${RECENT_MAX_TILES_PER_ROW};
         const recentStateVerificationTtlMs = 5000;
@@ -1562,21 +1564,8 @@ function RecentMediaScript() {
                 loaded = true;
             } catch (error) {
                 if (error?.code === 'recent-generation-expired') {
-                    // Replace the list only when a different generation exists. An unsafePending list can
-                    // expire before a new head is published; replacing it with the same head would reset
-                    // browsing again on the next load.
-                    try {
-                        const pinnedGeneration = recentState.generation;
-                        const body = await requestRecentMediaPage(recentState.showNsfw, recentState.showUnapproved);
-                        if (typeof body.generation === 'string' && body.generation && body.generation !== pinnedGeneration) {
-                            await replaceRecentPage(body);
-                            startRecentStatePolling();
-                            loaded = true;
-                            return;
-                        }
-                    } catch {
-                        // Fall through to the stopped state below.
-                    }
+                    // Stop browsing the pinned list and let the refresh button fetch the newer list.
+                    // Replacing automatically here would swap the whole feed under the reader.
                     recentState.hasMore = false;
                     updateRecentEndState();
                     showRecentUpdate(true);
@@ -1656,7 +1645,16 @@ function RecentMediaScript() {
             setRecentLoading(true);
             recentError?.classList.add('hidden');
             try {
-                const body = await requestRecentMediaPage(recentState.showNsfw, recentState.showUnapproved);
+                const pinnedGeneration = recentState.generation;
+                let body = await requestRecentMediaPage(recentState.showNsfw, recentState.showUnapproved);
+                if (body.generation === pinnedGeneration) {
+                    // The pinned list expired but the newest changes are not published yet.
+                    // Wait briefly for the publisher so the button returns the newer list.
+                    for (let attempt = 0; attempt < recentRefreshPublishAttempts && body.generation === pinnedGeneration; attempt++) {
+                        await new Promise((resolve) => setTimeout(resolve, recentRefreshRetryDelayMs));
+                        body = await requestRecentMediaPage(recentState.showNsfw, recentState.showUnapproved);
+                    }
+                }
                 await replaceRecentPage(body);
                 startRecentStatePolling();
                 refreshed = true;
