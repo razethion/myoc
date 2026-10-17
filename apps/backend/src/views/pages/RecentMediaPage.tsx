@@ -1562,6 +1562,21 @@ function RecentMediaScript() {
                 loaded = true;
             } catch (error) {
                 if (error?.code === 'recent-generation-expired') {
+                    // Replace the list only when a different generation exists. An unsafePending list can
+                    // expire before a new head is published; replacing it with the same head would reset
+                    // browsing again on the next load.
+                    try {
+                        const pinnedGeneration = recentState.generation;
+                        const body = await requestRecentMediaPage(recentState.showNsfw, recentState.showUnapproved);
+                        if (typeof body.generation === 'string' && body.generation && body.generation !== pinnedGeneration) {
+                            await replaceRecentPage(body);
+                            startRecentStatePolling();
+                            loaded = true;
+                            return;
+                        }
+                    } catch {
+                        // Fall through to the stopped state below.
+                    }
                     recentState.hasMore = false;
                     updateRecentEndState();
                     showRecentUpdate(true);
