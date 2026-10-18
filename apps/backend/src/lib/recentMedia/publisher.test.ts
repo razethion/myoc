@@ -9,7 +9,13 @@ import {
     RecentFeedRootSchema,
     RecentFeedYearManifestSchema,
 } from './model'
-import {buildRecentFeedVariantTree, getRecentFeedPointer, publishRecentFeed, requestRecentFeedRegeneration} from './publisher'
+import {
+    buildRecentFeedVariantTree,
+    getRecentFeedPointer,
+    publishRecentFeed,
+    requestRecentFeedRegeneration,
+    scheduleRecentFeedPublication,
+} from './publisher'
 
 const db = useTestDatabase()
 
@@ -29,6 +35,269 @@ function afterNextMatchingWrite(bucket: R2Bucket, keyPrefix: string, action: () 
 }
 
 describe('recent feed publisher', () => {
+    it('schedules a publication on the execution context and tolerates a missing one', async () => {
+        const bucket = createMockR2Bucket()
+        const env = publisherEnv(bucket)
+        const waitUntil = vi.fn()
+
+        scheduleRecentFeedPublication({waitUntil} as unknown as ExecutionContext, env)
+
+        expect(waitUntil).toHaveBeenCalledOnce()
+        await expect(waitUntil.mock.calls[0]?.[0] as Promise<unknown>).resolves.toEqual({status: 'disabled'})
+
+        expect(() => scheduleRecentFeedPublication(undefined, env)).not.toThrow()
+    })
+
+    it('retries a busy scheduled publication within its attempt budget', async () => {
+        const bucket = createMockR2Bucket()
+        const base = publisherEnv(bucket)
+        const prepare = vi.fn((sql: string) => base.DB.prepare(sql))
+        const env = {
+            ...base,
+            RECENT_FEED_PUBLISH_ENABLED: 'true',
+            DB: {prepare} as unknown as D1Database,
+        }
+        await db
+            .prepare(
+                `UPDATE recent_feed_state
+                 SET lease_owner = 'other-publisher', lease_expires_at = '2099-01-01 00:00:00'
+                 WHERE singleton = 1`,
+            )
+            .run()
+
+        try {
+            const waitUntil = vi.fn()
+            scheduleRecentFeedPublication({waitUntil} as unknown as ExecutionContext, env, {maxAttempts: 2, retryDelayMs: 1})
+
+            await expect(waitUntil.mock.calls[0]?.[0] as Promise<unknown>).resolves.toEqual({status: 'busy'})
+            expect(prepare.mock.calls.filter(([sql]) => String(sql).includes('SET lease_owner = ?'))).toHaveLength(2)
+        } finally {
+            await db.prepare('UPDATE recent_feed_state SET lease_owner = NULL, lease_expires_at = NULL WHERE singleton = 1').run()
+        }
+    })
+
+    it('backs off exponentially between scheduled publication retries', async () => {
+        const bucket = createMockR2Bucket()
+        const env = {...publisherEnv(bucket), RECENT_FEED_PUBLISH_ENABLED: 'true'}
+        await db
+            .prepare(
+                `UPDATE recent_feed_state
+                 SET lease_owner = 'other-publisher', lease_expires_at = '2099-01-01 00:00:00'
+                 WHERE singleton = 1`,
+            )
+            .run()
+        const retryDelays: number[] = []
+        const timeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: () => void, ms?: number) => {
+            retryDelays.push(ms ?? 0)
+            handler()
+            return 0 as unknown as ReturnType<typeof setTimeout>
+        }) as unknown as typeof setTimeout)
+
+        try {
+            const waitUntil = vi.fn()
+            scheduleRecentFeedPublication({waitUntil} as unknown as ExecutionContext, env, {maxAttempts: 4, retryDelayMs: 100})
+
+            await expect(waitUntil.mock.calls[0]?.[0] as Promise<unknown>).resolves.toEqual({status: 'busy'})
+            expect(retryDelays).toEqual([100, 200, 400])
+        } finally {
+            timeoutSpy.mockRestore()
+            await db.prepare('UPDATE recent_feed_state SET lease_owner = NULL, lease_expires_at = NULL WHERE singleton = 1').run()
+        }
+    })
+
+    it('stops scheduled retries when the time budget ends', async () => {
+        const bucket = createMockR2Bucket()
+        const env = {...publisherEnv(bucket), RECENT_FEED_PUBLISH_ENABLED: 'true'}
+        await db
+            .prepare(
+                `UPDATE recent_feed_state
+                 SET lease_owner = 'other-publisher', lease_expires_at = '2099-01-01 00:00:00'
+                 WHERE singleton = 1`,
+            )
+            .run()
+        const retryDelays: number[] = []
+        let fakeNow = Date.now()
+        const timeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: () => void, ms?: number) => {
+            fakeNow += ms ?? 0
+            retryDelays.push(ms ?? 0)
+            handler()
+            return 0 as unknown as ReturnType<typeof setTimeout>
+        }) as unknown as typeof setTimeout)
+        const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => fakeNow)
+
+        try {
+            const waitUntil = vi.fn()
+            scheduleRecentFeedPublication({waitUntil} as unknown as ExecutionContext, env, {
+                maxAttempts: 8,
+                retryDelayMs: 10_000,
+                timeBudgetMs: 15_000,
+            })
+
+            await expect(waitUntil.mock.calls[0]?.[0] as Promise<unknown>).resolves.toEqual({status: 'busy'})
+            expect(retryDelays).toEqual([10_000, 5_000])
+        } finally {
+            nowSpy.mockRestore()
+            timeoutSpy.mockRestore()
+            await db.prepare('UPDATE recent_feed_state SET lease_owner = NULL, lease_expires_at = NULL WHERE singleton = 1').run()
+        }
+    })
+
+    it('finishes scheduled retries when a later attempt publishes', async () => {
+        const bucket = createMockR2Bucket()
+        const env = {...publisherEnv(bucket), RECENT_FEED_PUBLISH_ENABLED: 'true'}
+        await seedSourceRows(1)
+        await publishRecentFeed(env, {now: new Date('2026-08-25T13:00:00.000Z')})
+        await seedMedia({
+            id: 'media-2',
+            userId: 'user-1',
+            characterId: 'character-1',
+            sfwReviewStatus: 'approved',
+            sfwApprovedAt: '2026-08-25 13:30:00',
+            sfwPreviewImageKey: 'media-2-preview',
+            sfwPreviewWidth: 600,
+            sfwPreviewHeight: 800,
+            sfwPreviewByteSize: 512,
+            createdAt: '2026-08-25 13:30:00',
+        })
+        await db
+            .prepare(
+                `UPDATE recent_feed_state
+                 SET lease_owner = 'other-publisher', lease_expires_at = '2099-01-01 00:00:00'
+                 WHERE singleton = 1`,
+            )
+            .run()
+        const retryDelays: number[] = []
+        const timeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: () => void, ms?: number) => {
+            retryDelays.push(ms ?? 0)
+            handler()
+            // The competing publisher releases its lease before the next attempt starts.
+            void db.prepare('UPDATE recent_feed_state SET lease_owner = NULL, lease_expires_at = NULL WHERE singleton = 1').run()
+            return 0 as unknown as ReturnType<typeof setTimeout>
+        }) as unknown as typeof setTimeout)
+
+        try {
+            const waitUntil = vi.fn()
+            scheduleRecentFeedPublication({waitUntil} as unknown as ExecutionContext, env, {retryDelayMs: 100})
+
+            await expect(waitUntil.mock.calls[0]?.[0] as Promise<unknown>).resolves.toMatchObject({status: 'published'})
+            expect(retryDelays).toEqual([100])
+        } finally {
+            timeoutSpy.mockRestore()
+            await db.prepare('UPDATE recent_feed_state SET lease_owner = NULL, lease_expires_at = NULL WHERE singleton = 1').run()
+        }
+    })
+
+    it('logs and swallows scheduled publication failures', async () => {
+        let failure: unknown = new Error('database unavailable')
+        const env = {
+            ...publisherEnv(createMockR2Bucket()),
+            RECENT_FEED_PUBLISH_ENABLED: 'true',
+            DB: {
+                prepare: () => {
+                    throw failure
+                },
+            } as unknown as D1Database,
+        }
+        const waitUntil = vi.fn()
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+        try {
+            scheduleRecentFeedPublication({waitUntil} as unknown as ExecutionContext, env)
+
+            await expect(waitUntil.mock.calls[0]?.[0] as Promise<unknown>).resolves.toBeUndefined()
+            expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('recent-feed-scheduled-publish-failed'))
+            expect(errorSpy).toHaveBeenLastCalledWith(expect.stringContaining('database unavailable'))
+
+            failure = 'database unavailable'
+            const stringWaitUntil = vi.fn()
+            scheduleRecentFeedPublication({waitUntil: stringWaitUntil} as unknown as ExecutionContext, env)
+
+            await expect(stringWaitUntil.mock.calls[0]?.[0] as Promise<unknown>).resolves.toBeUndefined()
+            expect(errorSpy).toHaveBeenLastCalledWith(expect.stringContaining('Unknown recent feed publication error'))
+        } finally {
+            errorSpy.mockRestore()
+        }
+    })
+
+    it('stops scheduled retries when a bootstrap build is in progress', async () => {
+        const bucket = createMockR2Bucket()
+        const env = {...publisherEnv(bucket), RECENT_FEED_PUBLISH_ENABLED: 'true'}
+        await seedSourceRows(1001)
+
+        const waitUntil = vi.fn()
+        scheduleRecentFeedPublication({waitUntil} as unknown as ExecutionContext, env)
+
+        await expect(waitUntil.mock.calls[0]?.[0] as Promise<unknown>).resolves.toMatchObject({status: 'building'})
+    })
+
+    it('logs a scheduled publication failure instead of rejecting the wait-until promise', async () => {
+        const bucket = createMockR2Bucket()
+        const env = {
+            ...publisherEnv(bucket),
+            RECENT_FEED_PUBLISH_ENABLED: 'true',
+            DB: {
+                prepare: () => {
+                    throw new Error('D1 unavailable')
+                },
+            } as unknown as D1Database,
+        }
+        const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+        try {
+            const waitUntil = vi.fn()
+            scheduleRecentFeedPublication({waitUntil} as unknown as ExecutionContext, env)
+
+            await expect(waitUntil.mock.calls[0]?.[0] as Promise<unknown>).resolves.toBeUndefined()
+            expect(errorLog).toHaveBeenCalledOnce()
+            expect(JSON.parse(String(errorLog.mock.calls[0]?.[0]))).toEqual({
+                event: 'recent-feed-scheduled-publish-failed',
+                message: 'D1 unavailable',
+            })
+        } finally {
+            errorLog.mockRestore()
+        }
+    })
+
+    it('catches a mutation that lands during an in-flight scheduled publication', async () => {
+        const bucket = createMockR2Bucket()
+        const env = {...publisherEnv(bucket), RECENT_FEED_PUBLISH_ENABLED: 'true'}
+        await seedSourceRows(1)
+        await publishRecentFeed(env, {now: new Date('2026-08-25T13:00:00.000Z')})
+
+        await seedMedia({
+            id: 'media-2',
+            userId: 'user-1',
+            characterId: 'character-1',
+            sfwReviewStatus: 'approved',
+            sfwApprovedAt: '2026-08-25 13:30:00',
+            sfwPreviewImageKey: 'media-2-preview',
+            sfwPreviewWidth: 600,
+            sfwPreviewHeight: 800,
+            sfwPreviewByteSize: 512,
+            createdAt: '2026-08-25 13:30:00',
+        })
+        afterNextMatchingWrite(bucket, 'recent-feed/generations/v1/roots/', async () => {
+            await seedMedia({
+                id: 'media-3',
+                userId: 'user-1',
+                characterId: 'character-1',
+                sfwReviewStatus: 'approved',
+                sfwApprovedAt: '2026-08-25 14:30:00',
+                sfwPreviewImageKey: 'media-3-preview',
+                sfwPreviewWidth: 600,
+                sfwPreviewHeight: 800,
+                sfwPreviewByteSize: 512,
+                createdAt: '2026-08-25 14:30:00',
+            })
+        })
+
+        const waitUntil = vi.fn()
+        scheduleRecentFeedPublication({waitUntil} as unknown as ExecutionContext, env, {retryDelayMs: 1})
+
+        await expect(waitUntil.mock.calls[0]?.[0] as Promise<unknown>).resolves.toMatchObject({status: 'published', revision: 3})
+        expect(await readFeedState()).toMatchObject({requested_revision: 3, published_revision: 3, lease_owner: null})
+    })
+
     it('stays disabled unless forced and reports an active publisher as busy', async () => {
         const bucket = createMockR2Bucket()
         const env = publisherEnv(bucket)
