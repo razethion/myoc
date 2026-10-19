@@ -94,19 +94,27 @@ export async function getRecentMediaPage(env: RecentFeedQueryEnv, options: Recen
     const hasMore = rows.length > request.limit
     const pageRows = hasMore ? rows.slice(0, request.limit) : rows
     const items = recentMediaItemsFromRows(pageRows, env.MEDIA_PUBLIC_BASE_URL, request.showNsfw, request.showUnapproved)
+    const cursorSecret = requireCursorSecret(env)
+    const firstRow = pageRows[0]
     const lastRow = pageRows.at(-1)
-    const nextCursor =
-        hasMore && lastRow
-            ? await encodeRecentFeedCursor(
-                  {version: 2, variant: request.variant, createdAt: lastRow.created_at, id: lastRow.id},
-                  requireCursorSecret(env),
-              )
-            : null
 
     return {
         items,
-        nextCursor,
-        head: await getRecentFeedHead(env, request.variant),
+        nextCursor:
+            hasMore && lastRow
+                ? await encodeRecentFeedCursor(
+                      {version: 2, variant: request.variant, createdAt: lastRow.created_at, id: lastRow.id},
+                      cursorSecret,
+                  )
+                : null,
+        // Head comes from the same result set as the items so a pinned head can never
+        // disagree with what the page shows; the client re-pins only from page-1 responses.
+        head: firstRow
+            ? await encodeRecentFeedCursor(
+                  {version: 2, variant: request.variant, createdAt: firstRow.created_at, id: firstRow.id},
+                  cursorSecret,
+              )
+            : null,
     }
 }
 

@@ -265,6 +265,33 @@ describe('recent media direct query', () => {
         expect(secondPage.nextCursor).toBeNull()
     })
 
+    it('pins the head to the newest item on the first page', async () => {
+        await seedFeedOwner()
+        await seedMedia({
+            id: 'first',
+            userId: 'user-1',
+            characterId: 'character-1',
+            sfwPreviewImageKey: 'first-preview',
+            createdAt: '2026-08-25 12:00:00',
+            updatedAt: '2026-08-25 12:00:00',
+        })
+        await seedMedia({
+            id: 'second',
+            userId: 'user-1',
+            characterId: 'character-1',
+            sfwPreviewImageKey: 'second-preview',
+            createdAt: '2026-08-25 12:01:00',
+            updatedAt: '2026-08-25 12:01:00',
+        })
+
+        const page = await getRecentMediaPage(env, {limit: 1})
+        expect(page.items.map((item) => item.id)).toEqual(['second'])
+
+        const state = await getRecentMediaState(env)
+        expect(page.head).toBe(state.head)
+        await expect(getRecentMediaState(env, {cursor: page.head})).resolves.toMatchObject({newCount: 0})
+    })
+
     it('rejects cursors from another variant or tampered payloads', async () => {
         await seedFeedOwner()
         for (const [id, createdAt] of [
