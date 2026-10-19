@@ -4,7 +4,6 @@ import {toSqlTimestamp} from '../auth/session'
 import {backupD1Database, type D1BackupSummary} from '../db/backup'
 import {type LeaderboardRefreshSummary, refreshLeaderboard} from '../leaderboard'
 import {cleanupStaleR2Media, type R2CleanupSummary} from '../media/r2Cleanup'
-import type {RecentFeedPublishSummary} from '../recentMedia/publisher'
 import {type AdminErrorLogEntry, getAdminErrorLogs} from './errorLog'
 import {
     activeMediaPreviewRegenerationWorkflowInstanceIds,
@@ -33,10 +32,6 @@ const ADMIN_JOBS = [
         label: 'Leaderboard Refresh',
     },
     {
-        name: 'recent-feed-regeneration',
-        label: 'Recent Page Regeneration',
-    },
-    {
         name: 'media-preview-regeneration',
         label: 'Media Preview Regeneration',
     },
@@ -62,7 +57,6 @@ export type AdminJobSummary =
     | LeaderboardRefreshSummary
     | MediaPreviewRegenerationSummary
     | SizeChartImageBackfillSummary
-    | RecentFeedPublishSummary
 
 type AdminJobEnv = Pick<
     Bindings,
@@ -185,10 +179,6 @@ export async function runAdminJob(env: AdminJobEnv, jobName: AdminJobName, optio
         return await startThumbnailRegenerationJob(env, options)
     }
 
-    if (jobName === 'recent-feed-regeneration') {
-        return await startRecentFeedRegenerationJob(env, options)
-    }
-
     if (jobName === 'size-chart-image-backfill') {
         return await startSizeChartImageBackfillJob(env, options)
     }
@@ -266,57 +256,6 @@ async function startMediaPreviewRegenerationJob(
     options: AdminJobRunOptions,
 ): Promise<AdminJobRunResult<MediaPreviewRegenerationSummary>> {
     return await startRegenerationWorkflowJob(env, 'media-preview-regeneration', options, 'media-previews')
-}
-
-async function startRecentFeedRegenerationJob(
-    env: AdminJobEnv,
-    options: AdminJobRunOptions,
-): Promise<AdminJobRunResult<RecentFeedPublishSummary>> {
-    const jobName = 'recent-feed-regeneration'
-    const summary: RecentFeedPublishSummary = {status: 'building'}
-    let started = await startExclusiveAdminJobRun(env.DB, jobName, options, summary, parseRecentFeedPublishSummary)
-
-    if (!started.created) {
-        const active = await isWorkflowInstanceActive(env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW, started.runId, started.startedAt)
-
-        if (active) {
-            return {
-                jobName,
-                runId: started.runId,
-                status: 'running',
-                summary: started.summary,
-            }
-        }
-
-        await failAdminJobRun(env.DB, started.runId, 'The recent page regeneration Workflow stopped before the job record finished.')
-        started = await startExclusiveAdminJobRun(env.DB, jobName, options, summary, parseRecentFeedPublishSummary)
-
-        if (!started.created) {
-            return {
-                jobName,
-                runId: started.runId,
-                status: 'running',
-                summary: started.summary,
-            }
-        }
-    }
-
-    try {
-        await env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW.create({
-            id: started.runId,
-            params: {kind: 'recent-feed', runId: started.runId} satisfies RegenerateMediaPreviewsWorkflowParams,
-        })
-    } catch (error) {
-        await tryFinishAdminJobRun(env.DB, started.runId, 'error', null, errorMessage(error))
-        throw error
-    }
-
-    return {
-        jobName,
-        runId: started.runId,
-        status: 'running',
-        summary,
-    }
 }
 
 async function startSizeChartImageBackfillJob(
@@ -476,15 +415,6 @@ async function startExclusiveAdminJobRun<TSummary extends AdminJobSummary>(
         startedAt: active.started_at,
         summary: created ? summary : (parseStoredSummary(active.summary_json) ?? summary),
     }
-}
-
-async function isWorkflowInstanceActive(
-    workflow: Bindings['REGENERATE_MEDIA_PREVIEWS_WORKFLOW'],
-    runId: string,
-    startedAt: string,
-): Promise<boolean> {
-    const recentlyStarted = wasWorkflowRecentlyStarted(startedAt)
-    return (await getWorkflowInstanceState(workflow, runId, recentlyStarted)) === 'active'
 }
 
 async function isMediaPreviewWorkflowActive(
@@ -700,16 +630,6 @@ function parseMediaPreviewRegenerationSummary(value: string | null): MediaPrevie
     const parsed = parseSummary(value)
 
     return parsed && 'totalVariants' in parsed && 'processedVariants' in parsed ? parsed : null
-}
-
-function parseRecentFeedPublishSummary(value: string | null): RecentFeedPublishSummary | null {
-    const parsed = parseSummary(value)
-
-    return parsed && 'status' in parsed && isRecentFeedPublishStatus(parsed.status) ? (parsed as RecentFeedPublishSummary) : null
-}
-
-function isRecentFeedPublishStatus(value: unknown): value is RecentFeedPublishSummary['status'] {
-    return value === 'disabled' || value === 'current' || value === 'busy' || value === 'building' || value === 'published'
 }
 
 function errorMessage(error: unknown): string {

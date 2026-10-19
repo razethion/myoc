@@ -16,7 +16,6 @@ import {
     characterProfileImageObjectKey,
     profilePhotoObjectKey,
 } from '../../lib/media/url'
-import {scheduleRecentFeedPublication} from '../../lib/recentMedia/publisher'
 import type {Bindings} from '../../types/bindings'
 
 type AdminRouteContext = Context<{Bindings: Bindings}>
@@ -174,8 +173,6 @@ adminPageActionRoutes.post('/admin/reports/images/:mediaId/:rating/:action', asy
     } else {
         await banReportedUser(c.env.DB, c.env.MEDIA_BUCKET, media.user_id, authorization.currentUser.id, now)
     }
-
-    scheduleRecentFeedPublication(c.executionCtx, c.env)
 
     return respondToReportAction(c, {ok: true})
 })

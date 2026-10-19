@@ -16,7 +16,6 @@ import {readGalleryImageDimensions} from '../../lib/media/imageMetadata'
 import {GALLERY_NSFW_BLUR_CONTENT_TYPE, generateNsfwBlurImage, mediaPreviewContainerIndex} from '../../lib/media/previewGeneration'
 import {deleteR2Objects} from '../../lib/media/r2Delete'
 import {characterMediaImageObjectKey, characterMediaNsfwBlurImageObjectKey, characterMediaPreviewImageObjectKey} from '../../lib/media/url'
-import {scheduleRecentFeedPublication} from '../../lib/recentMedia/publisher'
 import type {Bindings} from '../../types/bindings'
 
 export const adminRoutes = new Hono<{Bindings: Bindings}>()
@@ -192,7 +191,6 @@ adminRoutes.post('/image-approvals/:mediaId', async (c) => {
     }
 
     await applyMediaReview(c.env, media, update, authorization.currentUser.id, now)
-    scheduleRecentFeedPublication(c.executionCtx, c.env)
 
     return jsonResponse(
         c,

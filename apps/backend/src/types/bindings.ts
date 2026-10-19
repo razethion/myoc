@@ -18,6 +18,4 @@ export type Bindings = Omit<
     IMAGE_PROCESSING_DLQ_NAME: string
     IMAGE_UPLOAD_ASYNC_ENABLED?: string
     RECENT_FEED_CURSOR_SECRET?: string
-    RECENT_FEED_CLEANUP_ENABLED?: string
-    RECENT_FEED_PUBLIC_BASE_URL?: string
 }

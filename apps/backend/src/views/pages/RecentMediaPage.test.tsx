@@ -42,12 +42,9 @@ function mediaItem(id: string, groupId = `group-${id}`, overrides: Partial<Recen
 
 function recentPage(overrides: Partial<RecentMediaPageData> = {}): RecentMediaPageData {
     return {
-        generation: null,
+        head: null,
         items: [],
         nextCursor: null,
-        nextPosition: null,
-        publicRootUrl: null,
-        publishedAt: null,
         ...overrides,
     }
 }
@@ -88,11 +85,7 @@ describe('RecentMediaPage', () => {
 
     it('renders active saved media controls and paging data for a signed-in user', () => {
         const html = renderRecentMediaPage({
-            page: recentPage({
-                generation: 'generation-7',
-                nextPosition: 24,
-                publicRootUrl: 'https://feeds.example.com/recent-feed/generations/v1/roots/generation-7.json',
-            }),
+            page: recentPage({head: 'head-cursor', nextCursor: 'signed-cursor'}),
             showNsfw: true,
             user: currentUser,
         })
@@ -101,10 +94,12 @@ describe('RecentMediaPage', () => {
         expect(html).toMatch(/<button(?=[^>]*aria-pressed="true")[^>]*>Hide unapproved<\/button>/)
         expect(html).toContain('Hide NSFW media')
         expect(html).toContain('Hide unapproved')
+        expect(html).toContain('data-next-cursor="signed-cursor"')
+        expect(html).toContain('data-head="head-cursor"')
         expect(html).toContain('Load more')
     })
 
-    it('keeps fallback pagination available', () => {
+    it('keeps cursor pagination available', () => {
         const html = renderRecentMediaPage({page: recentPage({nextCursor: 'signed-fallback-cursor'})})
 
         expect(html).toContain('data-has-more="true"')

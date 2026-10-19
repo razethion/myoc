@@ -309,16 +309,9 @@ function RecentMediaScript() {
         const recentUpdateMessage = document.querySelector('[data-recent-update-message]');
         const recentRefreshButton = document.querySelector('[data-recent-refresh]');
         const recentStackDefaultKey = 'myoc:recent-media:expand-groups';
-        const recentBlockCacheLimit = 8;
-        const recentDirectPageSize = 24;
-        const recentManifestCacheLimit = 256;
         const recentAutoLoadMarginPx = 400;
-        const recentRefreshRetryDelayMs = 3000;
-        const recentRefreshPublishAttempts = 8;
         const recentDesktopMinTilesPerRow = ${RECENT_DESKTOP_MIN_TILES_PER_ROW};
         const recentMaximumTilesPerRow = ${RECENT_MAX_TILES_PER_ROW};
-        const recentStateVerificationTtlMs = 5000;
-        const recentFeedSchemaVersion = 1;
 
         function readRecentStackDefault() {
             try {
@@ -337,446 +330,26 @@ function RecentMediaScript() {
         }
 
         const recentState = {
-            directBlockCache: new Map(),
-            directManifestCache: new Map(),
-            directPosition: readRecentDirectPosition(recentFeed?.dataset.nextPosition),
-            directRoot: null,
-            directRootUrl: readRecentRootUrl(recentFeed?.dataset.publicRootUrl),
             pageCursor: readRecentCursor(recentFeed?.dataset.nextCursor),
+            headCursor: readRecentCursor(recentFeed?.dataset.head),
             entries: [],
             expandGroupsByDefault: readRecentStackDefault(),
-            generation: recentFeed?.dataset.generation || '',
-            availableGeneration: '',
             autoLoadFrame: 0,
-            generationExpired: false,
             inFlight: false,
             hasMore: recentFeed?.dataset.hasMore === 'true',
             itemIds: new Set(),
             layoutGroups: [],
-            mediaOrigin: readRecentMediaOrigin(recentFeed?.dataset.mediaOrigin),
             nextLayoutGroupId: 0,
             renderedEntryCount: 0,
             stateInFlight: null,
             statePollId: 0,
-            stateVerifiedAt: 0,
             showNsfw: recentFeed?.dataset.showNsfw === 'true',
             showUnapproved: recentFeed?.dataset.showUnapproved !== 'false',
             stackGroups: new Map(),
         };
 
-        function recentGenerationExpiredError() {
-            const error = new Error('This upload list expired. Refresh it to keep browsing.');
-            error.code = 'recent-generation-expired';
-            return error;
-        }
-
-        function readRecentDirectPosition(value) {
-            if (value === undefined || value === null || value === '') return null;
-            if (typeof value !== 'number' && (typeof value !== 'string' || !/^\\d+$/.test(value))) return null;
-            const position = Number(value);
-            return Number.isSafeInteger(position) && position >= 0 ? position : null;
-        }
-
         function readRecentCursor(value) {
             return typeof value === 'string' && value.length > 0 && value.length <= 512 ? value : '';
-        }
-
-        function readRecentRootUrl(value) {
-            if (!value) return '';
-            try {
-                const url = new URL(value);
-                if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) return '';
-                if (!/^\\/recent-feed\\/generations\\/v1\\/roots\\/[A-Za-z0-9._-]+\\.json$/.test(url.pathname)) return '';
-                return url.href;
-            } catch {
-                return '';
-            }
-        }
-
-        function readRecentMediaOrigin(value) {
-            if (!value) return '';
-            try {
-                const url = new URL(value);
-                return url.protocol === 'https:' ? url.origin : '';
-            } catch {
-                return '';
-            }
-        }
-
-        function recentFeedVariant() {
-            return 'n' + (recentState.showNsfw ? '1' : '0') + '-u' + (recentState.showUnapproved ? '1' : '0');
-        }
-
-        function isRecentRecord(value) {
-            return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-        }
-
-        function isRecentCount(value, allowZero = true) {
-            return Number.isSafeInteger(value) && (allowZero ? value >= 0 : value > 0);
-        }
-
-        function isRecentInternalHref(value) {
-            return typeof value === 'string'
-                && value.startsWith('/')
-                && !value.startsWith('//')
-                && !value.includes('\\\\')
-                && !/[\\u0000-\\u001f]/.test(value);
-        }
-
-        function isRecentImageUrl(value) {
-            if (typeof value !== 'string' || !recentState.mediaOrigin) return false;
-            try {
-                const url = new URL(value);
-                return url.protocol === 'https:'
-                    && url.origin === recentState.mediaOrigin
-                    && !url.username
-                    && !url.password;
-            } catch {
-                return false;
-            }
-        }
-
-        function isRecentMediaItem(item) {
-            return isRecentRecord(item)
-                && typeof item.id === 'string' && item.id.length > 0 && item.id.length <= 128
-                && typeof item.groupId === 'string' && item.groupId.length > 0 && item.groupId.length <= 512
-                && typeof item.alt === 'string' && item.alt.length <= 1000
-                && Number.isFinite(item.width)
-                && item.width > 0
-                && Number.isFinite(item.height)
-                && item.height > 0
-                && isRecentImageUrl(item.previewSrc)
-                && isRecentImageUrl(item.originalSrc)
-                && isRecentRecord(item.character)
-                && typeof item.character.name === 'string' && item.character.name.length > 0 && item.character.name.length <= 256
-                && isRecentInternalHref(item.character.href)
-                && isRecentImageUrl(item.character.avatarUrl)
-                && isRecentRecord(item.user)
-                && typeof item.user.username === 'string' && item.user.username.length > 0 && item.user.username.length <= 128
-                && isRecentInternalHref(item.user.href)
-                && (item.user.avatarUrl === null || isRecentImageUrl(item.user.avatarUrl))
-                && typeof item.user.initial === 'string' && item.user.initial.length <= 8;
-        }
-
-        function recentFeedKeyMatches(key, prefix) {
-            return typeof key === 'string'
-                && key.startsWith(prefix)
-                && key.endsWith('.json')
-                && !key.includes('..')
-                && !key.includes('\\\\')
-                && /^[A-Za-z0-9:_./-]+$/.test(key);
-        }
-
-        function validateRecentReferences(references, labelName, labelPattern, keyPrefix, maximumLength) {
-            if (!Array.isArray(references) || references.length > maximumLength) {
-                throw new Error('The recent uploads manifest was invalid.');
-            }
-
-            let previousLabel = '';
-            let itemCount = 0;
-            const labels = new Set();
-            for (const reference of references) {
-                const label = reference?.[labelName];
-                if (!isRecentRecord(reference)
-                    || typeof label !== 'string'
-                    || !labelPattern.test(label)
-                    || labels.has(label)
-                    || (previousLabel && previousLabel <= label)
-                    || !isRecentCount(reference.itemCount, false)
-                    || !recentFeedKeyMatches(reference.key, keyPrefix + label + '/')) {
-                    throw new Error('The recent uploads manifest was invalid.');
-                }
-                labels.add(label);
-                previousLabel = label;
-                itemCount += reference.itemCount;
-                if (!Number.isSafeInteger(itemCount)) throw new Error('The recent uploads manifest was invalid.');
-            }
-            return itemCount;
-        }
-
-        function validateRecentBlockReferences(references, variant, hour) {
-            if (!Array.isArray(references) || references.length > 4096) {
-                throw new Error('The recent uploads manifest was invalid.');
-            }
-            let itemCount = 0;
-            const keys = new Set();
-            for (const reference of references) {
-                if (!isRecentRecord(reference)
-                    || !isRecentCount(reference.itemCount, false)
-                    || keys.has(reference.key)
-                    || !recentFeedKeyMatches(reference.key, 'recent-feed/generations/v1/blocks/' + variant + '/' + hour + '/')) {
-                    throw new Error('The recent uploads manifest was invalid.');
-                }
-                keys.add(reference.key);
-                itemCount += reference.itemCount;
-                if (!Number.isSafeInteger(itemCount)) throw new Error('The recent uploads manifest was invalid.');
-            }
-            return itemCount;
-        }
-
-        function recentFeedObjectUrl(key) {
-            if (!recentState.directRootUrl) throw new Error('The recent uploads source was invalid.');
-            const rootUrl = new URL(recentState.directRootUrl);
-            const objectUrl = new URL('/' + key, rootUrl.origin);
-            if (objectUrl.origin !== rootUrl.origin) throw new Error('The recent uploads source was invalid.');
-            return objectUrl.href;
-        }
-
-        async function fetchRecentFeedJson(url, cacheManifest = true) {
-            if (cacheManifest && recentState.directManifestCache.has(url)) {
-                const cached = recentState.directManifestCache.get(url);
-                recentState.directManifestCache.delete(url);
-                recentState.directManifestCache.set(url, cached);
-                return cached;
-            }
-
-            const response = await fetch(url, {
-                credentials: 'omit',
-                headers: {accept: 'application/json'},
-                mode: 'cors',
-            });
-            if (response.status === 404 || response.status === 410) throw recentGenerationExpiredError();
-            if (!response.ok) throw new Error('Could not load uploads.');
-            if (response.url && new URL(response.url).origin !== new URL(url).origin) {
-                throw new Error('The recent uploads source was invalid.');
-            }
-            const contentType = response.headers.get('content-type');
-            if (!contentType?.toLowerCase().includes('application/json')) {
-                throw new Error('The recent uploads response was invalid.');
-            }
-            const contentLength = Number(response.headers.get('content-length'));
-            if (Number.isFinite(contentLength) && contentLength > 2_000_000) {
-                throw new Error('The recent uploads manifest was too large.');
-            }
-            const text = await response.text();
-            if (text.length > 2_000_000) throw new Error('The recent uploads manifest was too large.');
-            let body;
-            try {
-                body = JSON.parse(text);
-            } catch {
-                throw new Error('The recent uploads manifest was invalid.');
-            }
-            if (cacheManifest) {
-                recentState.directManifestCache.delete(url);
-                recentState.directManifestCache.set(url, body);
-                while (recentState.directManifestCache.size > recentManifestCacheLimit) {
-                    const oldestKey = recentState.directManifestCache.keys().next().value;
-                    if (typeof oldestKey !== 'string') break;
-                    recentState.directManifestCache.delete(oldestKey);
-                }
-            }
-            return body;
-        }
-
-        async function readRecentRoot() {
-            if (recentState.directRoot) return recentState.directRoot;
-            const root = await fetchRecentFeedJson(recentState.directRootUrl);
-            const variant = recentFeedVariant();
-            const variantRoot = root?.variants?.[variant];
-            if (!isRecentRecord(root)
-                || root.schemaVersion !== recentFeedSchemaVersion
-                || root.generation !== recentState.generation
-                || !isRecentRecord(variantRoot)
-                || !isRecentCount(variantRoot.itemCount)) {
-                throw new Error('The recent uploads root was invalid.');
-            }
-            const count = validateRecentReferences(
-                variantRoot.years,
-                'year',
-                /^\\d{4}$/,
-                'recent-feed/generations/v1/manifests/' + variant + '/years/',
-                100,
-            );
-            if (count !== variantRoot.itemCount) throw new Error('The recent uploads root count was invalid.');
-            recentState.directRoot = root;
-            return root;
-        }
-
-        async function readRecentYear(reference, variant) {
-            const manifest = await fetchRecentFeedJson(recentFeedObjectUrl(reference.key));
-            if (!isRecentRecord(manifest)
-                || manifest.schemaVersion !== recentFeedSchemaVersion
-                || manifest.variant !== variant
-                || manifest.year !== reference.year
-                || manifest.itemCount !== reference.itemCount) {
-                throw new Error('The recent uploads year manifest was invalid.');
-            }
-            const count = validateRecentReferences(
-                manifest.months,
-                'month',
-                new RegExp('^' + reference.year + '-(?:0[1-9]|1[0-2])$'),
-                'recent-feed/generations/v1/manifests/' + variant + '/months/',
-                12,
-            );
-            if (count !== manifest.itemCount) throw new Error('The recent uploads year count was invalid.');
-            return manifest;
-        }
-
-        async function readRecentMonth(reference, variant, year) {
-            const manifest = await fetchRecentFeedJson(recentFeedObjectUrl(reference.key));
-            if (!isRecentRecord(manifest)
-                || manifest.schemaVersion !== recentFeedSchemaVersion
-                || manifest.variant !== variant
-                || manifest.month !== reference.month
-                || !reference.month.startsWith(year + '-')
-                || manifest.itemCount !== reference.itemCount) {
-                throw new Error('The recent uploads month manifest was invalid.');
-            }
-            const count = validateRecentReferences(
-                manifest.days,
-                'day',
-                new RegExp('^' + reference.month + '-(?:0[1-9]|[12][0-9]|3[01])$'),
-                'recent-feed/generations/v1/manifests/' + variant + '/days/',
-                31,
-            );
-            if (count !== manifest.itemCount) throw new Error('The recent uploads month count was invalid.');
-            return manifest;
-        }
-
-        async function readRecentDay(reference, variant, month) {
-            const manifest = await fetchRecentFeedJson(recentFeedObjectUrl(reference.key));
-            if (!isRecentRecord(manifest)
-                || manifest.schemaVersion !== recentFeedSchemaVersion
-                || manifest.variant !== variant
-                || manifest.day !== reference.day
-                || !reference.day.startsWith(month + '-')
-                || manifest.itemCount !== reference.itemCount
-                || !Array.isArray(manifest.hours)
-                || manifest.hours.length > 24) {
-                throw new Error('The recent uploads day manifest was invalid.');
-            }
-
-            let previousHour = '';
-            let count = 0;
-            const hours = new Set();
-            for (const hour of manifest.hours) {
-                if (!isRecentRecord(hour)
-                    || typeof hour.hour !== 'string'
-                    || !new RegExp('^' + reference.day + 'T(?:[01][0-9]|2[0-3])$').test(hour.hour)
-                    || hours.has(hour.hour)
-                    || (previousHour && previousHour <= hour.hour)
-                    || !isRecentCount(hour.itemCount, false)) {
-                    throw new Error('The recent uploads day manifest was invalid.');
-                }
-                const blockCount = validateRecentBlockReferences(hour.blocks, variant, hour.hour);
-                if (blockCount !== hour.itemCount) throw new Error('The recent uploads hour count was invalid.');
-                hours.add(hour.hour);
-                previousHour = hour.hour;
-                count += hour.itemCount;
-                if (!Number.isSafeInteger(count)) throw new Error('The recent uploads day manifest was invalid.');
-            }
-            if (count !== manifest.itemCount) throw new Error('The recent uploads day count was invalid.');
-            return manifest;
-        }
-
-        async function readRecentBlock(reference, variant, hour) {
-            const url = recentFeedObjectUrl(reference.key);
-            if (recentState.directBlockCache.has(url)) {
-                const cached = recentState.directBlockCache.get(url);
-                recentState.directBlockCache.delete(url);
-                recentState.directBlockCache.set(url, cached);
-                return cached;
-            }
-            const block = await fetchRecentFeedJson(url, false);
-            if (!isRecentRecord(block)
-                || block.schemaVersion !== recentFeedSchemaVersion
-                || block.variant !== variant
-                || block.hour !== hour
-                || !Array.isArray(block.items)
-                || block.items.length !== reference.itemCount
-                || !block.items.every(isRecentMediaItem)) {
-                throw new Error('The recent uploads block was invalid.');
-            }
-            recentState.directBlockCache.set(url, block);
-            while (recentState.directBlockCache.size > recentBlockCacheLimit) {
-                const oldestKey = recentState.directBlockCache.keys().next().value;
-                if (typeof oldestKey !== 'string') break;
-                recentState.directBlockCache.delete(oldestKey);
-            }
-            return block;
-        }
-
-        async function collectRecentReferences(references, position, limit, loadChild, collectChild) {
-            const requests = [];
-            let offset = position;
-            let remaining = limit;
-            for (const reference of references) {
-                if (remaining === 0) break;
-                if (offset >= reference.itemCount) {
-                    offset -= reference.itemCount;
-                    continue;
-                }
-                const childOffset = offset;
-                const childLimit = Math.min(remaining, reference.itemCount - childOffset);
-                requests.push((async () => collectChild(await loadChild(reference), childOffset, childLimit))());
-                remaining -= childLimit;
-                offset = 0;
-            }
-            return (await Promise.all(requests)).flat();
-        }
-
-        async function collectRecentBlocks(hour, position, limit, variant) {
-            return collectRecentReferences(
-                hour.blocks,
-                position,
-                limit,
-                (reference) => readRecentBlock(reference, variant, hour.hour),
-                (block, offset, remaining) => block.items.slice(offset, offset + remaining),
-            );
-        }
-
-        async function collectRecentHours(day, position, limit, variant) {
-            return collectRecentReferences(
-                day.hours,
-                position,
-                limit,
-                async (hour) => hour,
-                (hour, offset, remaining) => collectRecentBlocks(hour, offset, remaining, variant),
-            );
-        }
-
-        async function collectRecentDays(month, position, limit, variant) {
-            return collectRecentReferences(
-                month.days,
-                position,
-                limit,
-                (reference) => readRecentDay(reference, variant, month.month),
-                (day, offset, remaining) => collectRecentHours(day, offset, remaining, variant),
-            );
-        }
-
-        async function collectRecentMonths(year, position, limit, variant) {
-            return collectRecentReferences(
-                year.months,
-                position,
-                limit,
-                (reference) => readRecentMonth(reference, variant, year.year),
-                (month, offset, remaining) => collectRecentDays(month, offset, remaining, variant),
-            );
-        }
-
-        async function loadRecentDirectPage() {
-            if (!recentState.directRootUrl || recentState.directPosition === null) return null;
-            const root = await readRecentRoot();
-            const variant = recentFeedVariant();
-            const variantRoot = root.variants[variant];
-            const position = recentState.directPosition;
-            if (position > variantRoot.itemCount) throw new Error('The recent uploads position was invalid.');
-            const items = await collectRecentReferences(
-                variantRoot.years,
-                position,
-                recentDirectPageSize,
-                (reference) => readRecentYear(reference, variant),
-                (year, offset, remaining) => collectRecentMonths(year, offset, remaining, variant),
-            );
-            if (items.length === 0 && position < variantRoot.itemCount) {
-                throw new Error('Recent uploads pagination returned no media.');
-            }
-            const nextPosition = position + items.length;
-            return {
-                items,
-                nextPosition: nextPosition < variantRoot.itemCount ? nextPosition : null,
-            };
         }
 
         function recentElement(tagName, className, text) {
@@ -1329,20 +902,19 @@ function RecentMediaScript() {
             });
         }
 
-        async function requestRecentMediaPage(showNsfw, showUnapproved, cursor = '', generation = '') {
+        async function requestRecentMediaPage(showNsfw, showUnapproved, cursor = '') {
             const params = new URLSearchParams({
                 limit: '24',
                 nsfw: showNsfw ? 'true' : 'false',
                 unapproved: showUnapproved ? 'true' : 'false',
             });
             if (cursor) params.set('cursor', cursor);
-            if (generation) params.set('generation', generation);
             const response = await fetch('/api/recent-media?' + params.toString(), {headers: {accept: 'application/json'}});
             const body = await response.json().catch(() => ({}));
 
             if (!response.ok) {
                 const error = new Error(body.error || 'Could not load uploads.');
-                if (response.status === 410) error.code = 'recent-generation-expired';
+                if (response.status === 400 && cursor) error.code = 'recent-cursor-invalid';
                 throw error;
             }
             if (!Array.isArray(body.items)) throw new Error('The recent uploads response was invalid.');
@@ -1352,67 +924,29 @@ function RecentMediaScript() {
 
         function hideRecentUpdate() {
             recentUpdate?.classList.add('hidden');
-            recentState.availableGeneration = '';
-            recentState.generationExpired = false;
         }
 
-        function showRecentUpdate(expired) {
-            recentState.generationExpired = expired;
+        function showRecentUpdate(count) {
             if (recentUpdateMessage) {
-                recentUpdateMessage.textContent = expired
-                    ? 'This upload list expired. Refresh it to keep browsing.'
-                    : 'New uploads are available.';
+                recentUpdateMessage.textContent = count > 0
+                    ? count + ' new upload' + (count === 1 ? '' : 's') + ' available.'
+                    : 'This upload list changed. Refresh it to keep browsing.';
             }
-            if (recentRefreshButton) recentRefreshButton.textContent = expired ? 'Refresh uploads' : 'Show new uploads';
+            if (recentRefreshButton) recentRefreshButton.textContent = count > 0 ? 'Show new uploads' : 'Refresh uploads';
             recentUpdate?.classList.remove('hidden');
         }
 
         function adoptRecentPageSource(body) {
-            recentState.generation = typeof body.generation === 'string' ? body.generation : '';
-            recentState.directBlockCache.clear();
-            recentState.directManifestCache.clear();
-            recentState.directRoot = null;
-            recentState.stateVerifiedAt = 0;
+            recentState.pageCursor = readRecentCursor(body.nextCursor);
+            recentState.headCursor = readRecentCursor(body.head);
+            recentState.hasMore = Boolean(recentState.pageCursor);
 
-            const rootUrl = readRecentRootUrl(body.publicRootUrl);
-            const position = readRecentDirectPosition(body.nextPosition);
-            const hasDirectPage = Boolean(recentState.generation && rootUrl && position !== null);
-            recentState.directRootUrl = hasDirectPage ? rootUrl : '';
-            recentState.directPosition = hasDirectPage ? position : null;
-            recentState.pageCursor = hasDirectPage ? '' : readRecentCursor(body.nextCursor);
-            recentState.hasMore = hasDirectPage || Boolean(recentState.pageCursor);
-
-            if (recentFeed) {
-                recentFeed.dataset.generation = recentState.generation;
-                recentFeed.dataset.nextPosition = recentState.directPosition === null ? '' : String(recentState.directPosition);
-                recentFeed.dataset.nextCursor = recentState.pageCursor;
-                recentFeed.dataset.publicRootUrl = recentState.directRootUrl;
-            }
-        }
-
-        async function appendRecentDirectPage() {
-            const body = await loadRecentDirectPage();
-            if (!body) throw new Error('Could not load uploads.');
-            const renderedLayoutChanged = appendRecentItems(body.items);
-            recentState.directPosition = readRecentDirectPosition(body.nextPosition);
-            recentState.hasMore = recentState.directPosition !== null;
-
-            if (recentFeed) {
-                recentFeed.dataset.nextPosition = recentState.directPosition === null
-                    ? ''
-                    : String(recentState.directPosition);
-            }
-            return renderedLayoutChanged;
+            if (recentFeed) recentFeed.dataset.nextCursor = recentState.pageCursor;
         }
 
         async function appendRecentApiPage() {
             if (!recentState.pageCursor) throw new Error('Could not load uploads.');
-            const body = await requestRecentMediaPage(
-                recentState.showNsfw,
-                recentState.showUnapproved,
-                recentState.pageCursor,
-                recentState.generation,
-            );
+            const body = await requestRecentMediaPage(recentState.showNsfw, recentState.showUnapproved, recentState.pageCursor);
             const renderedLayoutChanged = appendRecentItems(body.items);
             recentState.pageCursor = readRecentCursor(body.nextCursor);
             recentState.hasMore = Boolean(recentState.pageCursor);
@@ -1438,14 +972,18 @@ function RecentMediaScript() {
         }
 
         async function requestRecentMediaState() {
-            if (!recentState.generation) return null;
             if (recentState.stateInFlight) return await recentState.stateInFlight;
-            const requestedGeneration = recentState.generation;
+            const requestedHead = recentState.headCursor;
             const request = (async () => {
-                const response = await fetch('/api/recent-media/state', {headers: {accept: 'application/json'}});
+                const params = new URLSearchParams({
+                    nsfw: recentState.showNsfw ? 'true' : 'false',
+                    unapproved: recentState.showUnapproved ? 'true' : 'false',
+                });
+                if (requestedHead) params.set('cursor', requestedHead);
+                const response = await fetch('/api/recent-media/state?' + params.toString(), {headers: {accept: 'application/json'}});
                 const body = await response.json().catch(() => ({}));
-                if (requestedGeneration !== recentState.generation) return null;
-                if (!response.ok || typeof body.generation !== 'string' || typeof body.unsafePending !== 'boolean') return null;
+                if (requestedHead !== recentState.headCursor) return null;
+                if (!response.ok || (body.head !== null && typeof body.head !== 'string') || !Number.isSafeInteger(body.newCount)) return null;
                 return body;
             })();
             recentState.stateInFlight = request;
@@ -1457,31 +995,15 @@ function RecentMediaScript() {
         }
 
         async function checkRecentMediaState() {
-            if (!recentState.generation || document.visibilityState === 'hidden') return;
+            if (document.visibilityState === 'hidden') return;
             try {
                 const body = await requestRecentMediaState();
                 if (!body) return;
-                if (body.unsafePending || body.generation !== recentState.generation) {
-                    recentState.availableGeneration = body.generation;
-                    showRecentUpdate(body.unsafePending);
-                } else {
-                    recentState.stateVerifiedAt = Date.now();
-                }
+                const currentHead = body.head === null ? '' : body.head;
+                if (currentHead !== recentState.headCursor) showRecentUpdate(body.newCount);
             } catch {
-                // Keep the pinned list when the optional update check is unavailable.
+                // Keep the current list when the optional update check is unavailable.
             }
-        }
-
-        async function verifyRecentDirectState() {
-            if (Date.now() - recentState.stateVerifiedAt < recentStateVerificationTtlMs) return;
-            const body = await requestRecentMediaState();
-            if (!body) throw new Error('Could not confirm the current upload list.');
-            if (body.unsafePending || body.generation !== recentState.generation) {
-                recentState.availableGeneration = body.generation;
-                showRecentUpdate(true);
-                throw recentGenerationExpiredError();
-            }
-            recentState.stateVerifiedAt = Date.now();
         }
 
         function stopRecentStatePolling() {
@@ -1490,7 +1012,7 @@ function RecentMediaScript() {
         }
 
         function scheduleRecentStatePoll() {
-            if (!recentState.generation || document.visibilityState === 'hidden') return;
+            if (document.visibilityState === 'hidden') return;
             const delay = 51000 + Math.floor(Math.random() * 18001);
             recentState.statePollId = window.setTimeout(async () => {
                 await checkRecentMediaState();
@@ -1500,7 +1022,7 @@ function RecentMediaScript() {
 
         function startRecentStatePolling() {
             stopRecentStatePolling();
-            if (!recentState.generation || document.visibilityState === 'hidden') return;
+            if (document.visibilityState === 'hidden') return;
             checkRecentMediaState();
             scheduleRecentStatePoll();
         }
@@ -1548,27 +1070,24 @@ function RecentMediaScript() {
         }
 
         async function loadRecentMedia() {
-            if (recentState.inFlight || !recentState.hasMore) return;
-            const hasDirectPage = Boolean(recentState.directRootUrl && recentState.directPosition !== null);
-            if (!hasDirectPage && !recentState.pageCursor) return;
+            if (recentState.inFlight || !recentState.hasMore || !recentState.pageCursor) return;
             let loaded = false;
             setRecentLoading(true);
             recentError?.classList.add('hidden');
 
             try {
-                if (hasDirectPage) await verifyRecentDirectState();
-                const renderedLayoutChanged = hasDirectPage ? await appendRecentDirectPage() : await appendRecentApiPage();
+                const renderedLayoutChanged = await appendRecentApiPage();
                 commitRecentPendingRows(!recentState.hasMore);
                 if (renderedLayoutChanged) reconcileRecentRows();
                 updateRecentEndState();
                 loaded = true;
             } catch (error) {
-                if (error?.code === 'recent-generation-expired') {
-                    // Stop browsing the pinned list and let the refresh button fetch the newer list.
-                    // Replacing automatically here would swap the whole feed under the reader.
+                if (error?.code === 'recent-cursor-invalid') {
+                    // The cursor no longer matches this feed. Stop browsing it and let the
+                    // refresh button fetch the current first page.
                     recentState.hasMore = false;
                     updateRecentEndState();
-                    showRecentUpdate(true);
+                    showRecentUpdate(0);
                     return;
                 }
                 recentState.hasMore = true;
@@ -1645,24 +1164,7 @@ function RecentMediaScript() {
             setRecentLoading(true);
             recentError?.classList.add('hidden');
             try {
-                const pinnedGeneration = recentState.generation;
-                let body = await requestRecentMediaPage(recentState.showNsfw, recentState.showUnapproved);
-                if (body.generation === pinnedGeneration) {
-                    // The pinned list expired but the newest changes are not published yet.
-                    // Wait briefly for the publisher so the button returns the newer list.
-                    for (let attempt = 0; attempt < recentRefreshPublishAttempts && body.generation === pinnedGeneration; attempt++) {
-                        await new Promise((resolve) => setTimeout(resolve, recentRefreshRetryDelayMs));
-                        body = await requestRecentMediaPage(recentState.showNsfw, recentState.showUnapproved);
-                    }
-                    if (body.generation === pinnedGeneration) {
-                        // Still the same list. Keep the reader's position and say the newer list is
-                        // not published yet, instead of resetting the feed to the same content.
-                        if (recentErrorMessage) recentErrorMessage.textContent = 'The new upload list is still being published. Try again in a moment.';
-                        recentError?.classList.remove('hidden');
-                        showRecentUpdate(true);
-                        return;
-                    }
-                }
+                const body = await requestRecentMediaPage(recentState.showNsfw, recentState.showUnapproved);
                 await replaceRecentPage(body);
                 startRecentStatePolling();
                 refreshed = true;
@@ -1753,18 +1255,9 @@ export function RecentMediaUnavailablePage({
     )
 }
 
-function recentMediaPageHasDirectSource(page: RecentMediaPageData): boolean {
-    return Boolean(page.generation && page.publicRootUrl && page.nextPosition !== null)
-}
-
-function recentMediaPageHasMore(page: RecentMediaPageData): boolean {
-    return recentMediaPageHasDirectSource(page) || page.nextCursor !== null
-}
-
 export function RecentMediaPage({currentUser, guestInitial, mediaBaseUrl, page, showNsfw, showUnapproved}: RecentMediaPageProps) {
     const rows = chunkRecentMediaGroups(groupSequentialRecentMediaItems(page.items))
-    const hasDirectPage = recentMediaPageHasDirectSource(page)
-    const hasMore = recentMediaPageHasMore(page)
+    const hasMore = page.nextCursor !== null
 
     return (
         <BaseLayout title="Recently uploaded media | MyOC">
@@ -1792,13 +1285,10 @@ export function RecentMediaPage({currentUser, guestInitial, mediaBaseUrl, page, 
                     aria-busy="false"
                     aria-label="Recently uploaded character media"
                     class="mx-auto grid max-w-xl gap-5 md:max-w-none md:gap-2"
-                    data-has-more={hasMore ? 'true' : 'false'}
-                    data-generation={page.generation ?? ''}
-                    data-media-origin={mediaBaseUrl}
-                    data-next-cursor={hasDirectPage ? '' : (page.nextCursor ?? '')}
-                    data-next-position={page.nextPosition ?? ''}
-                    data-public-root-url={page.publicRootUrl ?? ''}
                     data-csrf-token={currentUser?.csrfToken ?? ''}
+                    data-has-more={hasMore ? 'true' : 'false'}
+                    data-head={page.head ?? ''}
+                    data-next-cursor={page.nextCursor ?? ''}
                     data-persist-unapproved={currentUser ? 'true' : 'false'}
                     data-recent-feed
                     data-show-nsfw={showNsfw ? 'true' : 'false'}

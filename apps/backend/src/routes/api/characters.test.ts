@@ -2753,30 +2753,6 @@ describe('PATCH /characters/:id', () => {
         ).toEqual({name: character.name, description: ''})
     })
 
-    it('schedules a recent feed publication after a character rename', async () => {
-        const sessionToken = 'session-token'
-        const character = createCharacterRecord()
-        await seedCurrentUser(sessionToken)
-        await seedCharacterRecord(character)
-        const csrfToken = await createCsrfToken(sessionToken)
-        const waitUntil = vi.fn()
-
-        const body = {name: 'Renamed character', description: 'Scheduled publication check'}
-        const response = await apiRoutes.request(
-            `https://example.com/characters/${character.id}`,
-            {
-                method: 'PATCH',
-                body: JSON.stringify(body),
-                headers: createRequestHeaders(body, {sessionToken, csrfToken}),
-            },
-            requestEnv(db),
-            {waitUntil} as unknown as ExecutionContext,
-        )
-
-        expect(response.status).toBe(200)
-        expect(waitUntil).toHaveBeenCalledTimes(1)
-    })
-
     it('updates a character name with quoted text and hyphenated numbers', async () => {
         const sessionToken = 'session-token'
         const character = createCharacterRecord()

@@ -2,7 +2,7 @@ import {afterEach, describe, expect, it, vi} from 'vitest'
 import app from '../index'
 import {createCsrfToken} from '../lib/auth/session'
 import type {LeaderboardSnapshot} from '../lib/leaderboard'
-import {getGeneratedRecentMediaPage} from '../lib/recentMedia/reader'
+import {getRecentMediaPage} from '../lib/recentMedia/query'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import {expectSecurityHeaders} from '../test/assertions'
 import {queryOne, seedCharacter, seedFolder, seedMedia, seedPasskey, seedSession, seedUser, useResetTestDatabase} from '../test/d1'
@@ -13,16 +13,14 @@ import {CharacterPage} from '../views/pages/CharacterPage'
 import {MigratePage} from '../views/pages/MigratePage'
 import {pageRoutes} from './pages'
 
-vi.mock('../lib/recentMedia/reader', () => ({
-    getGeneratedRecentMediaPage: vi.fn(async () => ({
-        generation: null,
-        items: [],
-        nextCursor: null,
-        nextPosition: null,
-        publicRootUrl: null,
-        publishedAt: null,
-    })),
-}))
+vi.mock('../lib/recentMedia/query', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../lib/recentMedia/query')>()
+
+    return {
+        ...actual,
+        getRecentMediaPage: vi.fn(async () => ({items: [], nextCursor: null, head: null})),
+    }
+})
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
 const NON_HTML_CONTENT_SECURITY_POLICY = [
@@ -921,7 +919,7 @@ describe('public page redirects', () => {
     })
 
     it.each([false, true])('shows a generic unavailable page when the recent gallery cannot load (signed in: %s)', async (signedIn) => {
-        vi.mocked(getGeneratedRecentMediaPage).mockRejectedValueOnce(new Error('R2 internal error with private diagnostic details'))
+        vi.mocked(getRecentMediaPage).mockRejectedValueOnce(new Error('R2 internal error with private diagnostic details'))
 
         const database = await seedPageDatabase({currentUser: signedIn ? createCurrentUserRecord('demo') : undefined})
         const response = await getAppPath('/recent', database, signedIn ? {cookie: 'myoc_session=session-token'} : {})
@@ -4159,8 +4157,6 @@ describe('GET /admin', () => {
         expect(html).toContain('Run R2 Media Cleanup')
         expect(html).toContain('action="/admin/admin-options/jobs/leaderboard-refresh/run"')
         expect(html).toContain('Run Leaderboard Refresh')
-        expect(html).toContain('action="/admin/admin-options/jobs/recent-feed-regeneration/run"')
-        expect(html).toContain('Run Recent Page Regeneration')
         expect(html).toContain('action="/admin/admin-options/jobs/media-preview-regeneration/run"')
         expect(html).toContain('Run Media Preview Regeneration')
         expect(html).toContain('formaction="/admin/admin-options/jobs/media-preview-regeneration/run?onlyInvalid=true"')
