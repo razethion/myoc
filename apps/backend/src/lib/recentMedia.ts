@@ -4,7 +4,7 @@ import {characterMediaImageUrl, characterMediaPreviewImageUrl, characterProfileI
 export const RECENT_MEDIA_PAGE_SIZE = 24
 export const RECENT_MEDIA_MAX_PAGE_SIZE = 30
 
-export const RecentMediaItemSchema = z.object({
+const RecentMediaItemSchema = z.object({
     id: z.string(),
     groupId: z.string(),
     alt: z.string(),
@@ -28,14 +28,17 @@ export const RecentMediaItemSchema = z.object({
 export const RecentMediaPageSchema = z.object({
     items: z.array(RecentMediaItemSchema),
     nextCursor: z.string().nullable(),
-    nextPosition: z.number().int().nonnegative().nullable().default(null),
-    publicRootUrl: z.url().nullable().default(null),
-    generation: z.string().nullable().default(null),
-    publishedAt: z.string().nullable().default(null),
+    head: z.string().nullable(),
+})
+
+export const RecentMediaStateSchema = z.object({
+    head: z.string().nullable(),
+    newCount: z.number().int().nonnegative(),
 })
 
 export type RecentMediaItem = z.infer<typeof RecentMediaItemSchema>
 export type RecentMediaPage = z.infer<typeof RecentMediaPageSchema>
+export type RecentMediaState = z.infer<typeof RecentMediaStateSchema>
 
 export type RecentMediaOptions = {
     cursor?: string | null
@@ -191,133 +194,4 @@ export function recentMediaItemsFromRows(
             return showNsfw ? sfwEligible || isEligibleRecentMediaVariant(row, 'nsfw', showUnapproved) : sfwEligible
         })
         .map((row) => recentMediaItemFromRow(row, mediaBaseUrl, showNsfw, showUnapproved))
-}
-
-const recentMediaSourceEligibilitySql = `((character_media.sfw_image_key IS NOT NULL
-                                          AND character_media.sfw_preview_image_key IS NOT NULL)
-                                      OR (character_media.nsfw_image_key IS NOT NULL
-                                          AND character_media.nsfw_preview_image_key IS NOT NULL))`
-
-export async function queryRecentMediaSourceRows(db: D1Database, hour?: string): Promise<RecentMediaRow[]> {
-    const range = hour ? recentMediaHourRange(hour) : null
-    const rangeClause = range ? 'AND character_media.created_at >= ? AND character_media.created_at < ?' : ''
-    const statement = db.prepare(
-        `SELECT character_media.id,
-                character_media.user_id,
-                character_media.character_id,
-                character_media.sfw_image_key,
-                character_media.sfw_preview_image_key,
-                character_media.sfw_preview_content_type,
-                character_media.sfw_content_type,
-                character_media.sfw_width,
-                character_media.sfw_height,
-                character_media.sfw_preview_width,
-                character_media.sfw_preview_height,
-                character_media.sfw_review_status,
-                character_media.sfw_approved_at,
-                character_media.nsfw_image_key,
-                character_media.nsfw_preview_image_key,
-                character_media.nsfw_preview_content_type,
-                character_media.nsfw_content_type,
-                character_media.nsfw_width,
-                character_media.nsfw_height,
-                character_media.nsfw_preview_width,
-                character_media.nsfw_preview_height,
-                character_media.nsfw_review_status,
-                character_media.nsfw_approved_at,
-                character_media.created_at,
-                character_media.updated_at,
-                characters.name              AS character_name,
-                characters.profile_image_key AS character_profile_image_key,
-                users.username               AS owner_username,
-                users.profile_photo_key      AS owner_profile_photo_key
-         FROM character_media
-         INNER JOIN characters ON characters.id = character_media.character_id
-         INNER JOIN users ON users.id = characters.user_id
-         WHERE ${recentMediaSourceEligibilitySql}
-         ${rangeClause}
-         ORDER BY character_media.created_at DESC, character_media.id DESC`,
-    )
-    const result = range ? await statement.bind(range.start, range.end).all<RecentMediaRow>() : await statement.bind().all<RecentMediaRow>()
-
-    return result.results
-}
-
-export async function queryRecentMediaSourceRowsPage(
-    db: D1Database,
-    cursor: RecentMediaSourceCursor | null,
-    limit: number,
-): Promise<RecentMediaRow[]> {
-    if (!Number.isInteger(limit) || limit < 1 || limit > 5000) {
-        throw new Error('Recent media source page limit is invalid')
-    }
-
-    const cursorClause = cursor
-        ? `AND (character_media.created_at < ?
-                OR (character_media.created_at = ? AND character_media.id < ?))`
-        : ''
-    const statement = db.prepare(
-        `SELECT character_media.id,
-                character_media.user_id,
-                character_media.character_id,
-                character_media.sfw_image_key,
-                character_media.sfw_preview_image_key,
-                character_media.sfw_preview_content_type,
-                character_media.sfw_content_type,
-                character_media.sfw_width,
-                character_media.sfw_height,
-                character_media.sfw_preview_width,
-                character_media.sfw_preview_height,
-                character_media.sfw_review_status,
-                character_media.sfw_approved_at,
-                character_media.nsfw_image_key,
-                character_media.nsfw_preview_image_key,
-                character_media.nsfw_preview_content_type,
-                character_media.nsfw_content_type,
-                character_media.nsfw_width,
-                character_media.nsfw_height,
-                character_media.nsfw_preview_width,
-                character_media.nsfw_preview_height,
-                character_media.nsfw_review_status,
-                character_media.nsfw_approved_at,
-                character_media.created_at,
-                character_media.updated_at,
-                characters.name              AS character_name,
-                characters.profile_image_key AS character_profile_image_key,
-                users.username               AS owner_username,
-                users.profile_photo_key      AS owner_profile_photo_key
-         FROM character_media
-         INNER JOIN characters ON characters.id = character_media.character_id
-         INNER JOIN users ON users.id = characters.user_id
-         WHERE ${recentMediaSourceEligibilitySql}
-         ${cursorClause}
-         ORDER BY character_media.created_at DESC, character_media.id DESC
-         LIMIT ?`,
-    )
-    const result = cursor
-        ? await statement.bind(cursor.createdAt, cursor.createdAt, cursor.id, limit).all<RecentMediaRow>()
-        : await statement.bind(limit).all<RecentMediaRow>()
-
-    return result.results
-}
-
-export function recentMediaHour(row: Pick<RecentMediaRow, 'created_at'>): string {
-    return row.created_at.slice(0, 13).replace(' ', 'T')
-}
-
-function recentMediaHourRange(hour: string): {start: string; end: string} {
-    if (!/^\d{4}-\d{2}-\d{2}T\d{2}$/.test(hour)) {
-        throw new Error('Recent media hour is invalid')
-    }
-
-    const startDate = new Date(`${hour}:00:00Z`)
-
-    if (Number.isNaN(startDate.getTime())) {
-        throw new Error('Recent media hour is invalid')
-    }
-
-    const endDate = new Date(startDate.getTime() + 60 * 60 * 1000)
-    const sqlTimestamp = (value: Date) => value.toISOString().slice(0, 19).replace('T', ' ')
-
-    return {start: sqlTimestamp(startDate), end: sqlTimestamp(endDate)}
 }

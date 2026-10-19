@@ -1,8 +1,8 @@
 import {Hono} from 'hono'
-import {describe, expect, it, vi} from 'vitest'
+import {beforeEach, describe, expect, it} from 'vitest'
 import type {RecentMediaItem} from '../../lib/recentMedia'
+import {resetRecentFeedHeadCache} from '../../lib/recentMedia/query'
 import {seedAuthenticatedUser, seedCharacter, seedMedia, seedUser, useTestDatabase} from '../../test/d1'
-import {createMockR2Bucket} from '../../test/mockR2'
 import {createWorkerEnv} from '../../test/workerBindings'
 import type {Bindings} from '../../types/bindings'
 import {apiRoutes} from '../api'
@@ -10,65 +10,73 @@ import {apiRoutes} from '../api'
 const app = new Hono<{Bindings: Bindings}>().route('/api', apiRoutes)
 const db = useTestDatabase()
 const cursorSecret = 'test-secret-with-at-least-thirty-two-characters'
-const publicBaseUrl = 'https://m.myoc.art'
+const env = createWorkerEnv({DB: db, RECENT_FEED_CURSOR_SECRET: cursorSecret})
+
+beforeEach(async () => {
+    resetRecentFeedHeadCache()
+    await seedUser({id: 'user-1'})
+    await seedCharacter({id: 'character-1', userId: 'user-1'})
+})
+
+async function requestRecentMedia(query = '', init: RequestInit = {}): Promise<Response> {
+    return await app.request(`https://example.com/api/recent-media${query}`, init, env)
+}
+
+async function seedUpload(options: {
+    id: string
+    createdAt: string
+    approved?: boolean
+    nsfwOnly?: boolean
+    userId?: string
+    characterId?: string
+}): Promise<void> {
+    const {id, createdAt, approved = false, nsfwOnly = false, userId = 'user-1', characterId = 'character-1'} = options
+
+    await seedMedia({
+        id,
+        userId,
+        characterId,
+        sfwImageKey: nsfwOnly ? null : `${id}-sfw`,
+        sfwPreviewImageKey: nsfwOnly ? null : `${id}-sfw-preview`,
+        sfwReviewStatus: approved ? 'approved' : 'pending',
+        sfwApprovedAt: approved ? createdAt : null,
+        nsfwImageKey: nsfwOnly ? `${id}-nsfw` : null,
+        nsfwPreviewImageKey: nsfwOnly ? `${id}-nsfw-preview` : null,
+        nsfwReviewStatus: approved ? 'approved' : 'pending',
+        nsfwApprovedAt: approved ? createdAt : null,
+        createdAt,
+        updatedAt: createdAt,
+    })
+}
+
+type RecentMediaPageBody = {
+    items: RecentMediaItem[]
+    nextCursor: string | null
+    head: string | null
+}
+
+async function itemIds(response: Response): Promise<string[]> {
+    const body = await response.json<{items: RecentMediaItem[]}>()
+
+    return body.items.map((item) => item.id)
+}
 
 describe('recent media API', () => {
-    it('returns the unapproved feed variant when the user requests it', async () => {
-        const bucket = createMockR2Bucket()
-        const rootKey = 'recent-feed/generations/v1/roots/r7-unapproved.json'
-        const pendingItem = recentItem('pending-media')
-        const emptyRoot = {itemCount: 0, years: []}
-        const unapprovedRoot = {
-            itemCount: 1,
-            years: [{year: '2026', key: 'unused-year.json', itemCount: 1}],
-        }
-        await bucket.put(
-            rootKey,
-            JSON.stringify({
-                schemaVersion: 1,
-                generation: 'r7-unapproved',
-                throughRevision: 7,
-                publishedAt: '2026-08-25T12:05:00.000Z',
-                variants: {
-                    'n0-u0': emptyRoot,
-                    'n0-u1': unapprovedRoot,
-                    'n1-u0': emptyRoot,
-                    'n1-u1': unapprovedRoot,
-                },
-                initialItems: {
-                    'n0-u0': [],
-                    'n0-u1': [pendingItem],
-                    'n1-u0': [],
-                    'n1-u1': [pendingItem],
-                },
-            }),
-        )
-        await db
-            .prepare(
-                `UPDATE recent_feed_state
-                 SET requested_revision = 7,
-                     published_revision = 7,
-                     generation = 'r7-unapproved',
-                     root_key = ?,
-                     published_at = '2026-08-25T12:05:00.000Z'
-                 WHERE singleton = 1`,
-            )
-            .bind(rootKey)
-            .run()
+    it('returns the requested feed variant and page shape', async () => {
+        await seedUpload({id: 'approved-media', createdAt: '2026-08-25 12:00:00', approved: true})
+        await seedUpload({id: 'pending-media', createdAt: '2026-08-25 11:00:00'})
 
-        const response = await app.request(
-            'https://example.com/api/recent-media?nsfw=false&unapproved=true',
-            {},
-            createWorkerEnv({
-                DB: db,
-                MEDIA_BUCKET: bucket,
-                RECENT_FEED_CURSOR_SECRET: cursorSecret,
-                RECENT_FEED_PUBLIC_BASE_URL: publicBaseUrl,
-            }),
-        )
+        const unapprovedResponse = await requestRecentMedia('?nsfw=false&unapproved=true')
+        expect(unapprovedResponse.status).toBe(200)
+        expect(await itemIds(unapprovedResponse)).toEqual(['approved-media', 'pending-media'])
 
-        expect(response.status).toBe(200)
-        expect((await response.json<{items: RecentMediaItem[]}>()).items.map((item) => item.id)).toEqual(['pending-media'])
+        const approvedResponse = await requestRecentMedia('?nsfw=false&unapproved=false')
+        expect(approvedResponse.status).toBe(200)
+        await expect(approvedResponse.json()).resolves.toMatchObject({
+            items: [{id: 'approved-media'}],
+            nextCursor: null,
+            head: expect.any(String),
+        })
     })
 
     it('uses the signed-in user media settings when query settings are absent', async () => {
@@ -82,35 +90,38 @@ describe('recent media API', () => {
             'settings-session',
             db,
         )
-        const bucket = createMockR2Bucket()
-        await publishTestRoot(bucket, {
-            'n0-u0': recentItem('safe-approved'),
-            'n0-u1': recentItem('safe-unapproved'),
-            'n1-u0': recentItem('account-default'),
-            'n1-u1': recentItem('all-media'),
+        await seedCharacter({id: 'settings-character', userId: 'settings-user'})
+        await seedUpload({
+            id: 'approved-sfw',
+            createdAt: '2026-08-25 12:00:00',
+            approved: true,
+            userId: 'settings-user',
+            characterId: 'settings-character',
         })
+        await seedUpload({
+            id: 'approved-nsfw',
+            createdAt: '2026-08-25 12:01:00',
+            approved: true,
+            nsfwOnly: true,
+            userId: 'settings-user',
+            characterId: 'settings-character',
+        })
+        await seedUpload({id: 'pending-sfw', createdAt: '2026-08-25 12:02:00', userId: 'settings-user', characterId: 'settings-character'})
 
-        const response = await requestRecentMedia(bucket, '', {
-            headers: {Cookie: 'myoc_session=settings-session'},
-        })
+        const response = await requestRecentMedia('', {headers: {Cookie: 'myoc_session=settings-session'}})
 
         expect(response.status).toBe(200)
-        expect((await response.json<{items: RecentMediaItem[]}>()).items.map((item) => item.id)).toEqual(['account-default'])
+        expect(await itemIds(response)).toEqual(['approved-nsfw', 'approved-sfw'])
     })
 
     it('uses public media defaults when there is no signed-in user', async () => {
-        const bucket = createMockR2Bucket()
-        await publishTestRoot(bucket, {
-            'n0-u0': recentItem('safe-approved'),
-            'n0-u1': recentItem('public-default'),
-            'n1-u0': recentItem('nsfw-approved'),
-            'n1-u1': recentItem('all-media'),
-        })
+        await seedUpload({id: 'public-default', createdAt: '2026-08-25 12:00:00'})
+        await seedUpload({id: 'nsfw-only', createdAt: '2026-08-25 12:01:00', approved: true, nsfwOnly: true})
 
-        const response = await requestRecentMedia(bucket)
+        const response = await requestRecentMedia()
 
         expect(response.status).toBe(200)
-        expect((await response.json<{items: RecentMediaItem[]}>()).items.map((item) => item.id)).toEqual(['public-default'])
+        expect(await itemIds(response)).toEqual(['public-default'])
     })
 
     it.each([
@@ -118,206 +129,82 @@ describe('recent media API', () => {
         ['an invalid media setting', '?nsfw=yes'],
         ['a cursor that is too long', `?cursor=${'x'.repeat(513)}`],
     ])('rejects %s', async (_description, query) => {
-        const response = await requestRecentMedia(createMockR2Bucket(), query)
+        const response = await requestRecentMedia(query)
 
         expect(response.status).toBe(400)
         await expect(response.json()).resolves.toEqual({error: 'Recent media query is invalid'})
     })
 
-    it('rejects an invalid cursor', async () => {
-        const response = await requestRecentMedia(createMockR2Bucket(), '?cursor=not-a-signed-cursor')
+    it('rejects a tampered cursor', async () => {
+        await seedUpload({id: 'first', createdAt: '2026-08-25 12:03:00'})
+        await seedUpload({id: 'second', createdAt: '2026-08-25 12:02:00'})
+        await seedUpload({id: 'third', createdAt: '2026-08-25 12:01:00'})
+
+        const firstPage = await requestRecentMedia('?nsfw=false&unapproved=true&limit=1')
+        const body = await firstPage.json<{nextCursor: string | null}>()
+        expect(body.nextCursor).toBeTypeOf('string')
+
+        const tampered = `${body.nextCursor?.slice(0, -3)}aaa`
+        const response = await requestRecentMedia(`?nsfw=false&unapproved=true&limit=1&cursor=${tampered}`)
 
         expect(response.status).toBe(400)
         await expect(response.json()).resolves.toEqual({error: 'Recent media cursor is invalid'})
     })
 
-    it('reports an expired generation', async () => {
-        const response = await requestRecentMedia(createMockR2Bucket(), '?generation=missing-generation')
+    it('pages with signed cursors', async () => {
+        await seedUpload({id: 'first', createdAt: '2026-08-25 12:03:00'})
+        await seedUpload({id: 'second', createdAt: '2026-08-25 12:02:00'})
+        await seedUpload({id: 'third', createdAt: '2026-08-25 12:01:00'})
 
-        expect(response.status).toBe(410)
-        await expect(response.json()).resolves.toEqual({
-            code: 'recent-generation-expired',
-            error: 'This recent media list has expired',
-        })
+        const firstBody = await (await requestRecentMedia('?nsfw=false&unapproved=true&limit=1')).json<RecentMediaPageBody>()
+        expect(firstBody.items.map((item) => item.id)).toEqual(['first'])
+        expect(firstBody.nextCursor).toBeTypeOf('string')
+
+        const secondBody = await (
+            await requestRecentMedia(`?nsfw=false&unapproved=true&limit=1&cursor=${firstBody.nextCursor}`)
+        ).json<RecentMediaPageBody>()
+        expect(secondBody.items.map((item) => item.id)).toEqual(['second'])
+        expect(secondBody.nextCursor).toBeTypeOf('string')
+
+        const thirdBody = await (
+            await requestRecentMedia(`?nsfw=false&unapproved=true&limit=1&cursor=${secondBody.nextCursor}`)
+        ).json<RecentMediaPageBody>()
+        expect(thirdBody.items.map((item) => item.id)).toEqual(['third'])
+        expect(thirdBody.nextCursor).toBeNull()
     })
 
-    it('returns a D1 first page while no generated feed is published', async () => {
-        await seedUser({id: 'fallback-user'})
-        await seedCharacter({id: 'fallback-character', userId: 'fallback-user'})
-        await seedMedia({
-            id: 'fallback-media',
-            userId: 'fallback-user',
-            characterId: 'fallback-character',
-            sfwPreviewImageKey: 'fallback-preview',
-            sfwReviewStatus: 'approved',
-            sfwApprovedAt: '2026-08-25 12:00:00',
-            createdAt: '2026-08-25 12:00:00',
-            updatedAt: '2026-08-25 12:00:00',
-        })
+    it('counts uploads newer than the pinned head on the state route', async () => {
+        await seedUpload({id: 'older-media', createdAt: '2026-08-25 12:00:00', approved: true})
 
-        const response = await app.request(
-            'https://example.com/api/recent-media?nsfw=false&unapproved=false',
-            {},
-            createWorkerEnv({
-                DB: db,
-                MEDIA_BUCKET: createMockR2Bucket(),
-                RECENT_FEED_CURSOR_SECRET: cursorSecret,
-            }),
-        )
+        const page = await requestRecentMedia('?nsfw=false&unapproved=false')
+        const head = (await page.json<{head: string | null}>()).head
+        expect(head).toBeTypeOf('string')
 
-        expect(response.status).toBe(200)
-        await expect(response.json()).resolves.toMatchObject({
-            items: [{id: 'fallback-media'}],
-            generation: null,
-            nextCursor: null,
-            nextPosition: null,
-            publicRootUrl: null,
-            publishedAt: null,
-        })
+        await seedUpload({id: 'newer-media', createdAt: '2026-08-25 12:05:00', approved: true})
+        resetRecentFeedHeadCache()
+
+        const stateResponse = await requestRecentMedia(`/state?cursor=${head}&nsfw=false&unapproved=false`)
+        expect(stateResponse.status).toBe(200)
+        expect(stateResponse.headers.get('cache-control')).toBe('no-store')
+        const state = await stateResponse.json<{head: string | null; newCount: number}>()
+        expect(state.newCount).toBe(1)
+        expect(state.head).not.toBe(head)
+
+        const freshState = await requestRecentMedia('/state?nsfw=false&unapproved=false')
+        await expect(freshState.json()).resolves.toMatchObject({newCount: 0})
     })
 
-    it('returns a server error when R2 fails', async () => {
-        const bucket = createMockR2Bucket()
-        vi.spyOn(bucket, 'get').mockRejectedValue(new Error('R2 is unavailable'))
-        await db
-            .prepare(
-                `UPDATE recent_feed_state
-                 SET requested_revision = 7,
-                     published_revision = 7,
-                     generation = 'r7-unavailable',
-                     root_key = 'recent-feed/generations/v1/roots/r7-unavailable.json',
-                     published_at = '2026-08-25T12:05:00.000Z'
-                 WHERE singleton = 1`,
-            )
-            .run()
+    it('rejects state cursors from another variant', async () => {
+        await seedUpload({id: 'first', createdAt: '2026-08-25 12:03:00'})
+        await seedUpload({id: 'second', createdAt: '2026-08-25 12:02:00'})
 
-        const response = await app.request(
-            'https://example.com/api/recent-media',
-            {},
-            createWorkerEnv({DB: db, MEDIA_BUCKET: bucket, RECENT_FEED_CURSOR_SECRET: cursorSecret}),
-        )
+        const page = await requestRecentMedia('?nsfw=true&unapproved=true&limit=1')
+        const cursor = (await page.json<{nextCursor: string | null}>()).nextCursor
+        expect(cursor).toBeTypeOf('string')
 
-        expect(response.status).toBe(500)
-    })
+        const response = await requestRecentMedia(`/state?cursor=${cursor}&nsfw=false&unapproved=true`)
 
-    it('reports that there is no published feed state', async () => {
-        const response = await app.request(
-            'https://example.com/api/recent-media/state',
-            {},
-            createWorkerEnv({DB: db, RECENT_FEED_PUBLIC_BASE_URL: publicBaseUrl}),
-        )
-
-        expect(response.status).toBe(200)
-        expect(response.headers.get('Cache-Control')).toBe('public, max-age=5, must-revalidate')
-        await expect(response.json()).resolves.toEqual({
-            generation: null,
-            publicRootUrl: null,
-            publishedAt: null,
-            unsafePending: false,
-        })
-    })
-
-    it('reports the current feed state and pending unsafe changes', async () => {
-        await db
-            .prepare(
-                `UPDATE recent_feed_state
-                 SET requested_revision = 8,
-                     published_revision = 7,
-                     generation = 'r7-state',
-                     root_key = 'recent-feed/generations/v1/roots/r7-state.json',
-                     published_at = '2026-08-25T12:05:00.000Z'
-                 WHERE singleton = 1`,
-            )
-            .run()
-        await db
-            .prepare(
-                `UPDATE recent_feed_dirty_hours
-                 SET revision = 8,
-                     urgent = 1
-                 WHERE dirty_hour = '*'`,
-            )
-            .run()
-
-        const response = await app.request(
-            'https://example.com/api/recent-media/state',
-            {},
-            createWorkerEnv({DB: db, RECENT_FEED_PUBLIC_BASE_URL: publicBaseUrl}),
-        )
-
-        expect(response.status).toBe(200)
-        await expect(response.json()).resolves.toEqual({
-            generation: 'r7-state',
-            publicRootUrl: `${publicBaseUrl}/recent-feed/generations/v1/roots/r7-state.json`,
-            publishedAt: '2026-08-25T12:05:00.000Z',
-            unsafePending: true,
-        })
+        expect(response.status).toBe(400)
+        await expect(response.json()).resolves.toEqual({error: 'Recent media cursor is invalid'})
     })
 })
-
-async function publishTestRoot(bucket: R2Bucket, items: Record<'n0-u0' | 'n0-u1' | 'n1-u0' | 'n1-u1', RecentMediaItem>): Promise<void> {
-    const rootKey = 'recent-feed/generations/v1/roots/r7-settings.json'
-    const variants = Object.fromEntries(
-        Object.keys(items).map((variant) => [variant, {itemCount: 1, years: [{year: '2026', key: 'unused-year.json', itemCount: 1}]}]),
-    )
-    const initialItems = Object.fromEntries(Object.entries(items).map(([variant, item]) => [variant, [item]]))
-
-    await bucket.put(
-        rootKey,
-        JSON.stringify({
-            schemaVersion: 1,
-            generation: 'r7-settings',
-            throughRevision: 7,
-            publishedAt: '2026-08-25T12:05:00.000Z',
-            variants,
-            initialItems,
-        }),
-    )
-    await db
-        .prepare(
-            `UPDATE recent_feed_state
-             SET requested_revision = 7,
-                 published_revision = 7,
-                 generation = 'r7-settings',
-                 root_key = ?,
-                 published_at = '2026-08-25T12:05:00.000Z'
-             WHERE singleton = 1`,
-        )
-        .bind(rootKey)
-        .run()
-}
-
-async function requestRecentMedia(bucket: R2Bucket, query = '', init: RequestInit = {}): Promise<Response> {
-    return app.request(
-        `https://example.com/api/recent-media${query}`,
-        init,
-        createWorkerEnv({
-            DB: db,
-            MEDIA_BUCKET: bucket,
-            RECENT_FEED_CURSOR_SECRET: cursorSecret,
-            RECENT_FEED_PUBLIC_BASE_URL: publicBaseUrl,
-        }),
-    )
-}
-
-function recentItem(id: string): RecentMediaItem {
-    return {
-        id,
-        groupId: '["user-1","character-1"]',
-        alt: 'Pending character art',
-        width: 800,
-        height: 600,
-        previewSrc: `https://m.example.com/${id}-preview.webp`,
-        originalSrc: `https://m.example.com/${id}.png`,
-        character: {
-            name: 'Pending Character',
-            href: '/u/demo/pending-character',
-            avatarUrl: 'https://m.example.com/character.webp',
-        },
-        user: {
-            username: 'demo',
-            href: '/u/demo',
-            avatarUrl: null,
-            initial: 'D',
-        },
-    }
-}

@@ -27,18 +27,13 @@ export function securityHeaders(c: Context<{Bindings: Bindings}>, next: Next): P
     return applySecurityHeaders(c, next)
 }
 
-function createHtmlContentSecurityPolicy(
-    nonce: string,
-    mediaPublicBaseUrl: string,
-    requestUrl: string,
-    recentFeedPublicBaseUrl?: string,
-): string {
+function createHtmlContentSecurityPolicy(nonce: string, mediaPublicBaseUrl: string, requestUrl: string): string {
     // CropperJS and the chart editors generate inline style attributes and runtime style elements.
     const mediaSource = cspSourceOrigin(mediaPublicBaseUrl)
     const toyhouseImageSources = isToyhouseMigrationPage(requestUrl) ? TOYHOUSE_IMAGE_SOURCES : []
     const imageSources = ["'self'", 'data:', 'blob:', mediaSource, ...toyhouseImageSources].filter(Boolean)
     const mediaSources = ["'self'", mediaSource].filter(Boolean)
-    const connectionSources = ["'self'", mediaSource, cspSourceOrigin(recentFeedPublicBaseUrl ?? '')].filter(Boolean)
+    const connectionSources = ["'self'", mediaSource].filter(Boolean)
 
     return [
         "default-src 'self'",
@@ -75,10 +70,7 @@ async function applySecurityHeaders(c: Context<{Bindings: Bindings}>, next: Next
     }
 
     const nonce = createCspNonce()
-    headers.set(
-        'Content-Security-Policy',
-        createHtmlContentSecurityPolicy(nonce, c.env.MEDIA_PUBLIC_BASE_URL, c.req.url, c.env.RECENT_FEED_PUBLIC_BASE_URL),
-    )
+    headers.set('Content-Security-Policy', createHtmlContentSecurityPolicy(nonce, c.env.MEDIA_PUBLIC_BASE_URL, c.req.url))
     headers.delete('Content-Length')
 
     c.res = new HTMLRewriter().on('script', new NonceAttributeHandler(nonce)).transform(copyResponseWithHeaders(c.res, headers))

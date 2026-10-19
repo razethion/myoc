@@ -1,17 +1,31 @@
-import {describe, expect, it} from 'vitest'
+import {beforeEach, describe, expect, it} from 'vitest'
 import {seedCharacter, seedMedia, seedUser, useTestDatabase} from '../test/d1'
 import {
     normalizeRecentMediaLimit,
-    queryRecentMediaSourceRows,
-    queryRecentMediaSourceRowsPage,
     RECENT_MEDIA_MAX_PAGE_SIZE,
     RECENT_MEDIA_PAGE_SIZE,
     RecentMediaPageSchema,
-    recentMediaHour,
-    recentMediaItemsFromRows,
+    RecentMediaStateSchema,
 } from './recentMedia'
+import {
+    getRecentMediaPage,
+    getRecentMediaState,
+    InvalidRecentFeedCursorError,
+    type RecentFeedQueryEnv,
+    resetRecentFeedHeadCache,
+} from './recentMedia/query'
 
 const db = useTestDatabase()
+const mediaBaseUrl = 'https://media.example.com'
+const env: RecentFeedQueryEnv = {
+    DB: db,
+    MEDIA_PUBLIC_BASE_URL: mediaBaseUrl,
+    RECENT_FEED_CURSOR_SECRET: 'test-secret-with-at-least-thirty-two-characters',
+}
+
+beforeEach(() => {
+    resetRecentFeedHeadCache()
+})
 
 function requireFirst<T>(values: T[], label: string): T {
     const value = values[0]
@@ -21,10 +35,14 @@ function requireFirst<T>(values: T[], label: string): T {
     return value
 }
 
-describe('recent media publication source', () => {
-    it('publishes media with previews for approved and unapproved variants', async () => {
-        await seedUser({id: 'user-1'})
-        await seedCharacter({id: 'character-1', userId: 'user-1'})
+async function seedFeedOwner(): Promise<void> {
+    await seedUser({id: 'user-1'})
+    await seedCharacter({id: 'character-1', userId: 'user-1'})
+}
+
+describe('recent media direct query', () => {
+    it('publishes approved media and includes unapproved media on request', async () => {
+        await seedFeedOwner()
         await seedMedia({
             id: 'approved-media',
             userId: 'user-1',
@@ -55,15 +73,11 @@ describe('recent media publication source', () => {
             updatedAt: '2026-08-25 10:00:00',
         })
 
-        const rows = await queryRecentMediaSourceRows(db)
+        const approvedPage = await getRecentMediaPage(env, {showNsfw: false, showUnapproved: false})
+        const unapprovedPage = await getRecentMediaPage(env, {showNsfw: false, showUnapproved: true})
 
-        expect(rows.map((row) => row.id)).toEqual(['approved-media', 'pending-media', 'changed-after-approval'])
-        expect(recentMediaItemsFromRows(rows, 'https://m.example.com', false, false).map((item) => item.id)).toEqual(['approved-media'])
-        expect(recentMediaItemsFromRows(rows, 'https://m.example.com', false, true).map((item) => item.id)).toEqual([
-            'approved-media',
-            'pending-media',
-            'changed-after-approval',
-        ])
+        expect(approvedPage.items.map((item) => item.id)).toEqual(['approved-media'])
+        expect(unapprovedPage.items.map((item) => item.id)).toEqual(['approved-media', 'pending-media', 'changed-after-approval'])
     })
 
     it('selects the requested eligible variant and returns presentation details', async () => {
@@ -91,9 +105,10 @@ describe('recent media publication source', () => {
             updatedAt: '2026-08-25 12:00:00',
         })
 
-        const row = requireFirst(await queryRecentMediaSourceRows(db), 'the seeded media row')
-        const sfwItem = requireFirst(recentMediaItemsFromRows([row], 'https://media.example.com/', false, false), 'the SFW item')
-        const nsfwItem = requireFirst(recentMediaItemsFromRows([row], 'https://media.example.com/', true, false), 'the NSFW item')
+        const sfwPage = await getRecentMediaPage(env, {showNsfw: false, showUnapproved: false})
+        const nsfwPage = await getRecentMediaPage(env, {showNsfw: true, showUnapproved: false})
+        const sfwItem = requireFirst(sfwPage.items, 'the SFW item')
+        const nsfwItem = requireFirst(nsfwPage.items, 'the NSFW item')
 
         expect(sfwItem).toMatchObject({
             id: 'mixed-media',
@@ -124,8 +139,7 @@ describe('recent media publication source', () => {
     })
 
     it('uses SFW media when NSFW media is not approved', async () => {
-        await seedUser({id: 'user-1'})
-        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        await seedFeedOwner()
         await seedMedia({
             id: 'pending-nsfw',
             userId: 'user-1',
@@ -140,17 +154,17 @@ describe('recent media publication source', () => {
             updatedAt: '2026-08-25 12:00:00',
         })
 
-        const rows = await queryRecentMediaSourceRows(db)
-        const sfwItem = requireFirst(recentMediaItemsFromRows(rows, 'https://media.example.com', true, false), 'the SFW item')
-        const nsfwItem = requireFirst(recentMediaItemsFromRows(rows, 'https://media.example.com', true, true), 'the NSFW item')
+        const sfwPage = await getRecentMediaPage(env, {showNsfw: true, showUnapproved: false})
+        const nsfwPage = await getRecentMediaPage(env, {showNsfw: true, showUnapproved: true})
+        const sfwItem = requireFirst(sfwPage.items, 'the SFW item')
+        const nsfwItem = requireFirst(nsfwPage.items, 'the NSFW item')
 
         expect(sfwItem.originalSrc).toContain('/sfw/')
         expect(nsfwItem.originalSrc).toContain('/nsfw/')
     })
 
     it('publishes NSFW-only media only when the request permits it', async () => {
-        await seedUser({id: 'user-1'})
-        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        await seedFeedOwner()
         await seedMedia({
             id: 'nsfw-only',
             userId: 'user-1',
@@ -164,18 +178,18 @@ describe('recent media publication source', () => {
             updatedAt: '2026-08-25 12:00:00',
         })
 
-        const rows = await queryRecentMediaSourceRows(db)
+        const sfwPage = await getRecentMediaPage(env, {showNsfw: false, showUnapproved: false})
+        const nsfwPage = await getRecentMediaPage(env, {showNsfw: true, showUnapproved: false})
 
-        expect(recentMediaItemsFromRows(rows, 'https://media.example.com', false, false)).toEqual([])
-        expect(recentMediaItemsFromRows(rows, 'https://media.example.com', true, false)[0]).toMatchObject({
+        expect(sfwPage.items).toEqual([])
+        expect(requireFirst(nsfwPage.items, 'the NSFW item')).toMatchObject({
             id: 'nsfw-only',
             user: {avatarUrl: null},
         })
     })
 
     it('uses safe dimensions when stored media dimensions are unavailable', async () => {
-        await seedUser({id: 'user-1'})
-        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        await seedFeedOwner()
         await seedMedia({
             id: 'media-without-dimensions',
             userId: 'user-1',
@@ -189,17 +203,15 @@ describe('recent media publication source', () => {
             nsfwPreviewImageKey: 'nsfw-preview',
         })
 
-        const rows = await queryRecentMediaSourceRows(db)
-        const sfwItem = requireFirst(recentMediaItemsFromRows(rows, 'https://media.example.com', false, true), 'the SFW item')
-        const nsfwItem = requireFirst(recentMediaItemsFromRows(rows, 'https://media.example.com', true, true), 'the NSFW item')
+        const sfwPage = await getRecentMediaPage(env, {showNsfw: false, showUnapproved: true})
+        const nsfwPage = await getRecentMediaPage(env, {showNsfw: true, showUnapproved: true})
 
-        expect(sfwItem).toMatchObject({width: 1, height: 1})
-        expect(nsfwItem).toMatchObject({width: 1, height: 1})
+        expect(requireFirst(sfwPage.items, 'the SFW item')).toMatchObject({width: 1, height: 1})
+        expect(requireFirst(nsfwPage.items, 'the NSFW item')).toMatchObject({width: 1, height: 1})
     })
 
     it('shows an eligible variant when the other variant has no preview', async () => {
-        await seedUser({id: 'user-1'})
-        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        await seedFeedOwner()
         await seedMedia({
             id: 'nsfw-preview-only',
             userId: 'user-1',
@@ -217,47 +229,23 @@ describe('recent media publication source', () => {
             nsfwPreviewImageKey: null,
         })
 
-        const rows = await queryRecentMediaSourceRows(db)
-        const sfwItems = recentMediaItemsFromRows(rows, 'https://media.example.com', false, true)
-        const allItems = recentMediaItemsFromRows(rows, 'https://media.example.com', true, true)
+        const sfwPage = await getRecentMediaPage(env, {showNsfw: false, showUnapproved: true})
+        const allPage = await getRecentMediaPage(env, {showNsfw: true, showUnapproved: true})
 
-        expect(sfwItems.map((item) => item.id)).toEqual(['sfw-preview-only'])
-        expect(allItems.map((item) => [item.id, item.originalSrc.includes('/nsfw/')])).toEqual([
+        expect(sfwPage.items.map((item) => item.id)).toEqual(['sfw-preview-only'])
+        expect(allPage.items.map((item) => [item.id, item.originalSrc.includes('/nsfw/')])).toEqual([
             ['sfw-preview-only', false],
             ['nsfw-preview-only', true],
         ])
     })
 
-    it('returns no rows when the source is empty', async () => {
-        await expect(queryRecentMediaSourceRows(db)).resolves.toEqual([])
-        await expect(queryRecentMediaSourceRowsPage(db, null, 10)).resolves.toEqual([])
+    it('returns an empty page and neutral state when the source is empty', async () => {
+        await expect(getRecentMediaPage(env)).resolves.toEqual({items: [], nextCursor: null, head: null})
+        await expect(getRecentMediaState(env)).resolves.toEqual({head: null, newCount: 0})
     })
 
-    it('filters source rows to one UTC hour', async () => {
-        await seedUser({id: 'user-1'})
-        await seedCharacter({id: 'character-1', userId: 'user-1'})
-        for (const [id, createdAt] of [
-            ['before', '2026-08-25 11:59:59'],
-            ['start', '2026-08-25 12:00:00'],
-            ['end', '2026-08-25 12:59:59'],
-            ['after', '2026-08-25 13:00:00'],
-        ] as const) {
-            await seedMedia({id, userId: 'user-1', characterId: 'character-1', sfwPreviewImageKey: `${id}-preview`, createdAt})
-        }
-
-        const rows = await queryRecentMediaSourceRows(db, '2026-08-25T12')
-
-        expect(rows.map((row) => row.id)).toEqual(['end', 'start'])
-        expect(rows.map(recentMediaHour)).toEqual(['2026-08-25T12', '2026-08-25T12'])
-    })
-
-    it.each(['2026-08-25 12', '2026-13-01T00'])('rejects invalid source hour %s', async (hour) => {
-        await expect(queryRecentMediaSourceRows(db, hour)).rejects.toThrow('Recent media hour is invalid')
-    })
-
-    it('pages source rows by timestamp and ID', async () => {
-        await seedUser({id: 'user-1'})
-        await seedCharacter({id: 'character-1', userId: 'user-1'})
+    it('pages items by keyset cursor with an ID tie-break', async () => {
+        await seedFeedOwner()
         for (const [id, createdAt] of [
             ['same-z', '2026-08-25 12:00:00'],
             ['same-y', '2026-08-25 12:00:00'],
@@ -267,19 +255,79 @@ describe('recent media publication source', () => {
             await seedMedia({id, userId: 'user-1', characterId: 'character-1', sfwPreviewImageKey: `${id}-preview`, createdAt})
         }
 
-        const firstPage = await queryRecentMediaSourceRowsPage(db, null, 2)
-        const secondPage = await queryRecentMediaSourceRowsPage(
-            db,
-            {createdAt: firstPage.at(-1)?.created_at ?? '', id: firstPage.at(-1)?.id ?? ''},
-            2,
-        )
+        const firstPage = await getRecentMediaPage(env, {limit: 2})
+        expect(firstPage.items.map((item) => item.id)).toEqual(['same-z', 'same-y'])
+        expect(firstPage.nextCursor).toBeTypeOf('string')
+        expect(firstPage.head).toBeTypeOf('string')
 
-        expect(firstPage.map((row) => row.id)).toEqual(['same-z', 'same-y'])
-        expect(secondPage.map((row) => row.id)).toEqual(['same-x', 'older'])
+        const secondPage = await getRecentMediaPage(env, {limit: 2, cursor: firstPage.nextCursor})
+        expect(secondPage.items.map((item) => item.id)).toEqual(['same-x', 'older'])
+        expect(secondPage.nextCursor).toBeNull()
     })
 
-    it.each([0, 1.5, 5001])('rejects invalid source page limit %s', async (limit) => {
-        await expect(queryRecentMediaSourceRowsPage(db, null, limit)).rejects.toThrow('Recent media source page limit is invalid')
+    it('rejects cursors from another variant or tampered payloads', async () => {
+        await seedFeedOwner()
+        for (const [id, createdAt] of [
+            ['first', '2026-08-25 12:03:00'],
+            ['second', '2026-08-25 12:02:00'],
+            ['third', '2026-08-25 12:01:00'],
+        ] as const) {
+            await seedMedia({id, userId: 'user-1', characterId: 'character-1', sfwPreviewImageKey: `${id}-preview`, createdAt})
+        }
+
+        const page = await getRecentMediaPage(env, {showNsfw: true, limit: 2})
+        const cursor = page.nextCursor
+        expect(cursor).toBeTypeOf('string')
+
+        await expect(getRecentMediaPage(env, {showNsfw: false, limit: 2, cursor})).rejects.toThrow(InvalidRecentFeedCursorError)
+        await expect(getRecentMediaPage(env, {showNsfw: true, limit: 2, cursor: `${cursor?.slice(0, -3)}aaa`})).rejects.toThrow(
+            InvalidRecentFeedCursorError,
+        )
+        await expect(getRecentMediaPage(env, {showNsfw: true, limit: 2, cursor: 'not-a-cursor'})).rejects.toThrow(
+            InvalidRecentFeedCursorError,
+        )
+    })
+
+    it('reports the head cursor and counts uploads newer than a pinned cursor', async () => {
+        await seedFeedOwner()
+        await seedMedia({
+            id: 'older-media',
+            userId: 'user-1',
+            characterId: 'character-1',
+            sfwPreviewImageKey: 'older-preview',
+            createdAt: '2026-08-25 12:00:00',
+            updatedAt: '2026-08-25 12:00:00',
+        })
+
+        const page = await getRecentMediaPage(env)
+        const head = page.head
+        expect(head).toBeTypeOf('string')
+        await expect(getRecentMediaState(env, {cursor: head})).resolves.toEqual({head, newCount: 0})
+
+        await seedMedia({
+            id: 'newer-media',
+            userId: 'user-1',
+            characterId: 'character-1',
+            sfwPreviewImageKey: 'newer-preview',
+            createdAt: '2026-08-25 12:05:00',
+            updatedAt: '2026-08-25 12:05:00',
+        })
+        resetRecentFeedHeadCache()
+
+        const updatedState = await getRecentMediaState(env, {cursor: head})
+        expect(updatedState.newCount).toBe(1)
+        expect(updatedState.head).not.toBe(head)
+
+        await expect(getRecentMediaState(env)).resolves.toMatchObject({newCount: 0})
+    })
+
+    it('rejects requests without a usable cursor secret', async () => {
+        await expect(getRecentMediaPage({...env, RECENT_FEED_CURSOR_SECRET: undefined})).rejects.toThrow(
+            'Recent feed cursor secret is not configured',
+        )
+        await expect(getRecentMediaPage({...env, RECENT_FEED_CURSOR_SECRET: 'too-short'})).rejects.toThrow(
+            'Recent feed cursor secret is not configured',
+        )
     })
 })
 
@@ -295,14 +343,13 @@ describe('recent media request values', () => {
         expect(normalizeRecentMediaLimit(limit)).toBe(expected)
     })
 
-    it('defaults optional page metadata', () => {
-        expect(RecentMediaPageSchema.parse({items: [], nextCursor: null})).toEqual({
+    it('parses direct feed page and state responses', () => {
+        expect(RecentMediaPageSchema.parse({items: [], nextCursor: null, head: null})).toEqual({
             items: [],
             nextCursor: null,
-            nextPosition: null,
-            publicRootUrl: null,
-            generation: null,
-            publishedAt: null,
+            head: null,
         })
+        expect(RecentMediaStateSchema.parse({head: null, newCount: 3})).toEqual({head: null, newCount: 3})
+        expect(() => RecentMediaStateSchema.parse({head: null, newCount: -1})).toThrow()
     })
 })

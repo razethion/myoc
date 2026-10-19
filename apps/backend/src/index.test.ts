@@ -5,8 +5,6 @@ import {runAdminJob} from './lib/admin/jobs'
 import {consumeMediaPreviewRegenerationMessage} from './lib/admin/mediaPreviewQueue'
 import {consumeThumbnailRegenerationMessage} from './lib/admin/thumbnailRegeneration'
 import {consumeImageUploadProcessingMessage, reconcileImageUploads} from './lib/media/imageUploadJobs'
-import {cleanupRecentFeed} from './lib/recentMedia/cleanup'
-import {publishRecentFeed, scheduleRecentFeedPublication} from './lib/recentMedia/publisher'
 import {createWorkerEnv} from './test/workerBindings'
 
 vi.mock('./lib/admin/jobs', async (importOriginal) => {
@@ -21,19 +19,6 @@ vi.mock('./lib/admin/jobs', async (importOriginal) => {
         })),
     }
 })
-
-vi.mock('./lib/recentMedia/publisher', () => ({
-    publishRecentFeed: vi.fn(async () => ({status: 'disabled'})),
-    scheduleRecentFeedPublication: vi.fn(),
-}))
-
-vi.mock('./lib/recentMedia/cleanup', () => ({
-    cleanupRecentFeed: vi.fn(async () => ({
-        retainedGenerations: 0,
-        deletedGenerations: 0,
-        deletedObjects: 0,
-    })),
-}))
 
 vi.mock('./lib/media/imageUploadJobs', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./lib/media/imageUploadJobs')>()
@@ -64,22 +49,17 @@ describe('worker scheduled handler', () => {
     })
 
     it.each([
-        ['* * * * *', 'recent-feed'],
+        ['* * * * *', 'image-upload-reconcile'],
         ['0 8 * * *', 'd1-backup'],
         ['0 9 * * *', 'r2-media-cleanup'],
-        ['30 9 * * *', 'recent-feed-cleanup'],
         ['0 10 * * *', 'leaderboard-refresh'],
     ] as const)('runs the %s cron as %s', async (cron, jobName) => {
         const {ctx, waitUntilPromises} = createExecutionContext()
 
         worker.scheduled({cron} as ScheduledEvent, env, ctx)
 
-        if (jobName === 'recent-feed') {
-            expect(publishRecentFeed).toHaveBeenCalledWith(env)
+        if (jobName === 'image-upload-reconcile') {
             expect(reconcileImageUploads).toHaveBeenCalledWith(env)
-            expect(runAdminJob).not.toHaveBeenCalled()
-        } else if (jobName === 'recent-feed-cleanup') {
-            expect(cleanupRecentFeed).toHaveBeenCalledWith(env)
             expect(runAdminJob).not.toHaveBeenCalled()
         } else {
             expect(runAdminJob).toHaveBeenCalledWith(env, jobName, {
@@ -134,7 +114,6 @@ describe('worker queue handler', () => {
         try {
             await worker.queue(batch, env, {} as ExecutionContext)
             expect(ack).toHaveBeenCalledOnce()
-            expect(scheduleRecentFeedPublication).toHaveBeenCalledWith(expect.anything(), env)
         } finally {
             error.mockRestore()
         }
@@ -172,7 +151,6 @@ describe('worker queue handler', () => {
             if (other !== consumer) expect(other).not.toHaveBeenCalled()
         }
         expect(consumeImageProcessingDeadLetterQueue).not.toHaveBeenCalled()
-        expect(scheduleRecentFeedPublication).toHaveBeenCalledWith(expect.anything(), env)
     })
 
     it('routes the shared dead-letter queue to its consumer', async () => {
@@ -184,7 +162,6 @@ describe('worker queue handler', () => {
         await worker.queue(batch, env, {} as ExecutionContext)
 
         expect(consumeImageProcessingDeadLetterQueue).toHaveBeenCalledWith(batch, env)
-        expect(scheduleRecentFeedPublication).not.toHaveBeenCalled()
         expect(consumeImageUploadProcessingMessage).not.toHaveBeenCalled()
         expect(consumeMediaPreviewRegenerationMessage).not.toHaveBeenCalled()
         expect(consumeThumbnailRegenerationMessage).not.toHaveBeenCalled()

@@ -12,7 +12,7 @@ import {readFormDataUpTo} from '../lib/http/requestBody'
 import {getLeaderboardSnapshot} from '../lib/leaderboard'
 import {parseHeightChartJson} from '../lib/media/heightChart'
 import {characterHeightChartImageUrl, characterMediaImageUrl, characterMediaPreviewImageUrl} from '../lib/media/url'
-import {getGeneratedRecentMediaPage} from '../lib/recentMedia/reader'
+import {getRecentMediaPage} from '../lib/recentMedia/query'
 import {APP_VERSION, RELEASE_NOTES} from '../lib/releases'
 import type {UserSocialLink} from '../lib/socialLinks'
 import type {Bindings} from '../types/bindings'
@@ -678,7 +678,7 @@ pageRoutes.get('/recent', async (c) => {
     const currentUser = await getCurrentUser(c)
     const showNsfw = Boolean(currentUser?.displayNsfwMedia)
     const showUnapproved = currentUser?.showUnapprovedMedia !== false
-    const page = await getGeneratedRecentMediaPage(c.env, {
+    const page = await getRecentMediaPage(c.env, {
         showNsfw,
         showUnapproved,
     }).catch((error: unknown) => {
