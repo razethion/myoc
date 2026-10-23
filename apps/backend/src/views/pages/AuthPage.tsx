@@ -163,7 +163,7 @@ function AuthPageScript() {
             }
         }
 
-        async function beginPasskeyLogin(form, username, showErrors = true) {
+        async function beginPasskeyLogin(form, username, showErrors = true, autofill = false) {
             if (passkeyLoginInFlight) {
                 return;
             }
@@ -185,10 +185,12 @@ function AuthPageScript() {
                 });
                 const credential = await window.SimpleWebAuthnBrowser.startAuthentication({
                     optionsJSON: optionsBody.options,
-                    // 'optional' keeps silent conditional UI (password managers such as
-                    // 1Password) inline, and only opens the platform security-key dialog
-                    // when the browser can resolve a credential without user interaction.
-                    mediation: 'optional',
+                    // Browser autofill mode sets mediation 'conditional': the browser only
+                    // offers the passkey inline (for example a 1Password suggestion on the
+                    // username field) and never opens the platform security-key dialog.
+                    // Regular form submits keep the default 'required' mediation, so the
+                    // full dialog still appears when the visitor explicitly asks for it.
+                    useBrowserAutofill: autofill,
                 });
                 await postJson('/login/passkey/verify', {
                     challengeId: optionsBody.challengeId,
@@ -216,18 +218,16 @@ function AuthPageScript() {
             });
 
             if (!passkeyLoginForm.closest('[data-login-panel]')?.hidden) {
-                // 'required' means the browser only proceeds when it can complete the
-                // ceremony silently (an already-decided platform credential or an inline
-                // manager autofill). Anything that would pop the full-window security-key
-                // dialog is refused here, so the visitor sees the normal login form instead.
-                const canSilentPrompt = typeof window.PublicKeyCredential !== 'undefined' &&
-                    Boolean(window.PublicKeyCredential.isConditionalMediationAvailable);
-
-                canSilentPrompt
+                // Start a conditional (silent) request on page load so password managers
+                // can offer stored passkeys inline. The username field carries
+                // autocomplete="username webauthn", which conditional UI attaches its
+                // suggestion to. Browsers without conditional support skip this entirely;
+                // visitors then see the normal login form with no prompt.
+                window.SimpleWebAuthnBrowser?.browserSupportsWebAuthnAutofill?.()
                     .then((available) => {
                         if (available) {
                             requestAnimationFrame(() => {
-                                beginPasskeyLogin(passkeyLoginForm, '', false);
+                                beginPasskeyLogin(passkeyLoginForm, '', false, true);
                             });
                         }
                     })
