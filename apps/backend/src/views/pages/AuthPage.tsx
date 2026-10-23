@@ -185,6 +185,10 @@ function AuthPageScript() {
                 });
                 const credential = await window.SimpleWebAuthnBrowser.startAuthentication({
                     optionsJSON: optionsBody.options,
+                    // 'optional' keeps silent conditional UI (password managers such as
+                    // 1Password) inline, and only opens the platform security-key dialog
+                    // when the browser can resolve a credential without user interaction.
+                    mediation: 'optional',
                 });
                 await postJson('/login/passkey/verify', {
                     challengeId: optionsBody.challengeId,
@@ -212,9 +216,22 @@ function AuthPageScript() {
             });
 
             if (!passkeyLoginForm.closest('[data-login-panel]')?.hidden) {
-                requestAnimationFrame(() => {
-                    beginPasskeyLogin(passkeyLoginForm, '', false);
-                });
+                // 'required' means the browser only proceeds when it can complete the
+                // ceremony silently (an already-decided platform credential or an inline
+                // manager autofill). Anything that would pop the full-window security-key
+                // dialog is refused here, so the visitor sees the normal login form instead.
+                const canSilentPrompt = typeof window.PublicKeyCredential !== 'undefined' &&
+                    Boolean(window.PublicKeyCredential.isConditionalMediationAvailable);
+
+                canSilentPrompt
+                    .then((available) => {
+                        if (available) {
+                            requestAnimationFrame(() => {
+                                beginPasskeyLogin(passkeyLoginForm, '', false);
+                            });
+                        }
+                    })
+                    .catch(() => {});
             }
         }
 
