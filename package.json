@@ -37,7 +37,7 @@
     "@biomejs/biome": "^2.5.15",
     "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@tailwindcss/cli": "^4.3.3",
-    "@vitest/coverage-istanbul": "^4.1.11",
+    "@vitest/coverage-istanbul": "^5.0.5",
     "daisyui": "^5.7.50",
     "knip": "^6.40.0",
     "tailwindcss": "^4.3.3",
