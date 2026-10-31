@@ -1,6 +1,6 @@
 <script lang="ts">
-import Navbar from '$lib/components/Navbar.svelte'
-import SearchPage from '$lib/components/SearchPage.svelte'
+import Navbar from '#lib/components/Navbar.svelte'
+import SearchPage from '#lib/components/SearchPage.svelte'
 import type {PageData} from './$types'
 
 let {data}: {data: PageData} = $props()
