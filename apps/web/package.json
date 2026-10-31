@@ -13,12 +13,12 @@
     "@myoc/ui": "*"
   },
   "devDependencies": {
-    "@sveltejs/adapter-cloudflare": "^7.2.9",
-    "@sveltejs/kit": "^2.70.3",
+    "@sveltejs/adapter-cloudflare": "^8.0.2",
+    "@sveltejs/kit": "^3.1.1",
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^26.6.5",
-    "svelte": "^5.57.0",
+    "svelte": "^5.57.3",
     "svelte-check": "^4.7.6",
     "typescript": "^6.0.3",
     "vite": "^8.3.5",
