@@ -1,3 +1,4 @@
+import {env} from 'cloudflare:workers'
 import type {Handle} from '@sveltejs/kit/hooks'
 
 const PERMISSIONS_POLICY = [
@@ -21,7 +22,7 @@ export const handle: Handle = async ({event, resolve}) => {
         let response: Response
 
         if (handler === 'hono') {
-            const backend = event.platform?.env.HONO
+            const backend = env.HONO
 
             if (!backend) {
                 response = new Response('The application backend is unavailable.', {status: 503})
