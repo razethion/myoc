@@ -16,8 +16,8 @@
     "@simplewebauthn/server": "^14.0.3",
     "bcryptjs": "^3.0.3",
     "cropperjs": "^2.1.1",
-    "hono": "^4.13.11",
+    "hono": "^4.13.16",
     "openseadragon": "^6.1.0",
-    "zod": "^4.5.4"
+    "zod": "^4.6.6"
   }
 }
