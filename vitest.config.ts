@@ -1,4 +1,4 @@
-import {cloudflareTest, readD1Migrations} from '@cloudflare/vitest-pool-workers'
+import {cloudflareTest, readD1Migrations} from '@cloudflare/vitest-plugin'
 import {defineConfig} from 'vitest/config'
 
 const runtimeProcess = (globalThis as typeof globalThis & {process?: {env: Record<string, string | undefined>}}).process
