@@ -1,5 +1,5 @@
-import {SearchPageDataSchema} from '@myoc/contracts/search'
 import {env} from 'cloudflare:workers'
+import {SearchPageDataSchema} from '@myoc/contracts/search'
 import {error} from '@sveltejs/kit'
 import type {PageServerLoad} from './$types'
 

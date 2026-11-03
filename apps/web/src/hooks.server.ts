@@ -1,5 +1,5 @@
-import type {Handle} from '@sveltejs/kit/hooks'
 import {env} from 'cloudflare:workers'
+import type {Handle} from '@sveltejs/kit/hooks'
 
 const PERMISSIONS_POLICY = [
     'accelerometer=()',
