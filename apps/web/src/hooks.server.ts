@@ -1,4 +1,4 @@
-import type {Handle} from '@sveltejs/kit'
+import type {Handle} from '@sveltejs/kit/hooks'
 
 const PERMISSIONS_POLICY = [
     'accelerometer=()',
@@ -10,6 +10,7 @@ const PERMISSIONS_POLICY = [
     'payment=()',
     'usb=()',
 ].join(', ')
+
 const STRICT_TRANSPORT_SECURITY = 'max-age=31536000; includeSubDomains'
 
 export const handle: Handle = async ({event, resolve}) => {
@@ -41,6 +42,7 @@ export const handle: Handle = async ({event, resolve}) => {
         } else {
             const resolvedResponse = await resolve(event)
             const headers = new Headers(resolvedResponse.headers)
+
             headers.set('Permissions-Policy', PERMISSIONS_POLICY)
             headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
             headers.set('X-Content-Type-Options', 'nosniff')
