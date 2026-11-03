@@ -1,9 +1,10 @@
 import {SearchPageDataSchema} from '@myoc/contracts/search'
+import {env} from 'cloudflare:workers'
 import {error} from '@sveltejs/kit'
 import type {PageServerLoad} from './$types'
 
-export const load: PageServerLoad = async ({platform, request, url}) => {
-    const backend = platform?.env.HONO
+export const load: PageServerLoad = async ({request, url}) => {
+    const backend = env.HONO
 
     if (!backend) {
         error(503, 'The application backend is unavailable.')
