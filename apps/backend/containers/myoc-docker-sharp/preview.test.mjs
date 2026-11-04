@@ -3,6 +3,40 @@ import test from 'node:test'
 import sharp from 'sharp'
 import {createAvifBlur, createAvifPreview, createGalleryAvifOutputs, createSquareAvif} from './preview.mjs'
 
+function findBox(buf, start, end, type) {
+    let off = start
+    while (off + 8 <= end) {
+        const size = buf.readUInt32BE(off)
+        const boxType = buf.toString('latin1', off + 4, off + 8)
+        if (boxType === type) return {off, size}
+        off += size
+    }
+    return null
+}
+
+function findNclx(buf) {
+    const meta = findBox(buf, 0, buf.length, 'meta')
+    if (!meta) return null
+    const iprp = findBox(buf, meta.off + 12, meta.off + meta.size, 'iprp')
+    if (!iprp) return null
+    const ipco = findBox(buf, iprp.off + 8, iprp.off + iprp.size, 'ipco')
+    if (!ipco) return null
+    let off = ipco.off + 8
+    while (off + 8 <= ipco.off + ipco.size) {
+        const size = buf.readUInt32BE(off)
+        const boxType = buf.toString('latin1', off + 4, off + 8)
+        if (boxType === 'colr' && buf.toString('latin1', off + 8, off + 12) === 'nclx') {
+            return {
+                primaries: buf.readUInt16BE(off + 12),
+                transfer: buf.readUInt16BE(off + 14),
+                matrix: buf.readUInt16BE(off + 16),
+            }
+        }
+        off += size
+    }
+    return null
+}
+
 const previewOptions = {
     limitInputPixels: 200_000_000,
     maxLongEdge: 1600,
@@ -33,7 +67,7 @@ test('creates a quality 60 AVIF within the preview size limit', async () => {
     assert.equal(metadata.hasAlpha, true)
 })
 
-test('retains a Display P3 source ICC profile in the AVIF preview', async () => {
+test('declares a Display P3 source as Display P3 in the AVIF preview', async () => {
     const source = await sharp({
         create: {
             background: {b: 32, g: 64, r: 255},
@@ -53,6 +87,12 @@ test('retains a Display P3 source ICC profile in the AVIF preview', async () => 
     assert.equal(sourceMetadata.hasProfile, true)
     assert.equal(previewMetadata.hasProfile, true)
     assert.deepEqual(previewMetadata.icc, sourceMetadata.icc)
+
+    const nclx = findNclx(result.bytes)
+    assert.ok(nclx, 'expected an nclx color box')
+    assert.equal(nclx.primaries, 12)
+    assert.equal(nclx.transfer, 13)
+    assert.equal(nclx.matrix, 0)
 })
 
 test('does not enlarge a source that is within the preview size limit', async () => {
