@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import {unlinkSync, writeFileSync} from 'node:fs'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
 import test from 'node:test'
 import sharp from 'sharp'
 import {createAvifBlur, createAvifPreview, createGalleryAvifOutputs, createSquareAvif} from './preview.mjs'
@@ -35,6 +38,89 @@ function findNclx(buf) {
         off += size
     }
     return null
+}
+
+/**
+ * Build a minimal ICC v2 RGB profile from D50-adapted colorants and a gamma curve.
+ *
+ * @param {{colorants: {r: number[], g: number[], b: number[]}, gamma: number}} options
+ */
+function makeIcc({colorants, gamma}) {
+    const xyzTag = (values) => {
+        const buffer = Buffer.alloc(20)
+        buffer.write('XYZ ', 0, 'latin1')
+        buffer.writeInt32BE(Math.round(values[0] * 65536), 8)
+        buffer.writeInt32BE(Math.round(values[1] * 65536), 12)
+        buffer.writeInt32BE(Math.round(values[2] * 65536), 16)
+        return buffer
+    }
+    const curvTag = (value) => {
+        const buffer = Buffer.alloc(14)
+        buffer.write('curv', 0, 'latin1')
+        buffer.writeUInt32BE(1, 8)
+        buffer.writeUInt16BE(Math.round(value * 256), 12)
+        return buffer
+    }
+    const descriptionText = 'Test profile'
+    const description = Buffer.alloc(4 + 4 + 4 + descriptionText.length + 1 + 4 + 4 + 4 + 67)
+    description.write('desc', 0, 'latin1')
+    description.writeUInt32BE(descriptionText.length + 1, 8)
+    description.write(descriptionText, 12, 'latin1')
+    const copyrightText = 'Public domain'
+    const copyright = Buffer.alloc(4 + 4 + copyrightText.length + 1)
+    copyright.write('text', 0, 'latin1')
+    copyright.write(copyrightText, 8, 'latin1')
+    const tagDefs = [
+        ['desc', description],
+        ['cprt', copyright],
+        ['wtpt', xyzTag([0.9642, 1.0, 0.8249])],
+        ['rXYZ', xyzTag(colorants.r)],
+        ['gXYZ', xyzTag(colorants.g)],
+        ['bXYZ', xyzTag(colorants.b)],
+        ['rTRC', curvTag(gamma)],
+        ['gTRC', curvTag(gamma)],
+        ['bTRC', curvTag(gamma)],
+    ]
+    const tagCount = tagDefs.length
+    let cursor = 128 + 4 + tagCount * 12
+    const size = cursor + tagDefs.reduce((sum, [, buffer]) => sum + buffer.length, 0)
+    const profile = Buffer.alloc(size)
+    profile.writeUInt32BE(size, 0)
+    profile.writeUInt32BE(0x02100000, 8)
+    profile.write('mntr', 12, 'latin1')
+    profile.write('RGB ', 16, 'latin1')
+    profile.write('XYZ ', 20, 'latin1')
+    profile.write('acsp', 36, 'latin1')
+    profile.writeUInt32BE(0, 64)
+    profile.writeInt32BE(Math.round(0.9642 * 65536), 68)
+    profile.writeInt32BE(65536, 72)
+    profile.writeInt32BE(Math.round(0.8249 * 65536), 76)
+    profile.writeUInt32BE(tagCount, 128)
+    let tableOffset = 132
+    for (const [signature, buffer] of tagDefs) {
+        profile.write(signature, tableOffset, 'latin1')
+        profile.writeUInt32BE(cursor, tableOffset + 4)
+        profile.writeUInt32BE(buffer.length, tableOffset + 8)
+        buffer.copy(profile, cursor)
+        cursor += buffer.length
+        tableOffset += 12
+    }
+    return profile
+}
+
+async function sourceWithIcc(profile) {
+    const path = join(tmpdir(), `myoc-icc-${process.pid}-${Math.random().toString(16).slice(2)}.icc`)
+    writeFileSync(path, profile)
+    try {
+        return await sharp({
+            create: {background: {b: 32, g: 64, r: 255}, channels: 3, height: 80, width: 100},
+        })
+            .withIccProfile(path)
+            .png()
+            .toBuffer()
+    } finally {
+        unlinkSync(path)
+    }
 }
 
 const previewOptions = {
@@ -196,4 +282,70 @@ test('creates gallery preview and blur outputs from one decode graph', async () 
 
     const withoutBlur = await createGalleryAvifOutputs(source, {...options, blur: false})
     assert.equal(withoutBlur.blur, null)
+})
+
+test('declares a Rec.2020 source as Rec.2020 in the AVIF preview', async () => {
+    const source = await sourceWithIcc(
+        makeIcc({
+            colorants: {
+                b: [0.1251, 0.045629, 0.797162],
+                g: [0.165661, 0.675338, 0.029979],
+                r: [0.673459, 0.279033, -0.001931],
+            },
+            gamma: 2.4,
+        }),
+    )
+    const result = await createAvifPreview(source, previewOptions)
+    const previewMetadata = await sharp(result.bytes).metadata()
+
+    assert.equal(previewMetadata.hasProfile, true)
+    const nclx = findNclx(result.bytes)
+    assert.ok(nclx, 'expected an nclx color box')
+    assert.equal(nclx.primaries, 9)
+    assert.equal(nclx.transfer, 14)
+    assert.equal(nclx.matrix, 0)
+})
+
+test('declares a DCI-P3 source as DCI-P3 in the AVIF preview', async () => {
+    const source = await sourceWithIcc(
+        makeIcc({
+            colorants: {
+                b: [0.157104, 0.066559, 0.783081],
+                g: [0.291977, 0.692245, 0.041824],
+                r: [0.515121, 0.241196, 0],
+            },
+            gamma: 2.6,
+        }),
+    )
+    const result = await createAvifPreview(source, previewOptions)
+    const previewMetadata = await sharp(result.bytes).metadata()
+
+    assert.equal(previewMetadata.hasProfile, true)
+    const nclx = findNclx(result.bytes)
+    assert.ok(nclx, 'expected an nclx color box')
+    assert.equal(nclx.primaries, 11)
+    assert.equal(nclx.transfer, 2)
+    assert.equal(nclx.matrix, 0)
+})
+
+test('converts an Adobe RGB source to sRGB in the AVIF preview', async () => {
+    const source = await sourceWithIcc(
+        makeIcc({
+            colorants: {
+                b: [0.149234, 0.063227, 0.744851],
+                g: [0.205264, 0.625669, 0.060885],
+                r: [0.609722, 0.311104, 0.019474],
+            },
+            gamma: 2.2,
+        }),
+    )
+    const result = await createAvifPreview(source, previewOptions)
+    const previewMetadata = await sharp(result.bytes).metadata()
+
+    assert.equal(previewMetadata.hasProfile, false)
+    const nclx = findNclx(result.bytes)
+    assert.ok(nclx, 'expected an nclx color box')
+    assert.equal(nclx.primaries, 1)
+    assert.equal(nclx.transfer, 13)
+    assert.equal(nclx.matrix, 0)
 })
