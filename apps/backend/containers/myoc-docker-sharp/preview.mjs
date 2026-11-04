@@ -12,6 +12,50 @@ const P3_PRIMARIES = {
     b: [0.1571044921875, 0.066558837890625, 0.7830810546875],
 }
 
+// D50-adapted colorants for the other CICP-representable spaces.
+const REC2020_PRIMARIES = {
+    r: [0.673459, 0.279033, -0.001931],
+    g: [0.165661, 0.675338, 0.029979],
+    b: [0.1251, 0.045629, 0.797162],
+}
+
+const BT601_525_PRIMARIES = {
+    r: [0.416279, 0.22167, 0.013652],
+    g: [0.393183, 0.703274, 0.091349],
+    b: [0.154758, 0.075056, 0.720209],
+}
+
+const BT601_625_PRIMARIES = {
+    r: [0.455232, 0.232277, 0.01454],
+    g: [0.367584, 0.707814, 0.104902],
+    b: [0.141403, 0.059909, 0.705769],
+}
+
+const BT470M_PRIMARIES = {
+    r: [0.634444, 0.310993, -0.001183],
+    g: [0.185125, 0.591482, 0.055516],
+    b: [0.144651, 0.097525, 0.770878],
+}
+
+const PRIMARIES_SPACES = [
+    {name: 'srgb', primaries: 1, transfer: 13, xyz: SRGB_PRIMARIES},
+    {name: 'display-p3', primaries: 12, transfer: 13, xyz: P3_PRIMARIES},
+    {name: 'rec2020', primaries: 9, transfer: 14, xyz: REC2020_PRIMARIES},
+    {name: 'bt601-525', primaries: 6, transfer: 6, xyz: BT601_525_PRIMARIES},
+    {name: 'bt601-625', primaries: 5, transfer: 5, xyz: BT601_625_PRIMARIES},
+    {name: 'bt470m', primaries: 4, transfer: 4, xyz: BT470M_PRIMARIES},
+]
+
+function iccTags(icc) {
+    const tagCount = icc.readUInt32BE(128)
+    const tags = {}
+    for (let i = 0; i < tagCount; i++) {
+        const off = 132 + i * 12
+        tags[icc.toString('latin1', off, off + 4)] = {offset: icc.readUInt32BE(off + 4)}
+    }
+    return tags
+}
+
 /**
  * Read the rXYZ/gXYZ/bXYZ colorants from an ICC profile.
  *
@@ -19,21 +63,12 @@ const P3_PRIMARIES = {
  */
 function iccPrimaries(icc) {
     try {
-        const tagCount = icc.readUInt32BE(128)
-        const tags = {}
-        for (let i = 0; i < tagCount; i++) {
-            const off = 132 + i * 12
-            tags[icc.toString('latin1', off, off + 4)] = {offset: icc.readUInt32BE(off + 4)}
-        }
+        const tags = iccTags(icc)
         const xyz = (signature) => {
             const tag = tags[signature]
             if (!tag) return null
             const base = tag.offset + 8
-            return [
-                icc.readInt32BE(base) / 65536,
-                icc.readInt32BE(base + 4) / 65536,
-                icc.readInt32BE(base + 8) / 65536,
-            ]
+            return [icc.readInt32BE(base) / 65536, icc.readInt32BE(base + 4) / 65536, icc.readInt32BE(base + 8) / 65536]
         }
         return {r: xyz('rXYZ'), g: xyz('gXYZ'), b: xyz('bXYZ')}
     } catch {
@@ -41,30 +76,101 @@ function iccPrimaries(icc) {
     }
 }
 
-function matchesPrimaries(actual, expected) {
-    if (!actual) return false
-    return ['r', 'g', 'b'].every((channel) => {
+/**
+ * Read the tone reproduction curve from an ICC profile so the transfer
+ * characteristics match the primaries (e.g. DCI-P3 vs Display P3).
+ *
+ * @param {Buffer} icc
+ */
+function iccTransfer(icc) {
+    try {
+        const tags = iccTags(icc)
+        const tag = tags.rTRC ?? tags.gTRC ?? tags.bTRC
+        if (!tag) return {gamma: null, kind: 'unknown'}
+        const offset = tag.offset
+        const type = icc.toString('latin1', offset, offset + 4)
+        if (type === 'para') {
+            const fn = icc.readUInt16BE(offset + 8)
+            if (fn === 3 || fn === 4) return {gamma: null, kind: 'srgb'}
+            return {gamma: icc.readInt32BE(offset + 12) / 65536, kind: 'gamma'}
+        }
+        if (type === 'curv') {
+            const count = icc.readUInt32BE(offset + 8)
+            if (count === 0) return {gamma: 1, kind: 'linear'}
+            if (count === 1) {
+                const gamma = icc.readUInt16BE(offset + 12) / 256
+                return Math.abs(gamma - 1) < 0.05 ? {gamma: 1, kind: 'linear'} : {gamma, kind: 'gamma'}
+            }
+            return {gamma: null, kind: 'sampled'}
+        }
+        return {gamma: null, kind: 'unknown'}
+    } catch {
+        return {gamma: null, kind: 'unknown'}
+    }
+}
+
+function primariesDistance(actual, expected) {
+    if (!actual) return Number.POSITIVE_INFINITY
+    let distance = 0
+    for (const channel of ['r', 'g', 'b']) {
         const values = actual[channel]
-        return values && values.every((value, i) => Math.abs(value - expected[channel][i]) < 0.02)
-    })
+        if (!values) return Number.POSITIVE_INFINITY
+        for (let i = 0; i < 3; i++) {
+            distance = Math.max(distance, Math.abs(values[i] - expected[channel][i]))
+        }
+    }
+    return distance
+}
+
+const SRGB_FALLBACK = {primaries: 1, transfer: 13, matrix: 0, fullRange: true, keepIcc: false}
+
+function nearGamma(trc, value) {
+    return trc.kind === 'gamma' && trc.gamma !== null && Math.abs(trc.gamma - value) < 0.15
+}
+
+function transferCode(trc, fallback) {
+    if (trc.kind === 'srgb') return 13
+    if (trc.kind === 'linear') return 8
+    if (nearGamma(trc, 2.2)) return 4
+    return fallback
+}
+
+function bestPrimariesMatch(primaries) {
+    let best = null
+    let bestDistance = Number.POSITIVE_INFINITY
+    for (const space of PRIMARIES_SPACES) {
+        const distance = primariesDistance(primaries, space.xyz)
+        if (distance < bestDistance) {
+            best = space
+            bestDistance = distance
+        }
+    }
+    return bestDistance <= 0.01 ? best : null
 }
 
 /**
  * Map a source ICC profile to CICP values so the AVIF declares its real color space.
- * Unknown profiles fall back to sRGB conversion.
+ * Display P3, DCI-P3, Rec.2020 and the BT.601/BT.470 spaces are preserved;
+ * unknown profiles (Adobe RGB, ProPhoto, Apple RGB) fall back to sRGB conversion.
  *
  * @param {Buffer | undefined} icc
  */
 function resolveCicp(icc) {
-    if (!icc) return {primaries: 1, transfer: 13, matrix: 0, fullRange: true, keepIcc: false}
-    const primaries = iccPrimaries(icc)
-    if (matchesPrimaries(primaries, P3_PRIMARIES)) {
-        return {primaries: 12, transfer: 13, matrix: 0, fullRange: true, keepIcc: true}
+    if (!icc) return SRGB_FALLBACK
+    const match = bestPrimariesMatch(iccPrimaries(icc))
+    if (!match) return SRGB_FALLBACK
+    const trc = iccTransfer(icc)
+    // DCI-P3 shares primaries with Display P3 but uses a 2.6 gamma transfer curve.
+    if (match.name === 'display-p3' && nearGamma(trc, 2.6)) {
+        return {primaries: 11, transfer: 2, matrix: 0, fullRange: true, keepIcc: true}
     }
-    if (matchesPrimaries(primaries, SRGB_PRIMARIES)) {
-        return {primaries: 1, transfer: 13, matrix: 0, fullRange: true, keepIcc: true}
+    return {
+        primaries: match.primaries,
+        transfer: transferCode(trc, match.transfer),
+        matrix: 0,
+        fullRange: true,
+        keepIcc: true,
     }
-    return {primaries: 1, transfer: 13, matrix: 0, fullRange: true, keepIcc: false}
 }
 
 function findBox(buf, start, end, type) {
@@ -101,8 +207,18 @@ function writeUInt(buf, off, value, size) {
     else throw new Error(`Unsupported integer size ${size}`)
 }
 
+function skipExtents(offset, count, offsetSize, lengthSize, indexSize) {
+    let p = offset
+    for (let j = 0; j < count; j++) {
+        p += indexSize + offsetSize + lengthSize
+    }
+    return p
+}
+
 function adjustIlocBaseOffset(buf, ilocOff, delta) {
     const version = buf[ilocOff + 8]
+    const wide = version === 2
+    const itemIdSize = wide ? 4 : 2
     let p = ilocOff + 12
     const offsetSize = buf[p] >> 4
     const lengthSize = buf[p] & 0x0f
@@ -110,59 +226,53 @@ function adjustIlocBaseOffset(buf, ilocOff, delta) {
     const baseOffsetSize = buf[p] >> 4
     const indexSize = version >= 1 ? buf[p] & 0x0f : 0
     p += 1
-    const itemCount = version === 2 ? buf.readUInt32BE(p) : buf.readUInt16BE(p)
-    p += version === 2 ? 4 : 2
+    const itemCount = wide ? buf.readUInt32BE(p) : buf.readUInt16BE(p)
+    p += itemIdSize
     for (let i = 0; i < itemCount; i++) {
-        p += version === 2 ? 4 : 2
-        if (version >= 1) p += 2
-        p += 2
+        p += itemIdSize + (version >= 1 ? 2 : 0) + 2
         if (baseOffsetSize > 0) {
-            const baseOffset = readUInt(buf, p, baseOffsetSize)
-            writeUInt(buf, p, baseOffset + delta, baseOffsetSize)
+            writeUInt(buf, p, readUInt(buf, p, baseOffsetSize) + delta, baseOffsetSize)
             p += baseOffsetSize
         }
         const extentCount = buf.readUInt16BE(p)
         p += 2
-        for (let j = 0; j < extentCount; j++) {
-            if (version >= 1 && indexSize > 0) p += indexSize
-            p += offsetSize
-            p += lengthSize
-        }
+        p = skipExtents(p, extentCount, offsetSize, lengthSize, indexSize)
     }
 }
 
-function addAssociation(buf, ipma, newIndex, primaryId) {
-    const version = buf[ipma.off + 8]
-    const flags = buf.readUIntBE(ipma.off + 9, 3)
+function readAssociations(buf, offset, count, size) {
+    const associations = []
+    let p = offset
+    for (let j = 0; j < count; j++) {
+        associations.push(size === 2 ? buf.readUInt16BE(p) : buf[p])
+        p += size
+    }
+    return {associations, next: p}
+}
+
+function readIpmaEntries(buf, ipma, version, associationSize) {
     const entryCount = buf.readUInt32BE(ipma.off + 12)
-    const associationSize = flags & 1 ? 2 : 1
+    const itemIdSize = version === 0 ? 2 : 4
     let p = ipma.off + 16
     const entries = []
     for (let i = 0; i < entryCount; i++) {
-        const itemIdSize = version === 0 ? 2 : 4
         const itemId = version === 0 ? buf.readUInt16BE(p) : buf.readUInt32BE(p)
         p += itemIdSize
-        const associationCount = buf[p]
+        const count = buf[p]
         p += 1
-        const associations = []
-        for (let j = 0; j < associationCount; j++) {
-            if (associationSize === 2) {
-                associations.push(buf.readUInt16BE(p))
-                p += 2
-            } else {
-                associations.push(buf[p])
-                p += 1
-            }
-        }
-        entries.push({itemId, associations})
+        const read = readAssociations(buf, p, count, associationSize)
+        entries.push({itemId, associations: read.associations})
+        p = read.next
     }
-    const target = entries.find((entry) => entry.itemId === primaryId) ?? entries[0]
-    target.associations.push(newIndex)
+    return entries
+}
+
+function writeIpma(version, flags, associationSize, entries) {
     const header = Buffer.alloc(16)
     header.write('ipma', 4, 'latin1')
     header.writeUInt8(version, 8)
     header.writeUIntBE(flags, 9, 3)
-    header.writeUInt32BE(entryCount, 12)
+    header.writeUInt32BE(entries.length, 12)
     const parts = [header]
     for (const entry of entries) {
         const itemIdSize = version === 0 ? 2 : 4
@@ -172,19 +282,91 @@ function addAssociation(buf, ipma, newIndex, primaryId) {
         body.writeUInt8(entry.associations.length, itemIdSize)
         let q = itemIdSize + 1
         for (const association of entry.associations) {
-            if (associationSize === 2) {
-                body.writeUInt16BE(association, q)
-                q += 2
-            } else {
-                body.writeUInt8(association, q)
-                q += 1
-            }
+            if (associationSize === 2) body.writeUInt16BE(association, q)
+            else body.writeUInt8(association, q)
+            q += associationSize
         }
         parts.push(body)
     }
     const result = Buffer.concat(parts)
     result.writeUInt32BE(result.length, 0)
     return result
+}
+
+function addAssociation(buf, ipma, newIndex, primaryId) {
+    const version = buf[ipma.off + 8]
+    const flags = buf.readUIntBE(ipma.off + 9, 3)
+    const associationSize = flags & 1 ? 2 : 1
+    const entries = readIpmaEntries(buf, ipma, version, associationSize)
+    const target = entries.find((entry) => entry.itemId === primaryId) ?? entries[0]
+    target.associations.push(newIndex)
+    return writeIpma(version, flags, associationSize, entries)
+}
+
+/**
+ * Add an nclx (CICP) color box to an AVIF so browsers interpret the pixels in the
+ * declared color space instead of falling back to sRGB.
+ *
+ * @param {Buffer} buf
+ * @param {{primaries: number, transfer: number, matrix: number, fullRange: boolean}} cicp
+ */
+function countProperties(buf, ipco) {
+    let count = 0
+    let offset = ipco.off + ipco.header
+    while (offset + 8 <= ipco.off + ipco.size) {
+        let size = buf.readUInt32BE(offset)
+        if (size === 1) size = Number(buf.readBigUInt64BE(offset + 8))
+        else if (size === 0) size = ipco.off + ipco.size - offset
+        count += 1
+        offset += size
+    }
+    return count
+}
+
+function buildNclx(cicp) {
+    const nclx = Buffer.alloc(19)
+    nclx.writeUInt32BE(19, 0)
+    nclx.write('colr', 4, 'latin1')
+    nclx.write('nclx', 8, 'latin1')
+    nclx.writeUInt16BE(cicp.primaries, 12)
+    nclx.writeUInt16BE(cicp.transfer, 14)
+    nclx.writeUInt16BE(cicp.matrix, 16)
+    nclx.writeUInt8(cicp.fullRange ? 0x80 : 0, 18)
+    return nclx
+}
+
+function rebuildIprp(buf, ipco, ipma, newIndex, primaryId, nclx) {
+    const children = buf.subarray(ipco.off + ipco.header, ipco.off + ipco.size)
+    const newIpco = Buffer.alloc(ipco.header + children.length + nclx.length)
+    if (ipco.header === 16) {
+        newIpco.writeUInt32BE(1, 0)
+        newIpco.writeBigUInt64BE(BigInt(newIpco.length), 8)
+    } else {
+        newIpco.writeUInt32BE(newIpco.length, 0)
+    }
+    newIpco.write('ipco', 4, 'latin1')
+    children.copy(newIpco, ipco.header)
+    nclx.copy(newIpco, ipco.header + children.length)
+    const newIpma = addAssociation(buf, ipma, newIndex, primaryId)
+    const newIprp = Buffer.alloc(8 + newIpco.length + newIpma.length)
+    newIprp.writeUInt32BE(newIprp.length, 0)
+    newIprp.write('iprp', 4, 'latin1')
+    newIpco.copy(newIprp, 8)
+    newIpma.copy(newIprp, 8 + newIpco.length)
+    return newIprp
+}
+
+function rebuildMeta(buf, meta, iprp, newIprp) {
+    const before = buf.subarray(meta.off + 12, iprp.off)
+    const after = buf.subarray(iprp.off + iprp.size, meta.off + meta.size)
+    const newMeta = Buffer.alloc(meta.size + (newIprp.length - iprp.size))
+    newMeta.writeUInt32BE(newMeta.length, 0)
+    newMeta.write('meta', 4, 'latin1')
+    buf.copy(newMeta, 8, meta.off + 8, meta.off + 12)
+    before.copy(newMeta, 12)
+    newIprp.copy(newMeta, 12 + before.length)
+    after.copy(newMeta, 12 + before.length + newIprp.length)
+    return newMeta
 }
 
 /**
@@ -198,60 +380,18 @@ function addNclx(buf, cicp) {
     const meta = findBox(buf, 0, buf.length, 'meta')
     if (!meta) return buf
     const iprp = findBox(buf, meta.off + 12, meta.off + meta.size, 'iprp')
-    if (!iprp) return buf
-    const ipco = findBox(buf, iprp.off + iprp.header, iprp.off + iprp.size, 'ipco')
-    const ipma = findBox(buf, iprp.off + iprp.header, iprp.off + iprp.size, 'ipma')
+    const ipco = iprp && findBox(buf, iprp.off + iprp.header, iprp.off + iprp.size, 'ipco')
+    const ipma = iprp && findBox(buf, iprp.off + iprp.header, iprp.off + iprp.size, 'ipma')
     const pitm = findBox(buf, meta.off + 12, meta.off + meta.size, 'pitm')
     const iloc = findBox(buf, meta.off + 12, meta.off + meta.size, 'iloc')
     if (!ipco || !ipma || !pitm || !iloc) return buf
-    const pitmVersion = buf[pitm.off + 8]
-    const primaryId = pitmVersion === 0 ? buf.readUInt16BE(pitm.off + 12) : buf.readUInt32BE(pitm.off + 12)
-    let propertyCount = 0
-    let p = ipco.off + ipco.header
-    while (p + 8 <= ipco.off + ipco.size) {
-        let size = buf.readUInt32BE(p)
-        if (size === 1) size = Number(buf.readBigUInt64BE(p + 8))
-        else if (size === 0) size = ipco.off + ipco.size - p
-        propertyCount += 1
-        p += size
-    }
-    const newIndex = propertyCount + 1
-    const nclx = Buffer.alloc(19)
-    nclx.writeUInt32BE(19, 0)
-    nclx.write('colr', 4, 'latin1')
-    nclx.write('nclx', 8, 'latin1')
-    nclx.writeUInt16BE(cicp.primaries, 12)
-    nclx.writeUInt16BE(cicp.transfer, 14)
-    nclx.writeUInt16BE(cicp.matrix, 16)
-    nclx.writeUInt8(cicp.fullRange ? 0x80 : 0, 18)
-    const ipcoChildren = buf.subarray(ipco.off + ipco.header, ipco.off + ipco.size)
-    const newIpcoSize = ipco.size + nclx.length
-    const newIpco = Buffer.alloc(newIpcoSize)
-    newIpco.writeUInt32BE(newIpcoSize, 0)
-    newIpco.write('ipco', 4, 'latin1')
-    ipcoChildren.copy(newIpco, 8)
-    nclx.copy(newIpco, 8 + ipcoChildren.length)
-    const newIpma = addAssociation(buf, ipma, newIndex, primaryId)
-    const newIprpSize = 8 + newIpco.length + newIpma.length
-    const newIprp = Buffer.alloc(newIprpSize)
-    newIprp.writeUInt32BE(newIprpSize, 0)
-    newIprp.write('iprp', 4, 'latin1')
-    newIpco.copy(newIprp, 8)
-    newIpma.copy(newIprp, 8 + newIpco.length)
-    const beforeIprp = buf.subarray(meta.off + 12, iprp.off)
-    const afterIprp = buf.subarray(iprp.off + iprp.size, meta.off + meta.size)
-    const newMetaSize = meta.size + (newIprp.length - iprp.size)
-    const newMeta = Buffer.alloc(newMetaSize)
-    newMeta.writeUInt32BE(newMetaSize, 0)
-    newMeta.write('meta', 4, 'latin1')
-    buf.copy(newMeta, 8, meta.off + 8, meta.off + 12)
-    beforeIprp.copy(newMeta, 12)
-    newIprp.copy(newMeta, 12 + beforeIprp.length)
-    afterIprp.copy(newMeta, 12 + beforeIprp.length + newIprp.length)
+    const primaryId = buf[pitm.off + 8] === 0 ? buf.readUInt16BE(pitm.off + 12) : buf.readUInt32BE(pitm.off + 12)
+    const nclx = buildNclx(cicp)
+    const newIprp = rebuildIprp(buf, ipco, ipma, countProperties(buf, ipco) + 1, primaryId, nclx)
+    const newMeta = rebuildMeta(buf, meta, iprp, newIprp)
     const out = Buffer.concat([buf.subarray(0, meta.off), newMeta, buf.subarray(meta.off + meta.size)])
-    const delta = newMeta.length - meta.size
-    const newIloc = findBox(out, meta.off + 12, meta.off + newMetaSize, 'iloc')
-    if (newIloc) adjustIlocBaseOffset(out, newIloc.off, delta)
+    const newIloc = findBox(out, meta.off + 12, meta.off + newMeta.length, 'iloc')
+    if (newIloc) adjustIlocBaseOffset(out, newIloc.off, newMeta.length - meta.size)
     return out
 }
 
@@ -283,15 +423,11 @@ export async function createAvifPreview(sourceBytes, options) {
     const previewWidth = Math.max(1, Math.round(width * scale))
     const previewHeight = Math.max(1, Math.round(height * scale))
     const cicp = resolveCicp(metadata.icc)
-    const bytes = await encodeAvif(
-        image.resize(previewWidth, previewHeight, {fit: 'fill'}),
-        cicp,
-        {
-            chromaSubsampling: '4:4:4',
-            effort: 4,
-            quality: options.quality,
-        },
-    )
+    const bytes = await encodeAvif(image.resize(previewWidth, previewHeight, {fit: 'fill'}), cicp, {
+        chromaSubsampling: '4:4:4',
+        effort: 4,
+        quality: options.quality,
+    })
 
     return {
         bytes,
@@ -323,15 +459,11 @@ export async function createAvifBlur(sourceBytes, options) {
     const blurWidth = Math.max(1, Math.round(width * scale))
     const blurHeight = Math.max(1, Math.round(height * scale))
     const cicp = resolveCicp(metadata.icc)
-    const bytes = await encodeAvif(
-        image.resize(blurWidth, blurHeight, {fit: 'fill'}).blur(options.sigma),
-        cicp,
-        {
-            chromaSubsampling: '4:4:4',
-            effort: 4,
-            quality: options.quality,
-        },
-    )
+    const bytes = await encodeAvif(image.resize(blurWidth, blurHeight, {fit: 'fill'}).blur(options.sigma), cicp, {
+        chromaSubsampling: '4:4:4',
+        effort: 4,
+        quality: options.quality,
+    })
 
     return {
         bytes,
@@ -360,15 +492,11 @@ export async function createSquareAvif(sourceBytes, options) {
     }
 
     const cicp = resolveCicp(metadata.icc)
-    const bytes = await encodeAvif(
-        image.resize(options.size, options.size, {fit: 'fill'}),
-        cicp,
-        {
-            chromaSubsampling: '4:4:4',
-            effort: 4,
-            quality: options.quality,
-        },
-    )
+    const bytes = await encodeAvif(image.resize(options.size, options.size, {fit: 'fill'}), cicp, {
+        chromaSubsampling: '4:4:4',
+        effort: 4,
+        quality: options.quality,
+    })
 
     return {
         bytes,
@@ -405,15 +533,11 @@ export async function createGalleryAvifOutputs(sourceBytes, options) {
     const previewHeight = Math.max(1, Math.round(height * previewScale))
     const cicp = resolveCicp(metadata.icc)
     const previewPipeline = image.clone().resize(previewWidth, previewHeight, {fit: 'fill'})
-    const previewBytes = await encodeAvif(
-        previewPipeline.clone(),
-        cicp,
-        {
-            chromaSubsampling: '4:4:4',
-            effort: 4,
-            quality: options.previewQuality,
-        },
-    )
+    const previewBytes = await encodeAvif(previewPipeline.clone(), cicp, {
+        chromaSubsampling: '4:4:4',
+        effort: 4,
+        quality: options.previewQuality,
+    })
 
     if (!options.blur) {
         return {
@@ -425,15 +549,11 @@ export async function createGalleryAvifOutputs(sourceBytes, options) {
     const blurScale = Math.min(1, options.blurMaxWidth / previewWidth)
     const blurWidth = Math.max(1, Math.round(previewWidth * blurScale))
     const blurHeight = Math.max(1, Math.round(previewHeight * blurScale))
-    const blurBytes = await encodeAvif(
-        previewPipeline.clone().resize(blurWidth, blurHeight, {fit: 'fill'}).blur(options.blurSigma),
-        cicp,
-        {
-            chromaSubsampling: '4:4:4',
-            effort: 4,
-            quality: options.blurQuality,
-        },
-    )
+    const blurBytes = await encodeAvif(previewPipeline.clone().resize(blurWidth, blurHeight, {fit: 'fill'}).blur(options.blurSigma), cicp, {
+        chromaSubsampling: '4:4:4',
+        effort: 4,
+        quality: options.blurQuality,
+    })
 
     return {
         blur: {bytes: blurBytes, height: blurHeight, width: blurWidth},
