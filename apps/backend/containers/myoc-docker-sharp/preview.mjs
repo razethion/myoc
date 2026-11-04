@@ -24,7 +24,6 @@ export async function createAvifPreview(sourceBytes, options) {
     const previewHeight = Math.max(1, Math.round(height * scale))
     const bytes = await image
         .resize(previewWidth, previewHeight, {fit: 'fill'})
-        .keepIccProfile()
         .avif({
             chromaSubsampling: '4:4:4',
             effort: 4,
@@ -64,7 +63,6 @@ export async function createAvifBlur(sourceBytes, options) {
     const bytes = await image
         .resize(blurWidth, blurHeight, {fit: 'fill'})
         .blur(options.sigma)
-        .keepIccProfile()
         .avif({
             chromaSubsampling: '4:4:4',
             effort: 4,
@@ -100,7 +98,6 @@ export async function createSquareAvif(sourceBytes, options) {
 
     const bytes = await image
         .resize(options.size, options.size, {fit: 'fill'})
-        .keepIccProfile()
         .avif({
             chromaSubsampling: '4:4:4',
             effort: 4,
@@ -141,7 +138,7 @@ export async function createGalleryAvifOutputs(sourceBytes, options) {
     const previewScale = Math.min(1, options.maxLongEdge / longEdge)
     const previewWidth = Math.max(1, Math.round(width * previewScale))
     const previewHeight = Math.max(1, Math.round(height * previewScale))
-    const previewPipeline = image.clone().resize(previewWidth, previewHeight, {fit: 'fill'}).keepIccProfile()
+    const previewPipeline = image.clone().resize(previewWidth, previewHeight, {fit: 'fill'})
     const previewBytes = await previewPipeline
         .clone()
         .avif({

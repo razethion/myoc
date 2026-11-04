@@ -33,7 +33,7 @@ test('creates a quality 60 AVIF within the preview size limit', async () => {
     assert.equal(metadata.hasAlpha, true)
 })
 
-test('retains a Display P3 source ICC profile in the AVIF preview', async () => {
+test('converts a Display P3 source to sRGB in the AVIF preview', async () => {
     const source = await sharp({
         create: {
             background: {b: 32, g: 64, r: 255},
@@ -51,8 +51,16 @@ test('retains a Display P3 source ICC profile in the AVIF preview', async () => 
     const previewMetadata = await sharp(result.bytes).metadata()
 
     assert.equal(sourceMetadata.hasProfile, true)
-    assert.equal(previewMetadata.hasProfile, true)
-    assert.deepEqual(previewMetadata.icc, sourceMetadata.icc)
+    assert.equal(previewMetadata.hasProfile, false)
+
+    const sourceRgb = await sharp(source).removeAlpha().raw().toBuffer()
+    const previewRgb = await sharp(result.bytes).removeAlpha().raw().toBuffer()
+    for (let i = 0; i < sourceRgb.length; i++) {
+        assert.ok(
+            Math.abs(sourceRgb[i] - previewRgb[i]) <= 12,
+            `channel ${i} drifted ${sourceRgb[i]} -> ${previewRgb[i]}`,
+        )
+    }
 })
 
 test('does not enlarge a source that is within the preview size limit', async () => {
