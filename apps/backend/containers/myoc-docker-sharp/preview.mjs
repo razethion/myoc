@@ -1,4 +1,10 @@
 import sharp from 'sharp'
+import {addNclx, resolveCicp} from './avifColor.mjs'
+
+async function encodeAvif(pipeline, cicp, options) {
+    const bytes = await (cicp.keepIcc ? pipeline.keepIccProfile() : pipeline).avif(options).toBuffer()
+    return addNclx(bytes, cicp)
+}
 
 /**
  * @param {import('sharp').SharpInput} sourceBytes
@@ -22,15 +28,12 @@ export async function createAvifPreview(sourceBytes, options) {
     const scale = Math.min(1, options.maxLongEdge / longEdge)
     const previewWidth = Math.max(1, Math.round(width * scale))
     const previewHeight = Math.max(1, Math.round(height * scale))
-    const bytes = await image
-        .resize(previewWidth, previewHeight, {fit: 'fill'})
-        .keepIccProfile()
-        .avif({
-            chromaSubsampling: '4:4:4',
-            effort: 4,
-            quality: options.quality,
-        })
-        .toBuffer()
+    const cicp = resolveCicp(metadata.icc)
+    const bytes = await encodeAvif(image.resize(previewWidth, previewHeight, {fit: 'fill'}), cicp, {
+        chromaSubsampling: '4:4:4',
+        effort: 4,
+        quality: options.quality,
+    })
 
     return {
         bytes,
@@ -61,16 +64,12 @@ export async function createAvifBlur(sourceBytes, options) {
     const scale = Math.min(1, options.maxWidth / width)
     const blurWidth = Math.max(1, Math.round(width * scale))
     const blurHeight = Math.max(1, Math.round(height * scale))
-    const bytes = await image
-        .resize(blurWidth, blurHeight, {fit: 'fill'})
-        .blur(options.sigma)
-        .keepIccProfile()
-        .avif({
-            chromaSubsampling: '4:4:4',
-            effort: 4,
-            quality: options.quality,
-        })
-        .toBuffer()
+    const cicp = resolveCicp(metadata.icc)
+    const bytes = await encodeAvif(image.resize(blurWidth, blurHeight, {fit: 'fill'}).blur(options.sigma), cicp, {
+        chromaSubsampling: '4:4:4',
+        effort: 4,
+        quality: options.quality,
+    })
 
     return {
         bytes,
@@ -98,15 +97,12 @@ export async function createSquareAvif(sourceBytes, options) {
         throw new Error(`Square image source must be ${options.size}x${options.size} pixels`)
     }
 
-    const bytes = await image
-        .resize(options.size, options.size, {fit: 'fill'})
-        .keepIccProfile()
-        .avif({
-            chromaSubsampling: '4:4:4',
-            effort: 4,
-            quality: options.quality,
-        })
-        .toBuffer()
+    const cicp = resolveCicp(metadata.icc)
+    const bytes = await encodeAvif(image.resize(options.size, options.size, {fit: 'fill'}), cicp, {
+        chromaSubsampling: '4:4:4',
+        effort: 4,
+        quality: options.quality,
+    })
 
     return {
         bytes,
@@ -141,15 +137,13 @@ export async function createGalleryAvifOutputs(sourceBytes, options) {
     const previewScale = Math.min(1, options.maxLongEdge / longEdge)
     const previewWidth = Math.max(1, Math.round(width * previewScale))
     const previewHeight = Math.max(1, Math.round(height * previewScale))
-    const previewPipeline = image.clone().resize(previewWidth, previewHeight, {fit: 'fill'}).keepIccProfile()
-    const previewBytes = await previewPipeline
-        .clone()
-        .avif({
-            chromaSubsampling: '4:4:4',
-            effort: 4,
-            quality: options.previewQuality,
-        })
-        .toBuffer()
+    const cicp = resolveCicp(metadata.icc)
+    const previewPipeline = image.clone().resize(previewWidth, previewHeight, {fit: 'fill'})
+    const previewBytes = await encodeAvif(previewPipeline.clone(), cicp, {
+        chromaSubsampling: '4:4:4',
+        effort: 4,
+        quality: options.previewQuality,
+    })
 
     if (!options.blur) {
         return {
@@ -161,16 +155,11 @@ export async function createGalleryAvifOutputs(sourceBytes, options) {
     const blurScale = Math.min(1, options.blurMaxWidth / previewWidth)
     const blurWidth = Math.max(1, Math.round(previewWidth * blurScale))
     const blurHeight = Math.max(1, Math.round(previewHeight * blurScale))
-    const blurBytes = await previewPipeline
-        .clone()
-        .resize(blurWidth, blurHeight, {fit: 'fill'})
-        .blur(options.blurSigma)
-        .avif({
-            chromaSubsampling: '4:4:4',
-            effort: 4,
-            quality: options.blurQuality,
-        })
-        .toBuffer()
+    const blurBytes = await encodeAvif(previewPipeline.clone().resize(blurWidth, blurHeight, {fit: 'fill'}).blur(options.blurSigma), cicp, {
+        chromaSubsampling: '4:4:4',
+        effort: 4,
+        quality: options.blurQuality,
+    })
 
     return {
         blur: {bytes: blurBytes, height: blurHeight, width: blurWidth},

@@ -3,6 +3,7 @@ import {createHash, randomUUID, timingSafeEqual} from 'node:crypto'
 import http from 'node:http'
 import process from 'node:process'
 import timers from 'node:timers'
+import {repairAvifColor} from './avifColor.mjs'
 import {createAvifBlur, createAvifPreview, createGalleryAvifOutputs, createSquareAvif} from './preview.mjs'
 
 const port = Number.parseInt(process.env['PORT'] ?? '8080', 10)
@@ -22,6 +23,7 @@ const allowHttpSourceUrls = process.env['ALLOW_HTTP_SOURCE_URLS'] === 'true'
 const squareImageQuality = clamp(parsePositiveInteger(process.env['SQUARE_IMAGE_AVIF_QUALITY'], 75), 1, 100)
 const squareImageSize = parsePositiveInteger(process.env['SQUARE_IMAGE_SIZE'], 512)
 const squareSourceMaxBytes = parsePositiveInteger(process.env['SQUARE_SOURCE_MAX_BYTES'], 3 * 1024 * 1024)
+const colorRepairMaxBytes = parsePositiveInteger(process.env['COLOR_REPAIR_MAX_BYTES'], 32 * 1024 * 1024)
 
 class RequestBodyTooLargeError extends Error {}
 
@@ -56,6 +58,11 @@ const server = http.createServer(async (request, response) => {
 
     if (url.pathname === '/images/height-chart') {
         await handleHeightChartRequest(request, response)
+        return
+    }
+
+    if (url.pathname === '/images/repair-color') {
+        await handleRepairColorRequest(request, response)
         return
     }
 
@@ -466,6 +473,46 @@ async function readResponseBytes(response, maxBytes) {
  */
 async function readRequestText(request, maxBytes) {
     return (await readRequestBytes(request, maxBytes)).toString('utf8')
+}
+
+async function handleRepairColorRequest(request, response) {
+    if (!authorizePost(request, response)) return
+
+    const requestId = randomUUID()
+    const startedAt = Date.now()
+
+    try {
+        const sourceBytes = await readRequestBytes(request, colorRepairMaxBytes)
+        const result = repairAvifColor(sourceBytes)
+
+        response.writeHead(200, {
+            'cache-control': 'no-store',
+            'content-length': Buffer.byteLength(result.bytes),
+            'content-type': 'image/avif',
+            'x-color-changed': result.changed ? 'true' : 'false',
+            'x-color-reason': result.reason,
+        })
+        response.end(result.bytes)
+
+        console.log('Preview container repaired AVIF color', {
+            changed: result.changed,
+            durationMs: Date.now() - startedAt,
+            reason: result.reason,
+            requestId,
+            sourceBytes: Buffer.byteLength(sourceBytes),
+        })
+    } catch (error) {
+        if (error instanceof RequestBodyTooLargeError) {
+            sendJson(response, 413, {error: 'Request body is too large'})
+            return
+        }
+        console.error('AVIF color repair failed', {
+            durationMs: Date.now() - startedAt,
+            error: error instanceof Error ? error.message : String(error),
+            requestId,
+        })
+        sendJson(response, 422, {error: 'AVIF color repair failed'})
+    }
 }
 
 function readRequestBytes(request, maxBytes) {
