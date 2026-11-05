@@ -4,7 +4,7 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import test from 'node:test'
 import sharp from 'sharp'
-import {addNclx, adjustIlocBaseOffset, repairAvifColor, resolveCicp} from './avifColor.mjs'
+import {addNclx, repairAvifColor, resolveCicp} from './avifColor.mjs'
 
 function findBox(buf, start, end, type) {
     let off = start
@@ -312,7 +312,37 @@ test('rejects a malformed property box instead of looping', async () => {
     assert.equal(result.reason, 'unsupported-layout')
 })
 
+function box(type, ...children) {
+    const body = Buffer.concat(children)
+    const header = Buffer.alloc(8)
+    header.writeUInt32BE(8 + body.length, 0)
+    header.write(type, 4, 'latin1')
+    return Buffer.concat([header, body])
+}
+
 test('shifts absolute extent offsets when the meta box grows', () => {
+    const ispe = Buffer.alloc(20)
+    ispe.writeUInt32BE(20, 0)
+    ispe.write('ispe', 4, 'latin1')
+    ispe.writeUInt32BE(0, 8)
+    ispe.writeUInt32BE(100, 12)
+    ispe.writeUInt32BE(80, 16)
+
+    const ipma = Buffer.alloc(20)
+    ipma.writeUInt32BE(20, 0)
+    ipma.write('ipma', 4, 'latin1')
+    ipma.writeUInt32BE(0, 8) // version 0, flags 0
+    ipma.writeUInt32BE(1, 12) // entry count
+    ipma.writeUInt16BE(1, 16) // item id
+    ipma.writeUInt8(1, 18) // association count
+    ipma.writeUInt8(1, 19) // association 1 (ispe)
+
+    const pitm = Buffer.alloc(14)
+    pitm.writeUInt32BE(14, 0)
+    pitm.write('pitm', 4, 'latin1')
+    pitm.writeUInt32BE(0, 8) // version 0, flags 0
+    pitm.writeUInt16BE(1, 12) // item id
+
     const iloc = Buffer.alloc(30)
     iloc.writeUInt32BE(30, 0)
     iloc.write('iloc', 4, 'latin1')
@@ -323,12 +353,17 @@ test('shifts absolute extent offsets when the meta box grows', () => {
     iloc.writeUInt16BE(1, 16) // item id
     iloc.writeUInt16BE(0, 18) // data reference index
     iloc.writeUInt16BE(1, 20) // extent count
-    iloc.writeUInt32BE(500, 22) // absolute extent offset
-    iloc.writeUInt32BE(1000, 26) // extent length
+    iloc.writeUInt32BE(120, 22) // absolute extent offset into mdat
+    iloc.writeUInt32BE(100, 26) // extent length
 
-    adjustIlocBaseOffset(iloc, 0, 100)
+    const meta = box('meta', Buffer.alloc(4), pitm, iloc, box('iprp', box('ipco', ispe), ipma))
+    const file = Buffer.concat([meta, box('mdat', Buffer.alloc(100))])
 
-    assert.equal(iloc.readUInt32BE(22), 600)
+    const result = addNclx(file, {primaries: 1, transfer: 13, matrix: 6, fullRange: true})
+    const newMeta = findBox(result, 0, result.length, 'meta')
+    const newIloc = findBox(result, newMeta.off + 12, newMeta.off + newMeta.size, 'iloc')
+
+    assert.equal(result.readUInt32BE(newIloc.off + 22), 140)
 })
 
 test('rejects an AVIF whose primary item is missing', async () => {

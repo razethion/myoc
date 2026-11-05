@@ -253,7 +253,7 @@ function writeUInt(buf, off, value, size) {
     else throw new Error(`Unsupported integer size ${size}`)
 }
 
-export function adjustIlocBaseOffset(buf, ilocOff, delta) {
+function adjustIlocBaseOffset(buf, ilocOff, delta) {
     const version = buf[ilocOff + 8]
     const wide = version === 2
     const itemIdSize = wide ? 4 : 2
