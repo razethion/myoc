@@ -164,12 +164,8 @@ function encodeRfc3986(value) {
 }
 
 function decodeXml(value) {
-    return value
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
+    const entities = {amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'"}
+    return value.replace(/&(amp|lt|gt|quot|#39);/g, (match, entity) => entities[entity] ?? match)
 }
 
 function sha256Hex(value) {
