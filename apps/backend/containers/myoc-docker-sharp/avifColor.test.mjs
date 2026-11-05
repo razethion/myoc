@@ -366,6 +366,188 @@ test('shifts absolute extent offsets when the meta box grows', () => {
     assert.equal(result.readUInt32BE(newIloc.off + 22), 140)
 })
 
+function readIlocItem(file, start, layout) {
+    const {version, wide, itemIdSize, offsetSize, lengthSize, baseOffsetSize, indexSize} = layout
+    let p = start
+    const itemId = wide ? file.readUInt32BE(p) : file.readUInt16BE(p)
+    p += itemIdSize
+    let method = 0
+    if (version >= 1) {
+        method = file[p] >> 4
+        p += 2
+    }
+    const dataRef = file.readUInt16BE(p)
+    p += 2
+    let base = 0
+    if (baseOffsetSize > 0) {
+        base = file.readUIntBE(p, baseOffsetSize)
+        p += baseOffsetSize
+    }
+    const extentCount = file.readUInt16BE(p)
+    p += 2
+    const extents = []
+    for (let j = 0; j < extentCount; j++) {
+        p += indexSize
+        const offset = file.readUIntBE(p, offsetSize)
+        p += offsetSize
+        const length = file.readUIntBE(p, lengthSize)
+        p += lengthSize
+        extents.push({offset, length})
+    }
+    return {item: {itemId, method, dataRef, base, extents}, next: p}
+}
+
+function readIloc(file, iloc) {
+    const version = file[iloc.off + 8]
+    const wide = version === 2
+    const itemIdSize = wide ? 4 : 2
+    let p = iloc.off + 12
+    const offsetSize = file[p] >> 4
+    const lengthSize = file[p] & 0x0f
+    p += 1
+    const baseOffsetSize = file[p] >> 4
+    const indexSize = version >= 1 ? file[p] & 0x0f : 0
+    p += 1
+    const itemCount = wide ? file.readUInt32BE(p) : file.readUInt16BE(p)
+    const prefix = Buffer.from(file.subarray(iloc.off + 12, p + itemIdSize))
+    p += itemIdSize
+    const layout = {version, wide, itemIdSize, offsetSize, lengthSize, baseOffsetSize, indexSize}
+    const items = []
+    for (let i = 0; i < itemCount; i++) {
+        const parsed = readIlocItem(file, p, layout)
+        items.push(parsed.item)
+        p = parsed.next
+    }
+    return {layout, prefix, items}
+}
+
+function writeExtent(extent, layout, method, delta) {
+    const parts = []
+    if (layout.indexSize > 0) parts.push(Buffer.alloc(layout.indexSize))
+    const offset = Buffer.alloc(layout.offsetSize)
+    const shifted = layout.baseOffsetSize === 0 && method === 0 ? extent.offset + delta : extent.offset
+    offset.writeUIntBE(shifted, 0, layout.offsetSize)
+    parts.push(offset)
+    const length = Buffer.alloc(layout.lengthSize)
+    length.writeUIntBE(extent.length, 0, layout.lengthSize)
+    parts.push(length)
+    return Buffer.concat(parts)
+}
+
+function writeIlocItem(item, layout, delta) {
+    const parts = []
+    const id = Buffer.alloc(layout.itemIdSize)
+    if (layout.wide) id.writeUInt32BE(item.itemId, 0)
+    else id.writeUInt16BE(item.itemId, 0)
+    parts.push(id)
+    if (layout.version >= 1) {
+        const method = Buffer.alloc(2)
+        method[0] = item.method << 4
+        parts.push(method)
+    }
+    const dataRef = Buffer.alloc(2)
+    dataRef.writeUInt16BE(item.dataRef, 0)
+    parts.push(dataRef)
+    if (layout.baseOffsetSize > 0) {
+        const base = Buffer.alloc(layout.baseOffsetSize)
+        base.writeUIntBE(item.base + (item.method === 0 ? delta : 0), 0, layout.baseOffsetSize)
+        parts.push(base)
+    }
+    const extentCount = Buffer.alloc(2)
+    extentCount.writeUInt16BE(item.extents.length * 32, 0)
+    parts.push(extentCount)
+    for (const extent of item.extents) {
+        for (let repeat = 0; repeat < 32; repeat++) {
+            parts.push(writeExtent(extent, layout, item.method, delta))
+        }
+    }
+    return Buffer.concat(parts)
+}
+
+function duplicatePrimaryExtent(file) {
+    const meta = findBox(file, 0, file.length, 'meta')
+    const iloc = findBox(file, meta.off + 12, meta.off + meta.size, 'iloc')
+    const {layout, prefix, items} = readIloc(file, iloc)
+    let delta = 0
+    for (const item of items) delta += item.extents.length * 31 * (layout.offsetSize + layout.lengthSize + layout.indexSize)
+    const body = [prefix, ...items.map((item) => writeIlocItem(item, layout, delta))]
+    const ilocBody = Buffer.concat(body)
+    const ilocOut = Buffer.alloc(12 + ilocBody.length)
+    ilocOut.writeUInt32BE(ilocOut.length, 0)
+    ilocOut.write('iloc', 4, 'latin1')
+    file.copy(ilocOut, 8, iloc.off + 8, iloc.off + 12)
+    ilocBody.copy(ilocOut, 12)
+    const out = Buffer.concat([file.subarray(0, iloc.off), ilocOut, file.subarray(iloc.off + iloc.size)])
+    out.writeUInt32BE(meta.size + delta, meta.off)
+    return out
+}
+
+test('shifts only file-backed items in a version 1 iloc', () => {
+    const ispe = Buffer.alloc(20)
+    ispe.writeUInt32BE(20, 0)
+    ispe.write('ispe', 4, 'latin1')
+    ispe.writeUInt32BE(0, 8)
+    ispe.writeUInt32BE(100, 12)
+    ispe.writeUInt32BE(80, 16)
+
+    const ipma = Buffer.alloc(20)
+    ipma.writeUInt32BE(20, 0)
+    ipma.write('ipma', 4, 'latin1')
+    ipma.writeUInt32BE(0, 8) // version 0, flags 0
+    ipma.writeUInt32BE(1, 12) // entry count
+    ipma.writeUInt16BE(1, 16) // item id
+    ipma.writeUInt8(1, 18) // association count
+    ipma.writeUInt8(1, 19) // association 1 (ispe)
+
+    const pitm = Buffer.alloc(14)
+    pitm.writeUInt32BE(14, 0)
+    pitm.write('pitm', 4, 'latin1')
+    pitm.writeUInt32BE(0, 8) // version 0, flags 0
+    pitm.writeUInt16BE(1, 12) // item id
+
+    const iloc = Buffer.alloc(48)
+    iloc.writeUInt32BE(48, 0)
+    iloc.write('iloc', 4, 'latin1')
+    iloc.writeUInt32BE(0x01000000, 8) // version 1, flags 0
+    iloc.writeUInt8(0x44, 12) // offset size 4, length size 4
+    iloc.writeUInt8(0x00, 13) // base offset size 0, index size 0
+    iloc.writeUInt16BE(2, 14) // item count
+    iloc.writeUInt16BE(1, 16) // item 1 id
+    iloc.writeUInt8(0x00, 18) // construction_method 0 (file)
+    iloc.writeUInt8(0x00, 19) // reserved
+    iloc.writeUInt16BE(0, 20) // data reference index
+    iloc.writeUInt16BE(1, 22) // extent count
+    iloc.writeUInt32BE(138, 24) // absolute extent offset
+    iloc.writeUInt32BE(100, 28) // extent length
+    iloc.writeUInt16BE(2, 32) // item 2 id
+    iloc.writeUInt8(0x10, 34) // construction_method 1 (idat), high nibble
+    iloc.writeUInt8(0x00, 35) // reserved
+    iloc.writeUInt16BE(0, 36) // data reference index
+    iloc.writeUInt16BE(1, 38) // extent count
+    iloc.writeUInt32BE(10, 40) // idat-relative extent offset
+    iloc.writeUInt32BE(50, 44) // extent length
+
+    const meta = box('meta', Buffer.alloc(4), pitm, iloc, box('iprp', box('ipco', ispe), ipma))
+    const file = Buffer.concat([meta, box('mdat', Buffer.alloc(100))])
+
+    const result = addNclx(file, {primaries: 1, transfer: 13, matrix: 6, fullRange: true})
+    const newMeta = findBox(result, 0, result.length, 'meta')
+    const newIloc = findBox(result, newMeta.off + 12, newMeta.off + newMeta.size, 'iloc')
+
+    assert.equal(result.readUInt32BE(newIloc.off + 24), 158)
+    assert.equal(result.readUInt32BE(newIloc.off + 40), 10)
+})
+
+test('caps the combined payload length for repeated extents', async () => {
+    const source = await avifFromProfile(makeIcc({colorants: P3_COLORANTS, gamma: 2.2}))
+    const file = duplicatePrimaryExtent(source)
+
+    const result = repairAvifColor(file)
+
+    assert.equal(result.changed, false)
+    assert.equal(result.reason, 'unsupported-layout')
+})
+
 test('rejects an AVIF whose primary item is missing', async () => {
     const source = await avifFromNamedProfile('p3')
     const meta = findBox(source, 0, source.length, 'meta')

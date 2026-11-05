@@ -541,8 +541,11 @@ function readPrimaryPayload(buf, meta, primaryId) {
     const item = info.items.find((entry) => entry.itemId === primaryId)
     if (item?.method !== 0 || item.extents.length === 0) return null
     const parts = []
+    let total = 0
     for (const extent of item.extents) {
         if (extent.offset + extent.length > buf.length) return null
+        total += extent.length
+        if (total > buf.length) return null
         parts.push(buf.subarray(extent.offset, extent.offset + extent.length))
     }
     return Buffer.concat(parts)
