@@ -130,6 +130,9 @@ function transferCode(trc, fallback) {
     if (trc.kind === 'srgb') return 13
     if (trc.kind === 'linear') return 8
     if (nearGamma(trc, 2.2)) return 4
+    // CICP has no gamma-2.6 transfer code. Mark the transfer unspecified and
+    // leave the ICC profile authoritative instead of claiming sRGB.
+    if (nearGamma(trc, 2.6)) return 2
     return fallback
 }
 
@@ -148,8 +151,13 @@ function bestPrimariesMatch(primaries) {
 
 /**
  * Map a source ICC profile to CICP values so the AVIF declares its real color space.
- * Display P3, DCI-P3, Rec.2020 and the BT.601/BT.470 spaces are preserved;
- * unknown profiles (Adobe RGB, ProPhoto, Apple RGB) fall back to sRGB conversion.
+ * Display P3, Rec.2020 and the BT.601/BT.470 spaces are preserved; unknown
+ * profiles (Adobe RGB, ProPhoto, Apple RGB) fall back to sRGB conversion.
+ *
+ * CICP primaries 11 (DCI-P3) and 12 (Display P3) share chromaticities but not
+ * white points, so the transfer curve alone cannot identify DCI-P3. The
+ * colorants match Display P3, and a gamma-2.6 curve is declared as unspecified
+ * transfer rather than claiming the DCI white point.
  *
  * @param {Buffer | undefined} icc
  */
@@ -158,10 +166,6 @@ export function resolveCicp(icc) {
     const match = bestPrimariesMatch(iccPrimaries(icc))
     if (!match) return SRGB_FALLBACK
     const trc = iccTransfer(icc)
-    // DCI-P3 shares primaries with Display P3 but uses a 2.6 gamma transfer curve.
-    if (match.name === 'display-p3' && nearGamma(trc, 2.6)) {
-        return {primaries: 11, transfer: 2, matrix: 0, fullRange: true, keepIcc: true}
-    }
     return {
         primaries: match.primaries,
         transfer: transferCode(trc, match.transfer),

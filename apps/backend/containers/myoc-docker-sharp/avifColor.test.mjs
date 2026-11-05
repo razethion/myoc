@@ -146,6 +146,12 @@ const P3_COLORANTS = {
     b: [0.1571044921875, 0.066558837890625, 0.7830810546875],
 }
 
+const SRGB_COLORANTS = {
+    r: [0.43603515625, 0.222442626953125, 0.0139007568359375],
+    g: [0.385101318359375, 0.7169342041015625, 0.097076416015625],
+    b: [0.14306640625, 0.0606231689453125, 0.71392822265625],
+}
+
 const NON_CICP_COLORANTS = {
     r: [0.7, 0.2, 0.1],
     g: [0.1, 0.8, 0.1],
@@ -166,7 +172,7 @@ test('repairs a Display P3 AVIF that has an ICC profile but no CICP box', async 
     assert.ok(colorBoxes(result.bytes).some((box) => box.type === 'prof' || box.type === 'rICC'))
 })
 
-test('repairs a DCI-P3 AVIF with the DCI transfer characteristic', async () => {
+test('declares a P3 profile with a 2.6 gamma as Display P3 primaries', async () => {
     const profile = makeIcc({colorants: P3_COLORANTS, gamma: 2.6})
     const source = await avifFromProfile(profile)
 
@@ -174,7 +180,7 @@ test('repairs a DCI-P3 AVIF with the DCI transfer characteristic', async () => {
 
     assert.equal(result.changed, true)
     const nclx = findNclx(result.bytes)
-    assert.equal(nclx.primaries, 11)
+    assert.equal(nclx.primaries, 12)
     assert.equal(nclx.transfer, 2)
 })
 
@@ -187,6 +193,18 @@ test('repairs an sRGB AVIF by declaring primaries 1', async () => {
     const nclx = findNclx(result.bytes)
     assert.equal(nclx.primaries, 1)
     assert.equal(nclx.transfer, 13)
+})
+
+test('declares a linear-sRGB profile with transfer 8', async () => {
+    const profile = makeIcc({colorants: SRGB_COLORANTS, gamma: 1})
+    const source = await avifFromProfile(profile)
+
+    const result = repairAvifColor(source)
+
+    assert.equal(result.changed, true)
+    const nclx = findNclx(result.bytes)
+    assert.equal(nclx.primaries, 1)
+    assert.equal(nclx.transfer, 8)
 })
 
 function mdatPayload(buf) {
@@ -202,6 +220,30 @@ test('does not touch the compressed pixels when repairing', async () => {
     assert.equal(result.changed, true)
     assert.ok(mdatPayload(source))
     assert.deepEqual(mdatPayload(result.bytes), mdatPayload(source))
+})
+
+test('repaired AVIF decodes successfully', async () => {
+    const source = await avifFromNamedProfile('p3')
+
+    const result = repairAvifColor(source)
+    const raw = await sharp(result.bytes).raw().toBuffer()
+
+    assert.equal(raw.length, 100 * 80 * 3)
+})
+
+test('repaired AVIF with alpha decodes successfully', async () => {
+    const png = await sharp({
+        create: {background: {alpha: 0.5, b: 32, g: 64, r: 255}, channels: 4, height: 80, width: 100},
+    })
+        .withIccProfile('p3')
+        .png()
+        .toBuffer()
+    const source = await sharp(png).keepIccProfile().avif({chromaSubsampling: '4:4:4', effort: 4, quality: 60}).toBuffer()
+
+    const result = repairAvifColor(source)
+    const raw = await sharp(result.bytes).raw().toBuffer()
+
+    assert.equal(raw.length, 100 * 80 * 4)
 })
 
 test('leaves an AVIF with no ICC profile alone', async () => {

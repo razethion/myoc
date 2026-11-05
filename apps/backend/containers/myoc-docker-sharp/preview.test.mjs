@@ -306,7 +306,7 @@ test('declares a Rec.2020 source as Rec.2020 in the AVIF preview', async () => {
     assert.equal(nclx.matrix, 0)
 })
 
-test('declares a DCI-P3 source as DCI-P3 in the AVIF preview', async () => {
+test('declares a P3 source with a 2.6 gamma as Display P3 primaries', async () => {
     const source = await sourceWithIcc(
         makeIcc({
             colorants: {
@@ -323,7 +323,7 @@ test('declares a DCI-P3 source as DCI-P3 in the AVIF preview', async () => {
     assert.equal(previewMetadata.hasProfile, true)
     const nclx = findNclx(result.bytes)
     assert.ok(nclx, 'expected an nclx color box')
-    assert.equal(nclx.primaries, 11)
+    assert.equal(nclx.primaries, 12)
     assert.equal(nclx.transfer, 2)
     assert.equal(nclx.matrix, 0)
 })
