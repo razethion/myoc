@@ -45,7 +45,7 @@ function findNclx(buf) {
  *
  * @param {{colorants: {r: number[], g: number[], b: number[]}, gamma: number}} options
  */
-function makeIcc({colorants, gamma}) {
+function makeIcc({colorants, gamma, para}) {
     const xyzTag = (values) => {
         const buffer = Buffer.alloc(20)
         buffer.write('XYZ ', 0, 'latin1')
@@ -59,6 +59,15 @@ function makeIcc({colorants, gamma}) {
         buffer.write('curv', 0, 'latin1')
         buffer.writeUInt32BE(1, 8)
         buffer.writeUInt16BE(Math.round(value * 256), 12)
+        return buffer
+    }
+    const paraTag = ({fn, params}) => {
+        const buffer = Buffer.alloc(12 + 4 * params.length)
+        buffer.write('para', 0, 'latin1')
+        buffer.writeUInt16BE(fn, 8)
+        for (const [index, value] of params.entries()) {
+            buffer.writeInt32BE(Math.round(value * 65536), 12 + index * 4)
+        }
         return buffer
     }
     const descriptionText = 'Test profile'
@@ -77,9 +86,9 @@ function makeIcc({colorants, gamma}) {
         ['rXYZ', xyzTag(colorants.r)],
         ['gXYZ', xyzTag(colorants.g)],
         ['bXYZ', xyzTag(colorants.b)],
-        ['rTRC', curvTag(gamma)],
-        ['gTRC', curvTag(gamma)],
-        ['bTRC', curvTag(gamma)],
+        ['rTRC', para ? paraTag(para) : curvTag(gamma)],
+        ['gTRC', para ? paraTag(para) : curvTag(gamma)],
+        ['bTRC', para ? paraTag(para) : curvTag(gamma)],
     ]
     const tagCount = tagDefs.length
     let cursor = 128 + 4 + tagCount * 12
@@ -178,7 +187,35 @@ test('declares a Display P3 source as Display P3 in the AVIF preview', async () 
     assert.ok(nclx, 'expected an nclx color box')
     assert.equal(nclx.primaries, 12)
     assert.equal(nclx.transfer, 13)
-    assert.equal(nclx.matrix, 0)
+    assert.equal(nclx.matrix, 6)
+})
+
+test('decodes an opaque preview after adding nclx', async () => {
+    const source = await sharp({
+        create: {background: {b: 32, g: 64, r: 255}, channels: 3, height: 80, width: 100},
+    })
+        .withIccProfile('p3')
+        .png()
+        .toBuffer()
+
+    const result = await createAvifPreview(source, previewOptions)
+    const raw = await sharp(result.bytes).raw().toBuffer()
+
+    assert.equal(raw.length, result.width * result.height * 3)
+})
+
+test('decodes a transparent preview after adding nclx', async () => {
+    const source = await sharp({
+        create: {background: {alpha: 0.5, b: 32, g: 64, r: 255}, channels: 4, height: 80, width: 100},
+    })
+        .withIccProfile('p3')
+        .png()
+        .toBuffer()
+
+    const result = await createAvifPreview(source, previewOptions)
+    const raw = await sharp(result.bytes).raw().toBuffer()
+
+    assert.equal(raw.length, result.width * result.height * 4)
 })
 
 test('does not enlarge a source that is within the preview size limit', async () => {
@@ -292,7 +329,7 @@ test('declares a Rec.2020 source as Rec.2020 in the AVIF preview', async () => {
                 g: [0.165661, 0.675338, 0.029979],
                 r: [0.673459, 0.279033, -0.001931],
             },
-            gamma: 2.4,
+            para: {fn: 4, params: [0.45, 1.0992968, 0, 4.5, 0.018054, -0.0992968, 0]},
         }),
     )
     const result = await createAvifPreview(source, previewOptions)
@@ -303,7 +340,7 @@ test('declares a Rec.2020 source as Rec.2020 in the AVIF preview', async () => {
     assert.ok(nclx, 'expected an nclx color box')
     assert.equal(nclx.primaries, 9)
     assert.equal(nclx.transfer, 14)
-    assert.equal(nclx.matrix, 0)
+    assert.equal(nclx.matrix, 6)
 })
 
 test('declares a P3 source with a 2.6 gamma as Display P3 primaries', async () => {
@@ -325,7 +362,7 @@ test('declares a P3 source with a 2.6 gamma as Display P3 primaries', async () =
     assert.ok(nclx, 'expected an nclx color box')
     assert.equal(nclx.primaries, 12)
     assert.equal(nclx.transfer, 2)
-    assert.equal(nclx.matrix, 0)
+    assert.equal(nclx.matrix, 6)
 })
 
 test('converts an Adobe RGB source to sRGB in the AVIF preview', async () => {
@@ -347,5 +384,5 @@ test('converts an Adobe RGB source to sRGB in the AVIF preview', async () => {
     assert.ok(nclx, 'expected an nclx color box')
     assert.equal(nclx.primaries, 1)
     assert.equal(nclx.transfer, 13)
-    assert.equal(nclx.matrix, 0)
+    assert.equal(nclx.matrix, 6)
 })

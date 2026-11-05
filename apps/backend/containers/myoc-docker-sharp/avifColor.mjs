@@ -74,9 +74,57 @@ function iccPrimaries(icc) {
     }
 }
 
+const SRGB_PARA = {g: 2.4, a: 0.9478673, b: 0.0521327, c: 0.0773994, d: 0.04045}
+const REC2020_PARA = {g: 0.45, a: 1.0992968, b: 0, c: 4.5, d: 0.018054, e: -0.0992968, f: 0}
+
+function near(value, expected, tolerance = 0.002) {
+    return Math.abs(value - expected) <= tolerance
+}
+
+function paraCurve(icc, offset) {
+    const fn = icc.readUInt16BE(offset + 8)
+    const param = (index) => icc.readInt32BE(offset + 12 + index * 4) / 65536
+    if (fn === 0) {
+        const gamma = param(0)
+        return Math.abs(gamma - 1) < 0.05 ? {gamma: 1, kind: 'linear'} : {gamma, kind: 'gamma'}
+    }
+    if (fn === 1 || fn === 2) return {gamma: param(0), kind: 'gamma'}
+    if (fn !== 3 && fn !== 4) return {gamma: null, kind: 'unknown'}
+    const g = param(0)
+    const a = param(1)
+    const b = param(2)
+    const c = param(3)
+    const d = param(4)
+    const isSrgb = near(g, SRGB_PARA.g) && near(a, SRGB_PARA.a) && near(b, SRGB_PARA.b) && near(c, SRGB_PARA.c) && near(d, SRGB_PARA.d)
+    if (isSrgb) return {gamma: null, kind: 'srgb'}
+    if (fn === 4) {
+        const e = param(5)
+        const f = param(6)
+        const isRec2020 =
+            near(g, REC2020_PARA.g) &&
+            near(a, REC2020_PARA.a) &&
+            near(b, REC2020_PARA.b) &&
+            near(c, REC2020_PARA.c) &&
+            near(d, REC2020_PARA.d) &&
+            near(e, REC2020_PARA.e) &&
+            near(f, REC2020_PARA.f)
+        if (isRec2020) return {gamma: null, kind: 'rec2020'}
+    }
+    return {gamma: g, kind: 'gamma'}
+}
+
+function curvCurve(icc, offset) {
+    const count = icc.readUInt32BE(offset + 8)
+    if (count === 0) return {gamma: 1, kind: 'linear'}
+    if (count !== 1) return {gamma: null, kind: 'sampled'}
+    const gamma = icc.readUInt16BE(offset + 12) / 256
+    return Math.abs(gamma - 1) < 0.05 ? {gamma: 1, kind: 'linear'} : {gamma, kind: 'gamma'}
+}
+
 /**
- * Read the tone reproduction curve from an ICC profile so the transfer
- * characteristics match the primaries (e.g. DCI-P3 vs Display P3).
+ * Read the tone reproduction curve from an ICC profile. Parametric curves are
+ * matched against the sRGB coefficients rather than trusting function type 3/4
+ * alone, which also describes other curves such as Rec.2020.
  *
  * @param {Buffer} icc
  */
@@ -85,22 +133,9 @@ function iccTransfer(icc) {
         const tags = iccTags(icc)
         const tag = tags.rTRC ?? tags.gTRC ?? tags.bTRC
         if (!tag) return {gamma: null, kind: 'unknown'}
-        const offset = tag.offset
-        const type = icc.toString('latin1', offset, offset + 4)
-        if (type === 'para') {
-            const fn = icc.readUInt16BE(offset + 8)
-            if (fn === 3 || fn === 4) return {gamma: null, kind: 'srgb'}
-            return {gamma: icc.readInt32BE(offset + 12) / 65536, kind: 'gamma'}
-        }
-        if (type === 'curv') {
-            const count = icc.readUInt32BE(offset + 8)
-            if (count === 0) return {gamma: 1, kind: 'linear'}
-            if (count === 1) {
-                const gamma = icc.readUInt16BE(offset + 12) / 256
-                return Math.abs(gamma - 1) < 0.05 ? {gamma: 1, kind: 'linear'} : {gamma, kind: 'gamma'}
-            }
-            return {gamma: null, kind: 'sampled'}
-        }
+        const type = icc.toString('latin1', tag.offset, tag.offset + 4)
+        if (type === 'para') return paraCurve(icc, tag.offset)
+        if (type === 'curv') return curvCurve(icc, tag.offset)
         return {gamma: null, kind: 'unknown'}
     } catch {
         return {gamma: null, kind: 'unknown'}
@@ -120,20 +155,20 @@ function primariesDistance(actual, expected) {
     return distance
 }
 
-const SRGB_FALLBACK = {primaries: 1, transfer: 13, matrix: 0, fullRange: true, keepIcc: false}
+const SRGB_FALLBACK = {primaries: 1, transfer: 13, matrix: 6, fullRange: true, keepIcc: false}
 
 function nearGamma(trc, value) {
     return trc.kind === 'gamma' && trc.gamma !== null && Math.abs(trc.gamma - value) < 0.15
 }
 
-function transferCode(trc, fallback) {
+function transferCode(trc) {
     if (trc.kind === 'srgb') return 13
+    if (trc.kind === 'rec2020') return 14
     if (trc.kind === 'linear') return 8
     if (nearGamma(trc, 2.2)) return 4
-    // CICP has no gamma-2.6 transfer code. Mark the transfer unspecified and
-    // leave the ICC profile authoritative instead of claiming sRGB.
-    if (nearGamma(trc, 2.6)) return 2
-    return fallback
+    // CICP has no gamma-2.6 code, and sampled or unknown curves cannot be named
+    // safely. Mark the transfer unspecified and leave the ICC authoritative.
+    return 2
 }
 
 function bestPrimariesMatch(primaries) {
@@ -168,27 +203,36 @@ export function resolveCicp(icc) {
     const trc = iccTransfer(icc)
     return {
         primaries: match.primaries,
-        transfer: transferCode(trc, match.transfer),
-        matrix: 0,
+        transfer: transferCode(trc),
+        matrix: 6,
         fullRange: true,
         keepIcc: true,
     }
 }
 
+function readBox(buf, off, end) {
+    if (off + 8 > end) return null
+    let size = buf.readUInt32BE(off)
+    const type = buf.toString('latin1', off + 4, off + 8)
+    let header = 8
+    if (size === 1) {
+        if (off + 16 > end) return null
+        size = Number(buf.readBigUInt64BE(off + 8))
+        header = 16
+    } else if (size === 0) {
+        size = end - off
+    }
+    if (size < header || size > end - off) return null
+    return {off, size, header, type}
+}
+
 function findBox(buf, start, end, type) {
     let off = start
     while (off + 8 <= end) {
-        let size = buf.readUInt32BE(off)
-        const boxType = buf.toString('latin1', off + 4, off + 8)
-        let header = 8
-        if (size === 1) {
-            size = Number(buf.readBigUInt64BE(off + 8))
-            header = 16
-        } else if (size === 0) {
-            size = end - off
-        }
-        if (boxType === type) return {off, size, header}
-        off += size
+        const box = readBox(buf, off, end)
+        if (!box) return null
+        if (box.type === type) return box
+        off += box.size
     }
     return null
 }
@@ -209,15 +253,7 @@ function writeUInt(buf, off, value, size) {
     else throw new Error(`Unsupported integer size ${size}`)
 }
 
-function skipExtents(offset, count, offsetSize, lengthSize, indexSize) {
-    let p = offset
-    for (let j = 0; j < count; j++) {
-        p += indexSize + offsetSize + lengthSize
-    }
-    return p
-}
-
-function adjustIlocBaseOffset(buf, ilocOff, delta) {
+export function adjustIlocBaseOffset(buf, ilocOff, delta) {
     const version = buf[ilocOff + 8]
     const wide = version === 2
     const itemIdSize = wide ? 4 : 2
@@ -231,14 +267,27 @@ function adjustIlocBaseOffset(buf, ilocOff, delta) {
     const itemCount = wide ? buf.readUInt32BE(p) : buf.readUInt16BE(p)
     p += itemIdSize
     for (let i = 0; i < itemCount; i++) {
-        p += itemIdSize + (version >= 1 ? 2 : 0) + 2
+        p += itemIdSize
+        let method = 0
+        if (version >= 1) {
+            method = buf[p] >> 4
+            p += 2
+        }
+        p += 2 // data_reference_index
         if (baseOffsetSize > 0) {
             writeUInt(buf, p, readUInt(buf, p, baseOffsetSize) + delta, baseOffsetSize)
             p += baseOffsetSize
         }
         const extentCount = buf.readUInt16BE(p)
         p += 2
-        p = skipExtents(p, extentCount, offsetSize, lengthSize, indexSize)
+        for (let j = 0; j < extentCount; j++) {
+            p += indexSize
+            // base_offset_size == 0 stores absolute file offsets, so shift them too.
+            if (baseOffsetSize === 0 && method === 0) {
+                writeUInt(buf, p, readUInt(buf, p, offsetSize) + delta, offsetSize)
+            }
+            p += offsetSize + lengthSize
+        }
     }
 }
 
@@ -300,22 +349,27 @@ function addAssociation(buf, ipma, newIndex, primaryId) {
     const flags = buf.readUIntBE(ipma.off + 9, 3)
     const associationSize = flags & 1 ? 2 : 1
     const entries = readIpmaEntries(buf, ipma, version, associationSize)
-    const target = entries.find((entry) => entry.itemId === primaryId) ?? entries[0]
+    const target = entries.find((entry) => entry.itemId === primaryId)
+    if (!target) return null
     target.associations.push(newIndex)
     return writeIpma(version, flags, associationSize, entries)
 }
 
-function countProperties(buf, ipco) {
-    let count = 0
+function readIpcoChildren(buf, ipco) {
+    const children = []
     let offset = ipco.off + ipco.header
     while (offset + 8 <= ipco.off + ipco.size) {
-        let size = buf.readUInt32BE(offset)
-        if (size === 1) size = Number(buf.readBigUInt64BE(offset + 8))
-        else if (size === 0) size = ipco.off + ipco.size - offset
-        count += 1
-        offset += size
+        const box = readBox(buf, offset, ipco.off + ipco.size)
+        if (!box) return null
+        children.push(box)
+        offset += box.size
     }
-    return count
+    return children
+}
+
+function countProperties(buf, ipco) {
+    const children = readIpcoChildren(buf, ipco)
+    return children ? children.length : -1
 }
 
 function buildNclx(cicp) {
@@ -343,6 +397,7 @@ function rebuildIprp(buf, ipco, ipma, newIndex, primaryId, nclx) {
     children.copy(newIpco, ipco.header)
     nclx.copy(newIpco, ipco.header + children.length)
     const newIpma = addAssociation(buf, ipma, newIndex, primaryId)
+    if (!newIpma) return null
     const newIprp = Buffer.alloc(8 + newIpco.length + newIpma.length)
     newIprp.writeUInt32BE(newIprp.length, 0)
     newIprp.write('iprp', 4, 'latin1')
@@ -372,6 +427,14 @@ function rebuildMeta(buf, meta, iprp, newIprp) {
  * @param {{primaries: number, transfer: number, matrix: number, fullRange: boolean}} cicp
  */
 export function addNclx(buf, cicp) {
+    try {
+        return addNclxUnsafe(buf, cicp)
+    } catch {
+        return buf
+    }
+}
+
+function addNclxUnsafe(buf, cicp) {
     const meta = findBox(buf, 0, buf.length, 'meta')
     if (!meta) return buf
     const iprp = findBox(buf, meta.off + 12, meta.off + meta.size, 'iprp')
@@ -382,7 +445,10 @@ export function addNclx(buf, cicp) {
     if (!ipco || !ipma || !pitm || !iloc) return buf
     const primaryId = buf[pitm.off + 8] === 0 ? buf.readUInt16BE(pitm.off + 12) : buf.readUInt32BE(pitm.off + 12)
     const nclx = buildNclx(cicp)
-    const newIprp = rebuildIprp(buf, ipco, ipma, countProperties(buf, ipco) + 1, primaryId, nclx)
+    const propertyCount = countProperties(buf, ipco)
+    if (propertyCount < 0) return buf
+    const newIprp = rebuildIprp(buf, ipco, ipma, propertyCount + 1, primaryId, nclx)
+    if (!newIprp) return buf
     const newMeta = rebuildMeta(buf, meta, iprp, newIprp)
     const out = Buffer.concat([buf.subarray(0, meta.off), newMeta, buf.subarray(meta.off + meta.size)])
     const newIloc = findBox(out, meta.off + 12, meta.off + newMeta.length, 'iloc')
@@ -401,22 +467,183 @@ export function addNclx(buf, cicp) {
  * @param {Buffer} buf
  * @returns {{bytes: Buffer, changed: boolean, reason: string, cicp?: {primaries: number, transfer: number, matrix: number, fullRange: boolean}}}
  */
-function readColorProperties(buf, ipco) {
+function readColorProperties(buf, ipco, ipma, primaryId) {
+    const children = readIpcoChildren(buf, ipco)
+    if (!children) return {icc: null, hasNclx: false, malformed: true}
+    const version = buf[ipma.off + 8]
+    const flags = buf.readUIntBE(ipma.off + 9, 3)
+    const associationSize = flags & 1 ? 2 : 1
+    const entries = readIpmaEntries(buf, ipma, version, associationSize)
+    const entry = entries.find((item) => item.itemId === primaryId)
+    if (!entry) return {icc: null, hasNclx: false, unsupported: true}
     let icc = null
     let hasNclx = false
-    let offset = ipco.off + ipco.header
-    while (offset + 8 <= ipco.off + ipco.size) {
-        let size = buf.readUInt32BE(offset)
-        if (size === 1) size = Number(buf.readBigUInt64BE(offset + 8))
-        else if (size === 0) size = ipco.off + ipco.size - offset
-        if (buf.toString('latin1', offset + 4, offset + 8) === 'colr') {
-            const colorType = buf.toString('latin1', offset + 8, offset + 12)
-            if (colorType === 'nclx') hasNclx = true
-            else if (colorType === 'prof' || colorType === 'rICC') icc = buf.subarray(offset + 12, offset + size)
-        }
-        offset += size
+    for (const association of entry.associations) {
+        const index = associationSize === 2 ? association & 0x7fff : association & 0x7f
+        const child = children[index - 1]
+        if (child?.type !== 'colr') continue
+        const colorType = buf.toString('latin1', child.off + 8, child.off + 12)
+        if (colorType === 'nclx') hasNclx = true
+        else if (colorType === 'prof' || colorType === 'rICC') icc = buf.subarray(child.off + 12, child.off + child.size)
     }
     return {icc, hasNclx}
+}
+
+function readIlocInfo(buf, meta) {
+    const iloc = findBox(buf, meta.off + 12, meta.off + meta.size, 'iloc')
+    if (!iloc) return null
+    const version = buf[iloc.off + 8]
+    const wide = version === 2
+    const itemIdSize = wide ? 4 : 2
+    let p = iloc.off + 12
+    const offsetSize = buf[p] >> 4
+    const lengthSize = buf[p] & 0x0f
+    p += 1
+    const baseOffsetSize = buf[p] >> 4
+    const indexSize = version >= 1 ? buf[p] & 0x0f : 0
+    p += 1
+    const itemCount = wide ? buf.readUInt32BE(p) : buf.readUInt16BE(p)
+    p += itemIdSize
+    const items = []
+    for (let i = 0; i < itemCount; i++) {
+        const itemId = wide ? buf.readUInt32BE(p) : buf.readUInt16BE(p)
+        p += itemIdSize
+        let method = 0
+        if (version >= 1) {
+            method = buf[p] >> 4
+            p += 2
+        }
+        p += 2 // data_reference_index
+        let base = 0
+        if (baseOffsetSize > 0) {
+            base = readUInt(buf, p, baseOffsetSize)
+            p += baseOffsetSize
+        }
+        const extentCount = buf.readUInt16BE(p)
+        p += 2
+        const extents = []
+        for (let j = 0; j < extentCount; j++) {
+            p += indexSize
+            const extentOffset = readUInt(buf, p, offsetSize)
+            p += offsetSize
+            const extentLength = readUInt(buf, p, lengthSize)
+            p += lengthSize
+            extents.push({offset: base + extentOffset, length: extentLength})
+        }
+        items.push({itemId, method, extents})
+    }
+    return {items, itemCount}
+}
+
+function readPrimaryPayload(buf, meta, primaryId) {
+    const info = readIlocInfo(buf, meta)
+    if (!info) return null
+    const item = info.items.find((entry) => entry.itemId === primaryId)
+    if (item?.method !== 0 || item.extents.length === 0) return null
+    const parts = []
+    for (const extent of item.extents) {
+        if (extent.offset + extent.length > buf.length) return null
+        parts.push(buf.subarray(extent.offset, extent.offset + extent.length))
+    }
+    return Buffer.concat(parts)
+}
+
+class BitReader {
+    constructor(buf) {
+        this.buf = buf
+        this.pos = 0
+    }
+
+    bit() {
+        if (this.pos >= this.buf.length * 8) throw new Error('bitstream exhausted')
+        const value = (this.buf[this.pos >> 3] >> (7 - (this.pos & 7))) & 1
+        this.pos += 1
+        return value
+    }
+
+    bits(count) {
+        let value = 0
+        for (let i = 0; i < count; i++) value = (value << 1) | this.bit()
+        return value
+    }
+}
+
+function readLeb128(buf, p) {
+    let size = 0
+    let shift = 0
+    while (true) {
+        if (p >= buf.length) return null
+        const byte = buf[p++]
+        size |= (byte & 0x7f) << shift
+        if (!(byte & 0x80)) break
+        shift += 7
+    }
+    return {size, next: p}
+}
+
+function parseObus(buf) {
+    let p = 0
+    const obus = []
+    while (p < buf.length) {
+        const header = buf[p++]
+        const type = (header >> 3) & 0x0f
+        const extension = (header >> 2) & 1
+        const hasSize = (header >> 1) & 1
+        if (extension) p += 1
+        let size
+        if (hasSize) {
+            const leb = readLeb128(buf, p)
+            if (!leb) return null
+            size = leb.size
+            p = leb.next
+        } else {
+            size = buf.length - p
+        }
+        if (size < 0 || p + size > buf.length) return null
+        obus.push({type, payload: buf.subarray(p, p + size)})
+        p += size
+    }
+    return obus
+}
+
+function readAv1ColorConfig(payload) {
+    const obus = parseObus(payload)
+    if (!obus) return null
+    const sequence = obus.find((obu) => obu.type === 1)
+    if (!sequence) return null
+    const reader = new BitReader(sequence.payload)
+    const seqProfile = reader.bits(3)
+    reader.bit() // still_picture
+    const reduced = reader.bit()
+    if (!reduced) return null
+    reader.bits(5) // seq_level_idx
+    const widthBits = reader.bits(4)
+    const heightBits = reader.bits(4)
+    reader.bits(widthBits + 1)
+    reader.bits(heightBits + 1)
+    reader.bit() // use_128x128_superblock
+    reader.bit() // enable_filter_intra
+    reader.bit() // enable_intra_edge_filter
+    reader.bit() // enable_superres
+    reader.bit() // enable_cdef
+    reader.bit() // enable_restoration
+    const highBitdepth = reader.bit()
+    if (seqProfile === 2 && highBitdepth) reader.bit() // twelve_bit
+    const monochrome = seqProfile !== 1 ? reader.bit() : 0
+    const descriptionPresent = reader.bit()
+    let colorPrimaries = 2
+    let transferCharacteristics = 2
+    let matrixCoefficients = 2
+    if (descriptionPresent) {
+        colorPrimaries = reader.bits(8)
+        transferCharacteristics = reader.bits(8)
+        matrixCoefficients = reader.bits(8)
+    }
+    let fullRange
+    if (monochrome) fullRange = reader.bit() === 1
+    else if (colorPrimaries === 1 && transferCharacteristics === 13 && matrixCoefficients === 0) fullRange = true
+    else fullRange = reader.bit() === 1
+    return {matrix: matrixCoefficients, fullRange}
 }
 
 function unchanged(buf, reason) {
@@ -424,21 +651,39 @@ function unchanged(buf, reason) {
 }
 
 export function repairAvifColor(buf) {
+    try {
+        return repairAvifColorUnsafe(buf)
+    } catch {
+        return unchanged(buf, 'unsupported-layout')
+    }
+}
+
+function repairAvifColorUnsafe(buf) {
     const meta = findBox(buf, 0, buf.length, 'meta')
     if (!meta) return unchanged(buf, 'not-avif')
 
     const iprp = findBox(buf, meta.off + 12, meta.off + meta.size, 'iprp')
     const ipco = iprp && findBox(buf, iprp.off + iprp.header, iprp.off + iprp.size, 'ipco')
-    if (!ipco) return unchanged(buf, 'no-properties')
+    const ipma = iprp && findBox(buf, iprp.off + iprp.header, iprp.off + iprp.size, 'ipma')
+    const pitm = findBox(buf, meta.off + 12, meta.off + meta.size, 'pitm')
+    if (!ipco || !ipma || !pitm) return unchanged(buf, 'unsupported-layout')
 
-    const {icc, hasNclx} = readColorProperties(buf, ipco)
-    if (hasNclx) return unchanged(buf, 'already-declared')
-    if (!icc) return unchanged(buf, 'no-profile')
+    const primaryId = buf[pitm.off + 8] === 0 ? buf.readUInt16BE(pitm.off + 12) : buf.readUInt32BE(pitm.off + 12)
+    const properties = readColorProperties(buf, ipco, ipma, primaryId)
+    if (properties.malformed || properties.unsupported) return unchanged(buf, 'unsupported-layout')
+    if (properties.hasNclx) return unchanged(buf, 'already-declared')
+    if (!properties.icc) return unchanged(buf, 'no-profile')
 
-    const cicp = resolveCicp(icc)
+    const payload = readPrimaryPayload(buf, meta, primaryId)
+    if (!payload) return unchanged(buf, 'unsupported-layout')
+    const av1 = readAv1ColorConfig(payload)
+    if (!av1) return unchanged(buf, 'unsupported-layout')
+
+    const cicp = resolveCicp(properties.icc)
     if (!cicp.keepIcc) return unchanged(buf, 'unsupported-profile')
+    const declared = {...cicp, matrix: av1.matrix, fullRange: av1.fullRange}
 
-    const out = addNclx(buf, cicp)
+    const out = addNclx(buf, declared)
     if (out === buf) return unchanged(buf, 'unsupported-layout')
-    return {bytes: out, changed: true, reason: 'repaired', cicp}
+    return {bytes: out, changed: true, reason: 'repaired', cicp: declared}
 }

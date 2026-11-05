@@ -37,11 +37,13 @@ function isAvif(key) {
 }
 
 async function main() {
-    let continuationToken = options.startAfter
+    let continuationToken = ''
+    let startAfter = options.startAfter
     let processed = 0
 
     while (true) {
-        const page = await listPage(options.prefix, continuationToken)
+        const page = await listPage(options.prefix, continuationToken, startAfter)
+        startAfter = ''
         for (const object of page.objects) {
             if (hasReachedLimit(processed)) break
             if (!isAvif(object.key)) continue
@@ -61,7 +63,7 @@ async function main() {
 async function processObject(object) {
     summary.scanned += 1
     try {
-        const {bytes, contentType} = await readObject(object.key)
+        const {bytes, headers} = await readObject(object.key)
         const result = repairAvifColor(bytes)
         recordReason(result.reason)
 
@@ -77,7 +79,7 @@ async function processObject(object) {
             return
         }
 
-        await writeObject(object.key, result.bytes, contentType)
+        await writeObject(object.key, result.bytes, headers)
         logVerbose(`repaired ${object.key} (${result.reason})`)
     } catch (error) {
         summary.failed += 1
@@ -88,14 +90,24 @@ async function processObject(object) {
 async function readObject(key) {
     const response = await signedRequest('GET', key, '')
     if (!response.ok) throw new Error(`GET failed with HTTP ${response.status}`)
+    const preservedHeaders = ['content-type', 'cache-control', 'content-disposition', 'content-language', 'content-encoding', 'expires']
+    const headers = {}
+    for (const name of preservedHeaders) {
+        const value = response.headers.get(name)
+        if (value) headers[name] = value
+    }
+    for (const [name, value] of response.headers) {
+        if (name.startsWith('x-amz-meta-')) headers[name] = value
+    }
+    if (!headers['content-type']) headers['content-type'] = 'image/avif'
     return {
         bytes: Buffer.from(await response.arrayBuffer()),
-        contentType: response.headers.get('content-type') ?? 'image/avif',
+        headers,
     }
 }
 
-async function writeObject(key, bytes, contentType) {
-    const response = await signedRequest('PUT', key, '', bytes, contentType)
+async function writeObject(key, bytes, headers) {
+    const response = await signedRequest('PUT', key, '', bytes, headers)
     if (!response.ok) throw new Error(`PUT failed with HTTP ${response.status}`)
 }
 
@@ -107,8 +119,9 @@ function logVerbose(message) {
     if (options.verbose) console.log(message)
 }
 
-async function listPage(prefix, continuationToken) {
+async function listPage(prefix, continuationToken, startAfter) {
     const query = new URLSearchParams({'list-type': '2', prefix})
+    if (startAfter) query.set('start-after', startAfter)
     if (continuationToken) query.set('continuation-token', continuationToken)
     const response = await signedRequest('GET', '', query.toString())
     if (!response.ok) throw new Error(`LIST failed with HTTP ${response.status}`)
@@ -120,28 +133,36 @@ async function listPage(prefix, continuationToken) {
     }
 }
 
-async function signedRequest(method, key, query, body, contentType) {
+async function signedRequest(method, key, query, body, extraHeaders = {}) {
     const canonicalUri = key ? `/${bucket}/${encodePath(key)}` : `/${bucket}`
     const canonicalQuery = canonicalizeQuery(query)
     const payloadHash = body ? sha256Hex(body) : 'UNSIGNED-PAYLOAD'
     const amzDate = new Date().toISOString().replace(/[:-]|\.\d{3}/g, '')
     const dateStamp = amzDate.slice(0, 8)
-    const canonicalHeaders = `host:${host}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${amzDate}\n`
-    const signedHeaders = 'host;x-amz-content-sha256;x-amz-date'
+    const headers = {
+        host,
+        'x-amz-content-sha256': payloadHash,
+        'x-amz-date': amzDate,
+        ...extraHeaders,
+    }
+    const names = Object.keys(headers)
+        .map((name) => name.toLowerCase())
+        .sort()
+    const canonicalHeaders = names.map((name) => `${name}:${String(headers[name]).trim()}\n`).join('')
+    const signedHeaders = names.join(';')
     const canonicalRequest = `${method}\n${canonicalUri}\n${canonicalQuery}\n${canonicalHeaders}\n${signedHeaders}\n${payloadHash}`
     const scope = `${dateStamp}/${region}/s3/aws4_request`
     const stringToSign = `${SIGNING_PREFIX}\n${amzDate}\n${scope}\n${sha256Hex(canonicalRequest)}`
     const signingKey = hmac(hmac(hmac(hmac(`AWS4${secretAccessKey}`, dateStamp), region), 's3'), 'aws4_request')
     const signature = createHmac('sha256', signingKey).update(stringToSign).digest('hex')
-    const headers = {
-        'x-amz-content-sha256': payloadHash,
-        'x-amz-date': amzDate,
+    const requestHeaders = {}
+    for (const [name, value] of Object.entries(headers)) {
+        if (name.toLowerCase() !== 'host') requestHeaders[name] = value
     }
-    if (body) headers['content-type'] = contentType
-    headers[AUTH_HEADER] =
+    requestHeaders[AUTH_HEADER] =
         `${SIGNING_PREFIX} ${CREDENTIAL_WORD}=${accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`
     const url = `${endpoint}${canonicalUri}${canonicalQuery ? `?${canonicalQuery}` : ''}`
-    return await fetch(url, {body, headers, method})
+    return await fetch(url, {body, headers: requestHeaders, method})
 }
 
 function canonicalizeQuery(query) {
@@ -203,7 +224,7 @@ function parseArgs(argv) {
 }
 
 function printUsage() {
-    console.log('Usage: node repair-avif-color.mjs [--apply] [--prefix characters/] [--limit N] [--verbose]')
+    console.log('Usage: node repair-avif-color.mjs [--apply] [--prefix characters/] [--limit N] [--start-after KEY] [--verbose]')
 }
 
 function requireEnv(name) {

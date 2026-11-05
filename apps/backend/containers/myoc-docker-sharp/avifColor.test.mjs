@@ -4,7 +4,7 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import test from 'node:test'
 import sharp from 'sharp'
-import {addNclx, repairAvifColor, resolveCicp} from './avifColor.mjs'
+import {addNclx, adjustIlocBaseOffset, repairAvifColor, resolveCicp} from './avifColor.mjs'
 
 function findBox(buf, start, end, type) {
     let off = start
@@ -295,4 +295,52 @@ test('reports non-AVIF input', () => {
 
     assert.equal(result.changed, false)
     assert.equal(result.reason, 'not-avif')
+})
+
+test('rejects a malformed property box instead of looping', async () => {
+    const source = await avifFromNamedProfile('p3')
+    const meta = findBox(source, 0, source.length, 'meta')
+    const iprp = findBox(source, meta.off + 12, meta.off + meta.size, 'iprp')
+    const ipco = findBox(source, iprp.off + 8, iprp.off + iprp.size, 'ipco')
+    const corrupted = Buffer.from(source)
+    corrupted.writeUInt32BE(1, ipco.off + 8)
+    corrupted.writeBigUInt64BE(0n, ipco.off + 16)
+
+    const result = repairAvifColor(corrupted)
+
+    assert.equal(result.changed, false)
+    assert.equal(result.reason, 'unsupported-layout')
+})
+
+test('shifts absolute extent offsets when the meta box grows', () => {
+    const iloc = Buffer.alloc(30)
+    iloc.writeUInt32BE(30, 0)
+    iloc.write('iloc', 4, 'latin1')
+    iloc.writeUInt32BE(0, 8) // version 0, flags 0
+    iloc.writeUInt8(0x44, 12) // offset size 4, length size 4
+    iloc.writeUInt8(0x00, 13) // base offset size 0, index size 0
+    iloc.writeUInt16BE(1, 14) // item count
+    iloc.writeUInt16BE(1, 16) // item id
+    iloc.writeUInt16BE(0, 18) // data reference index
+    iloc.writeUInt16BE(1, 20) // extent count
+    iloc.writeUInt32BE(500, 22) // absolute extent offset
+    iloc.writeUInt32BE(1000, 26) // extent length
+
+    adjustIlocBaseOffset(iloc, 0, 100)
+
+    assert.equal(iloc.readUInt32BE(22), 600)
+})
+
+test('rejects an AVIF whose primary item is missing', async () => {
+    const source = await avifFromNamedProfile('p3')
+    const meta = findBox(source, 0, source.length, 'meta')
+    const pitm = findBox(source, meta.off + 12, meta.off + meta.size, 'pitm')
+    const corrupted = Buffer.from(source)
+    if (corrupted[pitm.off + 8] === 0) corrupted.writeUInt16BE(999, pitm.off + 12)
+    else corrupted.writeUInt32BE(999, pitm.off + 12)
+
+    const result = repairAvifColor(corrupted)
+
+    assert.equal(result.changed, false)
+    assert.equal(result.reason, 'unsupported-layout')
 })
