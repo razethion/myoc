@@ -387,6 +387,58 @@ async function createChunkedSfwUploadTestContext() {
     }
 }
 
+async function createCompletedChunkedSfwUpload() {
+    const {sessionToken, mediaBucket, character, db, csrfToken, initBody} = await createChunkedSfwUploadTestContext()
+    const pngFile = createPngFile(800, 600)
+    const partResponse = await putChunkedMediaPart(
+        character.id,
+        initBody.mediaId,
+        'sfw',
+        initBody.uploads.sfw.uploadId,
+        1,
+        initBody.uploads.sfw.imageKey,
+        pngFile,
+        db,
+        {mediaBucket, sessionToken, csrfToken},
+    )
+    const uploadedPart = (await partResponse.json()) as R2UploadedPart
+
+    return {sessionToken, mediaBucket, character, db, csrfToken, initBody, pngFile, uploadedPart}
+}
+
+async function createStagedToyhouseSfwUpload(contentType: 'image/png' | 'image/gif', width = 800, height = 600) {
+    const sessionToken = 'session-token'
+    const mediaBucket = createMockR2Bucket()
+    const character = createCharacterRecord()
+    await seedCurrentUser(sessionToken)
+    await seedCharacterRecord(character)
+    await seedToyhouseImport()
+    const csrfToken = await createCsrfToken(sessionToken)
+    const initResponse = await initChunkedMedia(character.id, {uploads: [{rating: 'sfw', contentType}]}, db, {
+        asyncImageUploads: true,
+        mediaBucket,
+        sessionToken,
+        csrfToken,
+    })
+    const initBody = (await initResponse.json()) as ChunkedSfwInitBody
+    const file = contentType === 'image/png' ? createPngFile(width, height) : createGifFile(width, height)
+    const partResponse = await putChunkedMediaPart(
+        character.id,
+        initBody.mediaId,
+        'sfw',
+        initBody.uploads.sfw.uploadId,
+        1,
+        initBody.uploads.sfw.imageKey,
+        file,
+        db,
+        {asyncImageUploads: true, mediaBucket, sessionToken, csrfToken},
+        contentType,
+    )
+    const uploadedPart = (await partResponse.json()) as R2UploadedPart
+
+    return {sessionToken, mediaBucket, character, db, csrfToken, initBody, file, uploadedPart}
+}
+
 async function postCharacter(body: unknown, db: D1Database, options: CharacterRequestOptions = {}): Promise<Response> {
     return apiRoutes.request(
         'https://example.com/characters',
@@ -5757,6 +5809,223 @@ describe('character media uploads', () => {
         expect(mediaBucket.delete).toHaveBeenCalledWith(
             `characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.png`,
         )
+    })
+
+    it('publishes a chunked PNG without tagging when the stored object cannot be re-read', async () => {
+        const {sessionToken, mediaBucket, character, db, csrfToken, initBody, pngFile, uploadedPart} =
+            await createCompletedChunkedSfwUpload()
+        const objectKey = characterMediaImageObjectKey(
+            currentUserRecord.id,
+            character.id,
+            initBody.mediaId,
+            initBody.uploads.sfw.imageKey,
+            'sfw',
+            'image/png',
+        )
+        const originalGet = vi.mocked(mediaBucket.get).getMockImplementation()
+
+        if (!originalGet) {
+            throw new Error('Expected the mock R2 get implementation')
+        }
+
+        vi.mocked(mediaBucket.get).mockImplementation(async (key, options) => {
+            if (key === objectKey && !options) {
+                return null
+            }
+
+            return originalGet(key, options)
+        })
+
+        const completeResponse = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/png',
+                    parts: [uploadedPart],
+                },
+                sfwPreview: createPreviewPayload(800, 600),
+            },
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+
+        expect(completeResponse.status).toBe(201)
+        const body = (await completeResponse.json()) as {media: {sfwByteSize: number}}
+        expect(body.media.sfwByteSize).toBe(pngFile.size)
+    })
+
+    it('keeps the completed size when the PNG tag rewrite returns no object', async () => {
+        const {sessionToken, mediaBucket, character, db, csrfToken, initBody, pngFile, uploadedPart} =
+            await createCompletedChunkedSfwUpload()
+        const objectKey = characterMediaImageObjectKey(
+            currentUserRecord.id,
+            character.id,
+            initBody.mediaId,
+            initBody.uploads.sfw.imageKey,
+            'sfw',
+            'image/png',
+        )
+        const originalPut = vi.mocked(mediaBucket.put).getMockImplementation()
+
+        if (!originalPut) {
+            throw new Error('Expected the mock R2 put implementation')
+        }
+
+        vi.mocked(mediaBucket.put).mockImplementation(async (key, value) => {
+            const result = await originalPut(key, value)
+
+            if (key === objectKey) {
+                return null as unknown as R2Object
+            }
+
+            return result
+        })
+
+        const completeResponse = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/png',
+                    parts: [uploadedPart],
+                },
+                sfwPreview: createPreviewPayload(800, 600),
+            },
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+
+        expect(completeResponse.status).toBe(201)
+        const body = (await completeResponse.json()) as {media: {sfwByteSize: number}}
+        expect(body.media.sfwByteSize).toBe(pngFile.size)
+    })
+
+    it('deletes the completed upload when PNG tagging fails', async () => {
+        const {sessionToken, mediaBucket, character, db, csrfToken, initBody, uploadedPart} = await createCompletedChunkedSfwUpload()
+        const objectKey = characterMediaImageObjectKey(
+            currentUserRecord.id,
+            character.id,
+            initBody.mediaId,
+            initBody.uploads.sfw.imageKey,
+            'sfw',
+            'image/png',
+        )
+        const originalPut = vi.mocked(mediaBucket.put).getMockImplementation()
+
+        if (!originalPut) {
+            throw new Error('Expected the mock R2 put implementation')
+        }
+
+        vi.mocked(mediaBucket.put).mockImplementation(async (key, value) => {
+            if (key === objectKey) {
+                throw new Error('tagging write failed')
+            }
+
+            return originalPut(key, value)
+        })
+
+        const completeResponse = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/png',
+                    parts: [uploadedPart],
+                },
+                sfwPreview: createPreviewPayload(800, 600),
+            },
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+
+        expect(completeResponse.status).toBe(500)
+        expect(mediaBucket.delete).toHaveBeenCalledWith(objectKey)
+    })
+
+    it('publishes a staged non-PNG Toyhou.se import without PNG tagging', async () => {
+        const {sessionToken, mediaBucket, db, csrfToken, initBody, file, uploadedPart} = await createStagedToyhouseSfwUpload(
+            'image/gif',
+            320,
+            240,
+        )
+        const completeResponse = await completeToyhouseImportItem(
+            'toyhouse-import-item',
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/gif',
+                    parts: [uploadedPart],
+                },
+                sfwPreview: createPreviewPayload(320, 240),
+            },
+            db,
+            {asyncImageUploads: true, mediaBucket, sessionToken, csrfToken},
+        )
+
+        expect(completeResponse.status).toBe(201)
+        const body = (await completeResponse.json()) as {media: {sfwContentType: string; sfwByteSize: number}}
+        expect(body.media.sfwContentType).toBe('image/gif')
+        expect(body.media.sfwByteSize).toBe(file.size)
+    })
+
+    it('keeps the staged size when publishing returns no object', async () => {
+        const {sessionToken, mediaBucket, character, db, csrfToken, initBody, file, uploadedPart} = await createStagedToyhouseSfwUpload(
+            'image/png',
+            800,
+            600,
+        )
+        const publishedObjectKey = characterMediaImageObjectKey(
+            currentUserRecord.id,
+            character.id,
+            initBody.mediaId,
+            initBody.uploads.sfw.imageKey,
+            'sfw',
+            'image/png',
+        )
+        const originalPut = vi.mocked(mediaBucket.put).getMockImplementation()
+
+        if (!originalPut) {
+            throw new Error('Expected the mock R2 put implementation')
+        }
+
+        vi.mocked(mediaBucket.put).mockImplementation(async (key, value) => {
+            const result = await originalPut(key, value)
+
+            if (key === publishedObjectKey) {
+                return null as unknown as R2Object
+            }
+
+            return result
+        })
+
+        const completeResponse = await completeToyhouseImportItem(
+            'toyhouse-import-item',
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/png',
+                    parts: [uploadedPart],
+                },
+                sfwPreview: createPreviewPayload(800, 600),
+            },
+            db,
+            {asyncImageUploads: true, mediaBucket, sessionToken, csrfToken},
+        )
+
+        expect(completeResponse.status).toBe(201)
+        const body = (await completeResponse.json()) as {media: {sfwByteSize: number}}
+        expect(body.media.sfwByteSize).toBe(file.size)
     })
 
     it('marks Toyhou.se import items and their jobs as failed', async () => {

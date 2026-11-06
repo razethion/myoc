@@ -27,6 +27,7 @@ import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../../lib/media/cacheControl'
 import {type HeightChartJson, parseHeightChartJson as parseCharacterHeightChartJson} from '../../lib/media/heightChart'
 import {type GalleryImageMetadata, readGalleryImageMetadata} from '../../lib/media/imageMetadata'
 import {type CompletedGalleryJobSource, createGalleryImageUploadJob} from '../../lib/media/imageUploadJobs'
+import {tagPngWithSrgbFixedLength} from '../../lib/media/pngColorSpace'
 import {
     GALLERY_NSFW_BLUR_CONTENT_TYPE,
     type GeneratedGalleryPreview,
@@ -2720,12 +2721,24 @@ async function completeMediaVariant(
             throw new Error(`${label} staging object is not available`)
         }
 
-        await context.env.MEDIA_BUCKET.put(publishedObjectKey, source.body, {
+        const imageBody =
+            image.contentType === 'image/png'
+                ? await tagPngWithSrgbFixedLength(source.body, image.byteSize, {
+                      bucket: context.env.MEDIA_BUCKET,
+                      key: uploadObjectKey,
+                  })
+                : source.body
+        const published = await context.env.MEDIA_BUCKET.put(publishedObjectKey, imageBody, {
             httpMetadata: {
                 cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
                 contentType: image.contentType,
             },
         })
+
+        if (published) {
+            image.byteSize = published.size
+        }
+
         context.completedKeys.push(publishedObjectKey)
         await deleteR2Objects(context.env.MEDIA_BUCKET, [uploadObjectKey], 'toyhouse-import-staging-cleanup')
     }
@@ -4621,6 +4634,28 @@ async function completeChunkedGalleryUpload(
         throw new GalleryUploadValidationError(`${label} must be ${GALLERY_IMAGE_MAX_PIXELS.toLocaleString('en-US')} pixels or smaller`)
     }
 
+    let byteSize = completedObject.size
+
+    if (!staged && upload.contentType === 'image/png') {
+        try {
+            const stored = await bucket.get(objectKey)
+
+            if (stored) {
+                const tagged = await bucket.put(
+                    objectKey,
+                    await tagPngWithSrgbFixedLength(stored.body, stored.size, {bucket, key: objectKey}),
+                    {
+                        httpMetadata: {cacheControl: GALLERY_IMAGE_CACHE_CONTROL, contentType: upload.contentType},
+                    },
+                )
+                byteSize = tagged?.size ?? byteSize
+            }
+        } catch (error) {
+            await deleteR2Objects(bucket, [objectKey])
+            throw error
+        }
+    }
+
     return {
         imageKey: upload.imageKey,
         contentType: upload.contentType,
@@ -4628,7 +4663,7 @@ async function completeChunkedGalleryUpload(
         height: metadata.height,
         displayWidth: metadata.displayWidth,
         displayHeight: metadata.displayHeight,
-        byteSize: completedObject.size,
+        byteSize,
     }
 }
 

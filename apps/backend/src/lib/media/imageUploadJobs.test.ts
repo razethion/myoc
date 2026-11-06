@@ -1,6 +1,6 @@
 import {describe, expect, it, vi} from 'vitest'
 import {queryAll, queryOne, seedCharacter, seedFolder, seedUser, useTestDatabase, withFailingTrigger} from '../../test/d1'
-import {createAvifBytes, createPngFile} from '../../test/imageFixtures'
+import {createAvifBytes, createPngFile, createWebpBytes} from '../../test/imageFixtures'
 import {createMockKVNamespace} from '../../test/mockKV'
 import {createMockR2Bucket} from '../../test/mockR2'
 import type {Bindings} from '../../types/bindings'
@@ -869,6 +869,91 @@ describe('image upload jobs', () => {
             expect(new Uint8Array(await original.arrayBuffer())).toEqual(await pngBytes(100, 80))
         }
         expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({state: 'ready'})
+    })
+
+    it('publishes a non-PNG gallery source without PNG tagging', async () => {
+        await seedUser({id: 'user-1'})
+        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        const setup = createEnv()
+        const bytes = createWebpBytes(100, 80)
+        const objectKey = `image-staging/${characterMediaImageObjectKey(
+            'user-1',
+            'character-1',
+            'media-1',
+            'sfw-source',
+            'sfw',
+            'image/webp',
+        )}`
+        await setup.sourceBucket.put(objectKey, bytes)
+        const job = await createGalleryImageUploadJob(setup.env, {
+            userId: 'user-1',
+            characterId: 'character-1',
+            mediaId: 'media-1',
+            idempotencyKey: 'gallery-webp-job',
+            sfwArtist: 'Artist A',
+            nsfwArtist: 'Artist B',
+            sources: [
+                {
+                    rating: 'sfw',
+                    objectKey,
+                    contentType: 'image/webp',
+                    byteSize: bytes.byteLength,
+                    width: 100,
+                    height: 80,
+                    displayWidth: 100,
+                    displayHeight: 80,
+                },
+            ],
+            now,
+        })
+        const queued = firstQueuedMessage(setup.lanes)
+        await consumeQueued(setup.env, queued)
+
+        expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({state: 'ready', kind: 'gallery'})
+        const original = await setup.mediaBucket.get(objectKey.replace(/^image-staging\//, ''))
+        expect(original).not.toBeNull()
+
+        if (!original) {
+            throw new Error('Expected the gallery original')
+        }
+
+        expect(new Uint8Array(await original.arrayBuffer())).toEqual(bytes)
+    })
+
+    it('falls back to the task byte size when the gallery original put returns no object', async () => {
+        await seedUser({id: 'user-1'})
+        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        const setup = createEnv()
+        const created = await createSingleGalleryJob(setup)
+        const originalPut = vi.mocked(setup.mediaBucket.put).getMockImplementation()
+
+        if (!originalPut) {
+            throw new Error('Expected the mock R2 put implementation')
+        }
+
+        vi.mocked(setup.mediaBucket.put).mockImplementation(async (key, value) => {
+            const result = await originalPut(key, value)
+
+            if (key.includes('/preview/') || key.includes('/blur/')) {
+                return result
+            }
+
+            return null as unknown as R2Object
+        })
+
+        await consumeQueued(setup.env, created.queued)
+
+        expect(await getImageUploadStatus(db, 'user-1', created.job.id)).toMatchObject({state: 'ready', kind: 'gallery'})
+        const source = await setup.sourceBucket.get(created.sourceKey)
+        expect(source).not.toBeNull()
+
+        if (!source) {
+            throw new Error('Expected the gallery source')
+        }
+
+        expect(await queryOne<{sfw_byte_size: number}>('SELECT sfw_byte_size FROM character_media WHERE id = ?', ['media-1'], db)).toEqual({
+            sfw_byte_size: source.size,
+        })
     })
 
     it('rejects invalid gallery source sets and foreign targets', async () => {

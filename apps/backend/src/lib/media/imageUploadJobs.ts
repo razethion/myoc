@@ -6,6 +6,7 @@ import {toSqlTimestamp} from '../auth/session'
 import {GALLERY_MAX_MEDIA_PER_CHARACTER} from '../gallery'
 import {REVOCABLE_MEDIA_CACHE_CONTROL} from './cacheControl'
 import {readGalleryImageDimensions} from './imageMetadata'
+import {tagPngWithSrgbFixedLength} from './pngColorSpace'
 import {
     GALLERY_NSFW_BLUR_CONTENT_TYPE,
     GALLERY_PREVIEW_CONTENT_TYPE,
@@ -908,7 +909,15 @@ async function processGalleryTask(
         task.source_rating,
         task.source_content_type,
     )
-    await writeGalleryOutputs(env.MEDIA_BUCKET, task, source.body, imageObjectKey, previewObjectKey, blurObjectKey, generated)
+    const imageByteSize = await writeGalleryOutputs(
+        env.MEDIA_BUCKET,
+        task,
+        source.body,
+        imageObjectKey,
+        previewObjectKey,
+        blurObjectKey,
+        generated,
+    )
 
     const output = {
         rating: task.source_rating,
@@ -917,7 +926,7 @@ async function processGalleryTask(
         imageContentType: task.source_content_type,
         width: task.source_width,
         height: task.source_height,
-        byteSize: task.source_byte_size,
+        byteSize: imageByteSize,
         previewKey,
         previewObjectKey,
         previewWidth: generated.preview.width,
@@ -995,11 +1004,18 @@ async function writeGalleryOutputs(
     previewObjectKey: string,
     blurObjectKey: string | null,
     generated: Awaited<ReturnType<typeof generateGalleryOutputsWithContainer>>,
-): Promise<void> {
+): Promise<number> {
     const blur = generated.blur
-    await Promise.all([
+    let imageBody: ReadableStream
+
+    if (task.source_content_type === 'image/png') {
+        imageBody = await tagPngWithSrgbFixedLength(source, task.source_byte_size as number, {bucket, key: imageObjectKey})
+    } else {
+        imageBody = source
+    }
+    const [imageObject] = await Promise.all([
         Promise.resolve().then(() =>
-            bucket.put(imageObjectKey, source, {
+            bucket.put(imageObjectKey, imageBody, {
                 httpMetadata: {cacheControl: REVOCABLE_MEDIA_CACHE_CONTROL, contentType: task.source_content_type},
             }),
         ),
@@ -1018,6 +1034,7 @@ async function writeGalleryOutputs(
               ]
             : []),
     ])
+    return imageObject?.size ?? (task.source_byte_size as number)
 }
 
 async function handleTaskProcessingError(
