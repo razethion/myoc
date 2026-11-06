@@ -1,4 +1,5 @@
 import {describe, expect, it} from 'vitest'
+import {createMockR2Bucket} from '../../test/mockR2'
 import {tagPngWithSrgb, tagPngWithSrgbFixedLength} from './pngColorSpace'
 
 const SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
@@ -258,8 +259,27 @@ describe('tagPngWithSrgbFixedLength', () => {
 
     it('passes through when the prefix does not reach the color decision', async () => {
         const input = png([])
-        const output = await readAll(await tagPngWithSrgbFixedLength(streamOf(input), input.length, 20))
+        const output = await readAll(await tagPngWithSrgbFixedLength(streamOf(input), input.length, {probeBytes: 20}))
 
         expect(output).toEqual(input)
+    })
+
+    it('continues past the probe with ranged reads for large metadata', async () => {
+        const metadata = new Uint8Array(1.5 * 1024 * 1024)
+        metadata[0] = 0x41
+        const input = png([chunk('iTXt', metadata)])
+        const bucket = createMockR2Bucket()
+        await bucket.put('probe.png', input)
+        const stored = await bucket.get('probe.png')
+
+        if (!stored) {
+            throw new Error('probe object was not stored')
+        }
+
+        const output = await readAll(await tagPngWithSrgbFixedLength(stored.body, input.length, {bucket, key: 'probe.png'}))
+
+        expect(output.length).toBe(input.length + SRGB_CHUNK.length)
+        expect(chunkTypes(output)).toEqual(['IHDR', 'iTXt', 'sRGB', 'IDAT', 'IEND'])
+        expect(withoutChunk(output, 'sRGB')).toEqual(input)
     })
 })

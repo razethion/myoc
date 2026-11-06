@@ -2721,7 +2721,13 @@ async function completeMediaVariant(
             throw new Error(`${label} staging object is not available`)
         }
 
-        const imageBody = image.contentType === 'image/png' ? await tagPngWithSrgbFixedLength(source.body, image.byteSize) : source.body
+        const imageBody =
+            image.contentType === 'image/png'
+                ? await tagPngWithSrgbFixedLength(source.body, image.byteSize, {
+                      bucket: context.env.MEDIA_BUCKET,
+                      key: uploadObjectKey,
+                  })
+                : source.body
         const published = await context.env.MEDIA_BUCKET.put(publishedObjectKey, imageBody, {
             httpMetadata: {
                 cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
@@ -4635,9 +4641,13 @@ async function completeChunkedGalleryUpload(
             const stored = await bucket.get(objectKey)
 
             if (stored) {
-                const tagged = await bucket.put(objectKey, await tagPngWithSrgbFixedLength(stored.body, stored.size), {
-                    httpMetadata: {cacheControl: GALLERY_IMAGE_CACHE_CONTROL, contentType: upload.contentType},
-                })
+                const tagged = await bucket.put(
+                    objectKey,
+                    await tagPngWithSrgbFixedLength(stored.body, stored.size, {bucket, key: objectKey}),
+                    {
+                        httpMetadata: {cacheControl: GALLERY_IMAGE_CACHE_CONTROL, contentType: upload.contentType},
+                    },
+                )
                 byteSize = tagged?.size ?? byteSize
             }
         } catch (error) {

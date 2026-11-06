@@ -1007,7 +1007,9 @@ async function writeGalleryOutputs(
 ): Promise<number> {
     const blur = generated.blur
     const imageBody =
-        task.source_content_type === 'image/png' ? await tagPngWithSrgbFixedLength(source, task.source_byte_size ?? 0) : source
+        task.source_content_type === 'image/png'
+            ? await tagPngWithSrgbFixedLength(source, task.source_byte_size ?? 0, {bucket, key: imageObjectKey})
+            : source
     const [imageObject] = await Promise.all([
         Promise.resolve().then(() =>
             bucket.put(imageObjectKey, imageBody, {

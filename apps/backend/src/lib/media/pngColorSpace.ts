@@ -166,20 +166,28 @@ const PNG_SRGB_PROBE_BYTES = 1024 * 1024
 
 type PngSrgbDecision = 'insert' | 'preserve' | 'undecided'
 
+type PngSrgbOptions = {
+    probeBytes?: number
+    bucket?: R2Bucket
+    key?: string
+}
+
 /**
  * Tag an untagged RGB PNG and return a body whose length is known to R2.
  * The prefix is inspected first so the FixedLengthStream can be sized before
- * the upload starts; if the decision is not visible in the prefix, the source
- * passes through unchanged.
+ * the upload starts. If the prefix ends inside a large ancillary chunk, chunk
+ * headers are read from the stored object by range until the decision is known.
  */
 export async function tagPngWithSrgbFixedLength(
     source: ReadableStream,
     sourceSize: number,
-    probeBytes = PNG_SRGB_PROBE_BYTES,
+    options: PngSrgbOptions = {},
 ): Promise<ReadableStream> {
     const reader = source.getReader()
+    const probeBytes = options.probeBytes ?? PNG_SRGB_PROBE_BYTES
     const {prefix, remainder} = await readPrefix(reader, probeBytes)
-    const insert = pngSrgbDecision(prefix) === 'insert'
+    const decision = await scanPngSrgb(options.bucket ?? null, options.key ?? null, prefix, sourceSize)
+    const insert = decision === 'insert'
     const fixed = new FixedLengthStream(sourceSize + (insert ? SRGB_CHUNK.length : 0))
     const combined = combinePrefixAndReader(prefix, remainder, reader)
     const body = insert ? tagPngWithSrgb(combined) : combined
@@ -254,26 +262,26 @@ function combinePrefixAndReader(
     })
 }
 
-type ChunkRead = {
+type ChunkScan = {
     decision: PngSrgbDecision | null
     colorType: number | null
     nextOffset: number
 }
 
-function pngSrgbDecision(bytes: Uint8Array): PngSrgbDecision {
-    if (bytes.length < PNG_SIGNATURE.length) {
+async function scanPngSrgb(bucket: R2Bucket | null, key: string | null, prefix: Uint8Array, sourceSize: number): Promise<PngSrgbDecision> {
+    if (prefix.length < PNG_SIGNATURE.length) {
         return 'undecided'
     }
 
-    if (!matchesSignature(bytes.subarray(0, PNG_SIGNATURE.length))) {
+    if (!matchesSignature(prefix.subarray(0, PNG_SIGNATURE.length))) {
         return 'preserve'
     }
 
     let offset = PNG_SIGNATURE.length
     let colorType: number | null = null
 
-    while (offset + PNG_CHUNK_HEADER_BYTES <= bytes.length) {
-        const chunk = readChunkDecision(bytes, offset, colorType)
+    while (offset + PNG_CHUNK_HEADER_BYTES <= sourceSize) {
+        const chunk = await scanChunk(bucket, key, prefix, offset, colorType)
 
         if (chunk.decision !== null) {
             return chunk.decision
@@ -281,7 +289,7 @@ function pngSrgbDecision(bytes: Uint8Array): PngSrgbDecision {
 
         colorType = chunk.colorType ?? colorType
 
-        if (chunk.nextOffset > bytes.length) {
+        if (chunk.nextOffset > sourceSize) {
             return 'undecided'
         }
 
@@ -291,23 +299,25 @@ function pngSrgbDecision(bytes: Uint8Array): PngSrgbDecision {
     return 'undecided'
 }
 
-function readChunkDecision(bytes: Uint8Array, offset: number, colorType: number | null): ChunkRead {
-    const length = readUint32Be(bytes, offset)
-    const type = readChunkType(bytes.subarray(offset, offset + PNG_CHUNK_HEADER_BYTES))
+async function scanChunk(
+    bucket: R2Bucket | null,
+    key: string | null,
+    prefix: Uint8Array,
+    offset: number,
+    colorType: number | null,
+): Promise<ChunkScan> {
+    const header = await readPngBytes(bucket, key, prefix, offset, PNG_CHUNK_HEADER_BYTES)
+
+    if (header === null) {
+        return {decision: 'undecided', colorType: null, nextOffset: offset}
+    }
+
+    const length = readUint32Be(header, 0)
+    const type = readChunkType(header)
     const nextOffset = offset + PNG_CHUNK_HEADER_BYTES + 4 + length
 
     if (type === 'IHDR') {
-        const ihdr = readIhdrColorType(bytes, offset, length)
-
-        if (ihdr === null) {
-            return {decision: 'undecided', colorType: null, nextOffset}
-        }
-
-        if (ihdr === 'preserve') {
-            return {decision: 'preserve', colorType: null, nextOffset}
-        }
-
-        return {decision: null, colorType: ihdr, nextOffset}
+        return scanIhdr(bucket, key, prefix, offset, length, nextOffset)
     }
 
     if (COLOR_CHUNK_TYPES.has(type)) {
@@ -321,19 +331,56 @@ function readChunkDecision(bytes: Uint8Array, offset: number, colorType: number 
     return {decision: null, colorType: null, nextOffset}
 }
 
-function readIhdrColorType(bytes: Uint8Array, offset: number, length: number): number | 'preserve' | null {
+async function scanIhdr(
+    bucket: R2Bucket | null,
+    key: string | null,
+    prefix: Uint8Array,
+    offset: number,
+    length: number,
+    nextOffset: number,
+): Promise<ChunkScan> {
     if (length !== IHDR_DATA_BYTES) {
-        return 'preserve'
+        return {decision: 'preserve', colorType: null, nextOffset}
     }
 
-    const colorTypeOffset = offset + PNG_CHUNK_HEADER_BYTES + IHDR_COLOR_TYPE_OFFSET
+    const ihdr = await readPngBytes(bucket, key, prefix, offset + PNG_CHUNK_HEADER_BYTES, IHDR_DATA_BYTES)
 
-    if (colorTypeOffset >= bytes.length) {
+    if (ihdr === null) {
+        return {decision: 'undecided', colorType: null, nextOffset}
+    }
+
+    const ihdrColorType = ihdr[IHDR_COLOR_TYPE_OFFSET] ?? 0
+
+    if (!RGB_COLOR_TYPES.has(ihdrColorType)) {
+        return {decision: 'preserve', colorType: null, nextOffset}
+    }
+
+    return {decision: null, colorType: ihdrColorType, nextOffset}
+}
+
+async function readPngBytes(
+    bucket: R2Bucket | null,
+    key: string | null,
+    prefix: Uint8Array,
+    offset: number,
+    length: number,
+): Promise<Uint8Array | null> {
+    if (offset + length <= prefix.length) {
+        return prefix.subarray(offset, offset + length)
+    }
+
+    if (!bucket || !key) {
         return null
     }
 
-    const colorType = bytes[colorTypeOffset] ?? 0
-    return RGB_COLOR_TYPES.has(colorType) ? colorType : 'preserve'
+    const object = await bucket.get(key, {range: {offset, length}})
+
+    if (!object) {
+        return null
+    }
+
+    const bytes = new Uint8Array(await object.arrayBuffer())
+    return bytes.byteLength === length ? bytes : null
 }
 
 function concatBytes(parts: Uint8Array[]): Uint8Array {
