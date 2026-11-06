@@ -51,11 +51,6 @@ class PngSrgbTagger implements Transformer<Uint8Array, Uint8Array> {
     }
 
     private consumeChunkData(chunk: Uint8Array, offset: number, controller: TransformStreamDefaultController<Uint8Array>): number {
-        if (this.remainingChunkBytes === 0) {
-            this.phase = this.lastChunkType === 'IEND' ? 'passthrough' : 'chunkHeader'
-            return offset
-        }
-
         const take = Math.min(chunk.length - offset, this.remainingChunkBytes)
         controller.enqueue(chunk.subarray(offset, offset + take))
         this.remainingChunkBytes -= take
@@ -78,7 +73,7 @@ class PngSrgbTagger implements Transformer<Uint8Array, Uint8Array> {
 
         const ihdr = this.buffered
         this.buffered = new Uint8Array(0)
-        this.isRgb = RGB_COLOR_TYPES.has(ihdr[IHDR_COLOR_TYPE_OFFSET] ?? 0)
+        this.isRgb = RGB_COLOR_TYPES.has(ihdr[IHDR_COLOR_TYPE_OFFSET] as number)
         controller.enqueue(ihdr)
         this.remainingChunkBytes = 4
         this.phase = 'chunkData'
@@ -192,7 +187,9 @@ export async function tagPngWithSrgbFixedLength(
     const combined = combinePrefixAndReader(prefix, remainder, reader)
     const body = insert ? tagPngWithSrgb(combined) : combined
 
-    body.pipeTo(fixed.writable).catch(() => undefined)
+    body.pipeTo(fixed.writable)
+        .catch(() => undefined)
+        .finally(() => reader.cancel().catch(() => undefined))
 
     return fixed.readable
 }
@@ -255,9 +252,6 @@ function combinePrefixAndReader(
             }
 
             controller.enqueue(value)
-        },
-        cancel(reason) {
-            return reader.cancel(reason)
         },
     })
 }
@@ -359,7 +353,7 @@ async function readIhdr(state: ScanState, offset: number, length: number): Promi
         return null
     }
 
-    const colorType = ihdr[IHDR_COLOR_TYPE_OFFSET] ?? 0
+    const colorType = ihdr[IHDR_COLOR_TYPE_OFFSET] as number
     return RGB_COLOR_TYPES.has(colorType) ? colorType : 'preserve'
 }
 
@@ -408,7 +402,7 @@ function concatBytes(parts: Uint8Array[]): Uint8Array {
     }
 
     if (parts.length === 1) {
-        return parts[0] ?? new Uint8Array(0)
+        return parts[0] as Uint8Array
     }
 
     const total = parts.reduce((sum, part) => sum + part.length, 0)
@@ -435,19 +429,19 @@ function appendBytes(left: Uint8Array, right: Uint8Array): Uint8Array<ArrayBuffe
 }
 
 function matchesSignature(bytes: Uint8Array): boolean {
-    if (bytes.length !== PNG_SIGNATURE.length) {
-        return false
-    }
-
     return PNG_SIGNATURE.every((byte, index) => bytes[index] === byte)
 }
 
 function readUint32Be(bytes: Uint8Array, offset: number): number {
     return (
-        (((bytes[offset] ?? 0) << 24) | ((bytes[offset + 1] ?? 0) << 16) | ((bytes[offset + 2] ?? 0) << 8) | (bytes[offset + 3] ?? 0)) >>> 0
+        (((bytes[offset] as number) << 24) |
+            ((bytes[offset + 1] as number) << 16) |
+            ((bytes[offset + 2] as number) << 8) |
+            (bytes[offset + 3] as number)) >>>
+        0
     )
 }
 
 function readChunkType(bytes: Uint8Array): string {
-    return String.fromCharCode(bytes[4] ?? 0, bytes[5] ?? 0, bytes[6] ?? 0, bytes[7] ?? 0)
+    return String.fromCharCode(bytes[4] as number, bytes[5] as number, bytes[6] as number, bytes[7] as number)
 }

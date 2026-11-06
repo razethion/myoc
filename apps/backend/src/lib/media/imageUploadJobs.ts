@@ -1006,10 +1006,13 @@ async function writeGalleryOutputs(
     generated: Awaited<ReturnType<typeof generateGalleryOutputsWithContainer>>,
 ): Promise<number> {
     const blur = generated.blur
-    const imageBody =
-        task.source_content_type === 'image/png'
-            ? await tagPngWithSrgbFixedLength(source, task.source_byte_size ?? 0, {bucket, key: imageObjectKey})
-            : source
+    let imageBody: ReadableStream
+
+    if (task.source_content_type === 'image/png') {
+        imageBody = await tagPngWithSrgbFixedLength(source, task.source_byte_size as number, {bucket, key: imageObjectKey})
+    } else {
+        imageBody = source
+    }
     const [imageObject] = await Promise.all([
         Promise.resolve().then(() =>
             bucket.put(imageObjectKey, imageBody, {
@@ -1031,7 +1034,7 @@ async function writeGalleryOutputs(
               ]
             : []),
     ])
-    return imageObject?.size ?? task.source_byte_size ?? 0
+    return imageObject?.size ?? (task.source_byte_size as number)
 }
 
 async function handleTaskProcessingError(

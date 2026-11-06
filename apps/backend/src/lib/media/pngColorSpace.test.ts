@@ -223,6 +223,28 @@ describe('tagPngWithSrgb', () => {
 
         expect(await tag(input)).toEqual(input)
     })
+
+    it('passes through when the first chunk is not IHDR', async () => {
+        const input = concat([
+            SIGNATURE,
+            chunk('tEXt', ascii('x')),
+            chunk('IDAT', new Uint8Array([1, 2, 3])),
+            chunk('IEND', new Uint8Array(0)),
+        ])
+
+        expect(await tag(input)).toEqual(input)
+    })
+
+    it('passes through an IHDR with an unexpected length', async () => {
+        const input = concat([
+            SIGNATURE,
+            chunk('IHDR', new Uint8Array(12)),
+            chunk('IDAT', new Uint8Array([1, 2, 3])),
+            chunk('IEND', new Uint8Array(0)),
+        ])
+
+        expect(await tag(input)).toEqual(input)
+    })
 })
 
 describe('tagPngWithSrgbFixedLength', () => {
@@ -307,5 +329,115 @@ describe('tagPngWithSrgbFixedLength', () => {
 
         expect(getCalls).toBeLessThanOrEqual(65)
         expect(output).toEqual(input)
+    }, 20_000)
+
+    it('passes through when the probe is shorter than the signature', async () => {
+        const input = png([])
+        const output = await readAll(await tagPngWithSrgbFixedLength(streamOf(input), input.length, {probeBytes: 4}))
+
+        expect(output).toEqual(input)
+    })
+
+    it('passes through when a chunk extends past the declared size', async () => {
+        const input = concat([SIGNATURE, ihdr(6), chunk('tEXt', new Uint8Array([1, 2, 3, 4, 5]))])
+        const truncated = input.subarray(0, input.length - 3)
+        const output = await readAll(await tagPngWithSrgbFixedLength(streamOf(truncated), truncated.length))
+
+        expect(output).toEqual(truncated)
+    })
+
+    it('passes through a PNG without IDAT', async () => {
+        const input = concat([SIGNATURE, ihdr(6), chunk('IEND', new Uint8Array(0))])
+        const output = await readAll(await tagPngWithSrgbFixedLength(streamOf(input), input.length))
+
+        expect(output).toEqual(input)
+    })
+
+    it('passes through a PNG with an unexpected IHDR length', async () => {
+        const input = concat([
+            SIGNATURE,
+            chunk('IHDR', new Uint8Array(12)),
+            chunk('IDAT', new Uint8Array([1, 2, 3])),
+            chunk('IEND', new Uint8Array(0)),
+        ])
+        const output = await readAll(await tagPngWithSrgbFixedLength(streamOf(input), input.length))
+
+        expect(output).toEqual(input)
+    })
+
+    it('passes through a PNG whose first chunk is IDAT', async () => {
+        const input = concat([SIGNATURE, chunk('IDAT', new Uint8Array([1, 2, 3])), chunk('IEND', new Uint8Array(0))])
+        const output = await readAll(await tagPngWithSrgbFixedLength(streamOf(input), input.length))
+
+        expect(output).toEqual(input)
+    })
+
+    it('passes through a truncated IHDR when the bucket cannot supply the missing bytes', async () => {
+        const input = concat([SIGNATURE, ihdr(6).subarray(0, 8 + 9)])
+        const bucket = createMockR2Bucket()
+        await bucket.put('probe.png', input)
+        const output = await readAll(
+            await tagPngWithSrgbFixedLength(streamOf(input), input.length, {probeBytes: 16, bucket, key: 'probe.png'}),
+        )
+
+        expect(output).toEqual(input)
+    })
+
+    it('passes through when the bucket object is missing', async () => {
+        const metadata = new Uint8Array(1.5 * 1024 * 1024)
+        const input = png([chunk('iTXt', metadata)])
+        const bucket = createMockR2Bucket()
+        const output = await readAll(await tagPngWithSrgbFixedLength(streamOf(input), input.length, {bucket, key: 'missing.png'}))
+
+        expect(output).toEqual(input)
+    }, 20_000)
+
+    it('passes through when a ranged read returns fewer bytes than requested', async () => {
+        const metadata = new Uint8Array(1.5 * 1024 * 1024)
+        const input = png([chunk('iTXt', metadata)])
+        const bucket = {
+            get: vi.fn(async () => ({arrayBuffer: async () => new Uint8Array(4).buffer})),
+        } as unknown as R2Bucket
+        const output = await readAll(await tagPngWithSrgbFixedLength(streamOf(input), input.length, {bucket, key: 'probe.png'}))
+
+        expect(output).toEqual(input)
+    }, 20_000)
+
+    it('returns an empty body for an empty source', async () => {
+        const source = new ReadableStream({
+            start(controller) {
+                controller.close()
+            },
+        })
+        const output = await readAll(await tagPngWithSrgbFixedLength(source, 0))
+
+        expect(output.length).toBe(0)
+    })
+
+    it('reads the remaining source chunks after the prefix', async () => {
+        const metadata = new Uint8Array(1.5 * 1024 * 1024)
+        const input = png([chunk('iTXt', metadata)])
+        const bucket = createMockR2Bucket()
+        await bucket.put('probe.png', input)
+        const output = await readAll(await tagPngWithSrgbFixedLength(streamOf(input, 64 * 1024), input.length, {bucket, key: 'probe.png'}))
+
+        expect(chunkTypes(output)).toEqual(['IHDR', 'iTXt', 'sRGB', 'IDAT', 'IEND'])
+    }, 20_000)
+
+    it('rejects when the source is larger than the declared size', async () => {
+        const metadata = new Uint8Array(1.5 * 1024 * 1024)
+        const input = png([chunk('iTXt', metadata)])
+        const source = new ReadableStream({
+            start(controller) {
+                for (let offset = 0; offset < input.length; offset += 64 * 1024) {
+                    controller.enqueue(input.subarray(offset, Math.min(offset + 64 * 1024, input.length)))
+                }
+
+                controller.close()
+            },
+        })
+        const body = await tagPngWithSrgbFixedLength(source, input.length - 10)
+
+        await expect(readAll(body)).rejects.toThrow()
     }, 20_000)
 })

@@ -4651,15 +4651,7 @@ async function completeChunkedGalleryUpload(
                 byteSize = tagged?.size ?? byteSize
             }
         } catch (error) {
-            try {
-                await deleteR2Objects(bucket, [objectKey])
-            } catch (cleanupError) {
-                console.error('Unable to delete gallery upload after color tagging failed', {
-                    objectKey,
-                    error: describeError(cleanupError),
-                })
-            }
-
+            await deleteR2Objects(bucket, [objectKey])
             throw error
         }
     }
