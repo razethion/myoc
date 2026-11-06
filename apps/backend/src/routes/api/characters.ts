@@ -27,7 +27,7 @@ import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../../lib/media/cacheControl'
 import {type HeightChartJson, parseHeightChartJson as parseCharacterHeightChartJson} from '../../lib/media/heightChart'
 import {type GalleryImageMetadata, readGalleryImageMetadata} from '../../lib/media/imageMetadata'
 import {type CompletedGalleryJobSource, createGalleryImageUploadJob} from '../../lib/media/imageUploadJobs'
-import {tagPngWithSrgb} from '../../lib/media/pngColorSpace'
+import {tagPngWithSrgbFixedLength} from '../../lib/media/pngColorSpace'
 import {
     GALLERY_NSFW_BLUR_CONTENT_TYPE,
     type GeneratedGalleryPreview,
@@ -2721,16 +2721,13 @@ async function completeMediaVariant(
             throw new Error(`${label} staging object is not available`)
         }
 
-        const published = await context.env.MEDIA_BUCKET.put(
-            publishedObjectKey,
-            image.contentType === 'image/png' ? tagPngWithSrgb(source.body) : source.body,
-            {
-                httpMetadata: {
-                    cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
-                    contentType: image.contentType,
-                },
+        const imageBody = image.contentType === 'image/png' ? await tagPngWithSrgbFixedLength(source.body, image.byteSize) : source.body
+        const published = await context.env.MEDIA_BUCKET.put(publishedObjectKey, imageBody, {
+            httpMetadata: {
+                cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
+                contentType: image.contentType,
             },
-        )
+        })
 
         if (published) {
             image.byteSize = published.size
@@ -4634,13 +4631,26 @@ async function completeChunkedGalleryUpload(
     let byteSize = completedObject.size
 
     if (!staged && upload.contentType === 'image/png') {
-        const stored = await bucket.get(objectKey)
+        try {
+            const stored = await bucket.get(objectKey)
 
-        if (stored) {
-            const tagged = await bucket.put(objectKey, tagPngWithSrgb(stored.body), {
-                httpMetadata: {cacheControl: GALLERY_IMAGE_CACHE_CONTROL, contentType: upload.contentType},
-            })
-            byteSize = tagged?.size ?? byteSize
+            if (stored) {
+                const tagged = await bucket.put(objectKey, await tagPngWithSrgbFixedLength(stored.body, stored.size), {
+                    httpMetadata: {cacheControl: GALLERY_IMAGE_CACHE_CONTROL, contentType: upload.contentType},
+                })
+                byteSize = tagged?.size ?? byteSize
+            }
+        } catch (error) {
+            try {
+                await deleteR2Objects(bucket, [objectKey])
+            } catch (cleanupError) {
+                console.error('Unable to delete gallery upload after color tagging failed', {
+                    objectKey,
+                    error: describeError(cleanupError),
+                })
+            }
+
+            throw error
         }
     }
 

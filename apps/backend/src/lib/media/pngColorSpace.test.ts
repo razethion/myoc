@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest'
-import {tagPngWithSrgb} from './pngColorSpace'
+import {tagPngWithSrgb, tagPngWithSrgbFixedLength} from './pngColorSpace'
 
 const SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 const SRGB_CHUNK = new Uint8Array([0x00, 0x00, 0x00, 0x01, 0x73, 0x52, 0x47, 0x42, 0x00, 0xae, 0xce, 0x1c, 0xe9])
@@ -221,5 +221,45 @@ describe('tagPngWithSrgb', () => {
         const input = SIGNATURE.slice(0, 6)
 
         expect(await tag(input)).toEqual(input)
+    })
+})
+
+describe('tagPngWithSrgbFixedLength', () => {
+    it('returns a fixed-length body with the sRGB chunk for an untagged RGB PNG', async () => {
+        const input = png([])
+        const output = await readAll(await tagPngWithSrgbFixedLength(streamOf(input), input.length))
+
+        expect(output.length).toBe(input.length + SRGB_CHUNK.length)
+        expect(chunkTypes(output)).toEqual(['IHDR', 'sRGB', 'IDAT', 'IEND'])
+        expect(withoutChunk(output, 'sRGB')).toEqual(input)
+    })
+
+    it('returns an unchanged fixed-length body for an already-tagged PNG', async () => {
+        const input = png([chunk('iCCP', new Uint8Array([1]))])
+        const output = await readAll(await tagPngWithSrgbFixedLength(streamOf(input), input.length))
+
+        expect(output.length).toBe(input.length)
+        expect(output).toEqual(input)
+    })
+
+    it('returns an unchanged fixed-length body for a grayscale PNG', async () => {
+        const input = png([], 0)
+        const output = await readAll(await tagPngWithSrgbFixedLength(streamOf(input), input.length))
+
+        expect(output).toEqual(input)
+    })
+
+    it('returns an unchanged fixed-length body for non-PNG data', async () => {
+        const input = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5, 6, 7, 8])
+        const output = await readAll(await tagPngWithSrgbFixedLength(streamOf(input), input.length))
+
+        expect(output).toEqual(input)
+    })
+
+    it('passes through when the prefix does not reach the color decision', async () => {
+        const input = png([])
+        const output = await readAll(await tagPngWithSrgbFixedLength(streamOf(input), input.length, 20))
+
+        expect(output).toEqual(input)
     })
 })

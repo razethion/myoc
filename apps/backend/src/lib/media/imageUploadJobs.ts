@@ -6,7 +6,7 @@ import {toSqlTimestamp} from '../auth/session'
 import {GALLERY_MAX_MEDIA_PER_CHARACTER} from '../gallery'
 import {REVOCABLE_MEDIA_CACHE_CONTROL} from './cacheControl'
 import {readGalleryImageDimensions} from './imageMetadata'
-import {tagPngWithSrgb} from './pngColorSpace'
+import {tagPngWithSrgbFixedLength} from './pngColorSpace'
 import {
     GALLERY_NSFW_BLUR_CONTENT_TYPE,
     GALLERY_PREVIEW_CONTENT_TYPE,
@@ -1006,7 +1006,8 @@ async function writeGalleryOutputs(
     generated: Awaited<ReturnType<typeof generateGalleryOutputsWithContainer>>,
 ): Promise<number> {
     const blur = generated.blur
-    const imageBody = task.source_content_type === 'image/png' ? tagPngWithSrgb(source) : source
+    const imageBody =
+        task.source_content_type === 'image/png' ? await tagPngWithSrgbFixedLength(source, task.source_byte_size ?? 0) : source
     const [imageObject] = await Promise.all([
         Promise.resolve().then(() =>
             bucket.put(imageObjectKey, imageBody, {

@@ -155,9 +155,206 @@ class PngSrgbTagger implements Transformer<Uint8Array, Uint8Array> {
  * Insert a PNG sRGB chunk into an untagged RGB PNG without touching its pixels.
  * Images that already declare a color space (iCCP, sRGB, cICP, gAMA, cHRM) and
  * non-RGB or non-PNG data pass through byte-for-byte.
+ *
+ * @internal
  */
 export function tagPngWithSrgb(stream: ReadableStream): ReadableStream {
     return stream.pipeThrough(new TransformStream(new PngSrgbTagger()))
+}
+
+const PNG_SRGB_PROBE_BYTES = 1024 * 1024
+
+type PngSrgbDecision = 'insert' | 'preserve' | 'undecided'
+
+/**
+ * Tag an untagged RGB PNG and return a body whose length is known to R2.
+ * The prefix is inspected first so the FixedLengthStream can be sized before
+ * the upload starts; if the decision is not visible in the prefix, the source
+ * passes through unchanged.
+ */
+export async function tagPngWithSrgbFixedLength(
+    source: ReadableStream,
+    sourceSize: number,
+    probeBytes = PNG_SRGB_PROBE_BYTES,
+): Promise<ReadableStream> {
+    const reader = source.getReader()
+    const {prefix, remainder} = await readPrefix(reader, probeBytes)
+    const insert = pngSrgbDecision(prefix) === 'insert'
+    const fixed = new FixedLengthStream(sourceSize + (insert ? SRGB_CHUNK.length : 0))
+    const combined = combinePrefixAndReader(prefix, remainder, reader)
+    const body = insert ? tagPngWithSrgb(combined) : combined
+
+    body.pipeTo(fixed.writable).catch(() => undefined)
+
+    return fixed.readable
+}
+
+type PrefixRead = {
+    prefix: Uint8Array
+    remainder: Uint8Array
+    reader: ReadableStreamDefaultReader<Uint8Array>
+}
+
+async function readPrefix(reader: ReadableStreamDefaultReader<Uint8Array>, maxBytes: number): Promise<PrefixRead> {
+    const parts: Uint8Array[] = []
+    let total = 0
+    let remainder: Uint8Array = new Uint8Array(0)
+
+    while (total < maxBytes) {
+        const {done, value} = await reader.read()
+
+        if (done) {
+            break
+        }
+
+        const remaining = maxBytes - total
+
+        if (value.byteLength > remaining) {
+            parts.push(value.subarray(0, remaining))
+            remainder = value.subarray(remaining)
+            total = maxBytes
+            break
+        }
+
+        parts.push(value)
+        total += value.byteLength
+    }
+
+    return {prefix: concatBytes(parts), remainder, reader}
+}
+
+function combinePrefixAndReader(
+    prefix: Uint8Array,
+    remainder: Uint8Array,
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+): ReadableStream {
+    const initial = concatBytes([prefix, remainder])
+    let initialSent = false
+
+    return new ReadableStream({
+        async pull(controller) {
+            if (!initialSent) {
+                initialSent = true
+                controller.enqueue(initial)
+                return
+            }
+
+            const {done, value} = await reader.read()
+
+            if (done) {
+                controller.close()
+                return
+            }
+
+            controller.enqueue(value)
+        },
+        cancel(reason) {
+            return reader.cancel(reason)
+        },
+    })
+}
+
+type ChunkRead = {
+    decision: PngSrgbDecision | null
+    colorType: number | null
+    nextOffset: number
+}
+
+function pngSrgbDecision(bytes: Uint8Array): PngSrgbDecision {
+    if (bytes.length < PNG_SIGNATURE.length) {
+        return 'undecided'
+    }
+
+    if (!matchesSignature(bytes.subarray(0, PNG_SIGNATURE.length))) {
+        return 'preserve'
+    }
+
+    let offset = PNG_SIGNATURE.length
+    let colorType: number | null = null
+
+    while (offset + PNG_CHUNK_HEADER_BYTES <= bytes.length) {
+        const chunk = readChunkDecision(bytes, offset, colorType)
+
+        if (chunk.decision !== null) {
+            return chunk.decision
+        }
+
+        colorType = chunk.colorType ?? colorType
+
+        if (chunk.nextOffset > bytes.length) {
+            return 'undecided'
+        }
+
+        offset = chunk.nextOffset
+    }
+
+    return 'undecided'
+}
+
+function readChunkDecision(bytes: Uint8Array, offset: number, colorType: number | null): ChunkRead {
+    const length = readUint32Be(bytes, offset)
+    const type = readChunkType(bytes.subarray(offset, offset + PNG_CHUNK_HEADER_BYTES))
+    const nextOffset = offset + PNG_CHUNK_HEADER_BYTES + 4 + length
+
+    if (type === 'IHDR') {
+        const ihdr = readIhdrColorType(bytes, offset, length)
+
+        if (ihdr === null) {
+            return {decision: 'undecided', colorType: null, nextOffset}
+        }
+
+        if (ihdr === 'preserve') {
+            return {decision: 'preserve', colorType: null, nextOffset}
+        }
+
+        return {decision: null, colorType: ihdr, nextOffset}
+    }
+
+    if (COLOR_CHUNK_TYPES.has(type)) {
+        return {decision: 'preserve', colorType: null, nextOffset}
+    }
+
+    if (type === 'PLTE' || type === 'IDAT') {
+        return {decision: colorType !== null && RGB_COLOR_TYPES.has(colorType) ? 'insert' : 'preserve', colorType: null, nextOffset}
+    }
+
+    return {decision: null, colorType: null, nextOffset}
+}
+
+function readIhdrColorType(bytes: Uint8Array, offset: number, length: number): number | 'preserve' | null {
+    if (length !== IHDR_DATA_BYTES) {
+        return 'preserve'
+    }
+
+    const colorTypeOffset = offset + PNG_CHUNK_HEADER_BYTES + IHDR_COLOR_TYPE_OFFSET
+
+    if (colorTypeOffset >= bytes.length) {
+        return null
+    }
+
+    const colorType = bytes[colorTypeOffset] ?? 0
+    return RGB_COLOR_TYPES.has(colorType) ? colorType : 'preserve'
+}
+
+function concatBytes(parts: Uint8Array[]): Uint8Array {
+    if (parts.length === 0) {
+        return new Uint8Array(0)
+    }
+
+    if (parts.length === 1) {
+        return parts[0] ?? new Uint8Array(0)
+    }
+
+    const total = parts.reduce((sum, part) => sum + part.length, 0)
+    const combined = new Uint8Array(total)
+    let offset = 0
+
+    for (const part of parts) {
+        combined.set(part, offset)
+        offset += part.length
+    }
+
+    return combined
 }
 
 function appendBytes(left: Uint8Array, right: Uint8Array): Uint8Array<ArrayBuffer> {
