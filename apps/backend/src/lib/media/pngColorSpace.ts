@@ -262,6 +262,18 @@ function combinePrefixAndReader(
     })
 }
 
+const PNG_SCAN_WINDOW_BYTES = 64 * 1024
+const PNG_SCAN_MAX_WINDOWS = 64
+
+type ScanState = {
+    bucket: R2Bucket | null
+    key: string | null
+    sourceSize: number
+    buffer: Uint8Array
+    bufferStart: number
+    windows: number
+}
+
 type ChunkScan = {
     decision: PngSrgbDecision | null
     colorType: number | null
@@ -277,11 +289,12 @@ async function scanPngSrgb(bucket: R2Bucket | null, key: string | null, prefix: 
         return 'preserve'
     }
 
+    const state: ScanState = {bucket, key, sourceSize, buffer: prefix, bufferStart: 0, windows: 0}
     let offset = PNG_SIGNATURE.length
     let colorType: number | null = null
 
     while (offset + PNG_CHUNK_HEADER_BYTES <= sourceSize) {
-        const chunk = await scanChunk(bucket, key, prefix, offset, colorType)
+        const chunk = await scanChunk(state, offset, colorType)
 
         if (chunk.decision !== null) {
             return chunk.decision
@@ -299,14 +312,8 @@ async function scanPngSrgb(bucket: R2Bucket | null, key: string | null, prefix: 
     return 'undecided'
 }
 
-async function scanChunk(
-    bucket: R2Bucket | null,
-    key: string | null,
-    prefix: Uint8Array,
-    offset: number,
-    colorType: number | null,
-): Promise<ChunkScan> {
-    const header = await readPngBytes(bucket, key, prefix, offset, PNG_CHUNK_HEADER_BYTES)
+async function scanChunk(state: ScanState, offset: number, colorType: number | null): Promise<ChunkScan> {
+    const header = await ensureBytes(state, offset, PNG_CHUNK_HEADER_BYTES)
 
     if (header === null) {
         return {decision: 'undecided', colorType: null, nextOffset: offset}
@@ -317,7 +324,17 @@ async function scanChunk(
     const nextOffset = offset + PNG_CHUNK_HEADER_BYTES + 4 + length
 
     if (type === 'IHDR') {
-        return scanIhdr(bucket, key, prefix, offset, length, nextOffset)
+        const ihdr = await readIhdr(state, offset, length)
+
+        if (ihdr === null) {
+            return {decision: 'undecided', colorType: null, nextOffset}
+        }
+
+        if (ihdr === 'preserve') {
+            return {decision: 'preserve', colorType: null, nextOffset}
+        }
+
+        return {decision: null, colorType: ihdr, nextOffset}
     }
 
     if (COLOR_CHUNK_TYPES.has(type)) {
@@ -331,56 +348,58 @@ async function scanChunk(
     return {decision: null, colorType: null, nextOffset}
 }
 
-async function scanIhdr(
-    bucket: R2Bucket | null,
-    key: string | null,
-    prefix: Uint8Array,
-    offset: number,
-    length: number,
-    nextOffset: number,
-): Promise<ChunkScan> {
+async function readIhdr(state: ScanState, offset: number, length: number): Promise<number | 'preserve' | null> {
     if (length !== IHDR_DATA_BYTES) {
-        return {decision: 'preserve', colorType: null, nextOffset}
+        return 'preserve'
     }
 
-    const ihdr = await readPngBytes(bucket, key, prefix, offset + PNG_CHUNK_HEADER_BYTES, IHDR_DATA_BYTES)
+    const ihdr = await ensureBytes(state, offset + PNG_CHUNK_HEADER_BYTES, IHDR_DATA_BYTES)
 
     if (ihdr === null) {
-        return {decision: 'undecided', colorType: null, nextOffset}
-    }
-
-    const ihdrColorType = ihdr[IHDR_COLOR_TYPE_OFFSET] ?? 0
-
-    if (!RGB_COLOR_TYPES.has(ihdrColorType)) {
-        return {decision: 'preserve', colorType: null, nextOffset}
-    }
-
-    return {decision: null, colorType: ihdrColorType, nextOffset}
-}
-
-async function readPngBytes(
-    bucket: R2Bucket | null,
-    key: string | null,
-    prefix: Uint8Array,
-    offset: number,
-    length: number,
-): Promise<Uint8Array | null> {
-    if (offset + length <= prefix.length) {
-        return prefix.subarray(offset, offset + length)
-    }
-
-    if (!bucket || !key) {
         return null
     }
 
-    const object = await bucket.get(key, {range: {offset, length}})
+    const colorType = ihdr[IHDR_COLOR_TYPE_OFFSET] ?? 0
+    return RGB_COLOR_TYPES.has(colorType) ? colorType : 'preserve'
+}
+
+function windowContains(start: number, buffer: Uint8Array, offset: number, length: number): boolean {
+    return offset >= start && offset + length <= start + buffer.length
+}
+
+async function ensureBytes(state: ScanState, offset: number, length: number): Promise<Uint8Array | null> {
+    if (windowContains(state.bufferStart, state.buffer, offset, length)) {
+        const cursor = offset - state.bufferStart
+        return state.buffer.subarray(cursor, cursor + length)
+    }
+
+    if (!state.bucket || !state.key || state.windows >= PNG_SCAN_MAX_WINDOWS) {
+        return null
+    }
+
+    const readLength = Math.min(PNG_SCAN_WINDOW_BYTES, state.sourceSize - offset)
+
+    if (readLength < length) {
+        return null
+    }
+
+    const object = await state.bucket.get(state.key, {range: {offset, length: readLength}})
 
     if (!object) {
         return null
     }
 
     const bytes = new Uint8Array(await object.arrayBuffer())
-    return bytes.byteLength === length ? bytes : null
+
+    if (bytes.byteLength !== readLength) {
+        return null
+    }
+
+    state.buffer = bytes
+    state.bufferStart = offset
+    state.windows += 1
+
+    return bytes.subarray(0, length)
 }
 
 function concatBytes(parts: Uint8Array[]): Uint8Array {

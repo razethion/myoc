@@ -1,4 +1,4 @@
-import {describe, expect, it} from 'vitest'
+import {describe, expect, it, vi} from 'vitest'
 import {createMockR2Bucket} from '../../test/mockR2'
 import {tagPngWithSrgb, tagPngWithSrgbFixedLength} from './pngColorSpace'
 
@@ -281,5 +281,31 @@ describe('tagPngWithSrgbFixedLength', () => {
         expect(output.length).toBe(input.length + SRGB_CHUNK.length)
         expect(chunkTypes(output)).toEqual(['IHDR', 'iTXt', 'sRGB', 'IDAT', 'IEND'])
         expect(withoutChunk(output, 'sRGB')).toEqual(input)
-    })
+    }, 20_000)
+
+    it('caps ranged reads for pathological chunk sequences', async () => {
+        const tiny = chunk('tEXt', new Uint8Array(0))
+        const count = 450_000
+        const repeated = new Uint8Array(tiny.length * count)
+
+        for (let index = 0; index < count; index += 1) {
+            repeated.set(tiny, index * tiny.length)
+        }
+
+        const input = png([repeated])
+        const bucket = createMockR2Bucket()
+        await bucket.put('probe.png', input)
+        const stored = await bucket.get('probe.png')
+
+        if (!stored) {
+            throw new Error('probe object was not stored')
+        }
+
+        const getCallsBefore = vi.mocked(bucket.get).mock.calls.length
+        const output = await readAll(await tagPngWithSrgbFixedLength(stored.body, input.length, {bucket, key: 'probe.png'}))
+        const getCalls = vi.mocked(bucket.get).mock.calls.length - getCallsBefore
+
+        expect(getCalls).toBeLessThanOrEqual(65)
+        expect(output).toEqual(input)
+    }, 20_000)
 })
