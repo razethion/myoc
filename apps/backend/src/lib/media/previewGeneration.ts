@@ -43,6 +43,12 @@ export type GeneratedSquareImage = {
     contentType: typeof SQUARE_IMAGE_CONTENT_TYPE
 }
 
+export type RepairedIconColor = {
+    bytes: Uint8Array
+    changed: boolean
+    reason: string
+}
+
 export type GeneratedGalleryOutputs = {
     preview: GeneratedGalleryPreview
     blur: GeneratedNsfwBlur | null
@@ -163,6 +169,60 @@ export async function generateSquareImageWithContainer(
         return {
             bytes,
             contentType: SQUARE_IMAGE_CONTENT_TYPE,
+        }
+    })
+}
+
+export async function repairIconColorWithContainer(
+    env: PreviewGeneratorEnv,
+    source: Uint8Array,
+    routingKey: string,
+    options: PreviewContainerRequestOptions = {},
+): Promise<RepairedIconColor> {
+    if (!env.MYOC_DOCKER_SHARP_CONTAINER) {
+        throw new Error('Image container binding is not configured.')
+    }
+
+    return await withPreviewContainerRetry(env, routingKey, options, async (container) => {
+        const response = await container.fetch('https://container/images/repair-icon-color', {
+            body: source,
+            headers: {
+                authorization: `Bearer ${env.PREVIEW_PROCESSOR_TOKEN}`,
+                'content-type': SQUARE_IMAGE_CONTENT_TYPE,
+            },
+            method: 'POST',
+        })
+        const bytes = new Uint8Array(await response.arrayBuffer())
+        const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() ?? ''
+
+        if (!response.ok) {
+            const message = `Container icon color repair failed with ${response.status}`
+
+            if (response.status === 429) {
+                throw new PreviewContainerBusyError(message)
+            }
+
+            if (response.status >= 500) {
+                throw new Error(message)
+            }
+
+            throw new PreviewValidationError(message)
+        }
+
+        if (contentType !== SQUARE_IMAGE_CONTENT_TYPE) {
+            throw new PreviewValidationError(
+                `Container icon color repair returned an unexpected content type (${contentType || 'missing'})`,
+            )
+        }
+
+        if (bytes.byteLength === 0) {
+            throw new PreviewValidationError('Container icon color repair returned an empty image')
+        }
+
+        return {
+            bytes,
+            changed: response.headers.get('x-color-changed') === 'true',
+            reason: response.headers.get('x-color-reason')?.trim() || 'unknown',
         }
     })
 }

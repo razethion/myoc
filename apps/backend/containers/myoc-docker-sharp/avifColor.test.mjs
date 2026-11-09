@@ -4,7 +4,7 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import test from 'node:test'
 import sharp from 'sharp'
-import {addNclx, repairAvifColor, resolveCicp} from './avifColor.mjs'
+import {addNclx, repairAvifColor, repairIconColor, resolveCicp} from './avifColor.mjs'
 
 function findBox(buf, start, end, type) {
     let off = start
@@ -258,6 +258,38 @@ test('leaves an AVIF with no ICC profile alone', async () => {
     assert.equal(result.changed, false)
     assert.equal(result.reason, 'no-profile')
     assert.deepEqual(result.bytes, source)
+})
+
+test('declares sRGB on an icon AVIF with no color profile', async () => {
+    const source = await sharp({
+        create: {background: {b: 32, g: 64, r: 255}, channels: 3, height: 512, width: 512},
+    })
+        .avif({chromaSubsampling: '4:4:4', effort: 4, quality: 60})
+        .toBuffer()
+
+    const result = repairIconColor(source)
+
+    assert.equal(result.changed, true)
+    assert.equal(result.reason, 'repaired')
+    const nclx = findNclx(result.bytes)
+    assert.equal(nclx.primaries, 1)
+    assert.equal(nclx.transfer, 13)
+    assert.deepEqual(mdatPayload(result.bytes), mdatPayload(source))
+})
+
+test('leaves an icon AVIF with an existing CICP box alone', async () => {
+    const source = await sharp({
+        create: {background: {b: 32, g: 64, r: 255}, channels: 3, height: 512, width: 512},
+    })
+        .avif({chromaSubsampling: '4:4:4', effort: 4, quality: 60})
+        .toBuffer()
+    const tagged = addNclx(source, {primaries: 1, transfer: 13, matrix: 6, fullRange: true})
+
+    const result = repairIconColor(tagged)
+
+    assert.equal(result.changed, false)
+    assert.equal(result.reason, 'already-declared')
+    assert.deepEqual(result.bytes, tagged)
 })
 
 test('is idempotent once the CICP box exists', async () => {

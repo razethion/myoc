@@ -3,7 +3,7 @@ import {createHash, randomUUID, timingSafeEqual} from 'node:crypto'
 import http from 'node:http'
 import process from 'node:process'
 import timers from 'node:timers'
-import {repairAvifColor} from './avifColor.mjs'
+import {repairAvifColor, repairIconColor} from './avifColor.mjs'
 import {createAvifBlur, createAvifPreview, createGalleryAvifOutputs, createSquareAvif} from './preview.mjs'
 
 const port = Number.parseInt(process.env['PORT'] ?? '8080', 10)
@@ -62,7 +62,12 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (url.pathname === '/images/repair-color') {
-        await handleRepairColorRequest(request, response)
+        await handleRepairColorRequest(request, response, repairAvifColor)
+        return
+    }
+
+    if (url.pathname === '/images/repair-icon-color') {
+        await handleRepairColorRequest(request, response, repairIconColor)
         return
     }
 
@@ -475,7 +480,7 @@ async function readRequestText(request, maxBytes) {
     return (await readRequestBytes(request, maxBytes)).toString('utf8')
 }
 
-async function handleRepairColorRequest(request, response) {
+async function handleRepairColorRequest(request, response, repair) {
     if (!authorizePost(request, response)) return
 
     const requestId = randomUUID()
@@ -483,7 +488,7 @@ async function handleRepairColorRequest(request, response) {
 
     try {
         const sourceBytes = await readRequestBytes(request, colorRepairMaxBytes)
-        const result = repairAvifColor(sourceBytes)
+        const result = repair(sourceBytes)
 
         response.writeHead(200, {
             'cache-control': 'no-store',

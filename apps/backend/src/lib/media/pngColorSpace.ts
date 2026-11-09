@@ -173,17 +173,36 @@ type PngSrgbOptions = {
  * the upload starts. If the prefix ends inside a large ancillary chunk, chunk
  * headers are read from the stored object by range until the decision is known.
  */
+export type TaggedPngSrgb = {
+    body: ReadableStream
+    changed: boolean
+    size: number
+}
+
 export async function tagPngWithSrgbFixedLength(
     source: ReadableStream,
     sourceSize: number,
     options: PngSrgbOptions = {},
 ): Promise<ReadableStream> {
+    return (await tagPngWithSrgbFixedLengthResult(source, sourceSize, options)).body
+}
+
+/**
+ * Tag an untagged RGB PNG and report whether the output changed. The returned
+ * body has a length known to R2, and size is the exact output byte length.
+ */
+export async function tagPngWithSrgbFixedLengthResult(
+    source: ReadableStream,
+    sourceSize: number,
+    options: PngSrgbOptions = {},
+): Promise<TaggedPngSrgb> {
     const reader = source.getReader()
     const probeBytes = options.probeBytes ?? PNG_SRGB_PROBE_BYTES
     const {prefix, remainder} = await readPrefix(reader, probeBytes)
     const decision = await scanPngSrgb(options.bucket ?? null, options.key ?? null, prefix, sourceSize)
     const insert = decision === 'insert'
-    const fixed = new FixedLengthStream(sourceSize + (insert ? SRGB_CHUNK.length : 0))
+    const size = sourceSize + (insert ? SRGB_CHUNK.length : 0)
+    const fixed = new FixedLengthStream(size)
     const combined = combinePrefixAndReader(prefix, remainder, reader)
     const body = insert ? tagPngWithSrgb(combined) : combined
 
@@ -191,7 +210,7 @@ export async function tagPngWithSrgbFixedLength(
         .catch(() => undefined)
         .finally(() => reader.cancel().catch(() => undefined))
 
-    return fixed.readable
+    return {body: fixed.readable, changed: insert, size}
 }
 
 type PrefixRead = {

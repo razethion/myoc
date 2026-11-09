@@ -12,6 +12,8 @@ import {
     mediaPreviewRegenerationWorkflowInstanceId,
 } from '../lib/admin/mediaPreviewRegeneration'
 import type {Bindings} from '../types/bindings'
+import {type AvifIconColorBackfillWorkflowParams, runAvifIconColorBackfillWorkflow} from './avifIconColorBackfill'
+import {type PngSrgbBackfillWorkflowParams, runPngSrgbBackfillWorkflow} from './pngSrgbBackfill'
 import {runSizeChartImageBackfillWorkflow, type SizeChartImageBackfillWorkflowParams} from './sizeChartImageBackfill'
 import {runThumbnailRegenerationWorkflow, type ThumbnailRegenerationWorkflowParams} from './thumbnailRegeneration'
 
@@ -30,6 +32,8 @@ export type RegenerateMediaPreviewsWorkflowParams =
     | MediaPreviewRegenerationWorkflowParams
     | ThumbnailRegenerationWorkflowParams
     | SizeChartImageBackfillWorkflowParams
+    | PngSrgbBackfillWorkflowParams
+    | AvifIconColorBackfillWorkflowParams
 
 const D1_STEP_CONFIG = {
     retries: {
@@ -49,6 +53,12 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
             if (event.payload.kind === 'size-chart-images') {
                 return await runSizeChartImageBackfillWorkflow(this.env, event.payload, step)
             }
+            if (event.payload.kind === 'png-srgb-backfill') {
+                return await runPngSrgbBackfillWorkflow(this.env, event.payload, step)
+            }
+            if (event.payload.kind === 'avif-icon-color-backfill') {
+                return await runAvifIconColorBackfillWorkflow(this.env, event.payload, step)
+            }
 
             return await this.dispatchRegeneration(event.payload, step)
         } catch (error) {
@@ -56,7 +66,11 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
 
             await step.do('record job failure', D1_STEP_CONFIG, async () => {
                 await failAdminJobRun(this.env.DB, event.payload.runId, message)
-                if (event.payload.kind !== 'size-chart-images') {
+                if (
+                    event.payload.kind !== 'size-chart-images' &&
+                    event.payload.kind !== 'png-srgb-backfill' &&
+                    event.payload.kind !== 'avif-icon-color-backfill'
+                ) {
                     await deleteFinishedMediaPreviewRegenerationItems(this.env.DB, event.payload.runId)
                 }
                 return {recorded: true}
