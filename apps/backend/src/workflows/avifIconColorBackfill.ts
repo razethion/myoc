@@ -100,14 +100,19 @@ export async function runAvifIconColorBackfillWorkflow(
     const nextSegment = segment + 1
     const continuationCursor = cursor as AvifIconColorBackfillCursor
     await step.do(`start AVIF icon continuation ${nextSegment}`, D1_STEP_CONFIG, async () => {
-        await env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW.create({
-            id: avifIconColorBackfillWorkflowInstanceId(params.runId, nextSegment),
-            params: {
-                kind: 'avif-icon-color-backfill',
-                runId: params.runId,
-                continuation: {cursor: continuationCursor, segment: nextSegment},
+        // createBatch omits instances whose ID already exists without an
+        // error, so a step retry after a partial persist cannot fail a job
+        // whose continuation is already running.
+        await env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW.createBatch([
+            {
+                id: avifIconColorBackfillWorkflowInstanceId(params.runId, nextSegment),
+                params: {
+                    kind: 'avif-icon-color-backfill',
+                    runId: params.runId,
+                    continuation: {cursor: continuationCursor, segment: nextSegment},
+                },
             },
-        })
+        ])
         return {started: true}
     })
 

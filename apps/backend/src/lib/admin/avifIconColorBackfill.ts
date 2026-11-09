@@ -32,6 +32,8 @@ export type AvifIconColorBackfillCandidate = {
 
 export type AvifIconColorBackfillResult = {status: 'retagged'} | {status: 'skipped'}
 
+type IconWriteOutcome = 'not-needed' | 'written' | 'superseded'
+
 type BackfillEnv = Pick<Bindings, 'DB' | 'MEDIA_BUCKET' | 'MYOC_DOCKER_SHARP_CONTAINER' | 'PREVIEW_PROCESSOR_TOKEN'>
 
 const CANDIDATE_QUERY = `WITH icon_candidates AS (
@@ -194,10 +196,15 @@ export async function repairAvifIconColorCandidate(
         priority: 'background',
     })
     const needsContentTypeFix = candidate.contentType !== SQUARE_IMAGE_CONTENT_TYPE
-    const wroteObject = await writeRepairedIcon(env, candidate, source, sourceBytes, repaired, needsContentTypeFix)
+    const writeOutcome = await writeRepairedIcon(env, candidate, source, sourceBytes, repaired, needsContentTypeFix)
+
+    if (writeOutcome === 'superseded') {
+        return {status: 'skipped'}
+    }
+
     const updatedContentType = needsContentTypeFix ? await updateIconContentType(env.DB, candidate) : false
 
-    if (repaired.changed || wroteObject || updatedContentType) {
+    if (repaired.changed || writeOutcome === 'written' || updatedContentType) {
         return {status: 'retagged'}
     }
 
@@ -211,13 +218,14 @@ async function writeRepairedIcon(
     sourceBytes: Uint8Array,
     repaired: Awaited<ReturnType<typeof repairIconColorWithContainer>>,
     needsContentTypeFix: boolean,
-): Promise<boolean> {
+): Promise<IconWriteOutcome> {
     if (!repaired.changed && !needsContentTypeFix) {
-        return false
+        return 'not-needed'
     }
 
     const bytes = repaired.changed ? repaired.bytes : sourceBytes
     const written = await env.MEDIA_BUCKET.put(candidate.objectKey, bytes, {
+        onlyIf: new Headers({'if-match': source.httpEtag}),
         httpMetadata: {
             ...source.httpMetadata,
             cacheControl: source.httpMetadata?.cacheControl ?? REVOCABLE_MEDIA_CACHE_CONTROL,
@@ -226,14 +234,16 @@ async function writeRepairedIcon(
     })
 
     if (!written) {
-        throw new Error(`The repaired icon could not be written: ${candidate.objectKey}`)
+        // The icon was deleted or replaced while the repair ran. The
+        // conditional write refused to restore the removed object.
+        return 'superseded'
     }
 
     if (written.size !== bytes.byteLength) {
         throw new Error(`The repaired icon size did not match the expected size: ${candidate.objectKey}`)
     }
 
-    return true
+    return 'written'
 }
 
 function iconObjectKey(kind: AvifIconColorBackfillCandidate['kind'], userId: string, targetId: string, imageKey: string): string {

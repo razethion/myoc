@@ -219,6 +219,7 @@ export async function tagPngSrgbCandidate(env: BackfillEnv, candidate: PngSrgbBa
     }
 
     const written = await env.MEDIA_BUCKET.put(objectKey, tagged.body, {
+        onlyIf: new Headers({'if-match': source.httpEtag}),
         httpMetadata: {
             ...source.httpMetadata,
             cacheControl: source.httpMetadata?.cacheControl ?? REVOCABLE_MEDIA_CACHE_CONTROL,
@@ -227,7 +228,16 @@ export async function tagPngSrgbCandidate(env: BackfillEnv, candidate: PngSrgbBa
     })
 
     if (!written) {
-        throw new Error(`The tagged PNG could not be written: ${objectKey}`)
+        // The object was deleted or replaced while the tag was being built.
+        // The conditional write refused to restore the removed image, so
+        // treat this candidate as skipped instead of resurrecting it.
+        try {
+            await tagged.body.cancel()
+        } catch {
+            // The failed write may have already consumed or closed the body.
+        }
+
+        return {status: 'skipped'}
     }
 
     if (written.size !== tagged.size) {

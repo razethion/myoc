@@ -160,6 +160,38 @@ describe('AVIF icon color backfill', () => {
         ).toEqual({profile_photo_content_type: 'image/avif'})
     })
 
+    it('skips the write when the icon changed before the conditional put', async () => {
+        const bucket = createMockR2Bucket()
+        const fetch = vi.fn(async () => containerResponse(SQUARE_AVIF, true))
+        await seedUser({id: 'raced-user', profilePhotoKey: 'raced-icon'})
+        const key = profilePhotoObjectKey('raced-user', 'raced-icon')
+        await bucket.put(key, SQUARE_AVIF)
+        vi.mocked(bucket.put).mockClear()
+        vi.mocked(bucket.put).mockResolvedValueOnce(null)
+
+        await expect(
+            repairAvifIconColorCandidate(
+                iconEnv(bucket, fetch),
+                candidate({
+                    userId: 'raced-user',
+                    targetId: 'raced-user',
+                    imageKey: 'raced-icon',
+                    objectKey: key,
+                }),
+            ),
+        ).resolves.toEqual({status: 'skipped'})
+
+        expect(bucket.put).toHaveBeenCalledOnce()
+        const putOptions = vi.mocked(bucket.put).mock.calls[0]?.[2] as R2PutOptions | undefined
+        expect(putOptions?.onlyIf).toBeInstanceOf(Headers)
+        expect(putOptions?.onlyIf instanceof Headers ? putOptions.onlyIf.get('if-match') : null).toMatch(/^".*"$/)
+        expect(
+            await queryOne<{profile_photo_content_type: string | null}>('SELECT profile_photo_content_type FROM users WHERE id = ?', [
+                'raced-user',
+            ]),
+        ).toEqual({profile_photo_content_type: 'image/webp'})
+    })
+
     it('fixes a stale content type without rewriting unchanged bytes', async () => {
         const bucket = createMockR2Bucket()
         const fetch = vi.fn(async () => containerResponse(SQUARE_AVIF, false))

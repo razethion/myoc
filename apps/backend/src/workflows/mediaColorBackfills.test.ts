@@ -125,12 +125,12 @@ describe('PNG sRGB backfill workflow', () => {
         const batch = Array.from({length: 25}, (_, index) => pngCandidate(index + 1))
         vi.mocked(getPngSrgbBackfillCandidates).mockResolvedValue(batch)
         vi.mocked(tagPngSrgbCandidate).mockResolvedValue({status: 'skipped'})
-        const create = vi.fn(async () => ({id: 'continuation'}))
+        const createBatch = vi.fn(async () => ({instances: [], errors: []}))
 
         const summary = await runPngSrgbBackfillWorkflow(
             createWorkerEnv({
                 DB: db,
-                REGENERATE_MEDIA_PREVIEWS_WORKFLOW: {create} as unknown as Bindings['REGENERATE_MEDIA_PREVIEWS_WORKFLOW'],
+                REGENERATE_MEDIA_PREVIEWS_WORKFLOW: {createBatch} as unknown as Bindings['REGENERATE_MEDIA_PREVIEWS_WORKFLOW'],
             }),
             {kind: 'png-srgb-backfill', runId},
             immediateStep(),
@@ -143,17 +143,19 @@ describe('PNG sRGB backfill workflow', () => {
             skippedVariants: 250,
             failedVariants: 0,
         })
-        expect(create).toHaveBeenCalledWith({
-            id: `${runId}-png-srgb-segment-1`,
-            params: {
-                kind: 'png-srgb-backfill',
-                runId,
-                continuation: {
-                    cursor: {createdAt: batch[24]?.createdAt, mediaId: batch[24]?.mediaId, rating: batch[24]?.rating},
-                    segment: 1,
+        expect(createBatch).toHaveBeenCalledWith([
+            {
+                id: `${runId}-png-srgb-segment-1`,
+                params: {
+                    kind: 'png-srgb-backfill',
+                    runId,
+                    continuation: {
+                        cursor: {createdAt: batch[24]?.createdAt, mediaId: batch[24]?.mediaId, rating: batch[24]?.rating},
+                        segment: 1,
+                    },
                 },
             },
-        })
+        ])
     })
 
     it('does not resume a job that is no longer running', async () => {
@@ -230,12 +232,12 @@ describe('AVIF icon color backfill workflow', () => {
         const batch = Array.from({length: 25}, (_, index) => iconCandidate(index + 1))
         vi.mocked(getAvifIconColorBackfillCandidates).mockResolvedValue(batch)
         vi.mocked(repairAvifIconColorCandidate).mockResolvedValue({status: 'skipped'})
-        const create = vi.fn(async () => ({id: 'continuation'}))
+        const createBatch = vi.fn(async () => ({instances: [], errors: []}))
 
         const summary = await runAvifIconColorBackfillWorkflow(
             createWorkerEnv({
                 DB: db,
-                REGENERATE_MEDIA_PREVIEWS_WORKFLOW: {create} as unknown as Bindings['REGENERATE_MEDIA_PREVIEWS_WORKFLOW'],
+                REGENERATE_MEDIA_PREVIEWS_WORKFLOW: {createBatch} as unknown as Bindings['REGENERATE_MEDIA_PREVIEWS_WORKFLOW'],
             }),
             {kind: 'avif-icon-color-backfill', runId},
             immediateStep(),
@@ -248,17 +250,19 @@ describe('AVIF icon color backfill workflow', () => {
             skippedIcons: 250,
             failedIcons: 0,
         })
-        expect(create).toHaveBeenCalledWith({
-            id: `${runId}-avif-icon-segment-1`,
-            params: {
-                kind: 'avif-icon-color-backfill',
-                runId,
-                continuation: {
-                    cursor: {kind: batch[24]?.kind, targetId: batch[24]?.targetId},
-                    segment: 1,
+        expect(createBatch).toHaveBeenCalledWith([
+            {
+                id: `${runId}-avif-icon-segment-1`,
+                params: {
+                    kind: 'avif-icon-color-backfill',
+                    runId,
+                    continuation: {
+                        cursor: {kind: batch[24]?.kind, targetId: batch[24]?.targetId},
+                        segment: 1,
+                    },
                 },
             },
-        })
+        ])
     })
 
     it('does not resume a job that is no longer running', async () => {

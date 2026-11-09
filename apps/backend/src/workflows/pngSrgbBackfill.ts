@@ -101,14 +101,19 @@ export async function runPngSrgbBackfillWorkflow(
     const nextSegment = segment + 1
     const continuationCursor = cursor as PngSrgbBackfillCursor
     await step.do(`start PNG continuation ${nextSegment}`, D1_STEP_CONFIG, async () => {
-        await env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW.create({
-            id: pngSrgbBackfillWorkflowInstanceId(params.runId, nextSegment),
-            params: {
-                kind: 'png-srgb-backfill',
-                runId: params.runId,
-                continuation: {cursor: continuationCursor, segment: nextSegment},
+        // createBatch omits instances whose ID already exists without an
+        // error, so a step retry after a partial persist cannot fail a job
+        // whose continuation is already running.
+        await env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW.createBatch([
+            {
+                id: pngSrgbBackfillWorkflowInstanceId(params.runId, nextSegment),
+                params: {
+                    kind: 'png-srgb-backfill',
+                    runId: params.runId,
+                    continuation: {cursor: continuationCursor, segment: nextSegment},
+                },
             },
-        })
+        ])
         return {started: true}
     })
 

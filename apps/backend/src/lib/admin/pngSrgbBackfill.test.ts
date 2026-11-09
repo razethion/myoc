@@ -219,6 +219,45 @@ describe('PNG sRGB backfill', () => {
         )
     })
 
+    it('skips the write when the object changed before the conditional put', async () => {
+        const bucket = createMockR2Bucket()
+        const userId = 'raced-user'
+        const characterId = 'raced-character'
+        const mediaId = 'raced-media'
+        const original = pngBytes()
+        const key = characterMediaImageObjectKey(userId, characterId, mediaId, 'source', 'sfw', 'image/png')
+        await seedUser({id: userId})
+        await seedCharacter({id: characterId, userId})
+        await seedMedia({id: mediaId, userId, characterId, sfwImageKey: 'source', sfwByteSize: original.length})
+        await bucket.put(key, original)
+        vi.mocked(bucket.put).mockClear()
+        vi.mocked(bucket.put).mockResolvedValueOnce(null)
+
+        const result = await tagPngSrgbCandidate(
+            createWorkerEnv({DB: db, MEDIA_BUCKET: bucket}),
+            candidate({
+                mediaId,
+                userId,
+                characterId,
+                byteSize: original.length,
+            }),
+        )
+
+        expect(result).toEqual({status: 'skipped'})
+        expect(bucket.put).toHaveBeenCalledOnce()
+        const putOptions = vi.mocked(bucket.put).mock.calls[0]?.[2] as R2PutOptions | undefined
+        expect(putOptions?.onlyIf).toBeInstanceOf(Headers)
+        expect(putOptions?.onlyIf instanceof Headers ? putOptions.onlyIf.get('if-match') : null).toMatch(/^".*"$/)
+        expect(await queryOne<{sfw_byte_size: number}>('SELECT sfw_byte_size FROM character_media WHERE id = ?', [mediaId])).toEqual({
+            sfw_byte_size: original.length,
+        })
+        const stored = await bucket.get(key)
+        if (!stored) {
+            throw new Error('Expected the untouched PNG in the bucket')
+        }
+        expect(chunkTypes(new Uint8Array(await stored.arrayBuffer()))).toEqual(['IHDR', 'IDAT', 'IEND'])
+    })
+
     it('skips an already tagged PNG without rewriting it', async () => {
         const bucket = createMockR2Bucket()
         const userId = 'tagged-user'
