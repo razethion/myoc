@@ -167,7 +167,7 @@ describe('AVIF icon color backfill', () => {
         const key = profilePhotoObjectKey('raced-user', 'raced-icon')
         await bucket.put(key, SQUARE_AVIF)
         vi.mocked(bucket.put).mockClear()
-        vi.mocked(bucket.put).mockResolvedValueOnce(null)
+        vi.mocked(bucket.put).mockResolvedValueOnce(null as unknown as R2Object)
 
         await expect(
             repairAvifIconColorCandidate(

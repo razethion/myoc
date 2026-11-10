@@ -231,7 +231,7 @@ describe('PNG sRGB backfill', () => {
         await seedMedia({id: mediaId, userId, characterId, sfwImageKey: 'source', sfwByteSize: original.length})
         await bucket.put(key, original)
         vi.mocked(bucket.put).mockClear()
-        vi.mocked(bucket.put).mockResolvedValueOnce(null)
+        vi.mocked(bucket.put).mockResolvedValueOnce(null as unknown as R2Object)
 
         const result = await tagPngSrgbCandidate(
             createWorkerEnv({DB: db, MEDIA_BUCKET: bucket}),
