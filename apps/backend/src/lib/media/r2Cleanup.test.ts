@@ -238,8 +238,9 @@ describe('cleanupStaleR2Media', () => {
         const objectKeys = Array.from({length: 1200}, (_, index) => `users/user-${index}/profile/photo.webp`)
         const bucket = createPagedMediaBucket(objectKeys, new Date(0))
         const cache = createMockKVNamespace()
+        const counting = createCountingDb(workerEnv.DB)
         await seedReferencedProfileUsers(1200)
-        const env = createWorkerEnv({CACHE: cache, MEDIA_BUCKET: bucket})
+        const env = createWorkerEnv({DB: counting.db, CACHE: cache, MEDIA_BUCKET: bucket})
 
         const summary = await cleanupStaleR2Media(env, staleCleanupNow)
 
@@ -250,8 +251,48 @@ describe('cleanupStaleR2Media', () => {
             deleted: 0,
             stoppedAtScanLimit: false,
         })
+        // Indexed objects must not trigger a query each; only the paged index reads run.
+        expect(counting.count()).toBeLessThanOrEqual(8)
         await expect(cache.get('admin:r2-media-cleanup:cursor:v1')).resolves.toBeNull()
     }, 30_000)
+
+    it('falls back to the exact check when the index cannot be built', async () => {
+        await seedCleanupDatabase('{}')
+        await db.exec('ALTER TABLE character_folders RENAME TO character_folders_offline')
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        const bucket = createPagedMediaBucket(['characters/alice/blair/media/media-1/sfw/img.png'], new Date(0))
+
+        const summary = await cleanupStaleR2Media(createWorkerEnv({CACHE: createMockKVNamespace(), MEDIA_BUCKET: bucket}), staleCleanupNow)
+
+        expect(summary).toMatchObject({keptReferenced: 1, deleted: 0})
+    })
+
+    it('matches the exact content-type default when a media type is null', async () => {
+        await seedCleanupDatabase('{}')
+        await db.prepare('UPDATE character_media SET sfw_content_type = NULL WHERE id = ?').bind('media-1').run()
+        const keptKey = 'characters/alice/blair/media/media-1/sfw/img.png'
+        const deletedKey = 'characters/alice/blair/media/media-1/sfw/img.avif'
+        const bucket = createPagedMediaBucket([keptKey, deletedKey], new Date(0))
+
+        const summary = await cleanupStaleR2Media(createWorkerEnv({CACHE: createMockKVNamespace(), MEDIA_BUCKET: bucket}), staleCleanupNow)
+
+        expect(summary).toMatchObject({keptReferenced: 1, deleted: 1})
+        expect(vi.mocked(bucket.delete).mock.calls.map(([key]) => key)).toEqual([deletedKey])
+    })
+
+    it('protects task outputs only for the job states the exact check allows', async () => {
+        await seedCleanupDatabase('{}')
+        const inflightKey = 'characters/alice/blair/media/media-1/sfw/inflight.png'
+        const failedKey = 'characters/alice/blair/media/media-1/sfw/failed.png'
+        await seedGalleryTask({jobId: 'job-inflight', state: 'processing', outputKey: inflightKey})
+        await seedGalleryTask({jobId: 'job-failed', state: 'failed', errorCode: 'processor_failed', outputKey: failedKey})
+        const bucket = createPagedMediaBucket([inflightKey, failedKey], new Date(0))
+
+        const summary = await cleanupStaleR2Media(createWorkerEnv({CACHE: createMockKVNamespace(), MEDIA_BUCKET: bucket}), staleCleanupNow)
+
+        expect(summary).toMatchObject({keptReferenced: 1, deleted: 1})
+        expect(vi.mocked(bucket.delete).mock.calls.map(([key]) => key)).toEqual([failedKey])
+    })
 
     it('stops after the per-run delete limit', async () => {
         const objectKeys = Array.from({length: 501}, (_, index) => `users/user-${index}/profile/photo.webp`)
@@ -277,6 +318,65 @@ describe('cleanupStaleR2Media', () => {
         expect(summary).toMatchObject({deleted: 0, errors: 1})
     })
 })
+
+function createCountingDb(db: D1Database): {db: D1Database; count: () => number} {
+    let count = 0
+    const wrapped = {
+        prepare(query: string) {
+            count += 1
+            return db.prepare(query)
+        },
+    } as unknown as D1Database
+
+    return {db: wrapped, count: () => count}
+}
+
+async function seedGalleryTask(input: {
+    jobId: string
+    state: 'processing' | 'failed'
+    errorCode?: string
+    outputKey: string
+}): Promise<void> {
+    await db
+        .prepare(
+            `INSERT INTO image_upload_jobs (id, user_id, target_type, target_id, state, idempotency_key, request_json, error_code, deadline_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+            input.jobId,
+            'alice',
+            'gallery_create',
+            'blair',
+            input.state,
+            `idem-${input.jobId}`,
+            JSON.stringify({mediaId: 'media-1'}),
+            input.errorCode ?? null,
+            new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        )
+        .run()
+
+    await db
+        .prepare('INSERT INTO image_upload_sources (id, job_id, rating, state, object_key, content_type) VALUES (?, ?, ?, ?, ?, ?)')
+        .bind(`src-${input.jobId}`, input.jobId, 'sfw', 'ready', `image-sources/alice/blair/${input.jobId}.png`, 'image/png')
+        .run()
+
+    await db
+        .prepare(
+            `INSERT INTO image_processing_tasks (id, job_id, source_id, run_id, recipe, container_slot, state, output_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+            `task-${input.jobId}`,
+            input.jobId,
+            `src-${input.jobId}`,
+            `run-${input.jobId}`,
+            'gallery-sfw-v1',
+            0,
+            'ready',
+            JSON.stringify({imageObjectKey: input.outputKey}),
+        )
+        .run()
+}
 
 function createPagedMediaBucket(keys: string[], uploaded: Date): R2Bucket {
     const objectKeys = new Set(keys)

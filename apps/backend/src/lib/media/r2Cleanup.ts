@@ -26,7 +26,6 @@ const CONTENT_TYPE_EXTENSIONS: Record<string, string[]> = {
     'image/webp': ['webp'],
 }
 
-const ALL_MEDIA_EXTENSIONS = Object.keys(EXTENSION_CONTENT_TYPES)
 const PROFILE_EXTENSIONS = ['webp', 'avif']
 
 type ManagedR2MediaKey =
@@ -329,7 +328,12 @@ type MediaReferenceRow = {
     nsfw_blur_image_key: string | null
     nsfw_blur_content_type: string | null
 }
-type TaskOutputRow = {output_json: string | null}
+type TaskReferenceRow = {
+    user_id: string
+    target_id: string
+    media_id: string | null
+    output_json: string | null
+}
 
 async function tryBuildReferencedMediaKeyIndex(db: D1Database): Promise<Set<string> | null> {
     try {
@@ -351,7 +355,7 @@ async function buildReferencedMediaKeyIndex(db: D1Database): Promise<Set<string>
     const users = await selectAllRows<UserReferenceRow>(db, 'SELECT id, profile_photo_key FROM users WHERE profile_photo_key IS NOT NULL')
 
     for (const user of users) {
-        addReferencedKeyVariants(keys, `users/${user.id}/profile`, user.profile_photo_key, null, PROFILE_EXTENSIONS)
+        addProfileKeyVariants(keys, `users/${user.id}/profile`, user.profile_photo_key)
     }
 
     const characters = await selectAllRows<CharacterReferenceRow>(
@@ -360,13 +364,7 @@ async function buildReferencedMediaKeyIndex(db: D1Database): Promise<Set<string>
     )
 
     for (const character of characters) {
-        addReferencedKeyVariants(
-            keys,
-            `characters/${character.user_id}/${character.id}/profile`,
-            character.profile_image_key,
-            character.profile_image_content_type,
-            PROFILE_EXTENSIONS,
-        )
+        addProfileKeyVariants(keys, `characters/${character.user_id}/${character.id}/profile`, character.profile_image_key)
 
         const heightChart = parseHeightChartReference(character.height_chart_json)
 
@@ -376,7 +374,7 @@ async function buildReferencedMediaKeyIndex(db: D1Database): Promise<Set<string>
                 `characters/${character.user_id}/${character.id}/height-chart`,
                 heightChart.key,
                 heightChart.contentType,
-                ALL_MEDIA_EXTENSIONS,
+                'image/png',
             )
         }
     }
@@ -387,13 +385,7 @@ async function buildReferencedMediaKeyIndex(db: D1Database): Promise<Set<string>
     )
 
     for (const folder of folders) {
-        addReferencedKeyVariants(
-            keys,
-            `characters/${folder.user_id}/folders/${folder.id}/image`,
-            folder.folder_image_key,
-            folder.folder_image_content_type,
-            PROFILE_EXTENSIONS,
-        )
+        addProfileKeyVariants(keys, `characters/${folder.user_id}/folders/${folder.id}/image`, folder.folder_image_key)
     }
 
     const media = await selectAllRows<MediaReferenceRow>(
@@ -409,33 +401,35 @@ async function buildReferencedMediaKeyIndex(db: D1Database): Promise<Set<string>
 
     for (const row of media) {
         const baseKey = `characters/${row.user_id}/${row.character_id}/media/${row.id}`
-        addReferencedKeyVariants(keys, `${baseKey}/sfw`, row.sfw_image_key, row.sfw_content_type, ALL_MEDIA_EXTENSIONS)
-        addReferencedKeyVariants(keys, `${baseKey}/nsfw`, row.nsfw_image_key, row.nsfw_content_type, ALL_MEDIA_EXTENSIONS)
-        addReferencedKeyVariants(
-            keys,
-            `${baseKey}/sfw/preview`,
-            row.sfw_preview_image_key,
-            row.sfw_preview_content_type,
-            PROFILE_EXTENSIONS,
-        )
-        addReferencedKeyVariants(
-            keys,
-            `${baseKey}/nsfw/preview`,
-            row.nsfw_preview_image_key,
-            row.nsfw_preview_content_type,
-            PROFILE_EXTENSIONS,
-        )
-        addReferencedKeyVariants(keys, `${baseKey}/nsfw/blur`, row.nsfw_blur_image_key, row.nsfw_blur_content_type, PROFILE_EXTENSIONS)
+        addReferencedKeyVariants(keys, `${baseKey}/sfw`, row.sfw_image_key, row.sfw_content_type, 'image/png')
+        addReferencedKeyVariants(keys, `${baseKey}/nsfw`, row.nsfw_image_key, row.nsfw_content_type, 'image/png')
+        addReferencedKeyVariants(keys, `${baseKey}/sfw/preview`, row.sfw_preview_image_key, row.sfw_preview_content_type, 'image/webp')
+        addReferencedKeyVariants(keys, `${baseKey}/nsfw/preview`, row.nsfw_preview_image_key, row.nsfw_preview_content_type, 'image/webp')
+        addReferencedKeyVariants(keys, `${baseKey}/nsfw/blur`, row.nsfw_blur_image_key, row.nsfw_blur_content_type, 'image/webp')
     }
 
-    const tasks = await selectAllRows<TaskOutputRow>(
+    const tasks = await selectAllRows<TaskReferenceRow>(
         db,
-        "SELECT output_json FROM image_processing_tasks WHERE state = 'ready' AND output_json IS NOT NULL",
+        `SELECT jobs.user_id AS user_id,
+                jobs.target_id AS target_id,
+                json_extract(jobs.request_json, '$.mediaId') AS media_id,
+                tasks.output_json AS output_json
+         FROM image_processing_tasks AS tasks
+         JOIN image_upload_jobs AS jobs ON jobs.id = tasks.job_id
+         WHERE jobs.target_type = 'gallery_create'
+           AND tasks.state = 'ready'
+           AND tasks.output_json IS NOT NULL
+           AND (
+               jobs.state IN ('queued', 'processing', 'waiting_for_sources', 'publishing')
+               OR (jobs.state = 'failed' AND jobs.error_code = 'gallery_capacity_exceeded')
+           )`,
     )
 
     for (const task of tasks) {
         for (const key of parseTaskOutputKeys(task.output_json)) {
-            keys.add(key)
+            if (taskOutputMatchesJob(key, task)) {
+                keys.add(key)
+            }
         }
     }
 
@@ -458,22 +452,57 @@ async function selectAllRows<T>(db: D1Database, sql: string): Promise<T[]> {
     }
 }
 
+function addProfileKeyVariants(keys: Set<string>, baseKey: string, imageKey: string | null): void {
+    if (!imageKey) {
+        return
+    }
+
+    for (const extension of PROFILE_EXTENSIONS) {
+        keys.add(`${baseKey}/${imageKey}.${extension}`)
+    }
+}
+
 function addReferencedKeyVariants(
     keys: Set<string>,
     baseKey: string,
     imageKey: string | null,
     contentType: string | null,
-    allowedExtensions: string[],
+    defaultContentType: 'image/png' | 'image/webp',
 ): void {
     if (!imageKey) {
         return
     }
 
-    const normalizedContentType = typeof contentType === 'string' ? contentType.toLowerCase() : null
-    const extensions = normalizedContentType ? CONTENT_TYPE_EXTENSIONS[normalizedContentType] : undefined
+    const normalizedContentType = typeof contentType === 'string' ? contentType.toLowerCase() : defaultContentType
+    const extensions = CONTENT_TYPE_EXTENSIONS[normalizedContentType]
 
-    for (const extension of extensions ?? allowedExtensions) {
+    if (!extensions) {
+        return
+    }
+
+    for (const extension of extensions) {
         keys.add(`${baseKey}/${imageKey}.${extension}`)
+    }
+}
+
+function taskOutputMatchesJob(key: string, task: TaskReferenceRow): boolean {
+    if (!task.media_id) {
+        return false
+    }
+
+    const parsed = parseManagedR2MediaKey(key)
+
+    if (!parsed) {
+        return false
+    }
+
+    switch (parsed.kind) {
+        case 'characterMedia':
+        case 'characterMediaPreview':
+        case 'characterMediaNsfwBlur':
+            return parsed.userId === task.user_id && parsed.characterId === task.target_id && parsed.mediaId === task.media_id
+        default:
+            return false
     }
 }
 
