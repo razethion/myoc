@@ -331,6 +331,123 @@ describe('size chart image backfill jobs', () => {
     })
 })
 
+describe('media color backfill jobs', () => {
+    it('includes the media color backfill jobs', async () => {
+        const data = await getAdminOptionsData(db)
+
+        expect(data.jobs).toContainEqual({name: 'png-srgb-backfill', label: 'PNG sRGB Backfill'})
+        expect(data.jobs).toContainEqual({name: 'avif-icon-color-backfill', label: 'AVIF Icon Color Backfill'})
+    })
+
+    it('starts one PNG workflow and reuses its active run', async () => {
+        const workflow = createMockWorkflowBinding()
+        const env = thumbnailJobEnv(workflow)
+
+        const first = await runAdminJob(env, 'png-srgb-backfill', {triggerSource: 'manual'})
+        const second = await runAdminJob(env, 'png-srgb-backfill', {triggerSource: 'manual'})
+
+        expect(second).toEqual(first)
+        expect(first).toMatchObject({
+            jobName: 'png-srgb-backfill',
+            status: 'running',
+            summary: {
+                totalVariants: 0,
+                processedVariants: 0,
+                retaggedVariants: 0,
+                skippedVariants: 0,
+                failedVariants: 0,
+                lastError: null,
+            },
+        })
+        expect(workflow.create).toHaveBeenCalledOnce()
+        expect(workflow.create).toHaveBeenCalledWith({
+            id: first.runId,
+            params: {kind: 'png-srgb-backfill', runId: first.runId},
+        })
+    })
+
+    it('starts one AVIF icon workflow and reuses its active run', async () => {
+        const workflow = createMockWorkflowBinding()
+        const env = thumbnailJobEnv(workflow)
+
+        const first = await runAdminJob(env, 'avif-icon-color-backfill', {triggerSource: 'manual'})
+        const second = await runAdminJob(env, 'avif-icon-color-backfill', {triggerSource: 'manual'})
+
+        expect(second).toEqual(first)
+        expect(first).toMatchObject({
+            jobName: 'avif-icon-color-backfill',
+            status: 'running',
+            summary: {
+                totalIcons: 0,
+                processedIcons: 0,
+                retaggedIcons: 0,
+                skippedIcons: 0,
+                failedIcons: 0,
+                lastError: null,
+            },
+        })
+        expect(workflow.create).toHaveBeenCalledOnce()
+        expect(workflow.create).toHaveBeenCalledWith({
+            id: first.runId,
+            params: {kind: 'avif-icon-color-backfill', runId: first.runId},
+        })
+    })
+
+    it('replaces a stopped PNG workflow run', async () => {
+        const oldRunId = 'stopped-png-run'
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (id, job_name, trigger_source, status, started_at, summary_json)
+                 VALUES (?, 'png-srgb-backfill', 'manual', 'running', '2026-01-01 00:00:00', ?)`,
+            )
+            .bind(
+                oldRunId,
+                JSON.stringify({
+                    totalVariants: 4,
+                    processedVariants: 2,
+                    retaggedVariants: 2,
+                    skippedVariants: 0,
+                    failedVariants: 0,
+                    lastError: null,
+                }),
+            )
+            .run()
+        const workflow = createMockWorkflowBinding({[oldRunId]: 'complete'})
+
+        const result = await runAdminJob(thumbnailJobEnv(workflow), 'png-srgb-backfill', {triggerSource: 'manual'})
+
+        expect(result.runId).not.toBe(oldRunId)
+        expect(result).toMatchObject({status: 'running', summary: {processedVariants: 0}})
+        expect(
+            await queryOne<{status: string; error_message: string | null}>(
+                'SELECT status, error_message FROM admin_job_runs WHERE id = ?',
+                [oldRunId],
+            ),
+        ).toEqual({status: 'error', error_message: 'The PNG sRGB backfill Workflow stopped before the job record finished.'})
+        expect(workflow.create).toHaveBeenCalledWith({
+            id: result.runId,
+            params: {kind: 'png-srgb-backfill', runId: result.runId},
+        })
+    })
+
+    it('records an AVIF icon workflow start failure', async () => {
+        const workflow = createMockWorkflowBinding()
+        workflow.create.mockRejectedValueOnce(new Error('Workflow could not start'))
+
+        await expect(runAdminJob(thumbnailJobEnv(workflow), 'avif-icon-color-backfill', {triggerSource: 'manual'})).rejects.toThrow(
+            'Workflow could not start',
+        )
+
+        expect(
+            await queryOne<{status: string; error_message: string | null}>(
+                `SELECT status, error_message
+                 FROM admin_job_runs
+                 WHERE job_name = 'avif-icon-color-backfill'`,
+            ),
+        ).toEqual({status: 'error', error_message: 'Workflow could not start'})
+    })
+})
+
 describe('thumbnail regeneration jobs', () => {
     it('starts one workflow and reuses its active run', async () => {
         const workflow = createMockWorkflowBinding()

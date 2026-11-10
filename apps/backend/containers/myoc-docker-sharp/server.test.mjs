@@ -234,6 +234,36 @@ test('rejects unsupported square methods and unauthorized requests', async () =>
     assert.deepEqual(await unauthorized.json(), {error: 'Unauthorized'})
 })
 
+test('repairs an untagged icon AVIF through the HTTP interface', async () => {
+    const source = await sharp({
+        create: {background: {b: 32, g: 64, r: 255}, channels: 3, height: 512, width: 512},
+    })
+        .avif({chromaSubsampling: '4:4:4', effort: 4, quality: 60})
+        .toBuffer()
+    const response = await fetch(`${baseUrl}/images/repair-icon-color`, {
+        body: /** @type {BodyInit} */ (source),
+        headers: {authorization: `Bearer ${processorToken}`},
+        method: 'POST',
+    })
+    const result = Buffer.from(await response.arrayBuffer())
+
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('content-type'), 'image/avif')
+    assert.equal(response.headers.get('x-color-changed'), 'true')
+    assert.equal(response.headers.get('x-color-reason'), 'repaired')
+    assert.equal((await sharp(result).metadata()).format, 'heif')
+})
+
+test('requires the processor token for icon color repair', async () => {
+    const response = await fetch(`${baseUrl}/images/repair-icon-color`, {
+        body: new Uint8Array([1]),
+        method: 'POST',
+    })
+
+    assert.equal(response.status, 401)
+    assert.deepEqual(await response.json(), {error: 'Unauthorized'})
+})
+
 test('creates one framed gallery response with an optional blur', async () => {
     const source = await sharp({
         create: {background: {b: 20, g: 80, r: 220}, channels: 3, height: 800, width: 1200},

@@ -4,6 +4,12 @@ import {toSqlTimestamp} from '../auth/session'
 import {backupD1Database, type D1BackupSummary} from '../db/backup'
 import {type LeaderboardRefreshSummary, refreshLeaderboard} from '../leaderboard'
 import {cleanupStaleR2Media, type R2CleanupSummary} from '../media/r2Cleanup'
+import {
+    type AvifIconColorBackfillSummary,
+    activeAvifIconColorBackfillWorkflowInstanceIds,
+    emptyAvifIconColorBackfillSummary,
+    parseAvifIconColorBackfillSummary,
+} from './avifIconColorBackfill'
 import {type AdminErrorLogEntry, getAdminErrorLogs} from './errorLog'
 import {
     activeMediaPreviewRegenerationWorkflowInstanceIds,
@@ -11,6 +17,12 @@ import {
     isMediaPreviewRegenerationDispatchActive,
     type MediaPreviewRegenerationSummary,
 } from './mediaPreviewRegeneration'
+import {
+    activePngSrgbBackfillWorkflowInstanceIds,
+    emptyPngSrgbBackfillSummary,
+    type PngSrgbBackfillSummary,
+    parsePngSrgbBackfillSummary,
+} from './pngSrgbBackfill'
 import {
     activeSizeChartImageBackfillWorkflowInstanceIds,
     emptySizeChartImageBackfillSummary,
@@ -43,6 +55,14 @@ const ADMIN_JOBS = [
         name: 'size-chart-image-backfill',
         label: 'Size Chart Image Backfill',
     },
+    {
+        name: 'png-srgb-backfill',
+        label: 'PNG sRGB Backfill',
+    },
+    {
+        name: 'avif-icon-color-backfill',
+        label: 'AVIF Icon Color Backfill',
+    },
 ] as const
 
 export type AdminJobName = (typeof ADMIN_JOBS)[number]['name']
@@ -57,6 +77,8 @@ export type AdminJobSummary =
     | LeaderboardRefreshSummary
     | MediaPreviewRegenerationSummary
     | SizeChartImageBackfillSummary
+    | PngSrgbBackfillSummary
+    | AvifIconColorBackfillSummary
 
 type AdminJobEnv = Pick<
     Bindings,
@@ -67,6 +89,8 @@ type AdminJobEnv = Pick<
     | 'DB_BACKUP_BUCKET'
     | 'MEDIA_BUCKET'
     | 'CACHE'
+    | 'MYOC_DOCKER_SHARP_CONTAINER'
+    | 'PREVIEW_PROCESSOR_TOKEN'
     | 'REGENERATE_MEDIA_PREVIEWS_WORKFLOW'
 >
 
@@ -183,6 +207,14 @@ export async function runAdminJob(env: AdminJobEnv, jobName: AdminJobName, optio
         return await startSizeChartImageBackfillJob(env, options)
     }
 
+    if (jobName === 'png-srgb-backfill') {
+        return await startPngSrgbBackfillJob(env, options)
+    }
+
+    if (jobName === 'avif-icon-color-backfill') {
+        return await startAvifIconColorBackfillJob(env, options)
+    }
+
     return await recordAdminJobRun(env.DB, jobName, options, async () => runAdminJobTask(env, jobName))
 }
 
@@ -295,6 +327,100 @@ async function startSizeChartImageBackfillJob(
     }
 
     return {jobName, runId: started.runId, status: 'running', summary}
+}
+
+async function startPngSrgbBackfillJob(env: AdminJobEnv, options: AdminJobRunOptions): Promise<AdminJobRunResult<PngSrgbBackfillSummary>> {
+    const jobName = 'png-srgb-backfill'
+    const summary = emptyPngSrgbBackfillSummary()
+    let started = await startExclusiveAdminJobRun(env.DB, jobName, options, summary, parsePngSrgbBackfillSummary)
+
+    if (!started.created) {
+        const active = await isBackfillWorkflowActive(
+            env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW,
+            activePngSrgbBackfillWorkflowInstanceIds(started.runId, started.summary.processedVariants),
+            started.startedAt,
+        )
+        if (active) {
+            return {jobName, runId: started.runId, status: 'running', summary: started.summary}
+        }
+
+        await failAdminJobRun(env.DB, started.runId, 'The PNG sRGB backfill Workflow stopped before the job record finished.')
+        started = await startExclusiveAdminJobRun(env.DB, jobName, options, summary, parsePngSrgbBackfillSummary)
+        if (!started.created) {
+            return {jobName, runId: started.runId, status: 'running', summary: started.summary}
+        }
+    }
+
+    try {
+        await env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW.create({
+            id: started.runId,
+            params: {kind: 'png-srgb-backfill', runId: started.runId} satisfies RegenerateMediaPreviewsWorkflowParams,
+        })
+    } catch (error) {
+        await tryFinishAdminJobRun(env.DB, started.runId, 'error', null, errorMessage(error))
+        throw error
+    }
+
+    return {jobName, runId: started.runId, status: 'running', summary}
+}
+
+async function startAvifIconColorBackfillJob(
+    env: AdminJobEnv,
+    options: AdminJobRunOptions,
+): Promise<AdminJobRunResult<AvifIconColorBackfillSummary>> {
+    const jobName = 'avif-icon-color-backfill'
+    const summary = emptyAvifIconColorBackfillSummary()
+    let started = await startExclusiveAdminJobRun(env.DB, jobName, options, summary, parseAvifIconColorBackfillSummary)
+
+    if (!started.created) {
+        const active = await isBackfillWorkflowActive(
+            env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW,
+            activeAvifIconColorBackfillWorkflowInstanceIds(started.runId, started.summary.processedIcons),
+            started.startedAt,
+        )
+        if (active) {
+            return {jobName, runId: started.runId, status: 'running', summary: started.summary}
+        }
+
+        await failAdminJobRun(env.DB, started.runId, 'The AVIF icon color backfill Workflow stopped before the job record finished.')
+        started = await startExclusiveAdminJobRun(env.DB, jobName, options, summary, parseAvifIconColorBackfillSummary)
+        if (!started.created) {
+            return {jobName, runId: started.runId, status: 'running', summary: started.summary}
+        }
+    }
+
+    try {
+        await env.REGENERATE_MEDIA_PREVIEWS_WORKFLOW.create({
+            id: started.runId,
+            params: {kind: 'avif-icon-color-backfill', runId: started.runId} satisfies RegenerateMediaPreviewsWorkflowParams,
+        })
+    } catch (error) {
+        await tryFinishAdminJobRun(env.DB, started.runId, 'error', null, errorMessage(error))
+        throw error
+    }
+
+    return {jobName, runId: started.runId, status: 'running', summary}
+}
+
+async function isBackfillWorkflowActive(
+    workflow: Bindings['REGENERATE_MEDIA_PREVIEWS_WORKFLOW'],
+    instanceIds: string[],
+    startedAt: string,
+): Promise<boolean> {
+    const recentlyStarted = wasWorkflowRecentlyStarted(startedAt)
+    const errors: Error[] = []
+
+    for (const instanceId of instanceIds) {
+        try {
+            if ((await getWorkflowInstanceState(workflow, instanceId, recentlyStarted)) === 'active') return true
+        } catch (error) {
+            errors.push(error instanceof Error ? error : new Error(errorMessage(error)))
+        }
+    }
+
+    const [statusError] = errors
+    if (statusError) throw statusError
+    return false
 }
 
 async function startRegenerationWorkflowJob(
@@ -629,7 +755,13 @@ function parseSummary(value: string | null): AdminJobSummary | null {
 function parseMediaPreviewRegenerationSummary(value: string | null): MediaPreviewRegenerationSummary | null {
     const parsed = parseSummary(value)
 
-    return parsed && 'totalVariants' in parsed && 'processedVariants' in parsed ? parsed : null
+    return parsed &&
+        'totalVariants' in parsed &&
+        'processedVariants' in parsed &&
+        'regeneratedPreviews' in parsed &&
+        'regeneratedBlurs' in parsed
+        ? parsed
+        : null
 }
 
 function errorMessage(error: unknown): string {

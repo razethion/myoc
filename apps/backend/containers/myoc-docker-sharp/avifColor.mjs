@@ -661,32 +661,64 @@ export function repairAvifColor(buf) {
     }
 }
 
-function repairAvifColorUnsafe(buf) {
+/**
+ * Add an sRGB CICP declaration to an icon AVIF that has no color declaration.
+ * The square-image encoder treats an untagged source as sRGB, so an icon with
+ * no ICC profile is safe to declare as sRGB without touching its pixels.
+ *
+ * @param {Buffer} buf
+ */
+export function repairIconColor(buf) {
+    try {
+        return repairAvifColorUnsafe(buf, {primaries: 1, transfer: 13})
+    } catch {
+        return unchanged(buf, 'unsupported-layout')
+    }
+}
+
+function repairAvifColorUnsafe(buf, fallbackCicp = null) {
     const meta = findBox(buf, 0, buf.length, 'meta')
     if (!meta) return unchanged(buf, 'not-avif')
 
-    const iprp = findBox(buf, meta.off + 12, meta.off + meta.size, 'iprp')
-    const ipco = iprp && findBox(buf, iprp.off + iprp.header, iprp.off + iprp.size, 'ipco')
-    const ipma = iprp && findBox(buf, iprp.off + iprp.header, iprp.off + iprp.size, 'ipma')
-    const pitm = findBox(buf, meta.off + 12, meta.off + meta.size, 'pitm')
-    if (!ipco || !ipma || !pitm) return unchanged(buf, 'unsupported-layout')
+    const inputs = readRepairInputs(buf, meta, fallbackCicp)
+    if (inputs.reason) return unchanged(buf, inputs.reason)
 
-    const primaryId = buf[pitm.off + 8] === 0 ? buf.readUInt16BE(pitm.off + 12) : buf.readUInt32BE(pitm.off + 12)
-    const properties = readColorProperties(buf, ipco, ipma, primaryId)
-    if (properties.malformed || properties.unsupported) return unchanged(buf, 'unsupported-layout')
-    if (properties.hasNclx) return unchanged(buf, 'already-declared')
-    if (!properties.icc) return unchanged(buf, 'no-profile')
-
-    const payload = readPrimaryPayload(buf, meta, primaryId)
-    if (!payload) return unchanged(buf, 'unsupported-layout')
-    const av1 = readAv1ColorConfig(payload)
-    if (!av1) return unchanged(buf, 'unsupported-layout')
-
-    const cicp = resolveCicp(properties.icc)
-    if (!cicp.keepIcc) return unchanged(buf, 'unsupported-profile')
-    const declared = {...cicp, matrix: av1.matrix, fullRange: av1.fullRange}
+    const cicp = resolveRepairCicp(inputs.properties, fallbackCicp)
+    if (!cicp) return unchanged(buf, 'unsupported-profile')
+    const declared = {
+        primaries: cicp.primaries,
+        transfer: cicp.transfer,
+        matrix: inputs.av1.matrix,
+        fullRange: inputs.av1.fullRange,
+    }
 
     const out = addNclx(buf, declared)
     if (out === buf) return unchanged(buf, 'unsupported-layout')
     return {bytes: out, changed: true, reason: 'repaired', cicp: declared}
+}
+
+function readRepairInputs(buf, meta, fallbackCicp) {
+    const iprp = findBox(buf, meta.off + 12, meta.off + meta.size, 'iprp')
+    const ipco = iprp && findBox(buf, iprp.off + iprp.header, iprp.off + iprp.size, 'ipco')
+    const ipma = iprp && findBox(buf, iprp.off + iprp.header, iprp.off + iprp.size, 'ipma')
+    const pitm = findBox(buf, meta.off + 12, meta.off + meta.size, 'pitm')
+    if (!ipco || !ipma || !pitm) return {reason: 'unsupported-layout'}
+
+    const primaryId = buf[pitm.off + 8] === 0 ? buf.readUInt16BE(pitm.off + 12) : buf.readUInt32BE(pitm.off + 12)
+    const properties = readColorProperties(buf, ipco, ipma, primaryId)
+    if (properties.malformed || properties.unsupported) return {reason: 'unsupported-layout'}
+    if (properties.hasNclx) return {reason: 'already-declared'}
+    if (!properties.icc && !fallbackCicp) return {reason: 'no-profile'}
+
+    const payload = readPrimaryPayload(buf, meta, primaryId)
+    if (!payload) return {reason: 'unsupported-layout'}
+    const av1 = readAv1ColorConfig(payload)
+    if (!av1) return {reason: 'unsupported-layout'}
+    return {properties, av1}
+}
+
+function resolveRepairCicp(properties, fallbackCicp) {
+    if (!properties.icc) return fallbackCicp
+    const cicp = resolveCicp(properties.icc)
+    return cicp.keepIcc ? cicp : null
 }

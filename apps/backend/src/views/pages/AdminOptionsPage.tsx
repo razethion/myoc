@@ -188,6 +188,14 @@ function RunSummary({run}: {run: AdminJobRun}) {
         return <SizeChartImageBackfillSummary summary={run.summary} />
     }
 
+    if (run.jobName === 'png-srgb-backfill') {
+        return <PngSrgbBackfillSummaryView summary={run.summary} />
+    }
+
+    if (run.jobName === 'avif-icon-color-backfill') {
+        return <AvifIconColorBackfillSummaryView summary={run.summary} />
+    }
+
     return <R2CleanupSummary summary={run.summary} />
 }
 
@@ -246,7 +254,12 @@ function LeaderboardRefreshSummary({summary}: {summary: AdminJobSummary}) {
 }
 
 function MediaPreviewRegenerationSummary({summary, thumbnails}: {summary: AdminJobSummary; thumbnails: boolean}) {
-    if (!('totalVariants' in summary) || !('processedVariants' in summary)) {
+    if (
+        !('totalVariants' in summary) ||
+        !('processedVariants' in summary) ||
+        !('regeneratedPreviews' in summary) ||
+        !('regeneratedBlurs' in summary)
+    ) {
         return <JsonSummary summary={summary} />
     }
 
@@ -287,6 +300,52 @@ function SizeChartImageBackfillSummary({summary}: {summary: AdminJobSummary}) {
                 <span>{summary.replacedImages} replaced</span>
                 <span>{summary.skippedImages} skipped</span>
                 {summary.failedImages > 0 ? <span class="text-error">{summary.failedImages} failed</span> : null}
+            </div>
+            {summary.lastError ? <p class="max-w-xl whitespace-pre-wrap break-words text-error">Last error: {summary.lastError}</p> : null}
+        </div>
+    )
+}
+
+function PngSrgbBackfillSummaryView({summary}: {summary: AdminJobSummary}) {
+    if (!('totalVariants' in summary) || !('processedVariants' in summary) || !('retaggedVariants' in summary)) {
+        return <JsonSummary summary={summary} />
+    }
+
+    const progressMaximum = Math.max(1, summary.totalVariants)
+
+    return (
+        <div class="grid gap-2 text-xs">
+            <progress class="progress" max={progressMaximum} value={Math.min(summary.processedVariants, progressMaximum)} />
+            <div class="flex flex-wrap gap-x-3 gap-y-1">
+                <span>
+                    {summary.processedVariants} of {summary.totalVariants} PNG variants processed
+                </span>
+                <span>{summary.retaggedVariants} retagged</span>
+                <span>{summary.skippedVariants} skipped</span>
+                {summary.failedVariants > 0 ? <span class="text-error">{summary.failedVariants} failed</span> : null}
+            </div>
+            {summary.lastError ? <p class="max-w-xl whitespace-pre-wrap break-words text-error">Last error: {summary.lastError}</p> : null}
+        </div>
+    )
+}
+
+function AvifIconColorBackfillSummaryView({summary}: {summary: AdminJobSummary}) {
+    if (!('totalIcons' in summary) || !('processedIcons' in summary) || !('retaggedIcons' in summary)) {
+        return <JsonSummary summary={summary} />
+    }
+
+    const progressMaximum = Math.max(1, summary.totalIcons)
+
+    return (
+        <div class="grid gap-2 text-xs">
+            <progress class="progress" max={progressMaximum} value={Math.min(summary.processedIcons, progressMaximum)} />
+            <div class="flex flex-wrap gap-x-3 gap-y-1">
+                <span>
+                    {summary.processedIcons} of {summary.totalIcons} icons processed
+                </span>
+                <span>{summary.retaggedIcons} retagged</span>
+                <span>{summary.skippedIcons} skipped</span>
+                {summary.failedIcons > 0 ? <span class="text-error">{summary.failedIcons} failed</span> : null}
             </div>
             {summary.lastError ? <p class="max-w-xl whitespace-pre-wrap break-words text-error">Last error: {summary.lastError}</p> : null}
         </div>
