@@ -231,8 +231,8 @@ function R2CleanupSummary({summary}: {summary: AdminJobSummary}) {
             <span>{summary.scanned} scanned</span>
             <span>{summary.deleted} deleted</span>
             <span>{summary.errors} errors</span>
-            {summary.stoppedAtDeleteLimit ? <span class="text-warning">delete limit reached</span> : null}
-            {summary.stoppedAtScanLimit ? <span class="text-warning">scan limit reached</span> : null}
+            {summary.stoppedAtDeleteLimit ? <span class="text-warning">delete limit reached (resumes next run)</span> : null}
+            {summary.stoppedAtScanLimit ? <span class="text-warning">scan limit reached (resumes next run)</span> : null}
         </div>
     )
 }

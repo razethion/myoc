@@ -79,6 +79,8 @@ describe('parseManagedR2MediaKey', () => {
             contentType: 'image/png',
         })
 
+        expect(parseManagedR2MediaKey('d1/myoc-db/2026/11/10/backup.sql.gz')).toBeNull()
+        expect(parseManagedR2MediaKey('backups/characters/user-1/character-1/media/media-1/sfw/image-1.png')).toBeNull()
         expect(parseManagedR2MediaKey('characters/user-1/character-1/scratch/file.webp')).toBeNull()
         expect(parseManagedR2MediaKey('characters/user-1/character-1/media/media-1/sfw/image-1.bmp')).toBeNull()
         expect(parseManagedR2MediaKey('users/user-1/profile/photo-1.png')).toBeNull()
@@ -174,8 +176,8 @@ describe('cleanupStaleR2Media', () => {
         const env = createWorkerEnv({CACHE: cache, MEDIA_BUCKET: bucket})
         const now = new Date()
 
-        const first = await cleanupStaleR2Media(env, now)
-        const second = await cleanupStaleR2Media(env, now)
+        const first = await cleanupStaleR2Media(env, now, {scanLimit: 900})
+        const second = await cleanupStaleR2Media(env, now, {scanLimit: 900})
 
         expect(first.stoppedAtScanLimit).toBe(true)
         expect(first.scanned).toBe(900)
@@ -191,7 +193,7 @@ describe('cleanupStaleR2Media', () => {
         await seedReferencedProfileUsers(900)
         const env = createWorkerEnv({CACHE: cache, MEDIA_BUCKET: bucket})
 
-        const summary = await cleanupStaleR2Media(env, staleCleanupNow)
+        const summary = await cleanupStaleR2Media(env, staleCleanupNow, {scanLimit: 900})
 
         expect(summary).toMatchObject({
             scanned: 900,
@@ -211,8 +213,8 @@ describe('cleanupStaleR2Media', () => {
         const cache = createMockKVNamespace()
         const env = createWorkerEnv({CACHE: cache, MEDIA_BUCKET: bucket})
 
-        const first = await cleanupStaleR2Media(env, new Date())
-        const second = await cleanupStaleR2Media(env, new Date())
+        const first = await cleanupStaleR2Media(env, new Date(), {scanLimit: 900})
+        const second = await cleanupStaleR2Media(env, new Date(), {scanLimit: 900})
 
         expect(first).toMatchObject({scanned: 900, stoppedAtScanLimit: true})
         expect(second).toMatchObject({scanned: 1, stoppedAtScanLimit: false})
@@ -231,6 +233,25 @@ describe('cleanupStaleR2Media', () => {
             await expect(cache.get('admin:r2-media-cleanup:cursor:v1')).resolves.toBeNull()
         },
     )
+
+    it('completes a full sweep in one run when the bucket fits the scan budget', async () => {
+        const objectKeys = Array.from({length: 1200}, (_, index) => `users/user-${index}/profile/photo.webp`)
+        const bucket = createPagedMediaBucket(objectKeys, new Date(0))
+        const cache = createMockKVNamespace()
+        await seedReferencedProfileUsers(1200)
+        const env = createWorkerEnv({CACHE: cache, MEDIA_BUCKET: bucket})
+
+        const summary = await cleanupStaleR2Media(env, staleCleanupNow)
+
+        expect(summary).toMatchObject({
+            scanned: 1200,
+            recognized: 1200,
+            keptReferenced: 1200,
+            deleted: 0,
+            stoppedAtScanLimit: false,
+        })
+        await expect(cache.get('admin:r2-media-cleanup:cursor:v1')).resolves.toBeNull()
+    }, 30_000)
 
     it('stops after the per-run delete limit', async () => {
         const objectKeys = Array.from({length: 501}, (_, index) => `users/user-${index}/profile/photo.webp`)
