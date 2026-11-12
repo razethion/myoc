@@ -262,11 +262,6 @@ async function cleanupR2Object(
         return false
     }
 
-    if (PROTECTED_KEY_PREFIXES.some((prefix) => object.key.startsWith(prefix))) {
-        summary.skippedUnknown += 1
-        return false
-    }
-
     const parsed = parseManagedR2MediaKey(object.key)
 
     if (!parsed) {
@@ -304,15 +299,15 @@ async function cleanupR2Object(
     }
 }
 
-type UserReferenceRow = {id: string; profile_photo_key: string | null}
+type UserReferenceRow = {id: string; profile_photo_key: string}
 type CharacterReferenceRow = {
     user_id: string
     id: string
-    profile_image_key: string | null
+    profile_image_key: string
     profile_image_content_type: string | null
     height_chart_json: string | null
 }
-type FolderReferenceRow = {user_id: string; id: string; folder_image_key: string | null; folder_image_content_type: string | null}
+type FolderReferenceRow = {user_id: string; id: string; folder_image_key: string; folder_image_content_type: string | null}
 type MediaReferenceRow = {
     user_id: string
     character_id: string
@@ -332,7 +327,7 @@ type TaskReferenceRow = {
     user_id: string
     target_id: string
     media_id: string | null
-    output_json: string | null
+    output_json: string
 }
 
 async function tryBuildReferencedMediaKeyIndex(db: D1Database): Promise<Set<string> | null> {
@@ -452,11 +447,7 @@ async function selectAllRows<T>(db: D1Database, sql: string): Promise<T[]> {
     }
 }
 
-function addProfileKeyVariants(keys: Set<string>, baseKey: string, imageKey: string | null): void {
-    if (!imageKey) {
-        return
-    }
-
+function addProfileKeyVariants(keys: Set<string>, baseKey: string, imageKey: string): void {
     for (const extension of PROFILE_EXTENSIONS) {
         keys.add(`${baseKey}/${imageKey}.${extension}`)
     }
@@ -527,25 +518,17 @@ function parseHeightChartReference(rawJson: string | null | undefined): {key: st
     }
 }
 
-function parseTaskOutputKeys(rawJson: string | null): string[] {
-    if (!rawJson) {
+function parseTaskOutputKeys(rawJson: string): string[] {
+    const parsed = JSON.parse(rawJson) as unknown
+
+    if (!isRecord(parsed)) {
         return []
     }
 
-    try {
-        const parsed = JSON.parse(rawJson) as unknown
-
-        if (!isRecord(parsed)) {
-            return []
-        }
-
-        return ['imageObjectKey', 'previewObjectKey', 'blurObjectKey'].flatMap((field) => {
-            const value = parsed[field]
-            return typeof value === 'string' ? [value] : []
-        })
-    } catch {
-        return []
-    }
+    return ['imageObjectKey', 'previewObjectKey', 'blurObjectKey'].flatMap((field) => {
+        const value = parsed[field]
+        return typeof value === 'string' ? [value] : []
+    })
 }
 
 function logCleanupSummary(message: string, summary: R2CleanupSummary, level: 'log' | 'warn'): void {
@@ -553,6 +536,10 @@ function logCleanupSummary(message: string, summary: R2CleanupSummary, level: 'l
 }
 
 export function parseManagedR2MediaKey(key: string): ManagedR2MediaKey | null {
+    if (PROTECTED_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+        return null
+    }
+
     const parts = key.split('/')
 
     for (const parser of MANAGED_KEY_PARSERS) {

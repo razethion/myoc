@@ -89,6 +89,8 @@ describe('parseManagedR2MediaKey', () => {
         expect(parseManagedR2MediaKey('characters/user-1/character-1/media/media-1/sfw/preview/photo.png')).toBeNull()
         expect(parseManagedR2MediaKey('characters/user-1/character-1/media/media-1/nsfw/blur/photo.png')).toBeNull()
         expect(parseManagedR2MediaKey('characters/user-1/character-1/height-chart/photo.bmp')).toBeNull()
+        expect(parseManagedR2MediaKey('users/user-1/profile/photo')).toBeNull()
+        expect(parseManagedR2MediaKey('users/user-1/profile/.webp')).toBeNull()
     })
 })
 
@@ -294,6 +296,128 @@ describe('cleanupStaleR2Media', () => {
         expect(vi.mocked(bucket.delete).mock.calls.map(([key]) => key)).toEqual([failedKey])
     })
 
+    it('does not protect objects whose recorded content type is unknown', async () => {
+        await seedCleanupDatabase('{}')
+        await db.prepare('UPDATE character_media SET sfw_content_type = ? WHERE id = ?').bind('image/jpg', 'media-1').run()
+        const key = 'characters/alice/blair/media/media-1/sfw/img.jpg'
+        const bucket = createPagedMediaBucket([key], new Date(0))
+
+        const summary = await cleanupStaleR2Media(createWorkerEnv({CACHE: createMockKVNamespace(), MEDIA_BUCKET: bucket}), staleCleanupNow)
+
+        expect(summary).toMatchObject({keptReferenced: 0, deleted: 1})
+        expect(vi.mocked(bucket.delete).mock.calls.map(([deletedKey]) => deletedKey)).toEqual([key])
+    })
+
+    it('keeps a height chart through the exact fallback', async () => {
+        await seedCleanupDatabase(JSON.stringify({image: {key: 'chart', contentType: 'image/png'}}))
+        await db.exec('ALTER TABLE character_folders RENAME TO character_folders_offline')
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        const bucket = createPagedMediaBucket(['characters/alice/blair/height-chart/chart.png'], new Date(0))
+
+        const summary = await cleanupStaleR2Media(createWorkerEnv({CACHE: createMockKVNamespace(), MEDIA_BUCKET: bucket}), staleCleanupNow)
+
+        expect(summary).toMatchObject({keptReferenced: 1, deleted: 0})
+    })
+
+    it('deletes height charts with missing, malformed, or untyped metadata', async () => {
+        await seedCleanupDatabase('{}')
+        await seedCharacter({id: 'nova', userId: 'alice', name: 'Nova'})
+        await seedCharacter({id: 'cora', userId: 'alice', name: 'Cora', heightChartJson: 'not json'})
+        await seedCharacter({id: 'dana', userId: 'alice', name: 'Dana', heightChartJson: '"text"'})
+        await seedCharacter({id: 'erin', userId: 'alice', name: 'Erin', heightChartJson: '{"image":{"key":"chart"}}'})
+        const bucket = createPagedMediaBucket(
+            [
+                'characters/alice/nova/height-chart/chart.png',
+                'characters/alice/cora/height-chart/chart.png',
+                'characters/alice/dana/height-chart/chart.png',
+                'characters/alice/erin/height-chart/chart.avif',
+            ],
+            new Date(0),
+        )
+
+        const summary = await cleanupStaleR2Media(createWorkerEnv({CACHE: createMockKVNamespace(), MEDIA_BUCKET: bucket}), staleCleanupNow)
+
+        expect(summary).toMatchObject({keptReferenced: 0, deleted: 4})
+    })
+
+    it('uses the current clock when none is supplied', async () => {
+        await seedUser({id: 'alice', username: 'alice', profilePhotoKey: 'current'})
+        const bucket = createPagedMediaBucket(['users/alice/profile/current.webp'], new Date(0))
+
+        const summary = await cleanupStaleR2Media(createWorkerEnv({CACHE: createMockKVNamespace(), MEDIA_BUCKET: bucket}))
+
+        expect(summary).toMatchObject({keptReferenced: 1, deleted: 0})
+    })
+
+    it('falls back when index building fails with a non-Error value', async () => {
+        const failingDb = {
+            prepare() {
+                throw {code: 'index unavailable'}
+            },
+        } as unknown as D1Database
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+        const summary = await cleanupStaleR2Media(
+            createWorkerEnv({DB: failingDb, CACHE: createMockKVNamespace(), MEDIA_BUCKET: createPagedMediaBucket([], new Date(0))}),
+            staleCleanupNow,
+        )
+
+        expect(summary.scanned).toBe(0)
+    })
+
+    it('keeps a referenced NSFW preview', async () => {
+        await seedCleanupDatabase('{}')
+        await db
+            .prepare(
+                "UPDATE character_media SET nsfw_preview_image_key = 'npreview', nsfw_preview_content_type = 'image/webp' WHERE id = 'media-1'",
+            )
+            .run()
+        await db.exec('ALTER TABLE character_folders RENAME TO character_folders_offline')
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        const bucket = createPagedMediaBucket(
+            [
+                'characters/alice/blair/media/media-1/nsfw/preview/npreview.webp',
+                'characters/alice/blair/media/media-1/sfw/preview/preview.avif',
+            ],
+            new Date(0),
+        )
+
+        const summary = await cleanupStaleR2Media(createWorkerEnv({CACHE: createMockKVNamespace(), MEDIA_BUCKET: bucket}), staleCleanupNow)
+
+        expect(summary).toMatchObject({keptReferenced: 2, deleted: 0})
+    })
+
+    it('ignores task outputs that do not match the job target', async () => {
+        await seedCleanupDatabase('{}')
+        await seedRawGalleryTask({
+            jobId: 'job-no-media',
+            requestJson: '{}',
+            outputJson: JSON.stringify({imageObjectKey: 'characters/alice/blair/media/media-1/sfw/x.png'}),
+        })
+        await seedRawGalleryTask({
+            jobId: 'job-bad-key',
+            requestJson: JSON.stringify({mediaId: 'media-1'}),
+            outputJson: JSON.stringify({imageObjectKey: 'not-managed'}),
+        })
+        await seedRawGalleryTask({
+            jobId: 'job-profile-key',
+            requestJson: JSON.stringify({mediaId: 'media-1'}),
+            outputJson: JSON.stringify({imageObjectKey: 'users/alice/profile/current.webp'}),
+        })
+        await seedRawGalleryTask({
+            jobId: 'job-non-record',
+            requestJson: JSON.stringify({mediaId: 'media-1'}),
+            outputJson: '"text"',
+        })
+
+        const summary = await cleanupStaleR2Media(
+            createWorkerEnv({CACHE: createMockKVNamespace(), MEDIA_BUCKET: createPagedMediaBucket([], new Date(0))}),
+            staleCleanupNow,
+        )
+
+        expect(summary.scanned).toBe(0)
+    })
+
     it('stops after the per-run delete limit', async () => {
         const objectKeys = Array.from({length: 501}, (_, index) => `users/user-${index}/profile/photo.webp`)
         const bucket = createPagedMediaBucket(objectKeys, new Date(0))
@@ -337,6 +461,22 @@ async function seedGalleryTask(input: {
     errorCode?: string
     outputKey: string
 }): Promise<void> {
+    await seedRawGalleryTask({
+        jobId: input.jobId,
+        state: input.state,
+        errorCode: input.errorCode,
+        requestJson: JSON.stringify({mediaId: 'media-1'}),
+        outputJson: JSON.stringify({imageObjectKey: input.outputKey}),
+    })
+}
+
+async function seedRawGalleryTask(input: {
+    jobId: string
+    state?: 'processing' | 'failed'
+    errorCode?: string
+    requestJson: string
+    outputJson: string
+}): Promise<void> {
     await db
         .prepare(
             `INSERT INTO image_upload_jobs (id, user_id, target_type, target_id, state, idempotency_key, request_json, error_code, deadline_at)
@@ -347,9 +487,9 @@ async function seedGalleryTask(input: {
             'alice',
             'gallery_create',
             'blair',
-            input.state,
+            input.state ?? 'processing',
             `idem-${input.jobId}`,
-            JSON.stringify({mediaId: 'media-1'}),
+            input.requestJson,
             input.errorCode ?? null,
             new Date(Date.now() + 60 * 60 * 1000).toISOString(),
         )
@@ -373,7 +513,7 @@ async function seedGalleryTask(input: {
             'gallery-sfw-v1',
             0,
             'ready',
-            JSON.stringify({imageObjectKey: input.outputKey}),
+            input.outputJson,
         )
         .run()
 }
