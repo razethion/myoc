@@ -3,8 +3,10 @@ import type {Bindings} from '../../types/bindings'
 const MANAGED_PREFIXES = ['users/', 'characters/'] as const
 const CLEANUP_CURSOR_CACHE_KEY = 'admin:r2-media-cleanup:cursor:v1'
 const LIST_LIMIT = 500
-const SCAN_LIMIT_PER_RUN = 900
+const SCAN_LIMIT_PER_RUN = 20_000
 const DELETE_LIMIT_PER_RUN = 500
+const REFERENCE_INDEX_PAGE_SIZE = 500
+const PROTECTED_KEY_PREFIXES = ['d1/', 'backups/', 'originals/'] as const
 const MIN_STALE_AGE_MS = 24 * 60 * 60 * 1000
 const SAFE_SEGMENT = /^[A-Za-z0-9_-]{1,128}$/
 
@@ -15,6 +17,16 @@ const EXTENSION_CONTENT_TYPES: Record<string, string> = {
     png: 'image/png',
     webp: 'image/webp',
 }
+
+const CONTENT_TYPE_EXTENSIONS: Record<string, string[]> = {
+    'image/avif': ['avif'],
+    'image/gif': ['gif'],
+    'image/jpeg': ['jpg'],
+    'image/png': ['png'],
+    'image/webp': ['webp'],
+}
+
+const PROFILE_EXTENSIONS = ['webp', 'avif']
 
 type ManagedR2MediaKey =
     | {
@@ -87,6 +99,10 @@ export type R2CleanupSummary = {
     stoppedAtScanLimit: boolean
 }
 
+export type R2CleanupOptions = {
+    scanLimit?: number
+}
+
 type R2CleanupEnv = Pick<Bindings, 'CACHE' | 'DB' | 'MEDIA_BUCKET'>
 
 type CleanupCursor = {
@@ -108,7 +124,11 @@ const MANAGED_KEY_PARSERS: ManagedR2MediaKeyParser[] = [
     parseCharacterHeightChartKey,
 ]
 
-export async function cleanupStaleR2Media(env: R2CleanupEnv, now: Date = new Date()): Promise<R2CleanupSummary> {
+export async function cleanupStaleR2Media(
+    env: R2CleanupEnv,
+    now: Date = new Date(),
+    options: R2CleanupOptions = {},
+): Promise<R2CleanupSummary> {
     const summary: R2CleanupSummary = {
         scanned: 0,
         recognized: 0,
@@ -120,6 +140,8 @@ export async function cleanupStaleR2Media(env: R2CleanupEnv, now: Date = new Dat
         stoppedAtDeleteLimit: false,
         stoppedAtScanLimit: false,
     }
+    const scanLimit = Math.max(1, Math.floor(options.scanLimit ?? SCAN_LIMIT_PER_RUN))
+    const referencedKeys = await tryBuildReferencedMediaKeyIndex(env.DB)
     const savedCursor = await readCleanupCursor(env.CACHE)
     const startingPrefixIndex = savedCursor ? MANAGED_PREFIXES.indexOf(savedCursor.prefix) : 0
 
@@ -127,7 +149,7 @@ export async function cleanupStaleR2Media(env: R2CleanupEnv, now: Date = new Dat
 
     for (const [prefixIndex, prefix] of prefixes.entries()) {
         const cursor = prefixIndex === 0 ? savedCursor?.cursor : undefined
-        const result = await cleanupR2Prefix(env, prefix, cursor, now, summary)
+        const result = await cleanupR2Prefix(env, prefix, cursor, now, summary, scanLimit, referencedKeys)
 
         if (result.status === 'stopped') {
             summary.stoppedAtDeleteLimit = result.reason === 'deleteLimit'
@@ -143,7 +165,7 @@ export async function cleanupStaleR2Media(env: R2CleanupEnv, now: Date = new Dat
 
         const nextPrefix = prefixes[prefixIndex + 1]
 
-        if (summary.scanned >= SCAN_LIMIT_PER_RUN && nextPrefix) {
+        if (summary.scanned >= scanLimit && nextPrefix) {
             summary.stoppedAtScanLimit = true
             await writeCleanupCursor(env.CACHE, {prefix: nextPrefix})
             logCleanupSummary('R2 media cleanup stopped at per-run scan limit', summary, 'warn')
@@ -162,23 +184,25 @@ async function cleanupR2Prefix(
     initialCursor: string | undefined,
     now: Date,
     summary: R2CleanupSummary,
+    scanLimit: number,
+    referencedKeys: Set<string> | null,
 ): Promise<PrefixCleanupResult> {
     let cursor = initialCursor
 
     do {
-        const remainingScanCount = SCAN_LIMIT_PER_RUN - summary.scanned
+        const remainingScanCount = scanLimit - summary.scanned
         const pageStartCursor = cursor
         const listed = await env.MEDIA_BUCKET.list({prefix, limit: Math.min(LIST_LIMIT, remainingScanCount), cursor})
 
         for (const object of listed.objects) {
-            if (await cleanupR2Object(env, object, now, summary)) {
+            if (await cleanupR2Object(env, object, now, summary, referencedKeys)) {
                 return {status: 'stopped', reason: 'deleteLimit', cursor: pageStartCursor}
             }
         }
 
         cursor = listed.truncated ? listed.cursor : undefined
 
-        if (cursor && summary.scanned >= SCAN_LIMIT_PER_RUN) {
+        if (cursor && summary.scanned >= scanLimit) {
             return {status: 'stopped', reason: 'scanLimit', cursor}
         }
     } while (cursor)
@@ -224,7 +248,13 @@ async function writeCleanupCursor(cache: KVNamespace, cursor: CleanupCursor): Pr
     await cache.put(CLEANUP_CURSOR_CACHE_KEY, JSON.stringify(cursor))
 }
 
-async function cleanupR2Object(env: R2CleanupEnv, object: R2Object, now: Date, summary: R2CleanupSummary): Promise<boolean> {
+async function cleanupR2Object(
+    env: R2CleanupEnv,
+    object: R2Object,
+    now: Date,
+    summary: R2CleanupSummary,
+    referencedKeys: Set<string> | null,
+): Promise<boolean> {
     summary.scanned += 1
 
     if (!isOldEnoughToClean(object, now)) {
@@ -242,6 +272,11 @@ async function cleanupR2Object(env: R2CleanupEnv, object: R2Object, now: Date, s
     summary.recognized += 1
 
     try {
+        if (referencedKeys?.has(object.key)) {
+            summary.keptReferenced += 1
+            return false
+        }
+
         if (await isManagedR2MediaKeyReferenced(env.DB, parsed)) {
             summary.keptReferenced += 1
             return false
@@ -264,11 +299,247 @@ async function cleanupR2Object(env: R2CleanupEnv, object: R2Object, now: Date, s
     }
 }
 
+type UserReferenceRow = {id: string; profile_photo_key: string}
+type CharacterReferenceRow = {
+    user_id: string
+    id: string
+    profile_image_key: string
+    profile_image_content_type: string | null
+    height_chart_json: string | null
+}
+type FolderReferenceRow = {user_id: string; id: string; folder_image_key: string; folder_image_content_type: string | null}
+type MediaReferenceRow = {
+    user_id: string
+    character_id: string
+    id: string
+    sfw_image_key: string | null
+    sfw_content_type: string | null
+    nsfw_image_key: string | null
+    nsfw_content_type: string | null
+    sfw_preview_image_key: string | null
+    sfw_preview_content_type: string | null
+    nsfw_preview_image_key: string | null
+    nsfw_preview_content_type: string | null
+    nsfw_blur_image_key: string | null
+    nsfw_blur_content_type: string | null
+}
+type TaskReferenceRow = {
+    user_id: string
+    target_id: string
+    media_id: string | null
+    output_json: string
+}
+
+async function tryBuildReferencedMediaKeyIndex(db: D1Database): Promise<Set<string> | null> {
+    try {
+        return await buildReferencedMediaKeyIndex(db)
+    } catch (error) {
+        console.warn(
+            JSON.stringify({
+                message: 'Unable to build R2 cleanup reference index; falling back to per-object checks',
+                error: error instanceof Error ? error.message : String(error),
+            }),
+        )
+        return null
+    }
+}
+
+async function buildReferencedMediaKeyIndex(db: D1Database): Promise<Set<string>> {
+    const keys = new Set<string>()
+
+    const users = await selectAllRows<UserReferenceRow>(db, 'SELECT id, profile_photo_key FROM users WHERE profile_photo_key IS NOT NULL')
+
+    for (const user of users) {
+        addProfileKeyVariants(keys, `users/${user.id}/profile`, user.profile_photo_key)
+    }
+
+    const characters = await selectAllRows<CharacterReferenceRow>(
+        db,
+        'SELECT user_id, id, profile_image_key, profile_image_content_type, height_chart_json FROM characters',
+    )
+
+    for (const character of characters) {
+        addProfileKeyVariants(keys, `characters/${character.user_id}/${character.id}/profile`, character.profile_image_key)
+
+        const heightChart = parseHeightChartReference(character.height_chart_json)
+
+        if (heightChart) {
+            addReferencedKeyVariants(
+                keys,
+                `characters/${character.user_id}/${character.id}/height-chart`,
+                heightChart.key,
+                heightChart.contentType,
+                'image/png',
+            )
+        }
+    }
+
+    const folders = await selectAllRows<FolderReferenceRow>(
+        db,
+        'SELECT user_id, id, folder_image_key, folder_image_content_type FROM character_folders WHERE folder_image_key IS NOT NULL',
+    )
+
+    for (const folder of folders) {
+        addProfileKeyVariants(keys, `characters/${folder.user_id}/folders/${folder.id}/image`, folder.folder_image_key)
+    }
+
+    const media = await selectAllRows<MediaReferenceRow>(
+        db,
+        `SELECT user_id, character_id, id,
+                sfw_image_key, sfw_content_type,
+                nsfw_image_key, nsfw_content_type,
+                sfw_preview_image_key, sfw_preview_content_type,
+                nsfw_preview_image_key, nsfw_preview_content_type,
+                nsfw_blur_image_key, nsfw_blur_content_type
+         FROM character_media`,
+    )
+
+    for (const row of media) {
+        const baseKey = `characters/${row.user_id}/${row.character_id}/media/${row.id}`
+        addReferencedKeyVariants(keys, `${baseKey}/sfw`, row.sfw_image_key, row.sfw_content_type, 'image/png')
+        addReferencedKeyVariants(keys, `${baseKey}/nsfw`, row.nsfw_image_key, row.nsfw_content_type, 'image/png')
+        addReferencedKeyVariants(keys, `${baseKey}/sfw/preview`, row.sfw_preview_image_key, row.sfw_preview_content_type, 'image/webp')
+        addReferencedKeyVariants(keys, `${baseKey}/nsfw/preview`, row.nsfw_preview_image_key, row.nsfw_preview_content_type, 'image/webp')
+        addReferencedKeyVariants(keys, `${baseKey}/nsfw/blur`, row.nsfw_blur_image_key, row.nsfw_blur_content_type, 'image/webp')
+    }
+
+    const tasks = await selectAllRows<TaskReferenceRow>(
+        db,
+        `SELECT jobs.user_id AS user_id,
+                jobs.target_id AS target_id,
+                json_extract(jobs.request_json, '$.mediaId') AS media_id,
+                tasks.output_json AS output_json
+         FROM image_processing_tasks AS tasks
+         JOIN image_upload_jobs AS jobs ON jobs.id = tasks.job_id
+         WHERE jobs.target_type = 'gallery_create'
+           AND tasks.state = 'ready'
+           AND tasks.output_json IS NOT NULL
+           AND (
+               jobs.state IN ('queued', 'processing', 'waiting_for_sources', 'publishing')
+               OR (jobs.state = 'failed' AND jobs.error_code = 'gallery_capacity_exceeded')
+           )`,
+    )
+
+    for (const task of tasks) {
+        for (const key of parseTaskOutputKeys(task.output_json)) {
+            if (taskOutputMatchesJob(key, task)) {
+                keys.add(key)
+            }
+        }
+    }
+
+    return keys
+}
+
+async function selectAllRows<T>(db: D1Database, sql: string): Promise<T[]> {
+    const rows: T[] = []
+    let offset = 0
+
+    while (true) {
+        const result = await db.prepare(`${sql} LIMIT ${REFERENCE_INDEX_PAGE_SIZE} OFFSET ${offset}`).all<T>()
+        rows.push(...result.results)
+
+        if (result.results.length < REFERENCE_INDEX_PAGE_SIZE) {
+            return rows
+        }
+
+        offset += REFERENCE_INDEX_PAGE_SIZE
+    }
+}
+
+function addProfileKeyVariants(keys: Set<string>, baseKey: string, imageKey: string): void {
+    for (const extension of PROFILE_EXTENSIONS) {
+        keys.add(`${baseKey}/${imageKey}.${extension}`)
+    }
+}
+
+function addReferencedKeyVariants(
+    keys: Set<string>,
+    baseKey: string,
+    imageKey: string | null,
+    contentType: string | null,
+    defaultContentType: 'image/png' | 'image/webp',
+): void {
+    if (!imageKey) {
+        return
+    }
+
+    const normalizedContentType = typeof contentType === 'string' ? contentType.toLowerCase() : defaultContentType
+    const extensions = CONTENT_TYPE_EXTENSIONS[normalizedContentType]
+
+    if (!extensions) {
+        return
+    }
+
+    for (const extension of extensions) {
+        keys.add(`${baseKey}/${imageKey}.${extension}`)
+    }
+}
+
+function taskOutputMatchesJob(key: string, task: TaskReferenceRow): boolean {
+    if (!task.media_id) {
+        return false
+    }
+
+    const parsed = parseManagedR2MediaKey(key)
+
+    if (!parsed) {
+        return false
+    }
+
+    switch (parsed.kind) {
+        case 'characterMedia':
+        case 'characterMediaPreview':
+        case 'characterMediaNsfwBlur':
+            return parsed.userId === task.user_id && parsed.characterId === task.target_id && parsed.mediaId === task.media_id
+        default:
+            return false
+    }
+}
+
+function parseHeightChartReference(rawJson: string | null | undefined): {key: string; contentType: string | null} | null {
+    if (!rawJson) {
+        return null
+    }
+
+    try {
+        const parsed = JSON.parse(rawJson) as unknown
+
+        if (!isRecord(parsed) || !isRecord(parsed.image) || typeof parsed.image.key !== 'string') {
+            return null
+        }
+
+        return {
+            key: parsed.image.key,
+            contentType: typeof parsed.image.contentType === 'string' ? parsed.image.contentType : null,
+        }
+    } catch {
+        return null
+    }
+}
+
+function parseTaskOutputKeys(rawJson: string): string[] {
+    const parsed = JSON.parse(rawJson) as unknown
+
+    if (!isRecord(parsed)) {
+        return []
+    }
+
+    return ['imageObjectKey', 'previewObjectKey', 'blurObjectKey'].flatMap((field) => {
+        const value = parsed[field]
+        return typeof value === 'string' ? [value] : []
+    })
+}
+
 function logCleanupSummary(message: string, summary: R2CleanupSummary, level: 'log' | 'warn'): void {
     console[level](JSON.stringify({message, ...summary}))
 }
 
 export function parseManagedR2MediaKey(key: string): ManagedR2MediaKey | null {
+    if (PROTECTED_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+        return null
+    }
+
     const parts = key.split('/')
 
     for (const parser of MANAGED_KEY_PARSERS) {
