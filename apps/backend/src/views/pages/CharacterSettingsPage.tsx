@@ -115,20 +115,20 @@ function CharacterSettingsScript({
     media,
     galleryTabs,
     csrfToken,
-    username,
+    characterProfileBaseUrl,
 }: {
     character: CharacterSettingsCharacter
     media: ReturnType<typeof mediaWithUrls>[]
     galleryTabs: CharacterSettingsGalleryTab[]
     csrfToken: string
-    username: string
+    characterProfileBaseUrl: string
 }) {
     return (
         <script
             dangerouslySetInnerHTML={{
                 __html: `
 const character = ${safeJson(character)};
-const characterProfileBaseUrl = ${safeJson(`/u/${encodeURIComponent(username)}/`)};
+const characterProfileBaseUrl = ${safeJson(characterProfileBaseUrl)};
 const csrfToken = ${safeJson(csrfToken)};
 const maxGalleryImagesPerRow = ${safeJson(GALLERY_MAX_IMAGES_PER_ROW)};
 const galleryChunkSize = ${safeJson(GALLERY_CHUNK_SIZE)};
@@ -1810,7 +1810,8 @@ updateDeleteButtonState();
 export function CharacterSettingsPage({currentUser, character, media, galleryTabs, mediaBaseUrl}: CharacterSettingsPageProps) {
     const mediaItems = media.map((item) => mediaWithUrls(mediaBaseUrl, character, item))
     const profileImageUrl = characterProfileImageUrl(mediaBaseUrl, character.userId, character.id, character.profileImageKey)
-    const characterViewUrl = `/u/${encodeURIComponent(currentUser.username)}/${encodeURIComponent(character.name)}`
+    const characterProfileBaseUrl = `/u/${encodeURIComponent(currentUser.username)}/`
+    const characterViewUrl = `${characterProfileBaseUrl}${encodeURIComponent(character.name)}`
 
     return (
         <BaseLayout title={`${character.name} Settings | MyOC`}>
@@ -2082,7 +2083,7 @@ export function CharacterSettingsPage({currentUser, character, media, galleryTab
                     csrfToken={currentUser.csrfToken}
                     galleryTabs={galleryTabs}
                     media={mediaItems}
-                    username={currentUser.username}
+                    characterProfileBaseUrl={characterProfileBaseUrl}
                 />
             </main>
         </BaseLayout>
