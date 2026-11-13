@@ -40,6 +40,7 @@ export type CurrentUser = {
 
 const SESSION_COOKIE = 'myoc_session'
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30
+const SESSION_RENEWAL_INTERVAL_SECONDS = 60 * 60 * 24
 const SESSION_TOKEN_BYTES = 32
 const CSRF_TOKEN_PREFIX = 'csrf:'
 
@@ -74,10 +75,12 @@ export async function getCurrentUser(c: Context<{Bindings: Bindings}>): Promise<
         return null
     }
 
+    const now = new Date()
     const sessionHash = await sha256Hex(sessionToken)
     const user = await c.env.DB.prepare(
         `SELECT users.id,
                 sessions.id AS session_id,
+                sessions.expires_at AS session_expires_at,
                 users.email,
                 users.username,
                 users.role,
@@ -96,10 +99,11 @@ export async function getCurrentUser(c: Context<{Bindings: Bindings}>): Promise<
            AND users.banned_at IS NULL
          LIMIT 1`,
     )
-        .bind(sessionHash, toSqlTimestamp(new Date()))
+        .bind(sessionHash, toSqlTimestamp(now))
         .first<{
             id: string
             session_id: string
+            session_expires_at: string
             email: string
             username: string
             role: string | null
@@ -117,6 +121,8 @@ export async function getCurrentUser(c: Context<{Bindings: Bindings}>): Promise<
         return null
     }
 
+    await renewSessionIfDue(c, sessionToken, user.session_id, user.session_expires_at, now)
+
     return {
         id: user.id,
         sessionId: user.session_id,
@@ -133,6 +139,27 @@ export async function getCurrentUser(c: Context<{Bindings: Bindings}>): Promise<
         passkeyPromptSeen: Boolean(user.passkey_prompt_seen_at),
         csrfToken: await createCsrfToken(sessionToken),
     }
+}
+
+async function renewSessionIfDue(
+    c: Context<{Bindings: Bindings}>,
+    sessionToken: string,
+    sessionId: string,
+    sessionExpiresAt: string,
+    now: Date,
+): Promise<void> {
+    // Renew when the session is at least one day old, so an active session is written at most once per day.
+    const renewBefore = new Date(now.getTime() + (SESSION_TTL_SECONDS - SESSION_RENEWAL_INTERVAL_SECONDS) * 1000)
+
+    if (sessionExpiresAt > toSqlTimestamp(renewBefore)) {
+        return
+    }
+
+    const renewedExpiresAt = new Date(now.getTime() + SESSION_TTL_SECONDS * 1000)
+    await c.env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE id = ? AND expires_at <= ?')
+        .bind(toSqlTimestamp(renewedExpiresAt), sessionId, toSqlTimestamp(renewBefore))
+        .run()
+    setSessionCookie(c, sessionToken)
 }
 
 export function setSessionCookie(c: Context<{Bindings: Bindings}>, sessionToken: string): void {
