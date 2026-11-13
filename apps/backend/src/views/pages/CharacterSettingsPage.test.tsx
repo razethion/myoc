@@ -112,7 +112,7 @@ function createRenameHarness(): RenameHarness {
 }
 
 function extractSettingsScript(html: string): string {
-    for (const match of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
+    for (const match of html.matchAll(/<script[^>]*>([\s\S]*?)<\/script\s*>/gi)) {
         const script = match[1]
         if (script?.includes('character-settings-form')) return script
     }
