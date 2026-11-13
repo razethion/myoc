@@ -80,6 +80,7 @@ export async function getCurrentUser(c: Context<{Bindings: Bindings}>): Promise<
     const user = await c.env.DB.prepare(
         `SELECT users.id,
                 sessions.id AS session_id,
+                sessions.expires_at AS session_expires_at,
                 users.email,
                 users.username,
                 users.role,
@@ -102,6 +103,7 @@ export async function getCurrentUser(c: Context<{Bindings: Bindings}>): Promise<
         .first<{
             id: string
             session_id: string
+            session_expires_at: string
             email: string
             username: string
             role: string | null
@@ -119,7 +121,7 @@ export async function getCurrentUser(c: Context<{Bindings: Bindings}>): Promise<
         return null
     }
 
-    await renewSessionIfDue(c, sessionToken, user.session_id, now)
+    await renewSessionIfDue(c, sessionToken, user.session_id, user.session_expires_at, now)
 
     return {
         id: user.id,
@@ -139,9 +141,20 @@ export async function getCurrentUser(c: Context<{Bindings: Bindings}>): Promise<
     }
 }
 
-async function renewSessionIfDue(c: Context<{Bindings: Bindings}>, sessionToken: string, sessionId: string, now: Date): Promise<void> {
+async function renewSessionIfDue(
+    c: Context<{Bindings: Bindings}>,
+    sessionToken: string,
+    sessionId: string,
+    sessionExpiresAt: string,
+    now: Date,
+): Promise<void> {
     // Renew when the session is at least one day old, so an active session is written at most once per day.
     const renewBefore = new Date(now.getTime() + (SESSION_TTL_SECONDS - SESSION_RENEWAL_INTERVAL_SECONDS) * 1000)
+
+    if (sessionExpiresAt > toSqlTimestamp(renewBefore)) {
+        return
+    }
+
     const renewedExpiresAt = new Date(now.getTime() + SESSION_TTL_SECONDS * 1000)
     const result = await c.env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE id = ? AND expires_at <= ?')
         .bind(toSqlTimestamp(renewedExpiresAt), sessionId, toSqlTimestamp(renewBefore))
