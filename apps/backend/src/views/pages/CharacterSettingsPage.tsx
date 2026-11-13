@@ -115,17 +115,20 @@ function CharacterSettingsScript({
     media,
     galleryTabs,
     csrfToken,
+    username,
 }: {
     character: CharacterSettingsCharacter
     media: ReturnType<typeof mediaWithUrls>[]
     galleryTabs: CharacterSettingsGalleryTab[]
     csrfToken: string
+    username: string
 }) {
     return (
         <script
             dangerouslySetInnerHTML={{
                 __html: `
 const character = ${safeJson(character)};
+const characterProfileBaseUrl = ${safeJson(`/u/${encodeURIComponent(username)}/`)};
 const csrfToken = ${safeJson(csrfToken)};
 const maxGalleryImagesPerRow = ${safeJson(GALLERY_MAX_IMAGES_PER_ROW)};
 const galleryChunkSize = ${safeJson(GALLERY_CHUNK_SIZE)};
@@ -152,6 +155,7 @@ const saveCharacterSettingsWarning = document.getElementById('save-character-set
 const settingsToastRegion = document.querySelector('[data-character-settings-toast-region]');
 const characterSettingsForm = document.getElementById('character-settings-form');
 const characterTitle = document.querySelector('[data-character-title]');
+const characterViewLink = document.querySelector('[data-character-view-link]');
 const characterProfileImageInput = document.getElementById('character-profile-photo');
 const characterProfileImagePreview = document.querySelector('[data-character-profile-image-preview]');
 const characterProfileCropper = document.querySelector('[data-character-profile-cropper]');
@@ -1718,6 +1722,7 @@ characterSettingsForm.addEventListener('submit', async (event) => {
         character.name = updatedCharacter.character.name;
         character.description = updatedCharacter.character.description;
         characterTitle.textContent = character.name;
+        characterViewLink.href = characterProfileBaseUrl + encodeURIComponent(character.name);
         await apiFetch('/api/characters/' + encodeURIComponent(character.id) + '/gallery', {
             method: 'PUT',
             headers: { 'content-type': 'application/json' },
@@ -1870,7 +1875,7 @@ export function CharacterSettingsPage({currentUser, character, media, galleryTab
                         </h1>
                     </div>
                     <div class="flex flex-wrap gap-2 sm:justify-end">
-                        <a class="btn btn-primary" href={characterViewUrl}>
+                        <a class="btn btn-primary" href={characterViewUrl} data-character-view-link>
                             View Character
                         </a>
                         <a class="btn btn-secondary" href={`/edit/${encodeURIComponent(character.id)}/height-chart`}>
@@ -2077,6 +2082,7 @@ export function CharacterSettingsPage({currentUser, character, media, galleryTab
                     csrfToken={currentUser.csrfToken}
                     galleryTabs={galleryTabs}
                     media={mediaItems}
+                    username={currentUser.username}
                 />
             </main>
         </BaseLayout>
