@@ -1,7 +1,7 @@
 import {describe, expect, it, vi} from 'vitest'
 import {queryOne, seedUser, useTestDatabase} from '../../test/d1'
 import {createMockR2Bucket} from '../../test/mockR2'
-import {type AdminJobSummary, completeAdminJobRun, getAdminOptionsData, recordAdminJobRun, runAdminJob} from './jobs'
+import {type AdminJobSummary, getAdminOptionsData, recordAdminJobRun, runAdminJob} from './jobs'
 
 const db = useTestDatabase()
 

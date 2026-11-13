@@ -25,7 +25,6 @@
     "wrangler": "^4.148.0"
   },
   "imports": {
-    "#lib": "./src/lib/index.js",
     "#lib/*": "./src/lib/*"
   }
 }
