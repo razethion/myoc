@@ -4,6 +4,7 @@ import {characterMediaImageUrl, characterMediaPreviewImageUrl, characterProfileI
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 import {PROFILE_CROPPER_BROWSER_HELPERS} from '../profileCropperScript'
+import {serializeJsonForHtmlScript} from '../scriptJson'
 
 export type CharacterSettingsCharacter = {
     id: string
@@ -58,15 +59,6 @@ type CharacterSettingsPageProps = {
 const CHARACTER_NAME_INPUT_PATTERN = String.raw`(?=.*[A-Za-z0-9])[A-Za-z0-9 _'.\(\)"\-]+`
 const CHARACTER_NAME_INPUT_TITLE =
     'Use letters, numbers, spaces, apostrophes, quotation marks, hyphens, underscores, periods, and parentheses. Include at least one letter or number.'
-
-function safeJson(value: unknown): string {
-    return JSON.stringify(value)
-        .replace(/</g, '\\u003c')
-        .replace(/>/g, '\\u003e')
-        .replace(/&/g, '\\u0026')
-        .replace(/\u2028/g, '\\u2028')
-        .replace(/\u2029/g, '\\u2029')
-}
 
 function mediaWithUrls(mediaBaseUrl: string, character: CharacterSettingsCharacter, media: CharacterSettingsMedia) {
     return {
@@ -127,14 +119,14 @@ function CharacterSettingsScript({
         <script
             dangerouslySetInnerHTML={{
                 __html: `
-const character = ${safeJson(character)};
-const characterProfileBaseUrl = ${safeJson(characterProfileBaseUrl)};
-const csrfToken = ${safeJson(csrfToken)};
-const maxGalleryImagesPerRow = ${safeJson(GALLERY_MAX_IMAGES_PER_ROW)};
-const galleryChunkSize = ${safeJson(GALLERY_CHUNK_SIZE)};
-const mediaLibrary = new Map(${safeJson(media)}.map((item) => [item.id, item]));
-const tagLayouts = new Map(${safeJson(galleryTabs)}.map((tab) => [tab.id, normalizeInitialGalleryLayout(tab)]));
-let activeTagId = ${safeJson(galleryTabs[0]?.id ?? 'default')};
+const character = ${serializeJsonForHtmlScript(character)};
+const characterProfileBaseUrl = ${serializeJsonForHtmlScript(characterProfileBaseUrl)};
+const csrfToken = ${serializeJsonForHtmlScript(csrfToken)};
+const maxGalleryImagesPerRow = ${serializeJsonForHtmlScript(GALLERY_MAX_IMAGES_PER_ROW)};
+const galleryChunkSize = ${serializeJsonForHtmlScript(GALLERY_CHUNK_SIZE)};
+const mediaLibrary = new Map(${serializeJsonForHtmlScript(media)}.map((item) => [item.id, item]));
+const tagLayouts = new Map(${serializeJsonForHtmlScript(galleryTabs)}.map((tab) => [tab.id, normalizeInitialGalleryLayout(tab)]));
+let activeTagId = ${serializeJsonForHtmlScript(galleryTabs[0]?.id ?? 'default')};
 ${PROFILE_CROPPER_BROWSER_HELPERS}
 let pendingDeleteMediaId = null;
 let dragCandidate = null;
