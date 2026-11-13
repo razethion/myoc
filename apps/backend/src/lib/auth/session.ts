@@ -156,13 +156,10 @@ async function renewSessionIfDue(
     }
 
     const renewedExpiresAt = new Date(now.getTime() + SESSION_TTL_SECONDS * 1000)
-    const result = await c.env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE id = ? AND expires_at <= ?')
+    await c.env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE id = ? AND expires_at <= ?')
         .bind(toSqlTimestamp(renewedExpiresAt), sessionId, toSqlTimestamp(renewBefore))
         .run()
-
-    if ((result.meta.changes ?? 0) > 0) {
-        setSessionCookie(c, sessionToken)
-    }
+    setSessionCookie(c, sessionToken)
 }
 
 export function setSessionCookie(c: Context<{Bindings: Bindings}>, sessionToken: string): void {
