@@ -389,7 +389,145 @@ describe('size chart image backfill', () => {
         expect(await bucket.head(oldObjectKey)).not.toBeNull()
         expect(await bucket.head(targetObjectKey)).toBeNull()
     })
+
+    it('skips a candidate whose chart has no image', async () => {
+        const candidate: SizeChartImageBackfillCandidate = {
+            characterId: 'no-image-chart',
+            userId: 'no-image-owner',
+            chartJson: chartJson('none').replace(/"image":\{[^}]+}/, '"image":null'),
+            targetImageKey: 'unused-image',
+        }
+
+        await expect(replaceSizeChartImage(backfillEnv(createMockR2Bucket()), candidate)).resolves.toEqual({status: 'skipped'})
+    })
+
+    it('finishes when the stored chart already declares color for the same image', async () => {
+        const bucket = createMockR2Bucket()
+        const userId = 'declared-race-owner'
+        const characterId = 'declared-race-chart'
+        const storedJson = chartJson('declared-avif', 'image/avif', {colorDeclared: true})
+        const oldObjectKey = characterHeightChartImageObjectKey(userId, characterId, 'declared-avif', 'image/avif')
+        await seedUser({id: userId})
+        await seedCharacter({id: characterId, userId, heightChartJson: storedJson})
+        await bucket.put(oldObjectKey, createAvifBytes(3200, 1600))
+
+        await expect(
+            replaceSizeChartImage(backfillEnv(bucket), {
+                characterId,
+                userId,
+                chartJson: chartJson('declared-avif', 'image/avif'),
+                targetImageKey: 'unused-image',
+            }),
+        ).resolves.toEqual({status: 'replaced'})
+
+        expect(bucket.put).toHaveBeenCalledOnce()
+        expect(await bucket.head(oldObjectKey)).not.toBeNull()
+    })
+
+    it.each([
+        ['a different width', createAvifBytes(3000, 1600)],
+        ['a different height', createAvifBytes(3200, 1500)],
+        ['unreadable bytes', new Uint8Array([0, 1, 2])],
+    ])('rejects a repaired AVIF with %s', async (_label, repairedBytes) => {
+        const bucket = createMockR2Bucket()
+        const userId = 'invalid-repair-owner'
+        const characterId = 'invalid-repair-chart'
+        const originalJson = chartJson('legacy-avif', 'image/avif')
+        const oldObjectKey = characterHeightChartImageObjectKey(userId, characterId, 'legacy-avif', 'image/avif')
+        await seedUser({id: userId})
+        await seedCharacter({id: characterId, userId, heightChartJson: originalJson})
+        await bucket.put(oldObjectKey, createAvifBytes(3200, 1600))
+        const repairResponse = new Response(repairedBytes, {
+            headers: {'content-type': 'image/avif', 'x-color-changed': 'true', 'x-color-reason': 'repaired'},
+        })
+
+        await expect(
+            replaceSizeChartImage(backfillEnv(bucket, repairResponse), {
+                characterId,
+                userId,
+                chartJson: originalJson,
+                targetImageKey: 'unused-image',
+            }),
+        ).rejects.toThrow(`The repaired size chart image is invalid: ${oldObjectKey}`)
+
+        expect(bucket.put).toHaveBeenCalledOnce()
+    })
+
+    it('recovers when another writer marks the chart during the update', async () => {
+        const bucket = createMockR2Bucket()
+        const userId = 'mark-conflict-owner'
+        const characterId = 'mark-conflict-chart'
+        const originalJson = chartJson('declared-avif', 'image/avif')
+        const declaredJson = chartJson('declared-avif', 'image/avif', {colorDeclared: true})
+        const oldObjectKey = characterHeightChartImageObjectKey(userId, characterId, 'declared-avif', 'image/avif')
+        await seedUser({id: userId})
+        await seedCharacter({id: characterId, userId, heightChartJson: originalJson})
+        await bucket.put(oldObjectKey, createAvifBytes(3200, 1600))
+        const repairResponse = new Response(createAvifBytes(3200, 1600), {
+            headers: {'content-type': 'image/avif', 'x-color-changed': 'false', 'x-color-reason': 'already-declared'},
+        })
+        const env = {...backfillEnv(bucket, repairResponse), DB: databaseThatSkipsTheMarkWrite(db, declaredJson)}
+
+        await expect(
+            replaceSizeChartImage(env, {characterId, userId, chartJson: originalJson, targetImageKey: 'unused-image'}),
+        ).resolves.toEqual({status: 'replaced'})
+
+        const stored = await queryOne<{height_chart_json: string}>('SELECT height_chart_json FROM characters WHERE id = ?', [characterId])
+        expect(JSON.parse(stored?.height_chart_json ?? 'null')).toMatchObject({image: {key: 'declared-avif', colorDeclared: true}})
+        expect(bucket.put).toHaveBeenCalledOnce()
+    })
+
+    it('skips the chart when the mark write does not apply', async () => {
+        const bucket = createMockR2Bucket()
+        const userId = 'mark-failed-owner'
+        const characterId = 'mark-failed-chart'
+        const originalJson = chartJson('declared-avif', 'image/avif')
+        const oldObjectKey = characterHeightChartImageObjectKey(userId, characterId, 'declared-avif', 'image/avif')
+        await seedUser({id: userId})
+        await seedCharacter({id: characterId, userId, heightChartJson: originalJson})
+        await bucket.put(oldObjectKey, createAvifBytes(3200, 1600))
+        const repairResponse = new Response(createAvifBytes(3200, 1600), {
+            headers: {'content-type': 'image/avif', 'x-color-changed': 'false', 'x-color-reason': 'already-declared'},
+        })
+        const env = {...backfillEnv(bucket, repairResponse), DB: databaseThatSkipsTheMarkWrite(db)}
+
+        await expect(
+            replaceSizeChartImage(env, {characterId, userId, chartJson: originalJson, targetImageKey: 'unused-image'}),
+        ).resolves.toEqual({status: 'skipped'})
+
+        const stored = await queryOne<{height_chart_json: string}>('SELECT height_chart_json FROM characters WHERE id = ?', [characterId])
+        expect(stored?.height_chart_json).toBe(originalJson)
+        expect(bucket.put).toHaveBeenCalledOnce()
+    })
 })
+
+function databaseThatSkipsTheMarkWrite(database: D1Database, declaredJson?: string): D1Database {
+    return new Proxy(database, {
+        get(target, property, receiver) {
+            if (property !== 'prepare') return Reflect.get(target, property, receiver)
+
+            return (query: string) => {
+                const statement = target.prepare(query)
+                if (!query.includes('AND height_chart_json = ?')) return statement
+
+                return {
+                    bind: (...values: unknown[]) => ({
+                        run: async () => {
+                            if (declaredJson) {
+                                await target
+                                    .prepare('UPDATE characters SET height_chart_json = ? WHERE id = ?')
+                                    .bind(declaredJson, values[1])
+                                    .run()
+                            }
+
+                            return {meta: {changes: 0}}
+                        },
+                    }),
+                }
+            }
+        },
+    }) as unknown as D1Database
+}
 
 function databaseThatThrowsAfterCharacterUpdate(database: D1Database): D1Database {
     return new Proxy(database, {
