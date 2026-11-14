@@ -1954,7 +1954,10 @@ function toPublicHeightChart(baseUrl: string, userId: string, characterId: strin
         ...heightChart,
         image: heightChart.image
             ? {
-                  ...heightChart.image,
+                  key: heightChart.image.key,
+                  contentType: heightChart.image.contentType,
+                  naturalWidth: heightChart.image.naturalWidth,
+                  naturalHeight: heightChart.image.naturalHeight,
                   url: characterHeightChartImageUrl(baseUrl, userId, characterId, heightChart.image.key, heightChart.image.contentType),
               }
             : null,
@@ -3972,6 +3975,7 @@ function resolveHeightChartImage(
             contentType: uploadedImage.contentType,
             naturalWidth: uploadedImage.width,
             naturalHeight: uploadedImage.height,
+            colorDeclared: true,
         }
     }
 

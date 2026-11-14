@@ -1,8 +1,8 @@
 import type {Bindings} from '../../types/bindings'
 import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../media/cacheControl'
 import {type HeightChartJson, parseHeightChartJson} from '../media/heightChart'
-import {readGalleryImageMetadata} from '../media/imageMetadata'
-import {generateHeightChartImageWithContainer} from '../media/previewGeneration'
+import {type GalleryImageMetadata, readGalleryImageDimensions, readGalleryImageMetadata} from '../media/imageMetadata'
+import {generateHeightChartImageWithContainer, repairAvifColorWithContainer} from '../media/previewGeneration'
 import {characterHeightChartImageObjectKey} from '../media/url'
 
 export const SIZE_CHART_IMAGE_BACKFILL_BATCH_SIZE = 25
@@ -30,7 +30,10 @@ type BackfillEnv = Pick<Bindings, 'DB' | 'MEDIA_BUCKET' | 'MYOC_DOCKER_SHARP_CON
 
 const CANDIDATE_WHERE = `json_valid(height_chart_json)
     AND json_type(height_chart_json, '$.image') = 'object'
-    AND COALESCE(lower(json_extract(height_chart_json, '$.image.contentType')), 'image/png') <> 'image/avif'`
+    AND (
+        COALESCE(lower(json_extract(height_chart_json, '$.image.contentType')), 'image/png') <> 'image/avif'
+        OR COALESCE(json_extract(height_chart_json, '$.image.colorDeclared'), 0) <> 1
+    )`
 
 export function emptySizeChartImageBackfillSummary(): SizeChartImageBackfillSummary {
     return {
@@ -132,7 +135,13 @@ export async function replaceSizeChartImage(
     candidate: SizeChartImageBackfillCandidate,
 ): Promise<SizeChartImageBackfillResult> {
     const chart = parseHeightChartJson(candidate.chartJson)
-    if (!chart?.image || chart.image.contentType.toLowerCase() === 'image/avif') {
+    if (!chart?.image) {
+        return {status: 'skipped'}
+    }
+
+    const contentType = chart.image.contentType.toLowerCase()
+    const isAvif = contentType === 'image/avif'
+    if (isAvif && chart.image.colorDeclared) {
         return {status: 'skipped'}
     }
 
@@ -154,6 +163,10 @@ export async function replaceSizeChartImage(
         return {status: 'replaced'}
     }
 
+    if (isAvif && currentBeforeConversion?.image?.colorDeclared && currentBeforeConversion.image.key === chart.image.key) {
+        return {status: 'replaced'}
+    }
+
     const sourceObject = await env.MEDIA_BUCKET.get(oldObjectKey)
     if (!sourceObject) {
         throw new Error(`The source size chart image is missing: ${oldObjectKey}`)
@@ -166,35 +179,104 @@ export async function replaceSizeChartImage(
         throw new Error(`The source size chart image is invalid: ${oldObjectKey}`)
     }
 
-    const converted = await generateHeightChartImageWithContainer(
-        env,
-        async () => new Response(sourceBytes.slice()).body as ReadableStream,
-        {
-            width: metadata.width,
-            height: metadata.height,
-            displayWidth: metadata.displayWidth,
-            displayHeight: metadata.displayHeight,
-        },
-        oldObjectKey,
-        {priority: 'background'},
-    )
+    const prepared = await prepareReplacementBytes(env, candidate, isAvif, sourceBytes, oldObjectKey, metadata)
+    if (prepared.status !== 'ready') {
+        return {status: prepared.status}
+    }
+
     const storedChart = JSON.parse(candidate.chartJson) as Record<string, unknown>
     const replacementChart = {
         ...storedChart,
         image: {
             key: candidate.targetImageKey,
-            contentType: converted.contentType,
-            naturalWidth: converted.width,
-            naturalHeight: converted.height,
+            contentType: prepared.contentType,
+            naturalWidth: prepared.width,
+            naturalHeight: prepared.height,
+            colorDeclared: true,
         },
     }
     const replacementJson = JSON.stringify(replacementChart)
 
-    const published = await publishReplacement(env, candidate, targetObjectKey, replacementJson, converted.bytes)
+    const published = await publishReplacement(env, candidate, targetObjectKey, replacementJson, prepared.bytes)
     if (!published) return {status: 'skipped'}
 
     await env.MEDIA_BUCKET.delete(oldObjectKey)
     return {status: 'replaced'}
+}
+
+type PreparedReplacement =
+    | {status: 'replaced'}
+    | {status: 'skipped'}
+    | {status: 'ready'; bytes: Uint8Array; contentType: string; width: number; height: number}
+
+async function prepareReplacementBytes(
+    env: BackfillEnv,
+    candidate: SizeChartImageBackfillCandidate,
+    isAvif: boolean,
+    sourceBytes: Uint8Array,
+    sourceKey: string,
+    metadata: GalleryImageMetadata,
+): Promise<PreparedReplacement> {
+    if (!isAvif) {
+        const converted = await generateHeightChartImageWithContainer(
+            env,
+            async () => new Response(sourceBytes.slice()).body as ReadableStream,
+            {
+                width: metadata.width,
+                height: metadata.height,
+                displayWidth: metadata.displayWidth,
+                displayHeight: metadata.displayHeight,
+            },
+            sourceKey,
+            {priority: 'background'},
+        )
+        return {
+            status: 'ready',
+            bytes: converted.bytes,
+            contentType: converted.contentType,
+            width: converted.width,
+            height: converted.height,
+        }
+    }
+
+    const repaired = await repairAvifColorWithContainer(env, sourceBytes, sourceKey, {priority: 'background'})
+    if (repaired.reason === 'already-declared') {
+        const marked = await markChartColorDeclared(env, candidate)
+        return {status: marked ? 'replaced' : 'skipped'}
+    }
+    if (repaired.reason !== 'repaired') {
+        return {status: 'skipped'}
+    }
+
+    const dimensions = readGalleryImageDimensions(repaired.bytes, 'image/avif')
+    if (!dimensions || dimensions.width !== metadata.width || dimensions.height !== metadata.height) {
+        throw new Error(`The repaired size chart image is invalid: ${sourceKey}`)
+    }
+
+    return {status: 'ready', bytes: repaired.bytes, contentType: 'image/avif', width: dimensions.width, height: dimensions.height}
+}
+
+async function markChartColorDeclared(env: BackfillEnv, candidate: SizeChartImageBackfillCandidate): Promise<boolean> {
+    const storedChart = JSON.parse(candidate.chartJson) as Record<string, unknown>
+    const storedImage = storedChart.image as Record<string, unknown>
+    const replacementJson = JSON.stringify({
+        ...storedChart,
+        image: {...storedImage, colorDeclared: true},
+    })
+
+    const update = await env.DB.prepare(
+        `UPDATE characters
+         SET height_chart_json = ?
+         WHERE id = ?
+           AND user_id = ?
+           AND height_chart_json = ?`,
+    )
+        .bind(replacementJson, candidate.characterId, candidate.userId, candidate.chartJson)
+        .run()
+    if (Number(update.meta.changes) > 0) return true
+
+    const current = await readCurrentChart(env.DB, candidate.characterId, candidate.userId)
+    return current?.image?.key === storedImage.key && current?.image?.colorDeclared === true
 }
 
 async function publishReplacement(
@@ -246,7 +328,9 @@ async function readCurrentChart(db: D1Database, characterId: string, userId: str
 }
 
 function referencesReplacement(chart: HeightChartJson | null, targetImageKey: string): boolean {
-    return chart?.image?.key === targetImageKey && chart.image.contentType.toLowerCase() === 'image/avif'
+    return (
+        chart?.image?.key === targetImageKey && chart.image.contentType.toLowerCase() === 'image/avif' && chart.image.colorDeclared === true
+    )
 }
 
 export function sizeChartImageBackfillErrorMessage(error: unknown): string {

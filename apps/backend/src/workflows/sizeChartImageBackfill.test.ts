@@ -102,7 +102,13 @@ describe('size chart image backfill workflow', () => {
                             chartJson: JSON.stringify({
                                 version: 1,
                                 height: {meters: 1.7},
-                                image: {key: 'current', contentType: 'image/avif', naturalWidth: 100, naturalHeight: 200},
+                                image: {
+                                    key: 'current',
+                                    contentType: 'image/avif',
+                                    naturalWidth: 100,
+                                    naturalHeight: 200,
+                                    colorDeclared: true,
+                                },
                                 calibration: {headYPercent: 5, footYPercent: 95, footIsVirtual: false, nameTagXPercent: 50},
                             }),
                             targetImageKey: `target-${characterId}`,

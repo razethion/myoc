@@ -2870,7 +2870,10 @@ function parseCharacterHeightChartEditorData(
         ...chart,
         image: chart.image
             ? {
-                  ...chart.image,
+                  key: chart.image.key,
+                  contentType: chart.image.contentType,
+                  naturalWidth: chart.image.naturalWidth,
+                  naturalHeight: chart.image.naturalHeight,
                   url: characterHeightChartImageUrl(mediaBaseUrl, userId, characterId, chart.image.key, chart.image.contentType),
               }
             : null,

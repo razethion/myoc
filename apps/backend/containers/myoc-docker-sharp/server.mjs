@@ -3,7 +3,7 @@ import {createHash, randomUUID, timingSafeEqual} from 'node:crypto'
 import http from 'node:http'
 import process from 'node:process'
 import timers from 'node:timers'
-import {repairAvifColor, repairIconColor} from './avifColor.mjs'
+import {repairIconColor} from './avifColor.mjs'
 import {createAvifBlur, createAvifPreview, createGalleryAvifOutputs, createSquareAvif} from './preview.mjs'
 
 const port = Number.parseInt(process.env['PORT'] ?? '8080', 10)
@@ -62,7 +62,8 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (url.pathname === '/images/repair-color') {
-        await handleRepairColorRequest(request, response, repairAvifColor)
+        // Untagged AVIF pixels are encoded as sRGB, so declare sRGB when no profile exists.
+        await handleRepairColorRequest(request, response, repairIconColor)
         return
     }
 

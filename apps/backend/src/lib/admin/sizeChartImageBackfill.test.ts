@@ -17,29 +17,35 @@ import {
 
 const db = useTestDatabase()
 
-function chartJson(imageKey: string, contentType = 'image/png'): string {
+function chartJson(imageKey: string, contentType = 'image/png', extraImage: Record<string, unknown> = {}): string {
     return JSON.stringify({
         version: 1,
         height: {meters: 1.83},
-        image: {key: imageKey, contentType, naturalWidth: 3200, naturalHeight: 1600},
+        image: {key: imageKey, contentType, naturalWidth: 3200, naturalHeight: 1600, ...extraImage},
         calibration: {headYPercent: 7.25, footYPercent: 94.5, footIsVirtual: true, nameTagXPercent: 63},
         retainedField: 'keep-me',
     })
 }
 
-function createContainer(): Bindings['MYOC_DOCKER_SHARP_CONTAINER'] {
-    const fetch = vi.fn(async () => new Response(createAvifBytes(1600, 800), {headers: {'content-type': 'image/avif'}}))
+function createContainer(repairResponse?: Response): Bindings['MYOC_DOCKER_SHARP_CONTAINER'] {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+        if (url.endsWith('/images/repair-color')) {
+            return repairResponse ?? new Response(createAvifBytes(3200, 1600), {headers: {'content-type': 'image/avif'}})
+        }
+        return new Response(createAvifBytes(1600, 800), {headers: {'content-type': 'image/avif'}})
+    })
     return {
         idFromName: vi.fn(() => 'size-chart-container-id'),
         get: vi.fn(() => ({fetch})),
     } as unknown as Bindings['MYOC_DOCKER_SHARP_CONTAINER']
 }
 
-function backfillEnv(bucket: R2Bucket): Bindings {
+function backfillEnv(bucket: R2Bucket, repairResponse?: Response): Bindings {
     return createWorkerEnv({
         DB: db,
         MEDIA_BUCKET: bucket,
-        MYOC_DOCKER_SHARP_CONTAINER: createContainer(),
+        MYOC_DOCKER_SHARP_CONTAINER: createContainer(repairResponse),
         PREVIEW_PROCESSOR_TOKEN: 'size-chart-test-token',
     })
 }
@@ -87,21 +93,25 @@ describe('size chart image backfill', () => {
         ])
     })
 
-    it('selects only legacy size chart images', async () => {
+    it('selects legacy images and AVIF images without a declared color space', async () => {
         await seedUser({id: 'chart-owner'})
         await seedCharacter({id: 'legacy-chart', userId: 'chart-owner', heightChartJson: chartJson('legacy')})
-        await seedCharacter({id: 'avif-chart', userId: 'chart-owner', heightChartJson: chartJson('current', 'image/avif')})
+        await seedCharacter({
+            id: 'declared-avif-chart',
+            userId: 'chart-owner',
+            heightChartJson: chartJson('current', 'image/avif', {colorDeclared: true}),
+        })
+        await seedCharacter({id: 'undeclared-avif-chart', userId: 'chart-owner', heightChartJson: chartJson('old', 'image/avif')})
         await seedCharacter({
             id: 'no-chart-image',
             userId: 'chart-owner',
             heightChartJson: chartJson('none').replace(/"image":\{[^}]+}/, '"image":null'),
         })
 
-        expect(await countSizeChartImageBackfillCandidates(db)).toBe(1)
+        expect(await countSizeChartImageBackfillCandidates(db)).toBe(2)
         const candidates = await getSizeChartImageBackfillCandidates(db, null)
-        expect(candidates).toHaveLength(1)
-        expect(candidates[0]).toMatchObject({characterId: 'legacy-chart', userId: 'chart-owner', chartJson: chartJson('legacy')})
-        expect(candidates[0]?.targetImageKey).toBeTruthy()
+        expect(candidates.map((candidate) => candidate.characterId).sort()).toEqual(['legacy-chart', 'undeclared-avif-chart'])
+        expect(candidates.every((candidate) => candidate.targetImageKey)).toBe(true)
     })
 
     it('replaces a legacy image and preserves the chart calibration', async () => {
@@ -139,6 +149,105 @@ describe('size chart image backfill', () => {
                 contentType: 'image/avif',
             },
         })
+    })
+
+    it('repairs an undeclared AVIF size chart without changing its dimensions', async () => {
+        const bucket = createMockR2Bucket()
+        const userId = 'avif-repair-owner'
+        const characterId = 'avif-repair-chart'
+        const originalJson = chartJson('legacy-avif', 'image/avif')
+        const candidate: SizeChartImageBackfillCandidate = {
+            characterId,
+            userId,
+            chartJson: originalJson,
+            targetImageKey: 'repaired-image',
+        }
+        const oldObjectKey = characterHeightChartImageObjectKey(userId, characterId, 'legacy-avif', 'image/avif')
+        const targetObjectKey = characterHeightChartImageObjectKey(userId, characterId, 'repaired-image', 'image/avif')
+        await seedUser({id: userId})
+        await seedCharacter({id: characterId, userId, heightChartJson: originalJson})
+        await bucket.put(oldObjectKey, createAvifBytes(3200, 1600))
+        const repairResponse = new Response(createAvifBytes(3200, 1600), {
+            headers: {'content-type': 'image/avif', 'x-color-changed': 'true', 'x-color-reason': 'repaired'},
+        })
+
+        await expect(replaceSizeChartImage(backfillEnv(bucket, repairResponse), candidate)).resolves.toEqual({status: 'replaced'})
+
+        const stored = await queryOne<{height_chart_json: string}>('SELECT height_chart_json FROM characters WHERE id = ?', [characterId])
+        expect(JSON.parse(stored?.height_chart_json ?? 'null')).toMatchObject({
+            height: {meters: 1.83},
+            calibration: {headYPercent: 7.25, footYPercent: 94.5, footIsVirtual: true, nameTagXPercent: 63},
+            retainedField: 'keep-me',
+            image: {
+                key: 'repaired-image',
+                contentType: 'image/avif',
+                naturalWidth: 3200,
+                naturalHeight: 1600,
+                colorDeclared: true,
+            },
+        })
+        expect(await bucket.head(oldObjectKey)).toBeNull()
+        expect(await bucket.head(targetObjectKey)).not.toBeNull()
+    })
+
+    it('marks an AVIF size chart that already declares its color space', async () => {
+        const bucket = createMockR2Bucket()
+        const userId = 'avif-declared-owner'
+        const characterId = 'avif-declared-chart'
+        const originalJson = chartJson('declared-avif', 'image/avif')
+        const oldObjectKey = characterHeightChartImageObjectKey(userId, characterId, 'declared-avif', 'image/avif')
+        await seedUser({id: userId})
+        await seedCharacter({id: characterId, userId, heightChartJson: originalJson})
+        await bucket.put(oldObjectKey, createAvifBytes(3200, 1600))
+        const repairResponse = new Response(createAvifBytes(3200, 1600), {
+            headers: {'content-type': 'image/avif', 'x-color-changed': 'false', 'x-color-reason': 'already-declared'},
+        })
+
+        await expect(
+            replaceSizeChartImage(backfillEnv(bucket, repairResponse), {
+                characterId,
+                userId,
+                chartJson: originalJson,
+                targetImageKey: 'unused-image',
+            }),
+        ).resolves.toEqual({status: 'replaced'})
+
+        const stored = await queryOne<{height_chart_json: string}>('SELECT height_chart_json FROM characters WHERE id = ?', [characterId])
+        expect(JSON.parse(stored?.height_chart_json ?? 'null')).toMatchObject({
+            image: {key: 'declared-avif', contentType: 'image/avif', colorDeclared: true},
+        })
+        expect(bucket.put).toHaveBeenCalledOnce()
+        expect(await bucket.head(oldObjectKey)).not.toBeNull()
+    })
+
+    it('leaves an AVIF size chart unchanged when its color profile is unsupported', async () => {
+        const bucket = createMockR2Bucket()
+        const userId = 'avif-unsupported-owner'
+        const characterId = 'avif-unsupported-chart'
+        const originalJson = chartJson('unsupported-avif', 'image/avif')
+        const oldObjectKey = characterHeightChartImageObjectKey(userId, characterId, 'unsupported-avif', 'image/avif')
+        const targetObjectKey = characterHeightChartImageObjectKey(userId, characterId, 'unused-image', 'image/avif')
+        await seedUser({id: userId})
+        await seedCharacter({id: characterId, userId, heightChartJson: originalJson})
+        await bucket.put(oldObjectKey, createAvifBytes(3200, 1600))
+        const repairResponse = new Response(createAvifBytes(3200, 1600), {
+            headers: {'content-type': 'image/avif', 'x-color-changed': 'false', 'x-color-reason': 'unsupported-profile'},
+        })
+
+        await expect(
+            replaceSizeChartImage(backfillEnv(bucket, repairResponse), {
+                characterId,
+                userId,
+                chartJson: originalJson,
+                targetImageKey: 'unused-image',
+            }),
+        ).resolves.toEqual({status: 'skipped'})
+
+        const stored = await queryOne<{height_chart_json: string}>('SELECT height_chart_json FROM characters WHERE id = ?', [characterId])
+        expect(stored?.height_chart_json).toBe(originalJson)
+        expect(bucket.put).toHaveBeenCalledOnce()
+        expect(await bucket.head(oldObjectKey)).not.toBeNull()
+        expect(await bucket.head(targetObjectKey)).toBeNull()
     })
 
     it('keeps a concurrent user replacement and removes its unused AVIF', async () => {
@@ -190,7 +299,7 @@ describe('size chart image backfill', () => {
         const userId = 'replay-owner'
         const characterId = 'replay-chart'
         const originalJson = chartJson('legacy-image')
-        const replacementJson = chartJson('replacement-image', 'image/avif')
+        const replacementJson = chartJson('replacement-image', 'image/avif', {colorDeclared: true})
         const oldObjectKey = characterHeightChartImageObjectKey(userId, characterId, 'legacy-image', 'image/png')
         await seedUser({id: userId})
         await seedCharacter({id: characterId, userId, heightChartJson: replacementJson})
@@ -208,11 +317,11 @@ describe('size chart image backfill', () => {
         expect(await bucket.head(oldObjectKey)).toBeNull()
     })
 
-    it('skips a candidate that no longer contains a legacy image', async () => {
+    it('skips a candidate that no longer needs a replacement', async () => {
         const candidate = {
             characterId: 'skipped-chart',
             userId: 'skipped-owner',
-            chartJson: chartJson('current-image', 'image/avif'),
+            chartJson: chartJson('current-image', 'image/avif', {colorDeclared: true}),
             targetImageKey: 'unused-image',
         }
 

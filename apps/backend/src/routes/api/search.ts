@@ -288,7 +288,10 @@ function toSizeChartCharacterSearchResult(row: SizeChartCharacterSearchRow, medi
             ? {
                   ...heightChart,
                   image: {
-                      ...heightChart.image,
+                      key: heightChart.image.key,
+                      contentType: heightChart.image.contentType,
+                      naturalWidth: heightChart.image.naturalWidth,
+                      naturalHeight: heightChart.image.naturalHeight,
                       url: characterHeightChartImageUrl(
                           mediaBaseUrl,
                           row.user_id,
