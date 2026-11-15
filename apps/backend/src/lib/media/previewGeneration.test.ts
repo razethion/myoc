@@ -8,6 +8,8 @@ import {
     generateNsfwBlurImage,
     generateSquareImageWithContainer,
     mediaPreviewContainerIndex,
+    repairAvifColorWithContainer,
+    repairIconColorWithContainer,
 } from './previewGeneration'
 
 const sourceUrl = 'https://media.example.test/original.png'
@@ -359,6 +361,74 @@ describe('container image recipes', () => {
                 maxAttempts: 1,
             }),
         ).rejects.toThrow(message)
+    })
+})
+
+describe('repairAvifColorWithContainer', () => {
+    const source = createAvifBytes(3200, 1600)
+
+    it('returns repaired bytes with the container color report', async () => {
+        const response = new Response(source, {
+            headers: {'content-type': 'image/avif', 'x-color-changed': 'true', 'x-color-reason': 'repaired'},
+        })
+
+        await expect(repairAvifColorWithContainer(previewEnvironment([response]), source, 'size-chart.avif')).resolves.toEqual({
+            bytes: source,
+            changed: true,
+            reason: 'repaired',
+        })
+    })
+
+    it.each([
+        [400, 'Container AVIF color repair failed with 400'],
+        [500, 'Container AVIF color repair failed with 500'],
+    ])('rejects a %d response without retrying', async (status, message) => {
+        const fetch = vi.fn(async () => new Response(null, {status}))
+
+        await expect(
+            repairAvifColorWithContainer(previewEnvironment([], fetch), source, 'size-chart.avif', {maxAttempts: 1}),
+        ).rejects.toThrow(message)
+        expect(fetch).toHaveBeenCalledOnce()
+    })
+
+    it('reports busy when every container is at capacity', async () => {
+        const fetch = vi.fn(async () => new Response(null, {status: 429}))
+
+        await expect(
+            repairAvifColorWithContainer(previewEnvironment([], fetch), source, 'size-chart.avif', {maxAttempts: 1}),
+        ).rejects.toThrow('Container AVIF color repair failed with 429')
+        expect(fetch).toHaveBeenCalledTimes(8)
+    })
+
+    it.each([
+        ['an unexpected content type', new Response(source, {headers: {'content-type': 'image/webp'}}), 'image/webp'],
+        ['a missing content type', new Response(source), 'missing'],
+    ])('rejects %s', async (_label, response, contentType) => {
+        await expect(repairAvifColorWithContainer(previewEnvironment([response]), source, 'size-chart.avif')).rejects.toThrow(
+            `Container AVIF color repair returned an unexpected content type (${contentType})`,
+        )
+    })
+
+    it('rejects an empty image', async () => {
+        const response = new Response(null, {headers: {'content-type': 'image/avif'}})
+
+        await expect(repairAvifColorWithContainer(previewEnvironment([response]), source, 'size-chart.avif')).rejects.toThrow(
+            'Container AVIF color repair returned an empty image',
+        )
+    })
+})
+
+describe('repairIconColorWithContainer', () => {
+    it('forwards the request with and without options', async () => {
+        const source = createAvifBytes(512, 512)
+        const fetch = vi.fn(async () => new Response(source, {headers: {'content-type': 'image/avif', 'x-color-reason': 'repaired'}}))
+        const env = previewEnvironment([], fetch)
+
+        await expect(repairIconColorWithContainer(env, source, 'icon.avif')).resolves.toMatchObject({changed: false, reason: 'repaired'})
+        await expect(repairIconColorWithContainer(env, source, 'icon.avif', {priority: 'background'})).resolves.toMatchObject({
+            reason: 'repaired',
+        })
+        expect(fetch).toHaveBeenCalledTimes(2)
     })
 })
 

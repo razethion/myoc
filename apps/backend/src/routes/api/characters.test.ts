@@ -3471,6 +3471,7 @@ describe('PUT /characters/:id/height-chart', () => {
                 contentType: 'image/avif',
                 naturalWidth: 800,
                 naturalHeight: 1600,
+                colorDeclared: true,
             },
             calibration: {
                 headYPercent: 4.57,

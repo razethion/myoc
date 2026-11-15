@@ -8,6 +8,7 @@ export type HeightChartJson = {
         contentType: string
         naturalWidth: number
         naturalHeight: number
+        colorDeclared?: boolean
     } | null
     calibration: {
         headYPercent: number
@@ -56,6 +57,7 @@ function parseHeightChartImage(value: unknown): HeightChartJson['image'] {
         contentType: typeof value.contentType === 'string' ? value.contentType : 'image/png',
         naturalWidth: normalizeStoredImageDimension(value.naturalWidth),
         naturalHeight: normalizeStoredImageDimension(value.naturalHeight),
+        ...(value.colorDeclared === true ? {colorDeclared: true} : {}),
     }
 }
 

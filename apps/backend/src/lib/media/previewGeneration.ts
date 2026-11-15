@@ -43,11 +43,13 @@ export type GeneratedSquareImage = {
     contentType: typeof SQUARE_IMAGE_CONTENT_TYPE
 }
 
-export type RepairedIconColor = {
+export type RepairedAvifColor = {
     bytes: Uint8Array
     changed: boolean
     reason: string
 }
+
+export type RepairedIconColor = RepairedAvifColor
 
 export type GeneratedGalleryOutputs = {
     preview: GeneratedGalleryPreview
@@ -173,18 +175,18 @@ export async function generateSquareImageWithContainer(
     })
 }
 
-export async function repairIconColorWithContainer(
+export async function repairAvifColorWithContainer(
     env: PreviewGeneratorEnv,
     source: Uint8Array,
     routingKey: string,
     options: PreviewContainerRequestOptions = {},
-): Promise<RepairedIconColor> {
+): Promise<RepairedAvifColor> {
     if (!env.MYOC_DOCKER_SHARP_CONTAINER) {
         throw new Error('Image container binding is not configured.')
     }
 
     return await withPreviewContainerRetry(env, routingKey, options, async (container) => {
-        const response = await container.fetch('https://container/images/repair-icon-color', {
+        const response = await container.fetch('https://container/images/repair-color', {
             body: source,
             headers: {
                 authorization: `Bearer ${env.PREVIEW_PROCESSOR_TOKEN}`,
@@ -196,7 +198,7 @@ export async function repairIconColorWithContainer(
         const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() ?? ''
 
         if (!response.ok) {
-            const message = `Container icon color repair failed with ${response.status}`
+            const message = `Container AVIF color repair failed with ${response.status}`
 
             if (response.status === 429) {
                 throw new PreviewContainerBusyError(message)
@@ -211,12 +213,12 @@ export async function repairIconColorWithContainer(
 
         if (contentType !== SQUARE_IMAGE_CONTENT_TYPE) {
             throw new PreviewValidationError(
-                `Container icon color repair returned an unexpected content type (${contentType || 'missing'})`,
+                `Container AVIF color repair returned an unexpected content type (${contentType || 'missing'})`,
             )
         }
 
         if (bytes.byteLength === 0) {
-            throw new PreviewValidationError('Container icon color repair returned an empty image')
+            throw new PreviewValidationError('Container AVIF color repair returned an empty image')
         }
 
         return {
@@ -225,6 +227,15 @@ export async function repairIconColorWithContainer(
             reason: response.headers.get('x-color-reason')?.trim() || 'unknown',
         }
     })
+}
+
+export async function repairIconColorWithContainer(
+    env: PreviewGeneratorEnv,
+    source: Uint8Array,
+    routingKey: string,
+    options: PreviewContainerRequestOptions = {},
+): Promise<RepairedIconColor> {
+    return await repairAvifColorWithContainer(env, source, routingKey, options)
 }
 
 export async function generateGalleryOutputsWithContainer(

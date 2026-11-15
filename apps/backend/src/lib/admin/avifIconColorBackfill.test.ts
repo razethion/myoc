@@ -144,7 +144,7 @@ describe('AVIF icon color backfill', () => {
         await expect(repairAvifIconColorCandidate(iconEnv(bucket, fetch), candidate())).resolves.toEqual({status: 'retagged'})
 
         expect(fetch).toHaveBeenCalledOnce()
-        expect(fetch.mock.calls[0]?.[0]).toBe('https://container/images/repair-icon-color')
+        expect(fetch.mock.calls[0]?.[0]).toBe('https://container/images/repair-color')
         expect(bucket.put).toHaveBeenCalledOnce()
         expect(bucket.put).toHaveBeenCalledWith(
             key,
