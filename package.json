@@ -39,7 +39,7 @@
     "@tailwindcss/cli": "^4.3.3",
     "@vitest/coverage-istanbul": "~5.1.0",
     "daisyui": "^5.7.50",
-    "knip": "^6.40.0",
+    "knip": "^6.45.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",
     "vitest": "~5.1.0",
