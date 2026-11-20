@@ -245,6 +245,27 @@ describe('media preview queue consumer', () => {
         ])
     })
 
+    it('treats a stored candidate without an animation flag as static', async () => {
+        const {body, env} = await createQueuedTask()
+        const row = await queryOne<{candidate_json: string}>(
+            'SELECT candidate_json FROM media_preview_regeneration_items WHERE task_id = ?',
+            [body.taskId],
+        )
+        const candidate = JSON.parse(row?.candidate_json ?? '{}') as Record<string, unknown>
+        delete candidate.previousPreviewAnimated
+        await db
+            .prepare('UPDATE media_preview_regeneration_items SET candidate_json = ? WHERE task_id = ?')
+            .bind(JSON.stringify(candidate), body.taskId)
+            .run()
+        const {ack, message, retry} = createMessage(body)
+
+        await consumeImageProcessingQueue(createBatch(message), env)
+
+        expect(ack).toHaveBeenCalledOnce()
+        expect(retry).not.toHaveBeenCalled()
+        await expectCompletedJobSummary({processedVariants: 1, regeneratedPreviews: 1})
+    })
+
     it('delays a duplicate delivery while the first task lease is active', async () => {
         const {body, env} = await createQueuedTask()
         await claimMediaPreviewRegenerationTask(db, body.taskId, new Date('2026-09-04T12:00:00Z'))
