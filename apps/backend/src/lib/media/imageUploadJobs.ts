@@ -26,6 +26,7 @@ import {
     characterMediaPreviewImageObjectKey,
     characterMediaPreviewImageUrl,
     characterProfileImageObjectKey,
+    isAnimatedImageContentType,
     profilePhotoObjectKey,
 } from './url'
 
@@ -1243,7 +1244,7 @@ function galleryInsertVariant(output: GalleryTaskOutput | null): GalleryInsertVa
         }
     }
 
-    return output
+    return {...output, previewAnimated: output.previewAnimated === true}
 }
 
 function galleryPublicResult(
@@ -1314,15 +1315,18 @@ function galleryPublicVariant(baseUrl: string, job: JobRow, mediaId: string, out
             output.rating,
             output.imageContentType,
         ),
-        previewUrl: characterMediaPreviewImageUrl(
-            baseUrl,
-            job.user_id,
-            job.target_id,
-            mediaId,
-            output.previewKey,
-            output.rating,
-            GALLERY_PREVIEW_CONTENT_TYPE,
-        ),
+        previewUrl:
+            output.previewKey && (!isAnimatedImageContentType(output.imageContentType) || values.previewAnimated)
+                ? characterMediaPreviewImageUrl(
+                      baseUrl,
+                      job.user_id,
+                      job.target_id,
+                      mediaId,
+                      output.previewKey,
+                      output.rating,
+                      GALLERY_PREVIEW_CONTENT_TYPE,
+                  )
+                : null,
         blurUrl: output.blurKey
             ? characterMediaNsfwBlurImageUrl(baseUrl, job.user_id, job.target_id, mediaId, output.blurKey, GALLERY_NSFW_BLUR_CONTENT_TYPE)
             : null,

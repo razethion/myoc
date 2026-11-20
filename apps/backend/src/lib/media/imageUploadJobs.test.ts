@@ -928,6 +928,75 @@ describe('image upload jobs', () => {
         ).toEqual({sfw_preview_animated: 1, nsfw_preview_animated: 1})
     })
 
+    it('publishes a gallery pair when a ready task output has no animation flag', async () => {
+        await seedUser({id: 'user-1'})
+        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        const setup = createEnv()
+        const sources = []
+
+        for (const rating of ['sfw', 'nsfw'] as const) {
+            const objectKey = `image-staging/${characterMediaImageObjectKey(
+                'user-1',
+                'character-1',
+                'media-1',
+                `${rating}-source`,
+                rating,
+                'image/png',
+            )}`
+            const bytes = await pngBytes(100, 80)
+            await setup.sourceBucket.put(objectKey, bytes)
+            sources.push({
+                rating,
+                objectKey,
+                contentType: 'image/png',
+                byteSize: bytes.byteLength,
+                width: 100,
+                height: 80,
+                displayWidth: 100,
+                displayHeight: 80,
+            })
+        }
+
+        const job = await createGalleryImageUploadJob(setup.env, {
+            userId: 'user-1',
+            characterId: 'character-1',
+            mediaId: 'media-1',
+            idempotencyKey: 'gallery-legacy-output',
+            sfwArtist: 'Artist A',
+            nsfwArtist: 'Artist B',
+            sources,
+            now,
+        })
+        const queued = queuedMessages(setup.lanes)
+        const first = queued[0]
+        const second = queued[1]
+        if (!first || !second) throw new Error('Expected two queued gallery tasks')
+
+        await consumeQueued(setup.env, first)
+        const task = await queryOne<{output_json: string}>(
+            `SELECT output_json FROM image_processing_tasks WHERE job_id = ? AND state = 'ready'`,
+            [job.id],
+            db,
+        )
+        const output = JSON.parse(task?.output_json ?? '{}') as Record<string, unknown>
+        delete output.previewAnimated
+        await db
+            .prepare(`UPDATE image_processing_tasks SET output_json = ? WHERE job_id = ? AND state = 'ready'`)
+            .bind(JSON.stringify(output), job.id)
+            .run()
+
+        await consumeQueued(setup.env, second)
+
+        expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({state: 'ready'})
+        expect(
+            await queryOne<{sfw_preview_animated: number; nsfw_preview_animated: number}>(
+                'SELECT sfw_preview_animated, nsfw_preview_animated FROM character_media WHERE id = ?',
+                ['media-1'],
+                db,
+            ),
+        ).toEqual({sfw_preview_animated: 0, nsfw_preview_animated: 0})
+    })
+
     it('publishes a non-PNG gallery source without PNG tagging', async () => {
         await seedUser({id: 'user-1'})
         await seedCharacter({id: 'character-1', userId: 'user-1'})
