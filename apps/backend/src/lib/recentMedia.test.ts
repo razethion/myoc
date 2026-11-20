@@ -80,6 +80,47 @@ describe('recent media direct query', () => {
         expect(unapprovedPage.items.map((item) => item.id)).toEqual(['approved-media', 'pending-media', 'changed-after-approval'])
     })
 
+    it('uses the original GIF until its preview is animated', async () => {
+        await seedFeedOwner()
+        await seedMedia({
+            id: 'static-gif',
+            userId: 'user-1',
+            characterId: 'character-1',
+            sfwContentType: 'image/gif',
+            sfwPreviewImageKey: 'static-preview',
+            sfwPreviewContentType: 'image/avif',
+            sfwPreviewAnimated: false,
+            sfwReviewStatus: 'approved',
+            sfwApprovedAt: '2026-08-25 12:00:00',
+            createdAt: '2026-08-25 12:00:00',
+            updatedAt: '2026-08-25 12:00:00',
+        })
+        await seedMedia({
+            id: 'animated-gif',
+            userId: 'user-1',
+            characterId: 'character-1',
+            sfwContentType: 'image/gif',
+            sfwPreviewImageKey: 'animated-preview',
+            sfwPreviewContentType: 'image/avif',
+            sfwPreviewAnimated: true,
+            sfwReviewStatus: 'approved',
+            sfwApprovedAt: '2026-08-25 11:00:00',
+            createdAt: '2026-08-25 11:00:00',
+            updatedAt: '2026-08-25 11:00:00',
+        })
+
+        const page = await getRecentMediaPage(env, {showNsfw: false, showUnapproved: false})
+        const staticGif = page.items.find((item) => item.id === 'static-gif')
+        const animatedGif = page.items.find((item) => item.id === 'animated-gif')
+
+        expect(staticGif?.previewSrc).toBe(
+            'https://media.example.com/characters/user-1/character-1/media/static-gif/sfw/static-gif-sfw.gif',
+        )
+        expect(animatedGif?.previewSrc).toBe(
+            'https://media.example.com/characters/user-1/character-1/media/animated-gif/sfw/preview/animated-preview.avif',
+        )
+    })
+
     it('selects the requested eligible variant and returns presentation details', async () => {
         await seedUser({id: 'user-1', username: 'owner_name', profilePhotoKey: 'profile-photo'})
         await seedCharacter({id: 'character-1', userId: 'user-1', name: 'Hero Rival', profileImageKey: 'character-profile'})
