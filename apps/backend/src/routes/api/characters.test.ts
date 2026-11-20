@@ -172,6 +172,7 @@ async function expectStoredSfwMedia(
         sfw_byte_size: number
         sfw_preview_width: number
         sfw_preview_height: number
+        sfw_preview_animated: number
     }>,
 ): Promise<void> {
     expect(
@@ -182,9 +183,10 @@ async function expectStoredSfwMedia(
             sfw_byte_size: number
             sfw_preview_width: number
             sfw_preview_height: number
+            sfw_preview_animated: number
         }>(
             `SELECT sfw_content_type, sfw_width, sfw_height, sfw_byte_size,
-                    sfw_preview_width, sfw_preview_height
+                    sfw_preview_width, sfw_preview_height, sfw_preview_animated
              FROM character_media WHERE id = ?`,
             [mediaId],
             db,
@@ -5642,6 +5644,7 @@ describe('character media uploads', () => {
             media: {
                 sfwContentType: string
                 sfwImageUrl: string
+                sfwPreviewImageUrl: string | null
                 sfwWidth: number
                 sfwHeight: number
                 sfwByteSize: number
@@ -5650,6 +5653,7 @@ describe('character media uploads', () => {
             }
         }
         expect(body.media.sfwContentType).toBe('image/gif')
+        expect(body.media.sfwPreviewImageUrl).toBeNull()
         expect(body.media.sfwImageUrl).toBe(
             `${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/sfw/${initBody.uploads.sfw.imageKey}.gif`,
         )
@@ -5663,7 +5667,104 @@ describe('character media uploads', () => {
             sfw_width: 320,
             sfw_height: 240,
             sfw_byte_size: gifFile.size,
+            sfw_preview_animated: 0,
         })
+    })
+
+    it('stores an animated GIF preview and returns its preview URL', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await initChunkedMedia(
+            character.id,
+            {
+                uploads: [{rating: 'sfw', contentType: 'image/gif'}],
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+        )
+        expect(initResponse.status).toBe(200)
+        const initBody = (await initResponse.json()) as {
+            mediaId: string
+            uploads: {
+                sfw: {
+                    uploadId: string
+                    imageKey: string
+                    contentType: string
+                }
+            }
+        }
+        const gifFile = createGifFile(320, 240)
+        const partResponse = await putChunkedMediaPart(
+            character.id,
+            initBody.mediaId,
+            'sfw',
+            initBody.uploads.sfw.uploadId,
+            1,
+            initBody.uploads.sfw.imageKey,
+            gifFile,
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+            },
+            'image/gif',
+        )
+        expect(partResponse.status).toBe(200)
+        const uploadedPart = (await partResponse.json()) as R2UploadedPart
+        const previewContainer = createMockPreviewContainer(
+            new Response(createAvifBytes(320, 240), {
+                headers: {'content-type': 'image/avif', 'x-preview-animated': 'true'},
+            }),
+        ).namespace
+
+        const completeResponse = await completeChunkedMedia(
+            character.id,
+            {
+                mediaId: initBody.mediaId,
+                sfwUpload: {
+                    uploadId: initBody.uploads.sfw.uploadId,
+                    imageKey: initBody.uploads.sfw.imageKey,
+                    contentType: 'image/gif',
+                    parts: [uploadedPart],
+                },
+                sfwPreview: createPreviewPayload(320, 240),
+            },
+            db,
+            {
+                mediaBucket,
+                sessionToken,
+                csrfToken,
+                previewContainer,
+            },
+        )
+
+        expect(completeResponse.status).toBe(201)
+        const body = (await completeResponse.json()) as {
+            media: {
+                sfwPreviewImageKey: string
+                sfwPreviewImageUrl: string
+            }
+        }
+        expect(body.media.sfwPreviewImageUrl).toBe(
+            `${mediaPublicBaseUrl}/characters/current-user/character-id/media/${initBody.mediaId}/sfw/preview/${body.media.sfwPreviewImageKey}.avif`,
+        )
+        expect(
+            await queryOne<{sfw_preview_animated: number}>(
+                'SELECT sfw_preview_animated FROM character_media WHERE id = ?',
+                [initBody.mediaId],
+                db,
+            ),
+        ).toEqual({sfw_preview_animated: 1})
     })
 
     it.each([
