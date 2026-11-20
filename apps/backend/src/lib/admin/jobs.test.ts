@@ -254,6 +254,32 @@ describe('GIF preview backfill jobs', () => {
             params: {onlyGif: true, onlyInvalid: false, runId: result.runId},
         })
     })
+
+    it('closes a stopped GIF preview workflow before it starts a replacement', async () => {
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (
+                    id, job_name, trigger_source, status, started_at, summary_json
+                ) VALUES (?, 'gif-preview-backfill', 'manual', 'running', ?, ?)`,
+            )
+            .bind('stopped-gif-run', '2026-01-01 00:00:00', JSON.stringify(emptyRegenerationSummary()))
+            .run()
+        const workflow = createMockWorkflowBinding({'stopped-gif-run': 'terminated'})
+
+        const result = await runAdminJob(thumbnailJobEnv(workflow), 'gif-preview-backfill', {triggerSource: 'manual'})
+        const stopped = await queryOne<{status: string; error_message: string | null}>(
+            'SELECT status, error_message FROM admin_job_runs WHERE id = ?',
+            ['stopped-gif-run'],
+        )
+
+        expect(result).toMatchObject({jobName: 'gif-preview-backfill', status: 'running'})
+        expect(result.runId).not.toBe('stopped-gif-run')
+        expect(stopped).toEqual({
+            status: 'error',
+            error_message: 'The GIF preview backfill Workflow stopped before the job record finished.',
+        })
+        expect(workflow.create).toHaveBeenCalledOnce()
+    })
 })
 
 describe('size chart image backfill jobs', () => {
