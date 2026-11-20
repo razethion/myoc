@@ -69,6 +69,43 @@ describe('AdminOptionsPage', () => {
         expect(html).toContain('Last error: One source image is missing.')
     })
 
+    it('renders GIF preview backfill progress', () => {
+        const html = renderAdminOptionsPage({
+            jobs: [{name: 'gif-preview-backfill', label: 'GIF Preview Backfill'}] as unknown as AdminOptionsData['jobs'],
+            runs: [
+                {
+                    id: 'gif-preview-run',
+                    jobName: 'gif-preview-backfill',
+                    label: 'GIF Preview Backfill',
+                    triggerSource: 'manual',
+                    triggeredByUserId: 'admin-user',
+                    triggeredByUsername: 'admin_user',
+                    cron: null,
+                    status: 'running',
+                    startedAt: '2026-11-19 12:00:00',
+                    finishedAt: null,
+                    durationMs: null,
+                    summary: {
+                        totalVariants: 4,
+                        processedVariants: 2,
+                        regeneratedPreviews: 2,
+                        regeneratedBlurs: 0,
+                        skippedVariants: 0,
+                        failedVariants: 0,
+                        lastError: null,
+                    },
+                    errorMessage: null,
+                },
+            ],
+            errors: [],
+        })
+
+        expect(html).toContain('action="/admin/admin-options/jobs/gif-preview-backfill/run"')
+        expect(html).toContain('Run GIF Preview Backfill')
+        expect(html).toContain('2 of 4 variants processed')
+        expect(html).toContain('2 previews')
+    })
+
     it('renders a safe fallback for incomplete size chart progress', () => {
         const html = renderSizeChartSummary({status: 'building'} as unknown as AdminJobSummary)
 

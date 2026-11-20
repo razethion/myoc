@@ -232,6 +232,28 @@ describe('getAdminOptionsData', () => {
 
         expect(data.jobs).toContainEqual({name: 'size-chart-image-backfill', label: 'Size Chart Image Backfill'})
     })
+
+    it('includes the GIF preview backfill job', async () => {
+        const data = await getAdminOptionsData(db)
+
+        expect(data.jobs).toContainEqual({name: 'gif-preview-backfill', label: 'GIF Preview Backfill'})
+    })
+})
+
+describe('GIF preview backfill jobs', () => {
+    it('starts one workflow with the GIF filter', async () => {
+        const workflow = createMockWorkflowBinding()
+        const result = await runAdminJob(thumbnailJobEnv(workflow), 'gif-preview-backfill', {
+            onlyInvalid: false,
+            triggerSource: 'manual',
+        })
+
+        expect(result).toMatchObject({jobName: 'gif-preview-backfill', status: 'running'})
+        expect(workflow.create).toHaveBeenCalledWith({
+            id: result.runId,
+            params: {onlyGif: true, onlyInvalid: false, runId: result.runId},
+        })
+    })
 })
 
 describe('size chart image backfill jobs', () => {
