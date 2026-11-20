@@ -68,6 +68,16 @@ test('parses frame count from nb_frames', () => {
     assert.deepEqual(parseGifProbe(probeJson({frames: 7})), {frames: 7, height: 200, width: 300})
 })
 
+test('parses frame count from nb_read_frames', () => {
+    const probe = parseGifProbe(
+        JSON.stringify({
+            streams: [{codec_type: 'video', height: 200, nb_read_frames: '12', width: 300}],
+        }),
+    )
+
+    assert.deepEqual(probe, {frames: 12, height: 200, width: 300})
+})
+
 test('rejects a probe without a video stream', () => {
     assert.throws(() => parseGifProbe(JSON.stringify({streams: []})), /no video stream/)
 })
@@ -177,4 +187,20 @@ test('maps both streams for a transparent GIF', async () => {
     assert.ok(encodeCall)
     assert.equal(encodeCall.args.includes('[a]'), true)
     assert.equal(encodeCall.args.includes('-filter_complex'), true)
+})
+
+test('maps the color stream for an opaque GIF', async () => {
+    const fake = fakeExec({outputSizes: [2048]})
+
+    await createAnimatedAvifPreview(gifBytes(), {
+        execFile: fake.run,
+        maxBytes: 4096,
+        maxLongEdge: 1600,
+    })
+
+    const encodeCall = fake.calls.find((call) => call.command === 'ffmpeg' && !call.args.includes('rawvideo'))
+    assert.ok(encodeCall)
+    assert.equal(encodeCall.args.includes('[c]'), true)
+    assert.equal(encodeCall.args.includes('-filter_complex'), true)
+    assert.equal(encodeCall.args.includes('-vf'), false)
 })

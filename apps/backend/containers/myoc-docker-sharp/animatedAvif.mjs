@@ -54,7 +54,7 @@ export function parseGifProbe(json) {
     return {
         width: Number.parseInt(video.width ?? '0', 10),
         height: Number.parseInt(video.height ?? '0', 10),
-        frames: Number.parseInt(video.tags?.count_frames ?? video.nb_frames ?? '0', 10),
+        frames: Number.parseInt(video.tags?.count_frames ?? video.nb_read_frames ?? video.nb_frames ?? '0', 10),
     }
 }
 
@@ -132,10 +132,14 @@ export async function createAnimatedAvifPreview(sourceBytes, options) {
 }
 
 async function probeGif(inputPath, run) {
-    const {stdout} = await run('ffprobe', ['-v', 'quiet', '-print_format', 'json', '-show_streams', '-show_format', inputPath], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: ANIMATED_AVIF_PROBE_TIMEOUT_MS,
-    })
+    const {stdout} = await run(
+        'ffprobe',
+        ['-v', 'quiet', '-print_format', 'json', '-show_streams', '-show_format', '-count_frames', inputPath],
+        {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            timeout: ANIMATED_AVIF_PROBE_TIMEOUT_MS,
+        },
+    )
 
     return parseGifProbe(stdout)
 }
@@ -206,8 +210,10 @@ async function encodeAnimatedAvif(inputPath, outputPath, dimensions, crf, transp
               '-y',
               '-i',
               inputPath,
-              '-vf',
-              graph,
+              '-filter_complex',
+              `${graph}[c]`,
+              '-map',
+              '[c]',
               '-c:v',
               'libaom-av1',
               '-crf',
