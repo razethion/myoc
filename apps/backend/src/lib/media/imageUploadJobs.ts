@@ -932,6 +932,7 @@ async function processGalleryTask(
         previewWidth: generated.preview.width,
         previewHeight: generated.preview.height,
         previewByteSize: generated.preview.bytes.byteLength,
+        previewAnimated: generated.preview.animated,
         blurKey,
         blurObjectKey,
     }
@@ -992,6 +993,7 @@ type GalleryTaskOutput = {
     previewWidth: number
     previewHeight: number
     previewByteSize: number
+    previewAnimated: boolean
     blurKey: string | null
     blurObjectKey: string | null
 }
@@ -1105,11 +1107,12 @@ async function publishGalleryJobIfReady(env: Bindings, jobId: string, now: Date)
                  id, user_id, character_id, sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type,
                  sfw_artist, nsfw_artist, sfw_width, sfw_height, sfw_byte_size,
                  sfw_preview_image_key, sfw_preview_content_type, sfw_preview_width, sfw_preview_height, sfw_preview_byte_size,
+                 sfw_preview_animated,
                  nsfw_width, nsfw_height, nsfw_byte_size, nsfw_preview_image_key, nsfw_preview_content_type,
-                 nsfw_preview_width, nsfw_preview_height, nsfw_preview_byte_size,
+                 nsfw_preview_width, nsfw_preview_height, nsfw_preview_byte_size, nsfw_preview_animated,
                  nsfw_blur_image_key, nsfw_blur_content_type, created_at, updated_at
              )
-             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
              WHERE EXISTS (
                  SELECT 1 FROM image_upload_jobs
                  WHERE id = ? AND generation = ? AND state IN ('queued', 'processing', 'waiting_for_sources')
@@ -1138,6 +1141,7 @@ async function publishGalleryJobIfReady(env: Bindings, jobId: string, now: Date)
             sfwInsert.previewWidth,
             sfwInsert.previewHeight,
             sfwInsert.previewByteSize,
+            Number(sfwInsert.previewAnimated),
             nsfwInsert.width,
             nsfwInsert.height,
             nsfwInsert.byteSize,
@@ -1146,6 +1150,7 @@ async function publishGalleryJobIfReady(env: Bindings, jobId: string, now: Date)
             nsfwInsert.previewWidth,
             nsfwInsert.previewHeight,
             nsfwInsert.previewByteSize,
+            Number(nsfwInsert.previewAnimated),
             nsfwInsert.blurKey,
             GALLERY_NSFW_BLUR_CONTENT_TYPE,
             nowText,
@@ -1217,6 +1222,7 @@ type GalleryInsertVariant = {
     previewWidth: number | null
     previewHeight: number | null
     previewByteSize: number | null
+    previewAnimated: boolean
     blurKey: string | null
 }
 
@@ -1232,6 +1238,7 @@ function galleryInsertVariant(output: GalleryTaskOutput | null): GalleryInsertVa
             previewWidth: null,
             previewHeight: null,
             previewByteSize: null,
+            previewAnimated: false,
             blurKey: null,
         }
     }

@@ -28,7 +28,18 @@ describe('generateMediaPreviewWithContainer', () => {
             {width: 800, height: 1600, displayWidth: 2400, displayHeight: 1200},
         )
 
-        expect(result).toEqual({bytes, contentType: 'image/avif', width: 1600, height: 800})
+        expect(result).toEqual({animated: false, bytes, contentType: 'image/avif', width: 1600, height: 800})
+    })
+
+    it('reports an animated preview from the container header', async () => {
+        const bytes = createAvifBytes(100, 80)
+        const result = await generateMediaPreviewWithContainer(
+            previewEnvironment([new Response(bytes, {headers: {'content-type': 'image/avif', 'x-preview-animated': 'true'}})]),
+            sourceUrl,
+            {width: 100, height: 80},
+        )
+
+        expect(result.animated).toBe(true)
     })
 
     it('accepts previews within one pixel of the source dimensions', async () => {
@@ -216,7 +227,7 @@ describe('generateHeightChartImageWithContainer', () => {
             'height-chart',
         )
 
-        expect(result).toEqual({bytes, contentType: 'image/avif', width: 800, height: 1600})
+        expect(result).toEqual({animated: false, bytes, contentType: 'image/avif', width: 800, height: 1600})
         expect(fetch).toHaveBeenCalledWith('https://container/images/height-chart', expect.any(Object))
     })
 
@@ -308,6 +319,15 @@ describe('container image recipes', () => {
         await expect(generateGalleryOutputsWithContainer(env, source, {width: 100, height: 80}, false, 'gallery')).rejects.toThrow(
             'Image container binding is not configured.',
         )
+    })
+
+    it('reports an animated gallery preview from the container header', async () => {
+        const preview = createAvifBytes(100, 80)
+        const response = combinedGalleryResponse(preview, new Uint8Array(), true)
+
+        await expect(
+            generateGalleryOutputsWithContainer(previewEnvironment([response]), source, {width: 100, height: 80}, false, 'gallery'),
+        ).resolves.toMatchObject({preview: {animated: true, height: 80, width: 100}})
     })
 
     it('rejects a square container output with the wrong dimensions', async () => {
@@ -442,12 +462,16 @@ function paddedAvifBytes(width: number, height: number, byteLength: number): Uin
     return bytes
 }
 
-function combinedGalleryResponse(preview: Uint8Array, blur: Uint8Array): Response {
+function combinedGalleryResponse(preview: Uint8Array, blur: Uint8Array, animated = false): Response {
     const bytes = new Uint8Array(preview.byteLength + blur.byteLength)
     bytes.set(preview)
     bytes.set(blur, preview.byteLength)
     return new Response(bytes, {
-        headers: {'x-preview-length': String(preview.byteLength), 'x-blur-length': String(blur.byteLength)},
+        headers: {
+            'x-preview-length': String(preview.byteLength),
+            'x-blur-length': String(blur.byteLength),
+            ...(animated ? {'x-preview-animated': 'true'} : {}),
+        },
     })
 }
 

@@ -27,6 +27,7 @@ export type PreviewSourceImage = {
 }
 
 export type GeneratedGalleryPreview = {
+    animated: boolean
     bytes: Uint8Array
     contentType: typeof GALLERY_PREVIEW_CONTENT_TYPE
     width: number
@@ -274,7 +275,13 @@ export async function generateGalleryOutputsWithContainer(
 
         const previewBytes = bytes.slice(0, previewLength)
         const preview = await previewFromResponse(
-            new Response(previewBytes, {status: 200, headers: {'content-type': GALLERY_PREVIEW_CONTENT_TYPE}}),
+            new Response(previewBytes, {
+                status: 200,
+                headers: {
+                    'content-type': GALLERY_PREVIEW_CONTENT_TYPE,
+                    'x-preview-animated': response.headers.get('x-preview-animated') ?? 'false',
+                },
+            }),
             sourceImage,
             'Container preview',
         )
@@ -423,6 +430,7 @@ async function previewFromResponse(response: Response, image: PreviewSourceImage
     }
 
     const preview = {
+        animated: response.headers.get('x-preview-animated') === 'true',
         bytes,
         contentType: GALLERY_PREVIEW_CONTENT_TYPE,
         width: dimensions.width,
