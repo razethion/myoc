@@ -81,6 +81,17 @@ describe('generateMediaPreviewWithContainer', () => {
         ).rejects.toThrow(message)
     })
 
+    it('accepts an animated preview within the global byte cap', async () => {
+        const bytes = paddedAvifBytes(100, 80, 40_000)
+        const response = new Response(bytes, {
+            headers: {'content-type': 'image/avif', 'x-preview-animated': 'true'},
+        })
+
+        await expect(
+            generateMediaPreviewWithContainer(previewEnvironment([response]), sourceUrl, {width: 100, height: 80}),
+        ).resolves.toMatchObject({animated: true, height: 80, width: 100})
+    })
+
     it('does not retry a permanent container response error', async () => {
         const fetch = vi.fn(async () => new Response(null, {status: 400}))
 

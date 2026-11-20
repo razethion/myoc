@@ -439,7 +439,8 @@ async function previewFromResponse(response: Response, image: PreviewSourceImage
 
     assertPreviewMatchesOriginal(preview, image, label)
 
-    if (bytes.byteLength > maxPreviewByteSize(preview.width, preview.height)) {
+    const maxBytes = preview.animated ? maxAnimatedPreviewByteSize() : maxPreviewByteSize(preview.width, preview.height)
+    if (bytes.byteLength > maxBytes) {
         throw new PreviewValidationError(`${label} is too large for its dimensions`)
     }
 
@@ -509,6 +510,10 @@ function expectedBlurDimensions(preview: Pick<GeneratedGalleryPreview, 'height' 
 
 function maxPreviewByteSize(width: number, height: number): number {
     return width * height * GALLERY_PREVIEW_MAX_BYTES_PER_PIXEL + GALLERY_PREVIEW_MAX_CONTAINER_OVERHEAD_BYTES
+}
+
+function maxAnimatedPreviewByteSize(): number {
+    return GALLERY_PREVIEW_MAX_PIXELS * GALLERY_PREVIEW_MAX_BYTES_PER_PIXEL + GALLERY_PREVIEW_MAX_CONTAINER_OVERHEAD_BYTES
 }
 
 function readPositiveHeader(response: Response, name: string): number {
