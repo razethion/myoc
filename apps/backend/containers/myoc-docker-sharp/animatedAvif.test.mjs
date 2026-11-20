@@ -22,7 +22,7 @@ function probeJson({frames = 3, height = 200, width = 300} = {}) {
     })
 }
 
-function fakeExec({frames = 3, height = 2000, outputSizes = [1024], transparent = false, width = 3000} = {}) {
+function fakeExec({alphaBytes, frames = 3, height = 2000, outputSizes = [1024], transparent = false, width = 3000} = {}) {
     const calls = []
     let encodeIndex = 0
 
@@ -34,7 +34,10 @@ function fakeExec({frames = 3, height = 2000, outputSizes = [1024], transparent 
         }
 
         if (args.includes('rawvideo')) {
-            return {stderr: '', stdout: Buffer.from([transparent ? 0 : 255])}
+            const bytes = alphaBytes ?? [transparent ? 0 : 255]
+            const limitIndex = args.indexOf('-frames:v')
+            const limit = limitIndex >= 0 ? Number(args[limitIndex + 1]) : bytes.length
+            return {stderr: '', stdout: Buffer.from(bytes.slice(0, limit))}
         }
 
         const outputPath = args.at(-1)
@@ -176,6 +179,21 @@ test('throws when both encodes exceed the size limit', async () => {
 
 test('maps both streams for a transparent GIF', async () => {
     const fake = fakeExec({outputSizes: [2048], transparent: true})
+
+    await createAnimatedAvifPreview(gifBytes(), {
+        execFile: fake.run,
+        maxBytes: 4096,
+        maxLongEdge: 1600,
+    })
+
+    const encodeCall = fake.calls.find((call) => call.command === 'ffmpeg' && !call.args.includes('rawvideo'))
+    assert.ok(encodeCall)
+    assert.equal(encodeCall.args.includes('[a]'), true)
+    assert.equal(encodeCall.args.includes('-filter_complex'), true)
+})
+
+test('detects transparency that appears after the first 30 frames', async () => {
+    const fake = fakeExec({alphaBytes: [...Array(30).fill(255), 0], outputSizes: [2048]})
 
     await createAnimatedAvifPreview(gifBytes(), {
         execFile: fake.run,

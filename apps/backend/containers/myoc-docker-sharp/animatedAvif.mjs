@@ -14,7 +14,7 @@ const ANIMATED_AVIF_CPU_USED = 6
 const ANIMATED_AVIF_TIMEOUT_MS = 300_000
 const ANIMATED_AVIF_PROBE_TIMEOUT_MS = 30_000
 const ANIMATED_AVIF_TRANSPARENCY_PROBE_WIDTH = 64
-const ANIMATED_AVIF_TRANSPARENCY_PROBE_FRAMES = 30
+const ANIMATED_AVIF_TRANSPARENCY_PROBE_MAX_BYTES = 16 * 1024 * 1024
 
 // swscale converts RGB to YUV with BT.601 coefficients when the source has no
 // colour metadata. Tagging that output BT.709 shifts hues. Force the matrix the
@@ -82,7 +82,7 @@ export function buildAnimatedFilterGraph(width, height, transparent) {
         return color
     }
 
-    const alpha = `[0:v]alphaextract,scale=${width}:${height}:flags=lanczos,format=gray,setparams=${ALPHA_PARAMS}`
+    const alpha = `[0:v]format=rgba,alphaextract,scale=${width}:${height}:flags=lanczos,format=gray,setparams=${ALPHA_PARAMS}`
     return `${color}[c];${alpha}[a]`
 }
 
@@ -153,14 +153,17 @@ async function detectTransparency(inputPath, run) {
                 '-i',
                 inputPath,
                 '-filter_complex',
-                `alphaextract,format=gray,scale=${ANIMATED_AVIF_TRANSPARENCY_PROBE_WIDTH}:${ANIMATED_AVIF_TRANSPARENCY_PROBE_WIDTH}`,
-                '-frames:v',
-                String(ANIMATED_AVIF_TRANSPARENCY_PROBE_FRAMES),
+                `format=rgba,alphaextract,format=gray,scale=${ANIMATED_AVIF_TRANSPARENCY_PROBE_WIDTH}:${ANIMATED_AVIF_TRANSPARENCY_PROBE_WIDTH}`,
                 '-f',
                 'rawvideo',
                 '-',
             ],
-            {encoding: 'buffer', stdio: ['ignore', 'pipe', 'pipe'], timeout: ANIMATED_AVIF_PROBE_TIMEOUT_MS},
+            {
+                encoding: 'buffer',
+                maxBuffer: ANIMATED_AVIF_TRANSPARENCY_PROBE_MAX_BYTES,
+                stdio: ['ignore', 'pipe', 'pipe'],
+                timeout: ANIMATED_AVIF_PROBE_TIMEOUT_MS,
+            },
         )
 
         for (const value of stdout) {
@@ -171,7 +174,9 @@ async function detectTransparency(inputPath, run) {
 
         return false
     } catch {
-        return false
+        // A failed probe must not drop alpha. Encode with alpha unless the
+        // complete animation proves every frame is opaque.
+        return true
     }
 }
 
