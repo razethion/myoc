@@ -11,7 +11,6 @@ export type MediaPreviewRegenerationCandidate = {
     imageContentType: string
     previousPreviewKey: string | null
     previousPreviewContentType: string
-    previousPreviewAnimated: boolean
     previousBlurKey: string | null
     previousBlurContentType: string
     targetPreviewKey: string

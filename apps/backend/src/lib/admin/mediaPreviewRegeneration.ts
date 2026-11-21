@@ -658,7 +658,6 @@ function toCandidate(row: CandidateRow): MediaPreviewRegenerationCandidate[] {
             imageContentType: row.image_content_type ?? 'image/png',
             previousPreviewKey: row.preview_key,
             previousPreviewContentType: row.preview_content_type,
-            previousPreviewAnimated: row.preview_animated === 1,
             previousBlurKey: row.blur_key,
             previousBlurContentType: row.blur_content_type,
             targetPreviewKey: crypto.randomUUID(),

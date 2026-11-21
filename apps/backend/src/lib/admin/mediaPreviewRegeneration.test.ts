@@ -266,9 +266,6 @@ describe('media preview regeneration', () => {
             ['gif-missing-preview', 'sfw'],
             ['gif-static', 'sfw'],
         ])
-        expect(candidates.find((candidate) => candidate.mediaId === 'gif-static')).toMatchObject({
-            previousPreviewAnimated: false,
-        })
 
         const runId = crypto.randomUUID()
         await db

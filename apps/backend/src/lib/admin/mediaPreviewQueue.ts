@@ -31,10 +31,6 @@ const MediaPreviewRegenerationCandidateSchema = z
         imageContentType: z.string().min(1),
         previousPreviewKey: z.string().nullable(),
         previousPreviewContentType: z.string().min(1),
-        previousPreviewAnimated: z
-            .boolean()
-            .nullish()
-            .transform((value) => value ?? false),
         previousBlurKey: z.string().nullable(),
         previousBlurContentType: z.string().min(1),
         targetPreviewKey: z.string().min(1),
