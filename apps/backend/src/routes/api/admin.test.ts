@@ -354,7 +354,7 @@ describe('POST /admin/admin-options/jobs/:jobName/run', () => {
         expect(workflow.create).toHaveBeenCalledOnce()
         expect(workflow.create).toHaveBeenCalledWith({
             id: firstBody.run.runId,
-            params: {runId: firstBody.run.runId, onlyInvalid: false},
+            params: {runId: firstBody.run.runId, onlyInvalid: false, onlyGif: false},
         })
         expect(runs).toEqual([{id: firstBody.run.runId, triggered_by_user_id: currentUserId, status: 'running'}])
     })

@@ -48,6 +48,10 @@ const ADMIN_JOBS = [
         label: 'Media Preview Regeneration',
     },
     {
+        name: 'gif-preview-backfill',
+        label: 'GIF Preview Backfill',
+    },
+    {
         name: 'thumbnail-regeneration',
         label: 'Thumbnail Regeneration',
     },
@@ -199,6 +203,10 @@ export async function runAdminJob(env: AdminJobEnv, jobName: AdminJobName, optio
         return await startMediaPreviewRegenerationJob(env, options)
     }
 
+    if (jobName === 'gif-preview-backfill') {
+        return await startGifPreviewBackfillJob(env, options)
+    }
+
     if (jobName === 'thumbnail-regeneration') {
         return await startThumbnailRegenerationJob(env, options)
     }
@@ -288,6 +296,13 @@ async function startMediaPreviewRegenerationJob(
     options: AdminJobRunOptions,
 ): Promise<AdminJobRunResult<MediaPreviewRegenerationSummary>> {
     return await startRegenerationWorkflowJob(env, 'media-preview-regeneration', options, 'media-previews')
+}
+
+async function startGifPreviewBackfillJob(
+    env: AdminJobEnv,
+    options: AdminJobRunOptions,
+): Promise<AdminJobRunResult<MediaPreviewRegenerationSummary>> {
+    return await startRegenerationWorkflowJob(env, 'gif-preview-backfill', options, 'media-previews', true)
 }
 
 async function startSizeChartImageBackfillJob(
@@ -425,9 +440,10 @@ async function isBackfillWorkflowActive(
 
 async function startRegenerationWorkflowJob(
     env: AdminJobEnv,
-    jobName: 'media-preview-regeneration' | 'thumbnail-regeneration',
+    jobName: 'media-preview-regeneration' | 'thumbnail-regeneration' | 'gif-preview-backfill',
     options: AdminJobRunOptions,
     kind: 'media-previews' | 'thumbnails',
+    onlyGif = false,
 ): Promise<AdminJobRunResult<MediaPreviewRegenerationSummary>> {
     const summary = emptyMediaPreviewRegenerationSummary()
     let started = await startExclusiveAdminJobRun(env.DB, jobName, options, summary, parseMediaPreviewRegenerationSummary)
@@ -451,7 +467,12 @@ async function startRegenerationWorkflowJob(
             }
         }
 
-        const label = kind === 'thumbnails' ? 'thumbnail regeneration' : 'preview regeneration'
+        const label =
+            kind === 'thumbnails'
+                ? 'thumbnail regeneration'
+                : jobName === 'gif-preview-backfill'
+                  ? 'GIF preview backfill'
+                  : 'preview regeneration'
         await failAdminJobRun(env.DB, started.runId, `The ${label} Workflow stopped before the job record finished.`)
         started = await startExclusiveAdminJobRun(env.DB, jobName, options, summary, parseMediaPreviewRegenerationSummary)
 
@@ -471,7 +492,7 @@ async function startRegenerationWorkflowJob(
             params:
                 kind === 'thumbnails'
                     ? ({kind, runId: started.runId} satisfies RegenerateMediaPreviewsWorkflowParams)
-                    : ({runId: started.runId, onlyInvalid: options.onlyInvalid} satisfies RegenerateMediaPreviewsWorkflowParams),
+                    : ({runId: started.runId, onlyInvalid: options.onlyInvalid, onlyGif} satisfies RegenerateMediaPreviewsWorkflowParams),
         })
     } catch (error) {
         await tryFinishAdminJobRun(env.DB, started.runId, 'error', null, errorMessage(error))
@@ -546,7 +567,7 @@ async function startExclusiveAdminJobRun<TSummary extends AdminJobSummary>(
 async function isMediaPreviewWorkflowActive(
     db: D1Database,
     workflow: Bindings['REGENERATE_MEDIA_PREVIEWS_WORKFLOW'],
-    jobName: 'media-preview-regeneration' | 'thumbnail-regeneration',
+    jobName: 'media-preview-regeneration' | 'thumbnail-regeneration' | 'gif-preview-backfill',
     runId: string,
     startedAt: string,
     summary: MediaPreviewRegenerationSummary,

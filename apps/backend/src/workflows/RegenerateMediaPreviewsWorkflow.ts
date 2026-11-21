@@ -20,6 +20,7 @@ import {runThumbnailRegenerationWorkflow, type ThumbnailRegenerationWorkflowPara
 type MediaPreviewRegenerationWorkflowParams = {
     kind?: 'media-previews'
     onlyInvalid?: boolean
+    onlyGif?: boolean
     runId: string
     continuation?: {
         cursor: MediaPreviewRegenerationCursor
@@ -85,7 +86,7 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
 
         if (!continuation) {
             await step.do('initialize job', D1_STEP_CONFIG, async () => {
-                return await initializeMediaPreviewRegenerationDispatch(this.env.DB, runId, params.onlyInvalid)
+                return await initializeMediaPreviewRegenerationDispatch(this.env.DB, runId, params.onlyInvalid, params.onlyGif)
             })
         }
 
@@ -95,7 +96,7 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
 
         for (let batchNumber = 1; batchNumber <= MEDIA_PREVIEW_REGENERATION_BATCHES_PER_WORKFLOW; batchNumber += 1) {
             const candidates = await step.do(`load batch ${batchNumber}`, D1_STEP_CONFIG, async () => {
-                return await getMediaPreviewRegenerationCandidates(this.env.DB, cursor, params.onlyInvalid)
+                return await getMediaPreviewRegenerationCandidates(this.env.DB, cursor, params.onlyInvalid, params.onlyGif)
             })
 
             if (candidates.length === 0) {
@@ -146,6 +147,7 @@ export class RegenerateMediaPreviewsWorkflow extends WorkflowEntrypoint<Bindings
                     params: {
                         runId,
                         onlyInvalid: params.onlyInvalid,
+                        onlyGif: params.onlyGif,
                         continuation: {
                             cursor: continuationCursor,
                             queuedVariants,

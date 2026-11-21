@@ -223,6 +223,43 @@ describe('RegenerateMediaPreviewsWorkflow', () => {
         expect(tasks.map((task) => task.media_id)).not.toContain('workflow-media-0001')
     })
 
+    it('keeps the GIF filter across workflow continuations', async () => {
+        const runId = crypto.randomUUID()
+        await seedJob(runId)
+        await seedSfwMedia(201)
+        await db
+            .prepare(
+                `UPDATE character_media
+                 SET sfw_content_type = 'image/gif',
+                     sfw_preview_image_key = 'gif-preview',
+                     sfw_preview_content_type = 'image/avif',
+                     sfw_preview_animated = 0`,
+            )
+            .run()
+        await db.prepare("UPDATE character_media SET sfw_preview_animated = 1 WHERE id = 'workflow-media-0001'").run()
+
+        const first = await runWorkflow({runId, onlyGif: true})
+        expect(first.queue.bodies).toHaveLength(200)
+        expect(first.createBatch).toHaveBeenCalledWith([
+            {
+                id: `${runId}-segment-1`,
+                params: {
+                    runId,
+                    onlyGif: true,
+                    continuation: {cursor: {mediaId: 'workflow-media-0201', ratingOrder: 0}, queuedVariants: 200, segment: 1},
+                },
+            },
+        ])
+
+        const continuation = await runWorkflow({
+            runId,
+            onlyGif: true,
+            continuation: {cursor: {mediaId: 'workflow-media-0201', ratingOrder: 0}, queuedVariants: 200, segment: 1},
+        })
+        expect(continuation.queue.bodies).toHaveLength(0)
+        expect(continuation.output).toEqual({queuedVariants: 200})
+    })
+
     it('records a job-level dispatch failure', async () => {
         const runId = crypto.randomUUID()
         const failureMessage = 'x'.repeat(2_001)

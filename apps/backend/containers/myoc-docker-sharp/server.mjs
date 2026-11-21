@@ -9,6 +9,7 @@ import {createAvifBlur, createAvifPreview, createGalleryAvifOutputs, createSquar
 const port = Number.parseInt(process.env['PORT'] ?? '8080', 10)
 const previewLongEdge = parsePositiveInteger(process.env['PREVIEW_MAX_LONG_EDGE'], 1600)
 const previewQuality = clamp(parsePositiveInteger(process.env['PREVIEW_AVIF_QUALITY'], 60), 1, 100)
+const previewMaxBytes = previewLongEdge * previewLongEdge * 4 + 4096
 const heightChartLongEdge = parsePositiveInteger(process.env['HEIGHT_CHART_MAX_LONG_EDGE'], 1600)
 const heightChartQuality = clamp(parsePositiveInteger(process.env['HEIGHT_CHART_AVIF_QUALITY'], 75), 1, 100)
 const blurMaxWidth = parsePositiveInteger(process.env['BLUR_MAX_WIDTH'], 960)
@@ -197,12 +198,14 @@ async function handleGalleryRequest(request, response, url) {
     try {
         const sourceBytes = await readRequestBytes(request, sourceImageMaxBytes)
         const result = await createGalleryAvifOutputs(sourceBytes, {
+            animatedPreviews: true,
             blur: url.searchParams.get('blur') === '1',
             blurMaxWidth,
             blurQuality,
             blurSigma,
             limitInputPixels: sourceLimitInputPixels,
             maxLongEdge: previewLongEdge,
+            previewMaxBytes,
             previewQuality,
         })
         const body = result.blur ? Buffer.concat([result.preview.bytes, result.blur.bytes]) : result.preview.bytes
@@ -210,6 +213,7 @@ async function handleGalleryRequest(request, response, url) {
             'cache-control': 'no-store',
             'content-length': Buffer.byteLength(body),
             'content-type': 'application/octet-stream',
+            'x-preview-animated': result.preview.animated ? 'true' : 'false',
             'x-preview-height': result.preview.height,
             'x-preview-length': Buffer.byteLength(result.preview.bytes),
             'x-preview-width': result.preview.width,
@@ -224,6 +228,7 @@ async function handleGalleryRequest(request, response, url) {
         console.log('Image container processed gallery image', {
             blurBytes: result.blur ? Buffer.byteLength(result.blur.bytes) : 0,
             durationMs: Date.now() - startedAt,
+            previewAnimated: result.preview.animated,
             previewBytes: Buffer.byteLength(result.preview.bytes),
             requestId,
             sourceBytes: Buffer.byteLength(sourceBytes),
@@ -253,7 +258,9 @@ async function handleHeightChartRequest(request, response) {
     try {
         const sourceBytes = await readRequestBytes(request, sourceImageMaxBytes)
         const result = await createAvifPreview(sourceBytes, {
+            animatedPreviews: false,
             limitInputPixels: sourceLimitInputPixels,
+            maxBytes: previewMaxBytes,
             maxLongEdge: heightChartLongEdge,
             quality: heightChartQuality,
         })
@@ -338,7 +345,9 @@ async function handlePreviewRequest(request, response) {
     try {
         const sourceBytes = await fetchImageBytes(imageUrl)
         const result = await createAvifPreview(sourceBytes, {
+            animatedPreviews: true,
             limitInputPixels: sourceLimitInputPixels,
+            maxBytes: previewMaxBytes,
             maxLongEdge: previewLongEdge,
             quality: previewQuality,
         })
@@ -357,6 +366,7 @@ async function handlePreviewRequest(request, response) {
             'cache-control': 'no-store',
             'content-length': Buffer.byteLength(result.bytes),
             'content-type': 'image/avif',
+            'x-preview-animated': result.animated ? 'true' : 'false',
             'x-preview-height': result.height,
             'x-preview-width': result.width,
         })

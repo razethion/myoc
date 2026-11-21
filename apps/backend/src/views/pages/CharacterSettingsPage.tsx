@@ -1,6 +1,11 @@
 import type {CurrentUser} from '../../lib/auth/session'
 import {GALLERY_CHUNK_SIZE, GALLERY_MAX_IMAGES_PER_ROW} from '../../lib/gallery'
-import {characterMediaImageUrl, characterMediaPreviewImageUrl, characterProfileImageUrl} from '../../lib/media/url'
+import {
+    characterMediaImageUrl,
+    characterMediaPreviewImageUrl,
+    characterProfileImageUrl,
+    isAnimatedImageContentType,
+} from '../../lib/media/url'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 import {PROFILE_CROPPER_BROWSER_HELPERS} from '../profileCropperScript'
@@ -20,8 +25,10 @@ export type CharacterSettingsMedia = {
     nsfwImageKey: string | null
     sfwPreviewImageKey: string | null
     sfwPreviewContentType: string
+    sfwPreviewAnimated: boolean
     nsfwPreviewImageKey: string | null
     nsfwPreviewContentType: string
+    nsfwPreviewAnimated: boolean
     nsfwBlurImageKey: string | null
     nsfwBlurContentType: string
     sfwContentType: string | null
@@ -66,17 +73,18 @@ function mediaWithUrls(mediaBaseUrl: string, character: CharacterSettingsCharact
         sfwImageUrl: media.sfwImageKey
             ? characterMediaImageUrl(mediaBaseUrl, character.userId, character.id, media.id, media.sfwImageKey, 'sfw', media.sfwContentType)
             : null,
-        sfwPreviewImageUrl: media.sfwPreviewImageKey
-            ? characterMediaPreviewImageUrl(
-                  mediaBaseUrl,
-                  character.userId,
-                  character.id,
-                  media.id,
-                  media.sfwPreviewImageKey,
-                  'sfw',
-                  media.sfwPreviewContentType,
-              )
-            : null,
+        sfwPreviewImageUrl:
+            media.sfwPreviewImageKey && (!isAnimatedImageContentType(media.sfwContentType) || media.sfwPreviewAnimated)
+                ? characterMediaPreviewImageUrl(
+                      mediaBaseUrl,
+                      character.userId,
+                      character.id,
+                      media.id,
+                      media.sfwPreviewImageKey,
+                      'sfw',
+                      media.sfwPreviewContentType,
+                  )
+                : null,
         nsfwImageUrl: media.nsfwImageKey
             ? characterMediaImageUrl(
                   mediaBaseUrl,
@@ -88,17 +96,18 @@ function mediaWithUrls(mediaBaseUrl: string, character: CharacterSettingsCharact
                   media.nsfwContentType,
               )
             : null,
-        nsfwPreviewImageUrl: media.nsfwPreviewImageKey
-            ? characterMediaPreviewImageUrl(
-                  mediaBaseUrl,
-                  character.userId,
-                  character.id,
-                  media.id,
-                  media.nsfwPreviewImageKey,
-                  'nsfw',
-                  media.nsfwPreviewContentType,
-              )
-            : null,
+        nsfwPreviewImageUrl:
+            media.nsfwPreviewImageKey && (!isAnimatedImageContentType(media.nsfwContentType) || media.nsfwPreviewAnimated)
+                ? characterMediaPreviewImageUrl(
+                      mediaBaseUrl,
+                      character.userId,
+                      character.id,
+                      media.id,
+                      media.nsfwPreviewImageKey,
+                      'nsfw',
+                      media.nsfwPreviewContentType,
+                  )
+                : null,
     }
 }
 
