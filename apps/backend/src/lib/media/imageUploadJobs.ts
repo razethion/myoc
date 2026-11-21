@@ -33,7 +33,9 @@ import {
 const IMAGE_UPLOAD_DEADLINE_MS = 15 * 60 * 1_000
 const IMAGE_FAILED_GALLERY_RETRY_RETENTION_MS = 24 * 60 * 60 * 1_000
 const IMAGE_UPLOAD_RECONCILE_LIMIT = 50
-const IMAGE_TASK_LEASE_MS = 2 * 60 * 1_000
+// Animated AVIF previews can run two 300-second encode passes. Keep the lease
+// longer than the worst case so reconciliation does not requeue a live task.
+const IMAGE_TASK_LEASE_MS = 12 * 60 * 1_000
 const IMAGE_TASK_MAX_SHARP_ATTEMPTS = 3
 const IMAGE_TASK_STALE_MS = 2 * 60 * 1_000
 const IMAGE_CLEANUP_GRACE_MS = 60 * 60 * 1_000
@@ -881,6 +883,10 @@ async function processGalleryTask(
         return await handleTaskProcessingError(env.DB, task, leaseId, error, now, startedAt)
     }
 
+    if (!(await taskLeaseIsHeld(env.DB, task.id, leaseId))) {
+        return 'ack'
+    }
+
     const imageKey = fileStem(task.source_key)
     const previewKey = crypto.randomUUID()
     const blurKey = task.source_rating === 'nsfw' ? crypto.randomUUID() : null
@@ -968,7 +974,10 @@ async function processGalleryTask(
     ])
 
     if ((results as [D1Result, D1Result])[1].meta.changes === 0) {
-        await env.MEDIA_BUCKET.delete([imageObjectKey, previewObjectKey])
+        // The image key is shared by retries of the same source. A winning
+        // attempt may have published it, so delete only the attempt-unique
+        // preview and blur objects.
+        await env.MEDIA_BUCKET.delete(previewObjectKey)
         if (blurObjectKey) await env.MEDIA_BUCKET.delete(blurObjectKey)
         return 'ack'
     }
@@ -1393,6 +1402,19 @@ function galleryMediaId(task: TaskRow): string {
 function fileStem(key: string): string {
     const file = key.slice(key.lastIndexOf('/') + 1)
     return file.replace(/\.[^.]+$/, '')
+}
+
+async function taskLeaseIsHeld(db: D1Database, taskId: string, leaseId: string): Promise<boolean> {
+    const row = await db
+        .prepare(
+            `SELECT 1 AS held
+             FROM image_processing_tasks
+             WHERE id = ? AND lease_id = ? AND state = 'processing'`,
+        )
+        .bind(taskId, leaseId)
+        .first<{held: number}>()
+
+    return row?.held === 1
 }
 
 function successfulSourceCleanupStatement(db: D1Database, jobId: string, generation: number, now: Date): D1PreparedStatement {

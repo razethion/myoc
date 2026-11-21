@@ -1334,6 +1334,40 @@ describe('image upload jobs', () => {
         expect(await queryAll<{id: string}>('SELECT id FROM character_media', [], db)).toEqual([])
     })
 
+    it.each(['sfw', 'nsfw'] as const)('keeps the shared %s gallery image when a stale attempt loses the publish race', async (rating) => {
+        await seedUser({id: 'user-1'})
+        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        const setup = createEnv(async (request) => galleryResponse(new URL(request.url).searchParams.get('blur') === '1'))
+        const created = await createSingleGalleryJob(setup, rating)
+
+        await db
+            .prepare(
+                `CREATE TRIGGER revoke_gallery_lease AFTER INSERT ON image_processing_attempts
+                 BEGIN
+                     UPDATE image_processing_tasks
+                     SET state = 'queued', lease_id = NULL, lease_expires_at = NULL
+                     WHERE id = NEW.task_id;
+                 END`,
+            )
+            .run()
+
+        try {
+            const delivery = await consumeQueued(setup.env, created.queued)
+
+            expect(delivery.ack).toHaveBeenCalledOnce()
+            expect(delivery.retry).not.toHaveBeenCalled()
+            expect(await getImageUploadStatus(db, 'user-1', created.job.id)).toMatchObject({state: 'waiting'})
+            expect(await queryAll<{id: string}>('SELECT id FROM character_media', [], db)).toEqual([])
+
+            const keys = (await setup.mediaBucket.list()).objects.map((object) => object.key)
+            expect(keys).toContain(created.sourceKey)
+            expect(keys).toHaveLength(2)
+            expect(keys.find((key) => key !== created.sourceKey)).toContain('media-1')
+        } finally {
+            await db.prepare('DROP TRIGGER IF EXISTS revoke_gallery_lease').run()
+        }
+    })
+
     it('queues gallery outputs for cleanup when cancel wins the publish race', async () => {
         await seedUser({id: 'user-1'})
         await seedCharacter({id: 'character-1', userId: 'user-1'})
