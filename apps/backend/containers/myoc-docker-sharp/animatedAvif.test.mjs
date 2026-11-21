@@ -33,11 +33,12 @@ function fakeExec({alphaBytes, frames = 3, height = 2000, outputSizes = [1024], 
             return {stderr: '', stdout: probeJson({frames, height, width})}
         }
 
-        if (args.includes('rawvideo')) {
-            const bytes = alphaBytes ?? [transparent ? 0 : 255]
-            const limitIndex = args.indexOf('-frames:v')
-            const limit = limitIndex >= 0 ? Number(args[limitIndex + 1]) : bytes.length
-            return {stderr: '', stdout: Buffer.from(bytes.slice(0, limit))}
+        if (args.some((arg) => arg.includes('signalstats'))) {
+            const values = alphaBytes ?? [transparent ? 0 : 255]
+            return {
+                stderr: '',
+                stdout: values.map((value) => `lavfi.signalstats.YMIN=${value}`).join('\n'),
+            }
         }
 
         const outputPath = args.at(-1)
@@ -142,7 +143,7 @@ test('encodes an animated GIF within the size limit', async () => {
     })
 
     assert.deepEqual(result, {bytes: Buffer.alloc(2048), height: 1066, width: 1600})
-    const encodeCalls = fake.calls.filter((call) => call.command === 'ffmpeg' && !call.args.includes('rawvideo'))
+    const encodeCalls = fake.calls.filter((call) => call.command === 'ffmpeg' && call.args.includes('libaom-av1'))
     assert.equal(encodeCalls.length, 1)
     assert.equal(encodeCalls[0].args.includes(String(ANIMATED_AVIF_CRF)), true)
     assert.equal(encodeCalls[0].args.includes('-usage'), true)
@@ -159,7 +160,7 @@ test('retries at the fallback CRF when the first encode is too large', async () 
     })
 
     assert.deepEqual(result, {bytes: Buffer.alloc(2048), height: 1066, width: 1600})
-    const encodeCalls = fake.calls.filter((call) => call.command === 'ffmpeg' && !call.args.includes('rawvideo'))
+    const encodeCalls = fake.calls.filter((call) => call.command === 'ffmpeg' && call.args.includes('libaom-av1'))
     assert.equal(encodeCalls.length, 2)
     assert.equal(encodeCalls[1].args.includes(String(ANIMATED_AVIF_FALLBACK_CRF)), true)
 })
@@ -186,7 +187,7 @@ test('maps both streams for a transparent GIF', async () => {
         maxLongEdge: 1600,
     })
 
-    const encodeCall = fake.calls.find((call) => call.command === 'ffmpeg' && !call.args.includes('rawvideo'))
+    const encodeCall = fake.calls.find((call) => call.command === 'ffmpeg' && call.args.includes('libaom-av1'))
     assert.ok(encodeCall)
     assert.equal(encodeCall.args.includes('[a]'), true)
     assert.equal(encodeCall.args.includes('-filter_complex'), true)
@@ -201,10 +202,31 @@ test('detects transparency that appears after the first 30 frames', async () => 
         maxLongEdge: 1600,
     })
 
-    const encodeCall = fake.calls.find((call) => call.command === 'ffmpeg' && !call.args.includes('rawvideo'))
+    const encodeCall = fake.calls.find((call) => call.command === 'ffmpeg' && call.args.includes('libaom-av1'))
     assert.ok(encodeCall)
     assert.equal(encodeCall.args.includes('[a]'), true)
     assert.equal(encodeCall.args.includes('-filter_complex'), true)
+})
+
+test('probes every frame at full resolution for transparency', async () => {
+    const fake = fakeExec({alphaBytes: [...Array(30).fill(255), 0], outputSizes: [2048]})
+
+    await createAnimatedAvifPreview(gifBytes(), {
+        execFile: fake.run,
+        maxBytes: 4096,
+        maxLongEdge: 1600,
+    })
+
+    const probeCall = fake.calls.find((call) => call.command === 'ffmpeg' && call.args.some((arg) => arg.includes('signalstats')))
+    assert.ok(probeCall)
+    assert.equal(
+        probeCall.args.some((arg) => arg.includes('metadata=print:file=-')),
+        true,
+    )
+    assert.equal(
+        probeCall.args.some((arg) => arg.includes('scale=')),
+        false,
+    )
 })
 
 test('maps the color stream for an opaque GIF', async () => {
@@ -216,7 +238,7 @@ test('maps the color stream for an opaque GIF', async () => {
         maxLongEdge: 1600,
     })
 
-    const encodeCall = fake.calls.find((call) => call.command === 'ffmpeg' && !call.args.includes('rawvideo'))
+    const encodeCall = fake.calls.find((call) => call.command === 'ffmpeg' && call.args.includes('libaom-av1'))
     assert.ok(encodeCall)
     assert.equal(encodeCall.args.includes('[c]'), true)
     assert.equal(encodeCall.args.includes('-filter_complex'), true)

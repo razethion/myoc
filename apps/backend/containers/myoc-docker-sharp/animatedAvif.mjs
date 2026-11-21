@@ -13,7 +13,6 @@ export const ANIMATED_AVIF_FALLBACK_CRF = 12
 const ANIMATED_AVIF_CPU_USED = 6
 const ANIMATED_AVIF_TIMEOUT_MS = 300_000
 const ANIMATED_AVIF_PROBE_TIMEOUT_MS = 30_000
-const ANIMATED_AVIF_TRANSPARENCY_PROBE_WIDTH = 64
 const ANIMATED_AVIF_TRANSPARENCY_PROBE_MAX_BYTES = 16 * 1024 * 1024
 
 // swscale converts RGB to YUV with BT.601 coefficients when the source has no
@@ -150,32 +149,39 @@ async function detectTransparency(inputPath, run) {
             'ffmpeg',
             [
                 '-nostdin',
+                '-v',
+                'error',
                 '-i',
                 inputPath,
                 '-filter_complex',
-                `format=rgba,alphaextract,format=gray,scale=${ANIMATED_AVIF_TRANSPARENCY_PROBE_WIDTH}:${ANIMATED_AVIF_TRANSPARENCY_PROBE_WIDTH}`,
+                'format=rgba,alphaextract,signalstats,metadata=print:file=-',
                 '-f',
-                'rawvideo',
+                'null',
                 '-',
             ],
             {
-                encoding: 'buffer',
+                encoding: 'utf8',
                 maxBuffer: ANIMATED_AVIF_TRANSPARENCY_PROBE_MAX_BYTES,
                 stdio: ['ignore', 'pipe', 'pipe'],
                 timeout: ANIMATED_AVIF_PROBE_TIMEOUT_MS,
             },
         )
 
-        for (const value of stdout) {
-            if (value < 255) {
+        for (const line of stdout.split('\n')) {
+            const match = /^lavfi\.signalstats\.YMIN=(.+)$/.exec(line.trim())
+
+            if (match && Number(match[1]) < 255) {
                 return true
             }
         }
 
         return false
-    } catch {
+    } catch (error) {
         // A failed probe must not drop alpha. Encode with alpha unless the
         // complete animation proves every frame is opaque.
+        console.warn('Alpha probe failed; preserving alpha', {
+            error: error instanceof Error ? error.message : String(error),
+        })
         return true
     }
 }
