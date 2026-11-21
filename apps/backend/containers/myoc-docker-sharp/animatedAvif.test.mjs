@@ -92,12 +92,14 @@ test('scales animated previews to the long edge and rounds to even', () => {
     assert.deepEqual(scaleAnimatedDimensions(1, 1, 1600), {height: 2, width: 2})
 })
 
-test('builds an opaque filter graph with the BT.709 matrix', () => {
+test('builds an opaque filter graph with full-range BT.601 color', () => {
     const graph = buildAnimatedFilterGraph(1600, 1066, false)
 
-    assert.match(graph, /scale=1600:1066:flags=lanczos:out_color_matrix=bt709:out_range=tv/)
+    assert.match(graph, /scale=1600:1066:flags=lanczos:out_color_matrix=smpte170m:out_range=pc/)
     assert.match(graph, /format=yuv420p/)
-    assert.match(graph, /setparams=colorspace=bt709/)
+    assert.match(graph, /setparams=colorspace=smpte170m/)
+    assert.match(graph, /color_trc=iec61966-2-1/)
+    assert.match(graph, /range=pc/)
     assert.doesNotMatch(graph, /alphaextract/)
 })
 

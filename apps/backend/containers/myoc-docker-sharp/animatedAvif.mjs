@@ -15,11 +15,11 @@ const ANIMATED_AVIF_TIMEOUT_MS = 300_000
 const ANIMATED_AVIF_PROBE_TIMEOUT_MS = 30_000
 const ANIMATED_AVIF_TRANSPARENCY_PROBE_MAX_BYTES = 16 * 1024 * 1024
 
-// swscale converts RGB to YUV with BT.601 coefficients when the source has no
-// colour metadata. Tagging that output BT.709 shifts hues. Force the matrix the
-// tag claims.
-const RGB_TO_YUV = 'out_color_matrix=bt709:out_range=tv'
-const COLOR_PARAMS = 'colorspace=bt709:color_primaries=bt709:color_trc=iec61966-2-1'
+// The static preview path tags sRGB content as full-range BT.601 (matrix 6).
+// Use the same matrix and range here so animated previews match it. Limited
+// range darkens the image and shifts neutral colors toward magenta.
+const RGB_TO_YUV = 'out_color_matrix=smpte170m:out_range=pc'
+const COLOR_PARAMS = 'colorspace=smpte170m:color_primaries=bt709:color_trc=iec61966-2-1:range=pc'
 // Alpha is coverage, not colour. Tagging it BT.709 invites decoders to apply a
 // transfer curve to the plane.
 const ALPHA_PARAMS = 'colorspace=unknown:color_primaries=unknown:color_trc=unknown'
