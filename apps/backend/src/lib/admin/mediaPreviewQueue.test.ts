@@ -245,7 +245,7 @@ describe('media preview queue consumer', () => {
         ])
     })
 
-    it('treats a stored candidate without an animation flag as static', async () => {
+    it('accepts a stored candidate without an animation flag', async () => {
         const {body, env} = await createQueuedTask()
         const row = await queryOne<{candidate_json: string}>(
             'SELECT candidate_json FROM media_preview_regeneration_items WHERE task_id = ?',
