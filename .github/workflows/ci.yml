@@ -228,10 +228,12 @@ jobs:
           cp apps/backend/containers/myoc-docker-sharp/Dockerfile "$artifact_root/container/Dockerfile"
           cp apps/backend/containers/myoc-docker-sharp/package.json "$artifact_root/container/package.json"
           cp apps/backend/containers/myoc-docker-sharp/package-lock.json "$artifact_root/container/package-lock.json"
-          cp apps/backend/containers/myoc-docker-sharp/avifColor.mjs "$artifact_root/container/avifColor.mjs"
-          cp apps/backend/containers/myoc-docker-sharp/animatedAvif.mjs "$artifact_root/container/animatedAvif.mjs"
-          cp apps/backend/containers/myoc-docker-sharp/preview.mjs "$artifact_root/container/preview.mjs"
-          cp apps/backend/containers/myoc-docker-sharp/server.mjs "$artifact_root/container/server.mjs"
+          for module in apps/backend/containers/myoc-docker-sharp/*.mjs; do
+            case "$module" in
+              *.test.mjs) continue ;;
+            esac
+            cp "$module" "$artifact_root/container/"
+          done
           cp -R apps/web/.svelte-kit/cloudflare "$artifact_root/web/cloudflare"
           cp "$build_root/web/_worker.js" "$artifact_root/web/cloudflare/_worker.js"
           printf '%s\n' "$HEAD_SHA" > "$artifact_root/commit.txt"
