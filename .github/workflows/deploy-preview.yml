@@ -307,7 +307,9 @@ jobs:
                   return is_directory
               if is_directory:
                   return name in {'container', 'migrations', 'public', 'seeds', 'web', 'worker'} or name.startswith(('migrations/', 'public/', 'web/'))
-              return name in required_files or name.startswith(('migrations/', 'public/', 'web/'))
+              if name in required_files or name.startswith(('migrations/', 'public/', 'web/')):
+                  return True
+              return name.startswith('container/') and name.endswith('.mjs')
 
           seen = set()
           total_size = 0
