@@ -2,14 +2,39 @@
 -- The column-level UNIQUE constraint on users.username is case-sensitive,
 -- so accounts like "Raz" and "raz" could both exist and impersonate each other.
 
--- Collapse existing case-insensitive duplicates before creating the unique
--- index so the migration succeeds on databases that already contain
+-- Resolve existing case-insensitive duplicates before creating the unique
+-- index, so the migration succeeds on databases that already contain
 -- collisions. The oldest account per case-insensitive name keeps its username.
--- Every newer duplicate is renamed to "<name prefix>_<first 8 chars of id>",
--- which stays within the username CHECK constraints (23 + 1 + 8 = 32) and
--- cannot collide with another renamed row because user ids are unique.
+-- Every newer duplicate is renamed to "<name prefix>_<id hex>", using the
+-- shortest id suffix length that produces a free name. Availability is
+-- checked case-insensitively against every existing username. SQLite updates
+-- rows one at a time, so each rename also sees earlier renames in this
+-- statement and cannot collide with another replacement. Suffix lengths run
+-- from 8 to 27 characters, so the result always stays within the 32-character
+-- username limit. If no candidate is free, the subquery returns NULL and the
+-- NOT NULL constraint aborts the migration instead of writing a colliding
+-- name.
 UPDATE users
-SET username = substr(username, 1, 23) || '_' || substr(id, 1, 8)
+SET username = (
+    SELECT substr(users.username, 1, 31 - suffix.n) || '_' || substr(replace(users.id, '-', ''), 1, suffix.n)
+    FROM (
+        WITH RECURSIVE suffix_lengths(n) AS (
+            SELECT 8
+            UNION ALL
+            SELECT n + 1 FROM suffix_lengths WHERE n < 27
+        )
+        SELECT n FROM suffix_lengths
+    ) AS suffix
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM users AS taken
+        WHERE lower(taken.username) = lower(
+            substr(users.username, 1, 31 - suffix.n) || '_' || substr(replace(users.id, '-', ''), 1, suffix.n)
+        )
+    )
+    ORDER BY suffix.n
+    LIMIT 1
+)
 WHERE EXISTS (
     SELECT 1
     FROM users AS older
