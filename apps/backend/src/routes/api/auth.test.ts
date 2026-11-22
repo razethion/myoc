@@ -678,6 +678,20 @@ describe('POST /register/passkey/options', () => {
         })
     })
 
+    it('returns 409 when the username differs only by case from an existing username', async () => {
+        await seedUser({id: 'existing-user', email: 'existing@example.com', username: 'existinguser'})
+
+        const response = await postPasskeyRegistrationOptions({
+            email: 'new@example.com',
+            username: 'ExistingUser',
+        })
+
+        expect(response.status).toBe(409)
+        expect(await response.json()).toEqual({
+            error: 'Email or username is already in use',
+        })
+    })
+
     it('creates a passkey registration challenge for a new account', async () => {
         const response = await postPasskeyRegistrationOptions({
             email: ' Test@Example.com ',

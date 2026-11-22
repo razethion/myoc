@@ -660,7 +660,7 @@ async function enforceAvailableRegistrationIdentity(c: AuthRouteContext, email: 
         `SELECT id
          FROM users
          WHERE lower(email) = lower(?)
-            OR username = ?
+            OR lower(username) = lower(?)
          LIMIT 1`,
     )
         .bind(email, username)

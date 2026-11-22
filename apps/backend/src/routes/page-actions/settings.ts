@@ -262,7 +262,7 @@ async function hasConflictingUser(db: D1Database, email: string, username: strin
             `SELECT id
              FROM users
              WHERE (lower(email) = lower(?)
-                 OR username = ?)
+                 OR lower(username) = lower(?))
                AND id <> ?
              LIMIT 1`,
         )

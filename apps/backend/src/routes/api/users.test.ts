@@ -382,6 +382,24 @@ describe('POST /register', () => {
         })
     })
 
+    it('returns 409 when the username differs only by case from an existing username', async () => {
+        await seedUser({id: 'existing-user', email: 'existing@example.com', username: 'testuser'}, db)
+
+        const response = await postUser(
+            {
+                email: 'new@example.com',
+                username: 'TestUser',
+                password: 'password123',
+            },
+            db,
+        )
+
+        expect(response.status).toBe(409)
+        expect(await response.json()).toEqual({
+            error: 'Email or username is already in use',
+        })
+    })
+
     it('returns 409 when the insert hits a unique constraint', async () => {
         const response = await withFailingTrigger(
             {
@@ -666,6 +684,54 @@ describe('POST /settings', () => {
         expect(response.status).toBe(409)
         expect(await response.json()).toEqual({
             error: 'Email or username is already in use',
+        })
+    })
+
+    it('returns 409 when the updated username differs only by case from another user', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser({}, sessionToken)
+        await seedUser({id: 'other-user', email: 'other@example.com', username: 'takenuser'}, db)
+
+        const response = await postCurrentUserSettings(
+            {
+                email: 'old@example.com',
+                username: 'TAKENUSER',
+                bio: 'Updated bio',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(409)
+        expect(await response.json()).toEqual({
+            error: 'Email or username is already in use',
+        })
+    })
+
+    it('allows the current user to change only the case of their username', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser({username: 'caseuser'}, sessionToken)
+
+        const response = await postCurrentUserSettings(
+            {
+                email: 'old@example.com',
+                username: 'CaseUser',
+                bio: 'Old bio',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ok: true})
+        expect(await queryOne<{username: string}>('SELECT username FROM users WHERE id = ?', [currentUser.id], db)).toEqual({
+            username: 'CaseUser',
         })
     })
 
