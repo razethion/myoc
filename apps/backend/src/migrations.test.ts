@@ -5,10 +5,12 @@ import {queryAll} from './test/d1'
 
 const testDb = env.DB
 const migrations = (env as typeof env & {TEST_MIGRATIONS: D1Migration[]}).TEST_MIGRATIONS
-const finalMigration = migrations.at(-1)
+const nocaseMigrationName = '0037_enforce_case_insensitive_usernames'
+const nocaseMigrationIndex = migrations.findIndex((migration) => migration.name.includes(nocaseMigrationName))
+const nocaseMigration = migrations[nocaseMigrationIndex]
 
-if (!finalMigration) {
-    throw new Error('Expected TEST_MIGRATIONS to contain the case-insensitive username migration')
+if (!nocaseMigration) {
+    throw new Error(`Expected TEST_MIGRATIONS to contain ${nocaseMigrationName}`)
 }
 
 function insertUser(id: string, username: string, createdAt: string): D1PreparedStatement {
@@ -30,9 +32,7 @@ describe('migration 0037_enforce_case_insensitive_usernames', () => {
     })
 
     it('renames case-insensitive duplicates and blocks new ones', async () => {
-        expect(finalMigration.name).toContain('0037_enforce_case_insensitive_usernames')
-
-        await applyD1Migrations(testDb, migrations.slice(0, -1))
+        await applyD1Migrations(testDb, migrations.slice(0, nocaseMigrationIndex))
 
         await testDb.batch([
             insertUser('aaaaaaaa-0000-4000-8000-000000000000', 'Raz', '2026-01-01 00:00:00'),
@@ -41,7 +41,7 @@ describe('migration 0037_enforce_case_insensitive_usernames', () => {
             insertUser('dddddddd-0000-4000-8000-000000000000', 'someone', '2026-01-15 00:00:00'),
         ])
 
-        await applyD1Migrations(testDb, [finalMigration])
+        await applyD1Migrations(testDb, [nocaseMigration])
 
         // The oldest account keeps its username. Newer duplicates are renamed to
         // "<name prefix>_<id hex>" using the shortest free suffix.
@@ -60,7 +60,7 @@ describe('migration 0037_enforce_case_insensitive_usernames', () => {
     })
 
     it('extends the suffix when the replacement name already exists in another case', async () => {
-        await applyD1Migrations(testDb, migrations.slice(0, -1))
+        await applyD1Migrations(testDb, migrations.slice(0, nocaseMigrationIndex))
 
         await testDb.batch([
             insertUser('aaaaaaaa-0000-4000-8000-000000000000', 'Raz', '2026-01-01 00:00:00'),
@@ -68,7 +68,7 @@ describe('migration 0037_enforce_case_insensitive_usernames', () => {
             insertUser('bbbbbbbb-0000-4000-8000-000000000000', 'raz', '2026-02-01 00:00:00'),
         ])
 
-        await applyD1Migrations(testDb, [finalMigration])
+        await applyD1Migrations(testDb, [nocaseMigration])
 
         // The 'raz' duplicate would become 'raz_bbbbbbbb', which already exists
         // as 'RAZ_BBBBBBBB'. The case-insensitive availability check extends the
@@ -81,7 +81,7 @@ describe('migration 0037_enforce_case_insensitive_usernames', () => {
     })
 
     it('assigns distinct replacements when duplicate ids share a prefix', async () => {
-        await applyD1Migrations(testDb, migrations.slice(0, -1))
+        await applyD1Migrations(testDb, migrations.slice(0, nocaseMigrationIndex))
 
         await testDb.batch([
             insertUser('aaaaaaaa-0000-4000-8000-000000000000', 'Raz', '2026-01-01 00:00:00'),
@@ -89,7 +89,7 @@ describe('migration 0037_enforce_case_insensitive_usernames', () => {
             insertUser('bbbbbbbb-0000-4000-8000-000000000001', 'RAZ', '2026-03-01 00:00:00'),
         ])
 
-        await applyD1Migrations(testDb, [finalMigration])
+        await applyD1Migrations(testDb, [nocaseMigration])
 
         // Both duplicates share their first id characters. The second rename
         // sees the first replacement as taken and extends its own suffix.
