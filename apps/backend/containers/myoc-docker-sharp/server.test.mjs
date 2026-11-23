@@ -298,6 +298,74 @@ test('returns a stable error when an AVIF blur source cannot be decoded', async 
     assert.deepEqual(await response.json(), {error: 'Blur generation failed'})
 })
 
+// Two opaque frames encoded as a palette GIF. The gallery endpoint must return
+// an animated AVIF preview and a still single-frame blur.
+async function createAnimatedGifFixture() {
+    const dir = await mkdtemp(join(tmpdir(), 'myoc-gallery-gif-'))
+
+    try {
+        const rawPath = join(dir, 'frames.raw')
+        const gifPath = join(dir, 'animated.gif')
+        const red = Buffer.alloc(16 * 16 * 4, 255)
+        const blue = Buffer.alloc(16 * 16 * 4, 255)
+
+        for (let i = 0; i < red.length; i += 4) {
+            red[i] = 220
+            red[i + 1] = 10
+            red[i + 2] = 10
+            blue[i] = 10
+            blue[i + 1] = 10
+            blue[i + 2] = 220
+        }
+
+        await writeFile(rawPath, Buffer.concat([red, blue]))
+        await execFile(
+            'ffmpeg',
+            [
+                '-nostdin',
+                '-v',
+                'error',
+                '-y',
+                '-f',
+                'rawvideo',
+                '-pix_fmt',
+                'rgba',
+                '-s',
+                '16x16',
+                '-i',
+                rawPath,
+                '-filter_complex',
+                '[0:v]split[a][b];[a]palettegen=stats_mode=full[p];[b][p]paletteuse=dither=none',
+                '-loop',
+                '0',
+                gifPath,
+            ],
+            {stdio: ['ignore', 'pipe', 'pipe']},
+        )
+
+        return await readFile(gifPath)
+    } finally {
+        await rm(dir, {force: true, recursive: true})
+    }
+}
+
+test('creates an animated gallery preview and a still blur from a GIF source', async () => {
+    const source = await createAnimatedGifFixture()
+    const response = await fetch(`${baseUrl}/images/gallery?blur=1`, {
+        body: /** @type {BodyInit} */ (new Uint8Array(source)),
+        headers: {authorization: `Bearer ${processorToken}`},
+        method: 'POST',
+    })
+    const result = Buffer.from(await response.arrayBuffer())
+    const previewLength = Number(response.headers.get('x-preview-length'))
+
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('x-preview-animated'), 'true')
+    assert.equal(result.subarray(8, 12).toString('latin1'), 'avis')
+    await assert.rejects(() => sharp(result.subarray(0, previewLength)).metadata())
+    assert.equal((await sharp(result.subarray(previewLength)).metadata()).format, 'heif')
+})
+
 test('creates a square AVIF through the HTTP interface', async () => {
     const source = await sharp({
         create: {background: {b: 20, g: 80, r: 220}, channels: 3, height: 512, width: 512},
