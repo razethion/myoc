@@ -115,6 +115,10 @@ export function characterMediaNsfwBlurImageUrl(
     return mediaUrlForKey(baseUrl, characterMediaNsfwBlurImageObjectKey(userId, characterId, mediaId, imageKey, contentType))
 }
 
+export function isAnimatedImageContentType(contentType: string | null | undefined): boolean {
+    return (contentType ?? '').toLowerCase() === 'image/gif'
+}
+
 function extensionForImageContentType(contentType: string | null | undefined): string {
     switch ((contentType ?? 'image/png').toLowerCase()) {
         case 'image/jpeg':
