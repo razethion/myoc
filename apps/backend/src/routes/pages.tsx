@@ -2890,6 +2890,8 @@ async function getCharacterSettingsMedia(db: D1Database, userId: string, charact
                 nsfw_preview_image_key,
                 sfw_preview_content_type,
                 nsfw_preview_content_type,
+                sfw_preview_animated,
+                nsfw_preview_animated,
                 nsfw_blur_image_key,
                 nsfw_blur_content_type,
                 sfw_content_type,
@@ -2918,6 +2920,8 @@ async function getCharacterSettingsMedia(db: D1Database, userId: string, charact
             nsfw_preview_image_key: string | null
             sfw_preview_content_type: string
             nsfw_preview_content_type: string
+            sfw_preview_animated: number
+            nsfw_preview_animated: number
             nsfw_blur_image_key: string | null
             nsfw_blur_content_type: string
             sfw_content_type: string | null
@@ -2942,6 +2946,8 @@ async function getCharacterSettingsMedia(db: D1Database, userId: string, charact
         nsfwPreviewImageKey: media.nsfw_preview_image_key ?? null,
         sfwPreviewContentType: media.sfw_preview_content_type,
         nsfwPreviewContentType: media.nsfw_preview_content_type,
+        sfwPreviewAnimated: media.sfw_preview_animated === 1,
+        nsfwPreviewAnimated: media.nsfw_preview_animated === 1,
         nsfwBlurImageKey: media.nsfw_blur_image_key ?? null,
         nsfwBlurContentType: media.nsfw_blur_content_type,
         sfwContentType: media.sfw_content_type ?? (media.sfw_image_key ? 'image/png' : null),

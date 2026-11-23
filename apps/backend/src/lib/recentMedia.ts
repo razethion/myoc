@@ -1,5 +1,11 @@
 import {z} from 'zod'
-import {characterMediaImageUrl, characterMediaPreviewImageUrl, characterProfileImageUrl, profilePhotoUrl} from './media/url'
+import {
+    characterMediaImageUrl,
+    characterMediaPreviewImageUrl,
+    characterProfileImageUrl,
+    isAnimatedImageContentType,
+    profilePhotoUrl,
+} from './media/url'
 
 export const RECENT_MEDIA_PAGE_SIZE = 24
 export const RECENT_MEDIA_MAX_PAGE_SIZE = 30
@@ -54,6 +60,7 @@ export type RecentMediaRow = {
     sfw_image_key: string | null
     sfw_preview_image_key: string | null
     sfw_preview_content_type: string
+    sfw_preview_animated: number
     sfw_content_type: string | null
     sfw_width: number | null
     sfw_height: number | null
@@ -64,6 +71,7 @@ export type RecentMediaRow = {
     nsfw_image_key: string | null
     nsfw_preview_image_key: string | null
     nsfw_preview_content_type: string
+    nsfw_preview_animated: number
     nsfw_content_type: string | null
     nsfw_width: number | null
     nsfw_height: number | null
@@ -116,6 +124,7 @@ type RecentMediaVariantData = {
     contentType: string | null
     height: number
     imageKey: string | null
+    previewAnimated: boolean
     previewImageKey: string | null
     previewContentType: string
     width: number
@@ -127,6 +136,7 @@ function recentMediaVariantData(row: RecentMediaRow, rating: RecentMediaRating):
             contentType: row.nsfw_content_type,
             height: row.nsfw_preview_height ?? row.nsfw_height ?? 1,
             imageKey: row.nsfw_image_key,
+            previewAnimated: row.nsfw_preview_animated === 1,
             previewImageKey: row.nsfw_preview_image_key,
             previewContentType: row.nsfw_preview_content_type,
             width: row.nsfw_preview_width ?? row.nsfw_width ?? 1,
@@ -137,6 +147,7 @@ function recentMediaVariantData(row: RecentMediaRow, rating: RecentMediaRating):
         contentType: row.sfw_content_type,
         height: row.sfw_preview_height ?? row.sfw_height ?? 1,
         imageKey: row.sfw_image_key,
+        previewAnimated: row.sfw_preview_animated === 1,
         previewImageKey: row.sfw_preview_image_key,
         previewContentType: row.sfw_preview_content_type,
         width: row.sfw_preview_width ?? row.sfw_width ?? 1,
@@ -145,12 +156,14 @@ function recentMediaVariantData(row: RecentMediaRow, rating: RecentMediaRating):
 
 function recentMediaItemFromRow(row: RecentMediaRow, mediaBaseUrl: string, showNsfw: boolean, showUnapproved: boolean): RecentMediaItem {
     const rating: RecentMediaRating = showNsfw && isEligibleRecentMediaVariant(row, 'nsfw', showUnapproved) ? 'nsfw' : 'sfw'
-    const {contentType, height, imageKey, previewContentType, previewImageKey, width} = recentMediaVariantData(row, rating)
+    const {contentType, height, imageKey, previewAnimated, previewContentType, previewImageKey, width} = recentMediaVariantData(row, rating)
     const characterHref = `/u/${encodeURIComponent(row.owner_username)}/${encodeURIComponent(row.character_name)}`
 
     if (!imageKey || !previewImageKey) {
         throw new Error('Recent media query returned an ineligible media variant')
     }
+
+    const originalSrc = characterMediaImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, imageKey, rating, contentType)
 
     return {
         id: row.id,
@@ -158,16 +171,19 @@ function recentMediaItemFromRow(row: RecentMediaRow, mediaBaseUrl: string, showN
         alt: `${row.character_name} character art`,
         width: width > 0 ? width : 1,
         height: height > 0 ? height : 1,
-        previewSrc: characterMediaPreviewImageUrl(
-            mediaBaseUrl,
-            row.user_id,
-            row.character_id,
-            row.id,
-            previewImageKey,
-            rating,
-            previewContentType,
-        ),
-        originalSrc: characterMediaImageUrl(mediaBaseUrl, row.user_id, row.character_id, row.id, imageKey, rating, contentType),
+        previewSrc:
+            isAnimatedImageContentType(contentType) && !previewAnimated
+                ? originalSrc
+                : characterMediaPreviewImageUrl(
+                      mediaBaseUrl,
+                      row.user_id,
+                      row.character_id,
+                      row.id,
+                      previewImageKey,
+                      rating,
+                      previewContentType,
+                  ),
+        originalSrc,
         character: {
             name: row.character_name,
             href: characterHref,
