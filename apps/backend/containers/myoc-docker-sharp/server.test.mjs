@@ -1,8 +1,15 @@
 import assert from 'node:assert/strict'
 import {Buffer} from 'node:buffer'
+import {execFile as execFileCallback} from 'node:child_process'
+import {mkdtemp, readFile, rm, writeFile} from 'node:fs/promises'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
 import process from 'node:process'
 import {after, before, test} from 'node:test'
+import {promisify} from 'node:util'
 import sharp from 'sharp'
+
+const execFile = promisify(execFileCallback)
 
 const processorToken = 'container-test-token'
 let baseUrl
@@ -181,6 +188,109 @@ test('returns a stable error when Sharp rejects a blur source', async () => {
     const response = await fetch(`${baseUrl}/images/blur`, {
         body: new Uint8Array([1, 2, 3]),
         headers: {authorization: `Bearer ${processorToken}`},
+        method: 'POST',
+    })
+
+    assert.equal(response.status, 502)
+    assert.deepEqual(await response.json(), {error: 'Blur generation failed'})
+})
+
+// Two opaque frames encoded as an AVIF sequence. Sharp rejects this input.
+async function createAnimatedAvifFixture() {
+    const dir = await mkdtemp(join(tmpdir(), 'myoc-blur-avif-'))
+
+    try {
+        const rawPath = join(dir, 'stripes.raw')
+        const avifPath = join(dir, 'animated.avif')
+        const frame = Buffer.alloc(16 * 16 * 4, 255)
+
+        for (let y = 0; y < 16; y += 1) {
+            for (let x = 0; x < 8; x += 1) {
+                const offset = (y * 16 + x) * 4
+                frame[offset] = 220
+                frame[offset + 1] = 10
+                frame[offset + 2] = 10
+            }
+        }
+
+        await writeFile(rawPath, frame)
+        await execFile(
+            'ffmpeg',
+            [
+                '-nostdin',
+                '-v',
+                'error',
+                '-y',
+                '-stream_loop',
+                '1',
+                '-f',
+                'rawvideo',
+                '-pix_fmt',
+                'rgba',
+                '-s',
+                '16x16',
+                '-i',
+                rawPath,
+                '-map',
+                '0:v:0',
+                '-c:v',
+                'libaom-av1',
+                '-crf',
+                '20',
+                '-cpu-used',
+                '6',
+                '-row-mt',
+                '1',
+                '-usage',
+                'realtime',
+                '-pix_fmt',
+                'yuv420p',
+                '-fps_mode',
+                'passthrough',
+                '-f',
+                'avif',
+                avifPath,
+            ],
+            {stdio: ['ignore', 'pipe', 'pipe']},
+        )
+
+        return await readFile(avifPath)
+    } finally {
+        await rm(dir, {force: true, recursive: true})
+    }
+}
+
+test('blurs the first frame of an animated AVIF source', async () => {
+    const source = await createAnimatedAvifFixture()
+
+    await assert.rejects(() => sharp(source).metadata())
+
+    const response = await fetch(`${baseUrl}/images/blur`, {
+        body: new Uint8Array(source),
+        headers: {authorization: `Bearer ${processorToken}`, 'content-type': 'image/avif'},
+        method: 'POST',
+    })
+
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('content-type'), 'image/avif')
+    assert.equal(response.headers.get('x-preview-width'), '16')
+    assert.equal(response.headers.get('x-preview-height'), '16')
+
+    const bytes = Buffer.from(await response.arrayBuffer())
+    const metadata = await sharp(bytes).metadata()
+    assert.equal(metadata.format, 'heif')
+    assert.equal(metadata.width, 16)
+    assert.equal(metadata.height, 16)
+})
+
+test('returns a stable error when an AVIF blur source cannot be decoded', async () => {
+    const source = Buffer.alloc(32)
+    source.write('ftyp', 4, 'latin1')
+    source.write('avif', 8, 'latin1')
+
+    const response = await fetch(`${baseUrl}/images/blur`, {
+        body: new Uint8Array(source),
+        headers: {authorization: `Bearer ${processorToken}`, 'content-type': 'image/avif'},
         method: 'POST',
     })
 

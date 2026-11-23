@@ -4,11 +4,13 @@ import http from 'node:http'
 import process from 'node:process'
 import timers from 'node:timers'
 import {repairIconColor} from './avifColor.mjs'
+import {fetchImageBytes} from './fetchSource.mjs'
 import {createAvifBlur, createAvifPreview, createGalleryAvifOutputs, createSquareAvif} from './preview.mjs'
 
 const port = Number.parseInt(process.env['PORT'] ?? '8080', 10)
 const previewLongEdge = parsePositiveInteger(process.env['PREVIEW_MAX_LONG_EDGE'], 1600)
 const previewQuality = clamp(parsePositiveInteger(process.env['PREVIEW_AVIF_QUALITY'], 60), 1, 100)
+const previewMaxBytes = previewLongEdge * previewLongEdge * 4 + 4096
 const heightChartLongEdge = parsePositiveInteger(process.env['HEIGHT_CHART_MAX_LONG_EDGE'], 1600)
 const heightChartQuality = clamp(parsePositiveInteger(process.env['HEIGHT_CHART_AVIF_QUALITY'], 75), 1, 100)
 const blurMaxWidth = parsePositiveInteger(process.env['BLUR_MAX_WIDTH'], 960)
@@ -197,12 +199,14 @@ async function handleGalleryRequest(request, response, url) {
     try {
         const sourceBytes = await readRequestBytes(request, sourceImageMaxBytes)
         const result = await createGalleryAvifOutputs(sourceBytes, {
+            animatedPreviews: true,
             blur: url.searchParams.get('blur') === '1',
             blurMaxWidth,
             blurQuality,
             blurSigma,
             limitInputPixels: sourceLimitInputPixels,
             maxLongEdge: previewLongEdge,
+            previewMaxBytes,
             previewQuality,
         })
         const body = result.blur ? Buffer.concat([result.preview.bytes, result.blur.bytes]) : result.preview.bytes
@@ -210,6 +214,7 @@ async function handleGalleryRequest(request, response, url) {
             'cache-control': 'no-store',
             'content-length': Buffer.byteLength(body),
             'content-type': 'application/octet-stream',
+            'x-preview-animated': result.preview.animated ? 'true' : 'false',
             'x-preview-height': result.preview.height,
             'x-preview-length': Buffer.byteLength(result.preview.bytes),
             'x-preview-width': result.preview.width,
@@ -224,6 +229,7 @@ async function handleGalleryRequest(request, response, url) {
         console.log('Image container processed gallery image', {
             blurBytes: result.blur ? Buffer.byteLength(result.blur.bytes) : 0,
             durationMs: Date.now() - startedAt,
+            previewAnimated: result.preview.animated,
             previewBytes: Buffer.byteLength(result.preview.bytes),
             requestId,
             sourceBytes: Buffer.byteLength(sourceBytes),
@@ -253,7 +259,9 @@ async function handleHeightChartRequest(request, response) {
     try {
         const sourceBytes = await readRequestBytes(request, sourceImageMaxBytes)
         const result = await createAvifPreview(sourceBytes, {
+            animatedPreviews: false,
             limitInputPixels: sourceLimitInputPixels,
+            maxBytes: previewMaxBytes,
             maxLongEdge: heightChartLongEdge,
             quality: heightChartQuality,
         })
@@ -336,9 +344,11 @@ async function handlePreviewRequest(request, response) {
     })
 
     try {
-        const sourceBytes = await fetchImageBytes(imageUrl)
+        const sourceBytes = await fetchImageBytes(imageUrl, {maxBytes: sourceImageMaxBytes, timeoutMs: sourceFetchTimeoutMs})
         const result = await createAvifPreview(sourceBytes, {
+            animatedPreviews: true,
             limitInputPixels: sourceLimitInputPixels,
+            maxBytes: previewMaxBytes,
             maxLongEdge: previewLongEdge,
             quality: previewQuality,
         })
@@ -357,6 +367,7 @@ async function handlePreviewRequest(request, response) {
             'cache-control': 'no-store',
             'content-length': Buffer.byteLength(result.bytes),
             'content-type': 'image/avif',
+            'x-preview-animated': result.animated ? 'true' : 'false',
             'x-preview-height': result.height,
             'x-preview-width': result.width,
         })
@@ -415,63 +426,6 @@ function describeSourceUrl(value) {
         sourceHost: url.host,
         sourcePath: url.pathname,
     }
-}
-
-async function fetchImageBytes(imageUrl) {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), sourceFetchTimeoutMs)
-
-    try {
-        const response = await fetch(imageUrl, {
-            headers: {
-                accept: 'image/avif,image/webp,image/png,image/jpeg,image/gif,*/*;q=0.8',
-            },
-            signal: controller.signal,
-        })
-
-        if (!response.ok) {
-            throw new Error(`Source image fetch failed with ${response.status}`)
-        }
-
-        const contentLength = Number.parseInt(response.headers.get('content-length') ?? '0', 10)
-
-        if (contentLength > sourceImageMaxBytes) {
-            throw new Error('Source image is too large')
-        }
-
-        return await readResponseBytes(response, sourceImageMaxBytes)
-    } finally {
-        clearTimeout(timeout)
-    }
-}
-
-async function readResponseBytes(response, maxBytes) {
-    if (!response.body) {
-        throw new Error('Source image response has no body')
-    }
-
-    const chunks = []
-    const reader = response.body.getReader()
-    let receivedBytes = 0
-
-    while (true) {
-        const {done, value} = await reader.read()
-
-        if (done) {
-            break
-        }
-
-        receivedBytes += Buffer.byteLength(value)
-
-        if (receivedBytes > maxBytes) {
-            await reader.cancel()
-            throw new Error('Source image is too large')
-        }
-
-        chunks.push(value)
-    }
-
-    return Buffer.concat(chunks, receivedBytes)
 }
 
 /**
