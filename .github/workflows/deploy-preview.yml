@@ -280,6 +280,9 @@ jobs:
           required_files = {
               'commit.txt',
               'container/Dockerfile',
+              'container/animatedAvif.mjs',
+              'container/avifColor.mjs',
+              'container/fetchSource.mjs',
               'container/package-lock.json',
               'container/package.json',
               'container/preview.mjs',
