@@ -31,7 +31,8 @@ export function AdminOptionsPage({csrfToken, data, feedback}: AdminOptionsPagePr
             <section class="rounded border border-base-300 bg-base-200 p-4">
                 <p class="mb-3 text-sm text-base-content/70">
                     Thumbnail, media preview, and size chart image jobs run in the background. The size chart backfill replaces legacy
-                    images with resized AVIF images. Starting a running job again does not create a duplicate.
+                    images with resized AVIF images. The GIF preview backfill rebuilds static previews as animated AVIF previews. Starting a
+                    running job again does not create a duplicate.
                 </p>
                 <div class="flex flex-wrap gap-3">
                     {data.jobs.map((job, index) => (
@@ -180,7 +181,11 @@ function RunSummary({run}: {run: AdminJobRun}) {
         return <LeaderboardRefreshSummary summary={run.summary} />
     }
 
-    if (run.jobName === 'media-preview-regeneration' || run.jobName === 'thumbnail-regeneration') {
+    if (
+        run.jobName === 'media-preview-regeneration' ||
+        run.jobName === 'gif-preview-backfill' ||
+        run.jobName === 'thumbnail-regeneration'
+    ) {
         return <MediaPreviewRegenerationSummary summary={run.summary} thumbnails={run.jobName === 'thumbnail-regeneration'} />
     }
 

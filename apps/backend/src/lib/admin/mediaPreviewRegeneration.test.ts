@@ -221,6 +221,80 @@ describe('media preview regeneration', () => {
         await expect(initializeMediaPreviewRegenerationDispatch(db, runId, true)).resolves.toMatchObject({totalVariants: 7})
     })
 
+    it('selects only GIF variants whose preview is missing or static', async () => {
+        await seedUser({id: userId})
+        await seedCharacter({id: characterId, userId})
+        await seedMedia({
+            id: 'gif-static',
+            userId,
+            characterId,
+            sfwContentType: 'image/gif',
+            sfwPreviewImageKey: 'sfw-preview',
+            sfwPreviewContentType: 'image/avif',
+            sfwPreviewAnimated: false,
+        })
+        await seedMedia({
+            id: 'gif-animated',
+            userId,
+            characterId,
+            sfwContentType: 'image/gif',
+            sfwPreviewImageKey: 'sfw-preview',
+            sfwPreviewContentType: 'image/avif',
+            sfwPreviewAnimated: true,
+        })
+        await seedMedia({
+            id: 'gif-missing-preview',
+            userId,
+            characterId,
+            sfwContentType: 'image/gif',
+            sfwPreviewImageKey: null,
+            sfwPreviewContentType: 'image/avif',
+        })
+        await seedMedia({
+            id: 'png-static',
+            userId,
+            characterId,
+            sfwContentType: 'image/png',
+            sfwPreviewImageKey: 'sfw-preview',
+            sfwPreviewContentType: 'image/avif',
+            sfwPreviewAnimated: false,
+        })
+
+        const candidates = await getMediaPreviewRegenerationCandidates(db, null, false, true)
+
+        expect(candidates.map(({mediaId: candidateMediaId, rating}) => [candidateMediaId, rating])).toEqual([
+            ['gif-missing-preview', 'sfw'],
+            ['gif-static', 'sfw'],
+        ])
+
+        const runId = crypto.randomUUID()
+        await db
+            .prepare(
+                `INSERT INTO admin_job_runs (id, job_name, trigger_source, status, started_at)
+                 VALUES (?, 'gif-preview-backfill', 'manual', 'running', CURRENT_TIMESTAMP)`,
+            )
+            .bind(runId)
+            .run()
+
+        await expect(initializeMediaPreviewRegenerationDispatch(db, runId, false, true)).resolves.toMatchObject({totalVariants: 2})
+    })
+
+    it('stores the animated preview flag when the container reports an animation', async () => {
+        const {bucket, candidate} = await createRegenerationFixture('sfw')
+        const container = createMockPreviewContainer(
+            new Response(createAvifBytes(100, 80), {
+                headers: {'content-type': 'image/avif', 'x-preview-animated': 'true'},
+            }),
+        )
+
+        await expect(regenerateMediaPreviewCandidate(regenerationEnv(bucket, container), candidate)).resolves.toMatchObject({
+            status: 'regenerated',
+        })
+        expect(
+            await queryOne<{sfw_preview_animated: number}>('SELECT sfw_preview_animated FROM character_media WHERE id = ?', [mediaId]),
+        ).toEqual({sfw_preview_animated: 1})
+    })
+
     it('paginates sparse invalid variants without stopping at valid AVIF rows', async () => {
         await seedUser({id: userId})
         await seedCharacter({id: characterId, userId})
