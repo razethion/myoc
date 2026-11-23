@@ -15,6 +15,12 @@ const ANIMATED_AVIF_TIMEOUT_MS = 300_000
 const ANIMATED_AVIF_PROBE_TIMEOUT_MS = 30_000
 const ANIMATED_AVIF_TRANSPARENCY_PROBE_MAX_BYTES = 16 * 1024 * 1024
 
+// ffmpeg decodes every frame at full resolution, and the transparent filter
+// graph holds several full-size planes at once. Keep the source area inside a
+// budget the container can decode without exhausting memory. Oversized
+// sources fall back to the static preview path.
+const ANIMATED_AVIF_MAX_SOURCE_PIXELS = 16_000_000
+
 // swscale converts RGB to YUV with BT.601 coefficients when the source has no
 // colour metadata. Tagging that output BT.709 shifts hues. Force the matrix the
 // tag claims. Browsers decode AVIF as limited-range BT.709, so encode to match.
@@ -73,7 +79,11 @@ export function parseGifProbe(json) {
     }
 }
 
-/** @internal */
+/**
+ * libaom rejects odd and sub-2-pixel dimensions. Round down to even, then
+ * clamp to 2 so tiny sources upscale instead of failing the encode.
+ * @internal
+ */
 export function scaleAnimatedDimensions(width, height, maxLongEdge) {
     const scale = Math.min(1, maxLongEdge / Math.max(width, height))
     const scaledWidth = Math.round(width * scale) & ~1
@@ -136,7 +146,16 @@ export async function createAnimatedAvifPreview(sourceBytes, options) {
         await writeFile(inputPath, sourceBytes)
         const probe = await probeGif(inputPath, run)
 
-        if (probe.frames <= 1 || probe.width < 1 || probe.height < 1) {
+        if (!Number.isFinite(probe.frames) || probe.frames <= 1 || probe.width < 1 || probe.height < 1) {
+            return null
+        }
+
+        if (probe.width * probe.height > ANIMATED_AVIF_MAX_SOURCE_PIXELS) {
+            console.warn('Animated preview source exceeds the pixel budget; using a static preview', {
+                height: probe.height,
+                width: probe.width,
+            })
+
             return null
         }
 
@@ -173,6 +192,24 @@ async function probeGif(inputPath, run) {
     )
 
     return parseGifProbe(stdout)
+}
+
+async function probeFrameSize(inputPath, run) {
+    const {stdout} = await run('ffprobe', ['-v', 'quiet', '-print_format', 'json', '-show_streams', inputPath], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: ANIMATED_AVIF_PROBE_TIMEOUT_MS,
+    })
+    const data = JSON.parse(stdout)
+    const video = Array.isArray(data.streams) ? data.streams.find((stream) => stream.codec_type === 'video') : null
+
+    if (!video) {
+        throw new Error('Frame probe returned no video stream')
+    }
+
+    return {
+        height: Number.parseInt(video.height ?? '0', 10),
+        width: Number.parseInt(video.width ?? '0', 10),
+    }
 }
 
 async function detectTransparency(inputPath, run) {
@@ -296,6 +333,12 @@ export async function extractFirstFramePng(sourceBytes, options = {}) {
 
     try {
         await writeFile(inputPath, sourceBytes)
+        const dimensions = await probeFrameSize(inputPath, run)
+
+        if (dimensions.width * dimensions.height > ANIMATED_AVIF_MAX_SOURCE_PIXELS) {
+            throw new Error('Frame source exceeds the pixel budget')
+        }
+
         await run('ffmpeg', ['-nostdin', '-y', '-i', inputPath, '-map', '0:v:0', '-frames:v', '1', '-c:v', 'png', outputPath], {
             stdio: ['ignore', 'pipe', 'pipe'],
             timeout: ANIMATED_AVIF_PROBE_TIMEOUT_MS,

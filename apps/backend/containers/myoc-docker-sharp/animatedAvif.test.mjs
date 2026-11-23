@@ -87,6 +87,46 @@ test('extracts frame zero as PNG', async () => {
     assert.ok(call.args.includes('png'))
 })
 
+test('falls back to a static preview above the pixel budget', async () => {
+    const fake = fakeExec({height: 5000, width: 6000})
+
+    const result = await createAnimatedAvifPreview(gifBytes(), {
+        execFile: fake.run,
+        maxBytes: 10_000,
+        maxLongEdge: 1600,
+    })
+
+    assert.equal(result, null)
+    assert.equal(fake.calls.length, 1)
+    assert.equal(fake.calls[0].command, 'ffprobe')
+})
+
+test('treats a non-numeric frame count as a static source', async () => {
+    const fake = fakeExec({frames: 'N/A'})
+
+    const result = await createAnimatedAvifPreview(gifBytes(), {
+        execFile: fake.run,
+        maxBytes: 10_000,
+        maxLongEdge: 1600,
+    })
+
+    assert.equal(result, null)
+})
+
+test('rejects frame extraction above the pixel budget', async () => {
+    const fake = fakeExec({height: 5000, width: 6000})
+
+    await assert.rejects(() => extractFirstFramePng(Buffer.from('fake-avif'), {execFile: fake.run}), /pixel budget/)
+    assert.equal(fake.calls.length, 1)
+    assert.equal(fake.calls[0].command, 'ffprobe')
+})
+
+test('rejects frame extraction without a video stream', async () => {
+    const run = async () => ({stderr: '', stdout: '{"streams":[]}'})
+
+    await assert.rejects(() => extractFirstFramePng(Buffer.from('fake-avif'), {execFile: run}), /no video stream/)
+})
+
 test('parses frame count from count_frames tags', () => {
     const probe = parseGifProbe(
         JSON.stringify({
