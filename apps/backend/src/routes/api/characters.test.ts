@@ -3231,6 +3231,47 @@ describe('PUT /characters/:id/height-chart', () => {
         expect(mediaBucket.delete).not.toHaveBeenCalled()
     })
 
+    it('rejects an oversized height chart upload without a content-length header', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const probeForm = new FormData()
+        probeForm.set('heightChartJson', '{}')
+
+        expect(
+            new Request('https://example.com/characters/character-id/height-chart', {method: 'PUT', body: probeForm}).headers.get(
+                'content-length',
+            ),
+        ).toBeNull()
+
+        const form = new FormData()
+        form.set(
+            'heightChartJson',
+            JSON.stringify({
+                version: 1,
+                height: {meters: 1.82},
+                image: null,
+            }),
+        )
+        form.set(
+            'heightChartImage',
+            new File([new Uint8Array(heightChartMaxMultipartRequestBytes + 1024)], 'height-chart.png', {type: 'image/png'}),
+        )
+
+        const response = await putHeightChart(character.id, form, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(413)
+        expect(await response.json()).toEqual({error: 'Height chart image upload is too large'})
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+        expect(mediaBucket.delete).not.toHaveBeenCalled()
+    })
+
     it('rejects incomplete height chart data without deleting an object', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
