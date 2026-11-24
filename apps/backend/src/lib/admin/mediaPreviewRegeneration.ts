@@ -23,6 +23,11 @@ const MEDIA_PREVIEW_REGENERATION_ITEMS_PER_WORKFLOW =
     MEDIA_PREVIEW_REGENERATION_BATCH_SIZE * MEDIA_PREVIEW_REGENERATION_BATCHES_PER_WORKFLOW
 const THUMBNAIL_REGENERATION_ITEMS_PER_WORKFLOW = 250
 const GALLERY_IMAGE_DIMENSION_PROBE_BYTES = 1024 * 1024
+// Animated AVIF previews can run two 300-second encode passes plus a blur.
+// Keep the lease past the worst case so a duplicate delivery cannot start a
+// second attempt while the first attempt still writes outputs.
+export const MEDIA_PREVIEW_REGENERATION_LEASE_MS = 12 * 60 * 1_000
+const CLAIM_LEASE_MS = 2 * 60 * 1_000
 
 export type MediaPreviewRegenerationSummary = {
     totalVariants: number
@@ -73,6 +78,12 @@ type MediaPreviewRegenerationEnv = Pick<
 
 type MediaPreviewRegenerationOptions = {
     maxContainerAttempts?: number
+    /**
+     * When provided, the task aborts before writing outputs if this returns
+     * false. It must report whether the task lease is still held by this
+     * attempt.
+     */
+    leaseHeld?: () => Promise<boolean>
 }
 
 export type MediaPreviewRegenerationItemStatus = MediaPreviewRegenerationResult['status'] | 'pending' | 'processing'
@@ -342,10 +353,11 @@ export async function claimMediaPreviewRegenerationTask(
     db: D1Database,
     taskId: string,
     now: Date,
+    leaseMs = CLAIM_LEASE_MS,
 ): Promise<ClaimedMediaPreviewRegenerationTask | null> {
     const leaseId = crypto.randomUUID()
     const leasedAt = now.toISOString().replace('T', ' ').replace('Z', '')
-    const leaseExpiresAt = new Date(now.getTime() + 2 * 60 * 1_000).toISOString().replace('T', ' ').replace('Z', '')
+    const leaseExpiresAt = new Date(now.getTime() + leaseMs).toISOString().replace('T', ' ').replace('Z', '')
     const row = await db
         .prepare(
             `UPDATE media_preview_regeneration_items
@@ -377,6 +389,21 @@ export async function claimMediaPreviewRegenerationTask(
               runId: row.run_id,
           }
         : null
+}
+
+export async function isMediaPreviewRegenerationLeaseHeld(db: D1Database, taskId: string, leaseId: string): Promise<boolean> {
+    const row = await db
+        .prepare(
+            `SELECT 1 AS held
+             FROM media_preview_regeneration_items
+             WHERE task_id = ?
+               AND status = 'processing'
+               AND lease_id = ?`,
+        )
+        .bind(taskId, leaseId)
+        .first<{held: number}>()
+
+    return row?.held === 1
 }
 
 export async function recordMediaPreviewRegenerationResult(
@@ -603,10 +630,31 @@ export async function regenerateMediaPreviewCandidate(
             priority: 'background' as const,
         }
         const preview = await generateMediaPreviewWithContainer(env, sourceUrl, source, containerOptions)
+
+        if (options.leaseHeld && !(await options.leaseHeld())) {
+            // A duplicate delivery reclaimed the task. Do not write outputs;
+            // the new attempt owns the same target keys.
+            return {
+                status: 'skipped',
+                regeneratedBlur: false,
+                error: null,
+            }
+        }
+
         await putPreview(env.MEDIA_BUCKET, candidate, preview)
 
         if (candidate.targetBlurKey) {
             await putBlur(env, candidate, candidate.targetBlurKey, preview, containerOptions)
+        }
+
+        if (options.leaseHeld && !(await options.leaseHeld())) {
+            // Leave written objects in place: the new attempt rewrites the
+            // same target keys and publishes behind the same WHERE guard.
+            return {
+                status: 'skipped',
+                regeneratedBlur: false,
+                error: null,
+            }
         }
 
         const updated = await publishRegeneratedPreview(env.DB, candidate, preview)

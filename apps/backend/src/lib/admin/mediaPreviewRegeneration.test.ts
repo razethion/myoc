@@ -426,6 +426,45 @@ describe('media preview regeneration', () => {
         ).resolves.toBeNull()
     })
 
+    it('skips all writes when the task lease was lost before encoding finished', async () => {
+        const {bucket, candidate} = await createRegenerationFixture('sfw')
+
+        const result = await regenerateMediaPreviewCandidate(regenerationEnv(bucket), candidate, {leaseHeld: async () => false})
+
+        expect(result).toEqual({status: 'skipped', regeneratedBlur: false, error: null})
+        await expect(
+            bucket.get(characterMediaPreviewImageObjectKey(userId, characterId, mediaId, candidate.targetPreviewKey, 'sfw', 'image/avif')),
+        ).resolves.toBeNull()
+        const row = await queryOne<{sfw_preview_image_key: string | null}>(
+            'SELECT sfw_preview_image_key FROM character_media WHERE id = ?',
+            [mediaId],
+        )
+        expect(row?.sfw_preview_image_key).toBe('sfw-old-preview')
+    })
+
+    it('stops before publishing when the lease is lost during blur generation', async () => {
+        const {bucket, candidate} = await createRegenerationFixture('nsfw')
+
+        if (!candidate.targetBlurKey) throw new Error('Expected an NSFW regeneration candidate')
+        let checks = 0
+        const result = await regenerateMediaPreviewCandidate(regenerationEnv(bucket), candidate, {
+            leaseHeld: async () => {
+                checks += 1
+                return checks === 1
+            },
+        })
+
+        expect(result).toEqual({status: 'skipped', regeneratedBlur: false, error: null})
+        await expect(
+            bucket.get(characterMediaPreviewImageObjectKey(userId, characterId, mediaId, candidate.targetPreviewKey, 'nsfw', 'image/avif')),
+        ).resolves.not.toBeNull()
+        const row = await queryOne<{nsfw_preview_image_key: string | null}>(
+            'SELECT nsfw_preview_image_key FROM character_media WHERE id = ?',
+            [mediaId],
+        )
+        expect(row?.nsfw_preview_image_key).toBe('nsfw-old-preview')
+    })
+
     it('skips a task when its source key changed after dispatch', async () => {
         await seedPreviewMedia()
         const bucket = createMockR2Bucket()

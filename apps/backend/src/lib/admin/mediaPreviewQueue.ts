@@ -11,6 +11,8 @@ import {
     claimMediaPreviewRegenerationTask,
     deleteFinishedMediaPreviewRegenerationItems,
     getMediaPreviewRegenerationItemState,
+    isMediaPreviewRegenerationLeaseHeld,
+    MEDIA_PREVIEW_REGENERATION_LEASE_MS,
     recordMediaPreviewRegenerationAttemptError,
     recordMediaPreviewRegenerationResult,
     regenerateMediaPreviewCandidate,
@@ -45,7 +47,7 @@ export async function consumeMediaPreviewRegenerationMessage(
     now: () => Date,
 ): Promise<void> {
     try {
-        const claimed = await claimMediaPreviewRegenerationTask(env.DB, body.taskId, now())
+        const claimed = await claimMediaPreviewRegenerationTask(env.DB, body.taskId, now(), MEDIA_PREVIEW_REGENERATION_LEASE_MS)
 
         if (!claimed) {
             await handleUnclaimedMessage(message, env, body, now())
@@ -64,6 +66,7 @@ export async function consumeMediaPreviewRegenerationMessage(
         try {
             const result = await regenerateMediaPreviewCandidate(env, candidate, {
                 maxContainerAttempts: 1,
+                leaseHeld: () => isMediaPreviewRegenerationLeaseHeld(env.DB, body.taskId, claimed.leaseId),
             })
             await recordMediaPreviewRegenerationResult(env.DB, body.taskId, claimed.leaseId, result)
             await deleteFinishedMediaPreviewRegenerationItems(env.DB, claimed.runId)
