@@ -16,7 +16,8 @@ import {
     verifyRecoveryPhrase,
 } from '../../lib/auth/passkeys'
 import {enforceAuthChallengeRateLimit, enforceAuthIdentityRateLimit} from '../../lib/auth/rateLimit'
-import {getCurrentUser, normalizeCredential, toSqlTimestamp} from '../../lib/auth/session'
+import {getCurrentUser, hasRecentAuthentication, normalizeCredential, revokeOtherSessions, toSqlTimestamp} from '../../lib/auth/session'
+import {stepUpRequiredResponse} from '../../lib/auth/stepUp'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {readJsonUpTo, STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
 import {ErrorResponseSchema, OkResponseSchema, responseSchema} from '../../lib/http/responseSchemas'
@@ -67,6 +68,10 @@ securityRoutes.post('/passkeys/options', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
+    if (!hasRecentAuthentication(currentUser)) {
+        return stepUpRequiredResponse(c)
+    }
+
     const rateLimitResponse = await enforceAuthIdentityRateLimit(c, currentUser.id)
 
     if (rateLimitResponse) {
@@ -92,6 +97,10 @@ securityRoutes.post('/passkeys/verify', async (c) => {
 
     if (!currentUser) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
+    }
+
+    if (!hasRecentAuthentication(currentUser)) {
+        return stepUpRequiredResponse(c)
     }
 
     let body: PasskeyVerifyRequest
@@ -192,6 +201,8 @@ securityRoutes.post('/passkeys/verify', async (c) => {
         c.env.DB.prepare('DELETE FROM webauthn_challenges WHERE id = ?').bind(challengeId),
     ])
 
+    await revokeOtherSessions(c.env.DB, currentUser.id, currentUser.sessionId)
+
     return jsonResponse(c, OkResponseSchema, {ok: true})
 })
 
@@ -200,6 +211,10 @@ securityRoutes.delete('/passkeys/:id', async (c) => {
 
     if (!currentUser) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
+    }
+
+    if (!hasRecentAuthentication(currentUser)) {
+        return stepUpRequiredResponse(c)
     }
 
     const passkeyId = c.req.param('id')
@@ -227,6 +242,8 @@ securityRoutes.delete('/passkeys/:id', async (c) => {
         .bind(currentUser.id, passkeyId)
         .run()
 
+    await revokeOtherSessions(c.env.DB, currentUser.id, currentUser.sessionId)
+
     return jsonResponse(c, OkResponseSchema, {ok: true})
 })
 
@@ -235,6 +252,10 @@ securityRoutes.post('/recovery/regenerate', async (c) => {
 
     if (!currentUser) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
+    }
+
+    if (!hasRecentAuthentication(currentUser)) {
+        return stepUpRequiredResponse(c)
     }
 
     const rateLimitResponse = await enforceAuthIdentityRateLimit(c, currentUser.id)
@@ -255,6 +276,8 @@ securityRoutes.post('/recovery/regenerate', async (c) => {
     )
         .bind(phraseHash, toSqlTimestamp(new Date()), currentUser.id)
         .run()
+
+    await revokeOtherSessions(c.env.DB, currentUser.id, currentUser.sessionId)
 
     return jsonResponse(c, RecoveryPhraseResponseSchema, {
         recoveryPhrase: phrase,
@@ -323,6 +346,10 @@ securityRoutes.post('/sessions/revoke-others', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
+    if (!hasRecentAuthentication(currentUser)) {
+        return stepUpRequiredResponse(c)
+    }
+
     await c.env.DB.prepare(
         `DELETE FROM sessions
          WHERE user_id = ?
@@ -339,6 +366,10 @@ securityRoutes.post('/sessions/:id/revoke', async (c) => {
 
     if (!currentUser?.sessionId) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
+    }
+
+    if (!hasRecentAuthentication(currentUser)) {
+        return stepUpRequiredResponse(c)
     }
 
     const sessionId = c.req.param('id')
@@ -363,6 +394,10 @@ securityRoutes.post('/complete', async (c) => {
 
     if (!currentUser) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
+    }
+
+    if (!hasRecentAuthentication(currentUser)) {
+        return stepUpRequiredResponse(c)
     }
 
     const [user, passkeys] = await Promise.all([getSecurityUser(c.env.DB, currentUser.id), listUserPasskeys(c.env.DB, currentUser.id)])
@@ -397,6 +432,8 @@ securityRoutes.post('/complete', async (c) => {
     )
         .bind(createDisabledPasswordHash(), currentUser.id)
         .run()
+
+    await revokeOtherSessions(c.env.DB, currentUser.id, currentUser.sessionId)
 
     return jsonResponse(c, OkResponseSchema, {ok: true})
 })

@@ -629,6 +629,16 @@ authPageActionRoutes.post('/recovery/login', async (c) => {
 
     const now = new Date()
 
+    // Issue #251: a recovery-phrase login proves takeover. Drop every existing
+    // session before issuing the new one so an attacker's session cannot survive
+    // the account being recovered.
+    await c.env.DB.prepare(
+        `DELETE FROM sessions
+         WHERE user_id = ?`,
+    )
+        .bind(user.id)
+        .run()
+
     await c.env.DB.prepare(
         `UPDATE users
          SET secure_account_required            = 0,

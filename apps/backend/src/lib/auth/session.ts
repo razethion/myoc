@@ -23,7 +23,7 @@ export type UserRole = 'user' | 'moderator' | 'admin'
 
 export type CurrentUser = {
     id: string
-    sessionId?: string
+    sessionId: string
     email: string
     username: string
     role: UserRole
@@ -32,6 +32,7 @@ export type CurrentUser = {
     displayNsfwMedia: boolean
     showUnapprovedMedia: boolean
     lastSeenVersion: string | null
+    authenticatedAt: string | null
     recoveryPhraseConfirmed?: boolean
     secureAccountRequired?: boolean
     passkeyPromptSeen?: boolean
@@ -40,6 +41,9 @@ export type CurrentUser = {
 
 const SESSION_COOKIE = 'myoc_session'
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30
+
+// Sensitive account changes require a full authentication no older than this window.
+export const STEP_UP_AUTH_WINDOW_SECONDS = 10 * 60
 const SESSION_RENEWAL_INTERVAL_SECONDS = 60 * 60 * 24
 const SESSION_TOKEN_BYTES = 32
 const CSRF_TOKEN_PREFIX = 'csrf:'
@@ -53,10 +57,10 @@ export async function createSession(db: D1Database, userId: string, now = new Da
         db.prepare('DELETE FROM sessions WHERE expires_at <= ?').bind(toSqlTimestamp(now)),
         db
             .prepare(
-                `INSERT INTO sessions (id, user_id, session_hash, expires_at)
-             VALUES (?, ?, ?, ?)`,
+                `INSERT INTO sessions (id, user_id, session_hash, expires_at, authenticated_at)
+             VALUES (?, ?, ?, ?, ?)`,
             )
-            .bind(crypto.randomUUID(), userId, sessionHash, toSqlTimestamp(expiresAt)),
+            .bind(crypto.randomUUID(), userId, sessionHash, toSqlTimestamp(expiresAt), toSqlTimestamp(now)),
     ])
 
     return sessionToken
@@ -66,6 +70,33 @@ export async function deleteSession(db: D1Database, sessionToken: string): Promi
     const sessionHash = await sha256Hex(sessionToken)
 
     await db.prepare('DELETE FROM sessions WHERE session_hash = ?').bind(sessionHash).run()
+}
+
+/**
+ * True when the session completed a full authentication inside the step-up window.
+ * A missing or unparseable timestamp fails closed: an unusable value can only
+ * block a change, never authorize one.
+ */
+export function hasRecentAuthentication(user: Pick<CurrentUser, 'authenticatedAt'>, now = new Date()): boolean {
+    if (!user.authenticatedAt) {
+        return false
+    }
+
+    const authenticatedAtMs = Date.parse(`${user.authenticatedAt.replace(' ', 'T')}Z`)
+
+    // A NaN timestamp makes the comparison false, so unparseable values fail closed.
+    return now.getTime() - authenticatedAtMs <= STEP_UP_AUTH_WINDOW_SECONDS * 1000
+}
+
+export async function revokeOtherSessions(db: D1Database, userId: string, keepSessionId: string): Promise<void> {
+    await db
+        .prepare(
+            `DELETE FROM sessions
+         WHERE user_id = ?
+           AND id <> ?`,
+        )
+        .bind(userId, keepSessionId)
+        .run()
 }
 
 export async function getCurrentUser(c: Context<{Bindings: Bindings}>): Promise<CurrentUser | null> {
@@ -81,6 +112,7 @@ export async function getCurrentUser(c: Context<{Bindings: Bindings}>): Promise<
         `SELECT users.id,
                 sessions.id AS session_id,
                 sessions.expires_at AS session_expires_at,
+                sessions.authenticated_at,
                 users.email,
                 users.username,
                 users.role,
@@ -104,6 +136,7 @@ export async function getCurrentUser(c: Context<{Bindings: Bindings}>): Promise<
             id: string
             session_id: string
             session_expires_at: string
+            authenticated_at: string | null
             email: string
             username: string
             role: string | null
@@ -134,6 +167,7 @@ export async function getCurrentUser(c: Context<{Bindings: Bindings}>): Promise<
         displayNsfwMedia: Boolean(user.display_nsfw_media),
         showUnapprovedMedia: user.show_unapproved_media !== 0,
         lastSeenVersion: user.last_seen_version ?? null,
+        authenticatedAt: user.authenticated_at ?? null,
         recoveryPhraseConfirmed: Boolean(user.recovery_phrase_confirmed_at),
         secureAccountRequired: Boolean(user.secure_account_required),
         passkeyPromptSeen: Boolean(user.passkey_prompt_seen_at),

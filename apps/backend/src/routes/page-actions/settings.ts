@@ -2,7 +2,15 @@ import {hash} from 'bcryptjs'
 import type {Context} from 'hono'
 import {Hono} from 'hono'
 import {z} from 'zod'
-import {getCurrentUser, normalizeCredential, toSqlTimestamp, type UserRecord} from '../../lib/auth/session'
+import {
+    type CurrentUser,
+    getCurrentUser,
+    hasRecentAuthentication,
+    normalizeCredential,
+    toSqlTimestamp,
+    type UserRecord,
+} from '../../lib/auth/session'
+import {STEP_UP_REQUIRED_ERROR, stepUpRequiredResponse} from '../../lib/auth/stepUp'
 import {csrfProtection} from '../../lib/http/csrf'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {safeLocalRedirectPath} from '../../lib/http/redirect'
@@ -75,12 +83,24 @@ settingsPageActionRoutes.post('/settings', async (c) => {
         return respondToUpdate(c, updateResult, 400)
     }
 
+    // Issue #251: credential and identity changes need a recent full authentication.
+    // Profile-only changes (bio, links, preferences) stay allowed on an older session.
+    const changesIdentity = updateResult.email !== currentUser.email.toLowerCase() || updateResult.username !== currentUser.username
+
+    if ((updateResult.password || changesIdentity) && !hasRecentAuthentication(currentUser)) {
+        if (c.req.header('accept')?.includes('text/html')) {
+            return respondToUpdate(c, {error: STEP_UP_REQUIRED_ERROR}, 403)
+        }
+
+        return stepUpRequiredResponse(c)
+    }
+
     if (await hasConflictingUser(c.env.DB, updateResult.email, updateResult.username, currentUser.id)) {
         return respondToUpdate(c, {error: 'Email or username is already in use'}, 409)
     }
 
     try {
-        await c.env.DB.batch(await buildSettingsUpdateStatements(c.env.DB, currentUser.id, updateResult))
+        await c.env.DB.batch(await buildSettingsUpdateStatements(c.env.DB, currentUser, updateResult))
     } catch (error) {
         if (isUniqueConstraintError(error)) {
             return respondToUpdate(c, {error: 'Email or username is already in use'}, 409)
@@ -272,9 +292,19 @@ async function hasConflictingUser(db: D1Database, email: string, username: strin
     return Boolean(existingUser)
 }
 
-async function buildSettingsUpdateStatements(db: D1Database, userId: string, update: SettingsUpdate): Promise<D1PreparedStatement[]> {
-    const statements = [await buildUserUpdateStatement(db, userId, update)]
-    statements.push(db.prepare('DELETE FROM user_social_links WHERE user_id = ?').bind(userId))
+async function buildSettingsUpdateStatements(
+    db: D1Database,
+    currentUser: CurrentUser,
+    update: SettingsUpdate,
+): Promise<D1PreparedStatement[]> {
+    const statements = [await buildUserUpdateStatement(db, currentUser.id, update)]
+    statements.push(db.prepare('DELETE FROM user_social_links WHERE user_id = ?').bind(currentUser.id))
+
+    if (update.password) {
+        // Issue #251: a password change ends every other session, so a session
+        // the attacker may still hold dies as soon as the owner rotates the password.
+        statements.push(db.prepare('DELETE FROM sessions WHERE user_id = ? AND id <> ?').bind(currentUser.id, currentUser.sessionId))
+    }
 
     for (const link of update.socialLinks) {
         statements.push(
@@ -283,7 +313,7 @@ async function buildSettingsUpdateStatements(db: D1Database, userId: string, upd
                     `INSERT INTO user_social_links (user_id, platform, label, url, updated_at)
                  VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
                 )
-                .bind(userId, link.platform, link.label, link.url),
+                .bind(currentUser.id, link.platform, link.label, link.url),
         )
     }
 
@@ -456,7 +486,7 @@ function respondToUpdate(
         | {
               error: string
           },
-    status: 200 | 400 | 401 | 409 | 413 = 200,
+    status: 200 | 400 | 401 | 403 | 409 | 413 = 200,
 ): Response {
     if (c.req.header('accept')?.includes('text/html')) {
         return c.redirect('/settings', status === 200 ? 302 : 303)

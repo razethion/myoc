@@ -9,6 +9,8 @@ const currentUser: CurrentUser = {
     showUnapprovedMedia: true,
     email: 'demo@example.test',
     id: 'user-1',
+    sessionId: 'session-1',
+    authenticatedAt: '2026-06-10 12:00:00',
     lastSeenVersion: null,
     profilePhotoKey: null,
     role: 'user',

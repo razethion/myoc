@@ -119,6 +119,7 @@ describe('passkey database helpers', () => {
                 displayNsfwMedia: false,
                 showUnapprovedMedia: true,
                 lastSeenVersion: null,
+                authenticatedAt: '2026-06-10 12:00:00',
                 csrfToken: 'csrf-token',
             }),
         ).resolves.toEqual([

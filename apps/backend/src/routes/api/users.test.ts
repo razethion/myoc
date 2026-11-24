@@ -2,12 +2,13 @@ import {env} from 'cloudflare:workers'
 import {compare} from 'bcryptjs'
 import {describe, expect, it, vi} from 'vitest'
 import {createCsrfToken} from '../../lib/auth/session'
+import {STEP_UP_REQUIRED_ERROR} from '../../lib/auth/stepUp'
 import {STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
 import {PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/profileImage'
 import {thumbnailOriginalObjectKey} from '../../lib/media/thumbnailSources'
 import {APP_VERSION} from '../../lib/releases'
 import {expectSessionCookie} from '../../test/assertions'
-import {queryAll, queryOne, seedAuthenticatedUser, seedUser, useTestDatabase, withFailingTrigger} from '../../test/d1'
+import {queryAll, queryOne, seedAuthenticatedUser, seedSession, seedUser, useTestDatabase, withFailingTrigger} from '../../test/d1'
 import {
     createAvifBytes,
     createGifFile,
@@ -273,6 +274,21 @@ async function seedCurrentUser(overrides: CurrentUserSeedOverrides = {}, session
         sessionToken,
         db,
     )
+}
+
+async function seedCurrentUserWithStaleSession(sessionToken = 'session-token'): Promise<void> {
+    await seedUser({
+        id: currentUser.id,
+        email: currentUser.email,
+        username: currentUser.username,
+        role: currentUser.role,
+        passwordHash: 'old-password-hash',
+        profilePhotoKey: currentUser.profilePhotoKey,
+        bio: currentUser.bio,
+        displayNsfwMedia: currentUser.displayNsfwMedia,
+        lastSeenVersion: currentUser.lastSeenVersion,
+    })
+    await seedSession({userId: currentUser.id, token: sessionToken, authenticatedAt: '2020-01-01 00:00:00'})
 }
 
 describe('POST /register', () => {
@@ -760,6 +776,153 @@ describe('POST /settings', () => {
 
         const updatedUser = await queryOne<{password_hash: string}>('SELECT password_hash FROM users WHERE id = ?', [currentUser.id], db)
         expect(await compare('newpassword123', updatedUser?.password_hash ?? '')).toBe(true)
+    })
+
+    it('rejects an email change when the session authentication is too old', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUserWithStaleSession(sessionToken)
+
+        const response = await postCurrentUserSettings(
+            {
+                email: 'new@example.com',
+                username: 'olduser',
+                bio: 'Old bio',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(403)
+        expect(await response.json()).toEqual({error: STEP_UP_REQUIRED_ERROR, stepUpRequired: true})
+        expect(
+            await queryOne<{email: string; username: string}>('SELECT email, username FROM users WHERE id = ?', [currentUser.id], db),
+        ).toEqual({email: 'old@example.com', username: 'olduser'})
+    })
+
+    it('rejects a username change when the session authentication is too old', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUserWithStaleSession(sessionToken)
+
+        const response = await postCurrentUserSettings(
+            {
+                email: 'old@example.com',
+                username: 'newuser',
+                bio: 'Old bio',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(403)
+        expect(await response.json()).toEqual({error: STEP_UP_REQUIRED_ERROR, stepUpRequired: true})
+        expect(await queryOne<{username: string}>('SELECT username FROM users WHERE id = ?', [currentUser.id], db)).toEqual({
+            username: 'olduser',
+        })
+    })
+
+    it('rejects a password change when the session authentication is too old', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUserWithStaleSession(sessionToken)
+
+        const response = await postCurrentUserSettings(
+            {
+                email: 'old@example.com',
+                username: 'olduser',
+                bio: 'Old bio',
+                password: 'newpassword123',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(403)
+        expect(await response.json()).toEqual({error: STEP_UP_REQUIRED_ERROR, stepUpRequired: true})
+        expect(await queryOne<{password_hash: string}>('SELECT password_hash FROM users WHERE id = ?', [currentUser.id], db)).toEqual({
+            password_hash: 'old-password-hash',
+        })
+    })
+
+    it('allows profile-only changes when the session authentication is too old', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUserWithStaleSession(sessionToken)
+
+        const response = await postCurrentUserSettings(
+            {
+                email: 'old@example.com',
+                username: 'olduser',
+                bio: 'New bio',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ok: true})
+        expect(await queryOne<{bio: string}>('SELECT bio FROM users WHERE id = ?', [currentUser.id], db)).toEqual({bio: 'New bio'})
+    })
+
+    it('redirects browser form submissions that need step-up authentication', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUserWithStaleSession(sessionToken)
+
+        const response = await settingsPageActionRoutes.request(
+            'https://example.com/settings',
+            {
+                method: 'POST',
+                body: new URLSearchParams({email: 'new@example.com', username: 'olduser', bio: 'Old bio'}).toString(),
+                headers: {
+                    accept: 'text/html',
+                    'content-type': 'application/x-www-form-urlencoded',
+                    cookie: `myoc_session=${sessionToken}`,
+                    'x-csrf-token': await createCsrfToken(sessionToken),
+                },
+            },
+            {DB: db},
+            testExecutionContext,
+        )
+
+        expect(response.status).toBe(303)
+        expect(response.headers.get('location')).toBe('/settings')
+        expect(await queryOne<{email: string}>('SELECT email FROM users WHERE id = ?', [currentUser.id], db)).toEqual({
+            email: 'old@example.com',
+        })
+    })
+
+    it('revokes other sessions when the password changes', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser({passwordHash: 'old-password-hash'}, sessionToken)
+        await seedSession({id: 'other-session', userId: currentUser.id, token: 'other-token'})
+
+        const response = await postCurrentUserSettings(
+            {
+                email: 'old@example.com',
+                username: 'olduser',
+                bio: 'Old bio',
+                password: 'newpassword123',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(200)
+        expect(await queryAll<{id: string}>('SELECT id FROM sessions WHERE user_id = ? ORDER BY id', [currentUser.id], db)).toEqual([
+            {id: `${currentUser.id}-session`},
+        ])
     })
 
     it('replaces the current social links when settings are saved', async () => {

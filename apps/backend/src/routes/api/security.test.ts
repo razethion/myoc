@@ -2,6 +2,7 @@ import {type VerifiedRegistrationResponse, verifyRegistrationResponse} from '@si
 import {beforeEach, describe, expect, it, vi} from 'vitest'
 import {hashRecoveryPhrase, verifyRecoveryPhrase} from '../../lib/auth/passkeys'
 import {createCsrfToken} from '../../lib/auth/session'
+import {STEP_UP_REQUIRED_ERROR} from '../../lib/auth/stepUp'
 import {STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
 import {countRows, queryAll, queryOne, seedChallenge, seedPasskey, seedSession, seedUser, useTestDatabase} from '../../test/d1'
 import {createAllowingAuthRateLimits, createMockRateLimit} from '../../test/mockRateLimit'
@@ -31,7 +32,10 @@ type CurrentUserOverrides = {
     secureAccountRequired?: boolean
     secureAccountRequiredAt?: string | null
     secureAccountRequiredPasskeyId?: string | null
+    authenticatedAt?: string | null
 }
+
+const STALE_AUTHENTICATED_AT = '2020-01-01 00:00:00'
 
 async function seedCurrentUser(overrides: CurrentUserOverrides = {}): Promise<void> {
     await seedUser({
@@ -46,7 +50,7 @@ async function seedCurrentUser(overrides: CurrentUserOverrides = {}): Promise<vo
         secureAccountRequiredAt: overrides.secureAccountRequiredAt ?? null,
         secureAccountRequiredPasskeyId: overrides.secureAccountRequiredPasskeyId ?? null,
     })
-    await seedSession({id: 'current-session', userId: 'user-1', token: sessionToken})
+    await seedSession({id: 'current-session', userId: 'user-1', token: sessionToken, authenticatedAt: overrides.authenticatedAt})
 }
 
 async function securityRequest(
@@ -658,6 +662,162 @@ describe('POST /security/complete', () => {
             secure_account_required_at: null,
             secure_account_required_passkey_id: null,
         })
+    })
+})
+
+describe('step-up authentication requirement', () => {
+    const staleJsonEndpoints: Array<{name: string; path: string; body?: unknown}> = [
+        {name: 'POST /security/passkeys/options', path: '/passkeys/options'},
+        {name: 'POST /security/recovery/regenerate', path: '/recovery/regenerate'},
+        {name: 'POST /security/sessions/revoke-others', path: '/sessions/revoke-others'},
+        {name: 'POST /security/sessions/:id/revoke', path: '/sessions/other-session/revoke'},
+        {name: 'POST /security/complete', path: '/complete'},
+    ]
+
+    for (const endpoint of staleJsonEndpoints) {
+        it(`returns 403 for ${endpoint.name} when the session authentication is too old`, async () => {
+            await seedCurrentUser({authenticatedAt: STALE_AUTHENTICATED_AT})
+            await seedSession({id: 'other-session', userId: 'user-1', token: 'other-token'})
+
+            const response = await securityRequest(endpoint.path, db, {body: endpoint.body})
+
+            expect(response.status).toBe(403)
+            expect(await response.json()).toEqual({error: STEP_UP_REQUIRED_ERROR, stepUpRequired: true})
+            expect(await countRows('sessions')).toBe(2)
+        })
+    }
+
+    it('returns 403 for passkey verification without verifying the credential when the session authentication is too old', async () => {
+        await seedCurrentUser({authenticatedAt: STALE_AUTHENTICATED_AT})
+
+        const response = await securityRequest('/passkeys/verify', db, {
+            body: {challengeId: 'challenge-1', credential: createRegistrationCredential()},
+        })
+
+        expect(response.status).toBe(403)
+        expect(await response.json()).toEqual({error: STEP_UP_REQUIRED_ERROR, stepUpRequired: true})
+        expect(verifyRegistrationResponse).not.toHaveBeenCalled()
+    })
+
+    it('returns 403 for passkey deletion when the session authentication is too old', async () => {
+        await seedCurrentUser({authenticatedAt: STALE_AUTHENTICATED_AT})
+        await seedPasskey({
+            id: 'passkey-1',
+            userId: 'user-1',
+            credentialId: 'credential-id',
+            webauthnUserId: 'webauthn-user-1',
+        })
+
+        const response = await securityRequest('/passkeys/passkey-1', db, {method: 'DELETE'})
+
+        expect(response.status).toBe(403)
+        expect(await response.json()).toEqual({error: STEP_UP_REQUIRED_ERROR, stepUpRequired: true})
+        expect(await countRows('user_passkeys')).toBe(1)
+    })
+
+    it('still confirms a recovery phrase on an old session because the phrase itself proves possession', async () => {
+        await seedCurrentUser({
+            authenticatedAt: STALE_AUTHENTICATED_AT,
+            recoveryPhraseHash: await hashRecoveryPhrase('correct-horse-battery-staple'),
+        })
+
+        const response = await securityRequest('/recovery/confirm', db, {
+            body: {recoveryPhrase: 'correct-horse-battery-staple'},
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ok: true})
+    })
+})
+
+describe('session revocation after credential changes', () => {
+    it('revokes other sessions after a passkey is added', async () => {
+        await seedCurrentUser({webauthnUserId: null})
+        await seedSession({id: 'other-session', userId: 'user-1', token: 'other-token'})
+        await seedChallenge({
+            id: 'challenge-1',
+            userId: 'user-1',
+            webauthnUserId: 'webauthn-user-1',
+            ceremony: 'registration',
+            challenge: 'stored-challenge',
+        })
+        vi.mocked(verifyRegistrationResponse).mockResolvedValueOnce({
+            verified: true,
+            registrationInfo: {
+                fmt: 'none',
+                aaguid: '00000000-0000-0000-0000-000000000000',
+                credential: {
+                    id: 'credential-id',
+                    publicKey: new Uint8Array([1, 2, 3]),
+                    counter: 9,
+                    transports: ['internal'],
+                },
+                credentialType: 'public-key',
+                attestationObject: new Uint8Array(),
+                userVerified: true,
+                credentialDeviceType: 'singleDevice',
+                credentialBackedUp: false,
+                origin: 'https://example.com',
+                rpID: 'example.com',
+            },
+        })
+
+        const response = await securityRequest('/passkeys/verify', db, {
+            body: {challengeId: 'challenge-1', credential: createRegistrationCredential()},
+        })
+
+        expect(response.status).toBe(200)
+        expect(await queryAll<{id: string}>('SELECT id FROM sessions WHERE user_id = ? ORDER BY id', ['user-1'])).toEqual([
+            {id: 'current-session'},
+        ])
+    })
+
+    it('revokes other sessions after a passkey is removed', async () => {
+        await seedCurrentUser()
+        await seedSession({id: 'other-session', userId: 'user-1', token: 'other-token'})
+        await seedPasskey({
+            id: 'passkey-1',
+            userId: 'user-1',
+            credentialId: 'credential-id',
+            webauthnUserId: 'webauthn-user-1',
+        })
+
+        const response = await securityRequest('/passkeys/passkey-1', db, {method: 'DELETE'})
+
+        expect(response.status).toBe(200)
+        expect(await queryAll<{id: string}>('SELECT id FROM sessions WHERE user_id = ? ORDER BY id', ['user-1'])).toEqual([
+            {id: 'current-session'},
+        ])
+    })
+
+    it('revokes other sessions after a recovery phrase is regenerated', async () => {
+        await seedCurrentUser()
+        await seedSession({id: 'other-session', userId: 'user-1', token: 'other-token'})
+
+        const response = await securityRequest('/recovery/regenerate', db)
+
+        expect(response.status).toBe(200)
+        expect(await queryAll<{id: string}>('SELECT id FROM sessions WHERE user_id = ? ORDER BY id', ['user-1'])).toEqual([
+            {id: 'current-session'},
+        ])
+    })
+
+    it('revokes other sessions when recovery setup completes', async () => {
+        await seedCurrentUser({recoveryPhraseConfirmedAt: '2026-06-10 12:05:00'})
+        await seedSession({id: 'other-session', userId: 'user-1', token: 'other-token'})
+        await seedPasskey({
+            id: 'passkey-1',
+            userId: 'user-1',
+            credentialId: 'credential-id',
+            webauthnUserId: 'webauthn-user-1',
+        })
+
+        const response = await securityRequest('/complete', db)
+
+        expect(response.status).toBe(200)
+        expect(await queryAll<{id: string}>('SELECT id FROM sessions WHERE user_id = ? ORDER BY id', ['user-1'])).toEqual([
+            {id: 'current-session'},
+        ])
     })
 })
 
