@@ -856,6 +856,76 @@ describe('session revocation after credential changes', () => {
     })
 })
 
+describe('session revocation during credential changes', () => {
+    it('rejects passkey registration when the session was revoked during the ceremony', async () => {
+        await seedCurrentUser({webauthnUserId: null})
+        await seedSession({id: 'other-session', userId: 'user-1', token: 'other-token'})
+        await seedChallenge({
+            id: 'challenge-1',
+            userId: 'user-1',
+            webauthnUserId: 'webauthn-user-1',
+            ceremony: 'registration',
+            challenge: 'stored-challenge',
+        })
+        vi.mocked(verifyRegistrationResponse).mockImplementationOnce(async () => {
+            await db.prepare('DELETE FROM sessions WHERE id = ?').bind('current-session').run()
+
+            return {
+                verified: true,
+                registrationInfo: {
+                    fmt: 'none',
+                    aaguid: '00000000-0000-0000-0000-000000000000',
+                    credential: {
+                        id: 'credential-id',
+                        publicKey: new Uint8Array([1, 2, 3]),
+                        counter: 9,
+                        transports: ['internal'],
+                    },
+                    credentialType: 'public-key',
+                    attestationObject: new Uint8Array(),
+                    userVerified: true,
+                    credentialDeviceType: 'singleDevice',
+                    credentialBackedUp: false,
+                    origin: 'https://example.com',
+                    rpID: 'example.com',
+                },
+            }
+        })
+
+        const response = await securityRequest('/passkeys/verify', db, {
+            body: {challengeId: 'challenge-1', credential: createRegistrationCredential()},
+        })
+
+        expect(response.status).toBe(401)
+        expect(await response.json()).toEqual({error: 'Authentication required'})
+        expect(await countRows('user_passkeys')).toBe(0)
+        expect(await queryOne<{id: string}>('SELECT id FROM webauthn_challenges WHERE id = ?', ['challenge-1'])).not.toBeNull()
+        expect(await queryAll<{id: string}>('SELECT id FROM sessions ORDER BY id')).toEqual([{id: 'other-session'}])
+    })
+
+    it('rejects recovery regeneration when the session was revoked during the request', async () => {
+        await seedCurrentUser()
+
+        const response = await securityRequest('/recovery/regenerate', db, {
+            rateLimits: {
+                AUTH_IDENTITY_SUSTAINED_RATE_LIMITER: {
+                    limit: vi.fn(async () => {
+                        await db.prepare('DELETE FROM sessions WHERE id = ?').bind('current-session').run()
+                        return {success: true}
+                    }),
+                },
+            },
+        })
+
+        expect(response.status).toBe(401)
+        expect(await response.json()).toEqual({error: 'Authentication required'})
+        expect(
+            await queryOne<{recovery_phrase_hash: string | null}>('SELECT recovery_phrase_hash FROM users WHERE id = ?', ['user-1']),
+        ).toEqual({recovery_phrase_hash: null})
+        expect(await countRows('sessions')).toBe(0)
+    })
+})
+
 function createRegistrationCredential() {
     return {
         id: 'credential-id',

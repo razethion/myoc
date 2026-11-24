@@ -126,6 +126,22 @@ describe('step-up authentication window', () => {
         expect(await response.json()).toEqual({authenticatedAt: '2026-06-10 12:00:00'})
     })
 
+    it('reports no authentication time for a legacy session row', async () => {
+        const token = 'legacy-auth'
+        await seedUser({id: 'user-14'})
+        await seedSession({userId: 'user-14', token, authenticatedAt: null})
+
+        const app = new Hono<{Bindings: Bindings}>()
+        app.get('/probe', async (c) => {
+            const user = await getCurrentUser(c)
+            return c.json({authenticatedAt: user?.authenticatedAt ?? null})
+        })
+
+        const response = await app.request('https://example.com/probe', {headers: {cookie: `myoc_session=${token}`}}, {DB: db} as Bindings)
+
+        expect(await response.json()).toEqual({authenticatedAt: null})
+    })
+
     it('keeps authentication time stale when an old session renews', async () => {
         const token = 'renew-without-reauth'
         const seededExpiry = toSqlTimestamp(new Date(Date.now() + 29 * DAY_MS - HOUR_MS))
