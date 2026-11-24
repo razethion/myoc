@@ -50,7 +50,7 @@ function createContainer(handler: (request: Request) => Response | Promise<Respo
     }
 }
 
-function galleryResponse(includeBlur: boolean, width = 100, height = 80): Response {
+function galleryResponse(includeBlur: boolean, width = 100, height = 80, animated = false): Response {
     const preview = createAvifBytes(width, height)
     const blur = includeBlur ? createAvifBytes(width, height) : new Uint8Array()
     const bytes = new Uint8Array(preview.byteLength + blur.byteLength)
@@ -60,6 +60,7 @@ function galleryResponse(includeBlur: boolean, width = 100, height = 80): Respon
         headers: {
             'x-preview-length': String(preview.byteLength),
             ...(includeBlur ? {'x-blur-length': String(blur.byteLength)} : {}),
+            ...(animated ? {'x-preview-animated': 'true'} : {}),
         },
     })
 }
@@ -871,6 +872,195 @@ describe('image upload jobs', () => {
         expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({state: 'ready'})
     })
 
+    it('stores the animated preview flag from the container', async () => {
+        await seedUser({id: 'user-1'})
+        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        const setup = createEnv((request) => {
+            const url = new URL(request.url)
+            return url.pathname === '/images/gallery'
+                ? galleryResponse(url.searchParams.get('blur') === '1', 100, 80, true)
+                : new Response(createAvifBytes(512, 512), {headers: {'content-type': 'image/avif'}})
+        })
+        const sources = []
+
+        for (const rating of ['sfw', 'nsfw'] as const) {
+            const objectKey = `image-staging/${characterMediaImageObjectKey(
+                'user-1',
+                'character-1',
+                'media-1',
+                `${rating}-source`,
+                rating,
+                'image/gif',
+            )}`
+            const bytes = await pngBytes(100, 80)
+            await setup.sourceBucket.put(objectKey, bytes)
+            sources.push({
+                rating,
+                objectKey,
+                contentType: 'image/gif',
+                byteSize: bytes.byteLength,
+                width: 100,
+                height: 80,
+                displayWidth: 100,
+                displayHeight: 80,
+            })
+        }
+
+        const job = await createGalleryImageUploadJob(setup.env, {
+            userId: 'user-1',
+            characterId: 'character-1',
+            mediaId: 'media-1',
+            idempotencyKey: 'gallery-animated-preview',
+            sfwArtist: 'Artist A',
+            nsfwArtist: 'Artist B',
+            sources,
+            now,
+        })
+
+        for (const message of queuedMessages(setup.lanes)) await consumeQueued(setup.env, message)
+
+        expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({
+            state: 'ready',
+            result: {media: {sfwPreviewImageUrl: expect.any(String), nsfwPreviewImageUrl: expect.any(String)}},
+        })
+        expect(
+            await queryOne<{sfw_preview_animated: number; nsfw_preview_animated: number}>(
+                'SELECT sfw_preview_animated, nsfw_preview_animated FROM character_media WHERE id = ?',
+                ['media-1'],
+                db,
+            ),
+        ).toEqual({sfw_preview_animated: 1, nsfw_preview_animated: 1})
+    })
+
+    it('omits preview URLs when a GIF source falls back to a static preview', async () => {
+        await seedUser({id: 'user-1'})
+        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        const setup = createEnv((request) => {
+            const url = new URL(request.url)
+            return url.pathname === '/images/gallery'
+                ? galleryResponse(url.searchParams.get('blur') === '1')
+                : new Response(createAvifBytes(512, 512), {headers: {'content-type': 'image/avif'}})
+        })
+        const sources = []
+
+        for (const rating of ['sfw', 'nsfw'] as const) {
+            const objectKey = `image-staging/${characterMediaImageObjectKey(
+                'user-1',
+                'character-1',
+                'media-1',
+                `${rating}-source`,
+                rating,
+                'image/gif',
+            )}`
+            const bytes = await pngBytes(100, 80)
+            await setup.sourceBucket.put(objectKey, bytes)
+            sources.push({
+                rating,
+                objectKey,
+                contentType: 'image/gif',
+                byteSize: bytes.byteLength,
+                width: 100,
+                height: 80,
+                displayWidth: 100,
+                displayHeight: 80,
+            })
+        }
+
+        const job = await createGalleryImageUploadJob(setup.env, {
+            userId: 'user-1',
+            characterId: 'character-1',
+            mediaId: 'media-1',
+            idempotencyKey: 'gallery-static-gif',
+            sfwArtist: 'Artist A',
+            nsfwArtist: 'Artist B',
+            sources,
+            now,
+        })
+
+        for (const message of queuedMessages(setup.lanes)) await consumeQueued(setup.env, message)
+
+        expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({
+            state: 'ready',
+            result: {media: {sfwPreviewImageUrl: null, nsfwPreviewImageUrl: null}},
+        })
+        expect(
+            await queryOne<{sfw_preview_animated: number; nsfw_preview_animated: number}>(
+                'SELECT sfw_preview_animated, nsfw_preview_animated FROM character_media WHERE id = ?',
+                ['media-1'],
+                db,
+            ),
+        ).toEqual({sfw_preview_animated: 0, nsfw_preview_animated: 0})
+    })
+
+    it('publishes a gallery pair when a ready task output has no animation flag', async () => {
+        await seedUser({id: 'user-1'})
+        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        const setup = createEnv()
+        const sources = []
+
+        for (const rating of ['sfw', 'nsfw'] as const) {
+            const objectKey = `image-staging/${characterMediaImageObjectKey(
+                'user-1',
+                'character-1',
+                'media-1',
+                `${rating}-source`,
+                rating,
+                'image/png',
+            )}`
+            const bytes = await pngBytes(100, 80)
+            await setup.sourceBucket.put(objectKey, bytes)
+            sources.push({
+                rating,
+                objectKey,
+                contentType: 'image/png',
+                byteSize: bytes.byteLength,
+                width: 100,
+                height: 80,
+                displayWidth: 100,
+                displayHeight: 80,
+            })
+        }
+
+        const job = await createGalleryImageUploadJob(setup.env, {
+            userId: 'user-1',
+            characterId: 'character-1',
+            mediaId: 'media-1',
+            idempotencyKey: 'gallery-legacy-output',
+            sfwArtist: 'Artist A',
+            nsfwArtist: 'Artist B',
+            sources,
+            now,
+        })
+        const queued = queuedMessages(setup.lanes)
+        const first = queued[0]
+        const second = queued[1]
+        if (!first || !second) throw new Error('Expected two queued gallery tasks')
+
+        await consumeQueued(setup.env, first)
+        const task = await queryOne<{output_json: string}>(
+            `SELECT output_json FROM image_processing_tasks WHERE job_id = ? AND state = 'ready'`,
+            [job.id],
+            db,
+        )
+        const output = JSON.parse(task?.output_json ?? '{}') as Record<string, unknown>
+        delete output.previewAnimated
+        await db
+            .prepare(`UPDATE image_processing_tasks SET output_json = ? WHERE job_id = ? AND state = 'ready'`)
+            .bind(JSON.stringify(output), job.id)
+            .run()
+
+        await consumeQueued(setup.env, second)
+
+        expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({state: 'ready'})
+        expect(
+            await queryOne<{sfw_preview_animated: number; nsfw_preview_animated: number}>(
+                'SELECT sfw_preview_animated, nsfw_preview_animated FROM character_media WHERE id = ?',
+                ['media-1'],
+                db,
+            ),
+        ).toEqual({sfw_preview_animated: 0, nsfw_preview_animated: 0})
+    })
+
     it('publishes a non-PNG gallery source without PNG tagging', async () => {
         await seedUser({id: 'user-1'})
         await seedCharacter({id: 'character-1', userId: 'user-1'})
@@ -1206,6 +1396,40 @@ describe('image upload jobs', () => {
         expect(await queryAll<{id: string}>('SELECT id FROM image_processing_attempts', [], db)).toEqual([])
         expect((await setup.mediaBucket.list()).objects.map((object) => object.key)).toEqual([created.sourceKey])
         expect(await queryAll<{id: string}>('SELECT id FROM character_media', [], db)).toEqual([])
+    })
+
+    it.each(['sfw', 'nsfw'] as const)('keeps the shared %s gallery image when a stale attempt loses the publish race', async (rating) => {
+        await seedUser({id: 'user-1'})
+        await seedCharacter({id: 'character-1', userId: 'user-1'})
+        const setup = createEnv(async (request) => galleryResponse(new URL(request.url).searchParams.get('blur') === '1'))
+        const created = await createSingleGalleryJob(setup, rating)
+
+        await db
+            .prepare(
+                `CREATE TRIGGER revoke_gallery_lease AFTER INSERT ON image_processing_attempts
+                 BEGIN
+                     UPDATE image_processing_tasks
+                     SET state = 'queued', lease_id = NULL, lease_expires_at = NULL
+                     WHERE id = NEW.task_id;
+                 END`,
+            )
+            .run()
+
+        try {
+            const delivery = await consumeQueued(setup.env, created.queued)
+
+            expect(delivery.ack).toHaveBeenCalledOnce()
+            expect(delivery.retry).not.toHaveBeenCalled()
+            expect(await getImageUploadStatus(db, 'user-1', created.job.id)).toMatchObject({state: 'waiting'})
+            expect(await queryAll<{id: string}>('SELECT id FROM character_media', [], db)).toEqual([])
+
+            const keys = (await setup.mediaBucket.list()).objects.map((object) => object.key)
+            expect(keys).toContain(created.sourceKey)
+            expect(keys).toHaveLength(2)
+            expect(keys.find((key) => key !== created.sourceKey)).toContain('media-1')
+        } finally {
+            await db.prepare('DROP TRIGGER IF EXISTS revoke_gallery_lease').run()
+        }
     })
 
     it('queues gallery outputs for cleanup when cancel wins the publish race', async () => {

@@ -3276,6 +3276,7 @@ describe('CharacterPage', () => {
                     nsfwPreviewHeight: null,
                     nsfwPreviewImageKey: null,
                     nsfwPreviewContentType: 'image/webp',
+                    nsfwPreviewAnimated: false,
                     nsfwPreviewWidth: null,
                     nsfwWidth: null,
                     sfwArtist: '',
@@ -3285,6 +3286,7 @@ describe('CharacterPage', () => {
                     sfwPreviewHeight: null,
                     sfwPreviewImageKey: null,
                     sfwPreviewContentType: 'image/webp',
+                    sfwPreviewAnimated: false,
                     sfwPreviewWidth: null,
                     sfwWidth: null,
                 },
@@ -3327,6 +3329,7 @@ describe('CharacterPage', () => {
                     nsfwPreviewHeight: 0,
                     nsfwPreviewImageKey: null,
                     nsfwPreviewContentType: 'image/webp',
+                    nsfwPreviewAnimated: false,
                     nsfwPreviewWidth: 0,
                     nsfwWidth: 0,
                     sfwArtist: '',
@@ -3336,6 +3339,7 @@ describe('CharacterPage', () => {
                     sfwPreviewHeight: null,
                     sfwPreviewImageKey: null,
                     sfwPreviewContentType: 'image/webp',
+                    sfwPreviewAnimated: false,
                     sfwPreviewWidth: null,
                     sfwWidth: null,
                 },
@@ -3380,6 +3384,129 @@ describe('CharacterPage', () => {
         expect(ownerHtml).toContain(
             'src="https://m.myoc.art/characters/profile-user/character-1/media/nsfw-without-metadata/nsfw/nsfw-key.png"',
         )
+    })
+
+    it('prefers an animated preview and falls back to the original GIF', () => {
+        const props = {
+            character: {
+                description: '',
+                hasHeightChart: false,
+                id: 'character-1',
+                name: 'RAZETH',
+                profileImageKey: 'character-profile-key',
+                userId: 'profile-user',
+            },
+            currentUser: null,
+            galleryTabs: [],
+            mediaBaseUrl: mediaPublicBaseUrl,
+            metaDescriptionFallback: 'An original-character gallery.',
+            profileUser: {
+                bio: '',
+                id: 'profile-user',
+                profilePhotoKey: null,
+                username: 'demo',
+            },
+            siteUrl: 'https://example.com',
+        }
+        const media = (sfwPreviewAnimated: boolean) => ({
+            id: 'gif-media',
+            nsfwArtist: '',
+            nsfwBlurImageKey: null,
+            nsfwBlurContentType: 'image/webp',
+            nsfwContentType: null,
+            nsfwHeight: null,
+            nsfwImageKey: null,
+            nsfwPreviewHeight: null,
+            nsfwPreviewImageKey: null,
+            nsfwPreviewContentType: 'image/webp',
+            nsfwPreviewAnimated: false,
+            nsfwPreviewWidth: null,
+            nsfwWidth: null,
+            sfwArtist: '',
+            sfwContentType: 'image/gif',
+            sfwHeight: 80,
+            sfwImageKey: 'gif-source',
+            sfwPreviewHeight: 80,
+            sfwPreviewImageKey: 'gif-preview',
+            sfwPreviewContentType: 'image/avif',
+            sfwPreviewAnimated,
+            sfwPreviewWidth: 100,
+            sfwWidth: 100,
+        })
+
+        const staticHtml = CharacterPage({...props, media: [media(false)]}).toString()
+        const animatedHtml = CharacterPage({...props, media: [media(true)]}).toString()
+
+        expect(staticHtml).toContain('/media/gif-media/sfw/gif-source.gif')
+        expect(staticHtml).not.toContain('/media/gif-media/sfw/preview/gif-preview.avif')
+        expect(animatedHtml).toContain('/media/gif-media/sfw/preview/gif-preview.avif')
+    })
+
+    it('prefers an animated NSFW preview and falls back to the original GIF', () => {
+        const props = {
+            character: {
+                description: '',
+                hasHeightChart: false,
+                id: 'character-1',
+                name: 'RAZETH',
+                profileImageKey: 'character-profile-key',
+                userId: 'profile-user',
+            },
+            currentUser: {
+                bio: '',
+                csrfToken: 'csrf-token',
+                displayNsfwMedia: true,
+                showUnapprovedMedia: true,
+                email: 'demo@example.test',
+                id: 'profile-user',
+                lastSeenVersion: null,
+                profilePhotoKey: null,
+                role: 'user' as const,
+                username: 'demo',
+            },
+            galleryTabs: [],
+            mediaBaseUrl: mediaPublicBaseUrl,
+            metaDescriptionFallback: 'An original-character gallery.',
+            profileUser: {
+                bio: '',
+                id: 'profile-user',
+                profilePhotoKey: null,
+                username: 'demo',
+            },
+            siteUrl: 'https://example.com',
+        }
+        const media = (nsfwPreviewAnimated: boolean) => ({
+            id: 'nsfw-gif-media',
+            nsfwArtist: '',
+            nsfwBlurImageKey: null,
+            nsfwBlurContentType: 'image/webp',
+            nsfwContentType: 'image/gif',
+            nsfwHeight: 80,
+            nsfwImageKey: 'nsfw-gif-source',
+            nsfwPreviewHeight: 80,
+            nsfwPreviewImageKey: 'nsfw-gif-preview',
+            nsfwPreviewContentType: 'image/avif',
+            nsfwPreviewAnimated,
+            nsfwPreviewWidth: 100,
+            nsfwWidth: 100,
+            sfwArtist: '',
+            sfwContentType: null,
+            sfwHeight: null,
+            sfwImageKey: null,
+            sfwPreviewHeight: null,
+            sfwPreviewImageKey: null,
+            sfwPreviewContentType: 'image/webp',
+            sfwPreviewAnimated: false,
+            sfwPreviewWidth: null,
+            sfwWidth: null,
+        })
+
+        const staticHtml = CharacterPage({...props, media: [media(false)]}).toString()
+        const animatedHtml = CharacterPage({...props, media: [media(true)]}).toString()
+
+        expect(staticHtml).toContain('/media/nsfw-gif-media/nsfw/nsfw-gif-source.gif')
+        expect(staticHtml).not.toContain('/media/nsfw-gif-media/nsfw/preview/nsfw-gif-preview.avif')
+        expect(animatedHtml).toContain('/media/nsfw-gif-media/nsfw/preview/nsfw-gif-preview.avif')
     })
 })
 

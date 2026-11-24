@@ -278,6 +278,7 @@ async function deleteReportedImage(db: D1Database, bucket: R2Bucket, media: Repo
                      sfw_preview_width = NULL,
                      sfw_preview_height = NULL,
                      sfw_preview_byte_size = NULL,
+                     sfw_preview_animated = 0,
                      sfw_review_status = 'pending',
                      sfw_reviewed_at = NULL,
                      sfw_approved_at = NULL,
@@ -301,6 +302,7 @@ async function deleteReportedImage(db: D1Database, bucket: R2Bucket, media: Repo
                      nsfw_preview_width     = NULL,
                      nsfw_preview_height = NULL,
                      nsfw_preview_byte_size = NULL,
+                     nsfw_preview_animated = 0,
                      nsfw_review_status = 'pending',
                      nsfw_reviewed_at = NULL,
                      nsfw_approved_at = NULL

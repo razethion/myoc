@@ -1,6 +1,7 @@
 import {Container} from '@cloudflare/containers'
 
 type MyocDockerSharpContainerEnv = {
+    MEDIA_PUBLIC_BASE_URL?: string
     PREVIEW_PROCESSOR_TOKEN: string
 }
 
@@ -35,6 +36,16 @@ export class MyocDockerSharpContainer extends Container<MyocDockerSharpContainer
             SQUARE_IMAGE_SIZE: '512',
             SQUARE_SOURCE_MAX_BYTES: String(3 * 1024 * 1024),
         }
+
+        // Preview regeneration passes media URLs to the container. The
+        // container fetches them through the allowedHosts gate. Preview
+        // deployments serve media from a bucket domain, so the deployment's
+        // own media host must pass that gate too.
+        const mediaHost = publicMediaHost(env.MEDIA_PUBLIC_BASE_URL)
+
+        if (mediaHost && !this.allowedHosts.includes(mediaHost)) {
+            this.allowedHosts = [...this.allowedHosts, mediaHost]
+        }
     }
 
     override async fetch(request: Request): Promise<Response> {
@@ -52,6 +63,22 @@ export class MyocDockerSharpContainer extends Container<MyocDockerSharpContainer
         } finally {
             this.activeImageRequests -= 1
         }
+    }
+}
+
+/**
+ * Returns the host name of a base URL. Returns null when the value is
+ * missing or invalid.
+ */
+function publicMediaHost(value: string | undefined): string | null {
+    if (!value) {
+        return null
+    }
+
+    try {
+        return new URL(value).host
+    } catch {
+        return null
     }
 }
 

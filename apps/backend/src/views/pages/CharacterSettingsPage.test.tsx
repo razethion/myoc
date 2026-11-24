@@ -1,6 +1,6 @@
 import {describe, expect, it} from 'vitest'
 import type {CurrentUser} from '../../lib/auth/session'
-import {type CharacterSettingsCharacter, CharacterSettingsPage} from './CharacterSettingsPage'
+import {type CharacterSettingsCharacter, type CharacterSettingsMedia, CharacterSettingsPage} from './CharacterSettingsPage'
 
 const currentUser: CurrentUser = {
     bio: '',
@@ -146,5 +146,109 @@ describe('CharacterSettingsPage', () => {
         expect(harness.anchor.href).toBe('/u/demo%20user/New%20Name')
         const patch = harness.requests.find((request) => request.url === '/api/characters/character-1')
         expect(patch).toBeDefined()
+    })
+
+    it('prefers an animated preview and falls back to the original GIF', () => {
+        const media = (sfwPreviewAnimated: boolean): CharacterSettingsMedia => ({
+            id: 'gif-media',
+            nsfwArtist: '',
+            nsfwBlurImageKey: null,
+            nsfwBlurContentType: 'image/webp',
+            nsfwContentType: null,
+            nsfwHeight: null,
+            nsfwImageKey: null,
+            nsfwPreviewHeight: null,
+            nsfwPreviewImageKey: null,
+            nsfwPreviewContentType: 'image/webp',
+            nsfwPreviewAnimated: false,
+            nsfwPreviewWidth: null,
+            nsfwWidth: null,
+            sfwArtist: '',
+            sfwContentType: 'image/gif',
+            sfwHeight: 80,
+            sfwImageKey: 'gif-source',
+            sfwPreviewHeight: 80,
+            sfwPreviewImageKey: 'gif-preview',
+            sfwPreviewContentType: 'image/avif',
+            sfwPreviewAnimated,
+            sfwPreviewWidth: 100,
+            sfwWidth: 100,
+        })
+        const render = (sfwPreviewAnimated: boolean) =>
+            CharacterSettingsPage({
+                currentUser,
+                character: character(),
+                galleryTabs: [],
+                media: [media(sfwPreviewAnimated)],
+                mediaBaseUrl: 'https://m.example.com',
+            }).toString()
+
+        const staticHtml = render(false)
+        const animatedHtml = render(true)
+
+        expect(staticHtml).toContain('/media/gif-media/sfw/gif-source.gif')
+        expect(staticHtml).not.toContain('/media/gif-media/sfw/preview/gif-preview.avif')
+        expect(animatedHtml).toContain('/media/gif-media/sfw/preview/gif-preview.avif')
+    })
+
+    it('uses static previews for other types and animated NSFW previews for GIFs', () => {
+        const media = (overrides: Partial<CharacterSettingsMedia>): CharacterSettingsMedia => ({
+            id: 'media-1',
+            nsfwArtist: '',
+            nsfwBlurImageKey: null,
+            nsfwBlurContentType: 'image/webp',
+            nsfwContentType: null,
+            nsfwHeight: null,
+            nsfwImageKey: null,
+            nsfwPreviewHeight: null,
+            nsfwPreviewImageKey: null,
+            nsfwPreviewContentType: 'image/webp',
+            nsfwPreviewAnimated: false,
+            nsfwPreviewWidth: null,
+            nsfwWidth: null,
+            sfwArtist: '',
+            sfwContentType: 'image/png',
+            sfwHeight: 80,
+            sfwImageKey: 'sfw-source',
+            sfwPreviewHeight: 80,
+            sfwPreviewImageKey: 'sfw-preview',
+            sfwPreviewContentType: 'image/avif',
+            sfwPreviewAnimated: false,
+            sfwPreviewWidth: 100,
+            sfwWidth: 100,
+            ...overrides,
+        })
+        const render = (item: CharacterSettingsMedia) =>
+            CharacterSettingsPage({
+                currentUser,
+                character: character(),
+                galleryTabs: [],
+                media: [item],
+                mediaBaseUrl: 'https://m.example.com',
+            }).toString()
+
+        expect(render(media({}))).toContain('/media/media-1/sfw/preview/sfw-preview.avif')
+        expect(render(media({sfwImageKey: null, sfwPreviewImageKey: null}))).not.toContain('/media/media-1/sfw/preview/')
+
+        const staticNsfw = media({
+            id: 'nsfw-media',
+            nsfwContentType: 'image/gif',
+            nsfwHeight: 80,
+            nsfwImageKey: 'nsfw-source',
+            nsfwPreviewHeight: 80,
+            nsfwPreviewImageKey: 'nsfw-preview',
+            nsfwPreviewContentType: 'image/avif',
+            nsfwPreviewAnimated: false,
+            nsfwPreviewWidth: 100,
+            nsfwWidth: 100,
+        })
+        const animatedNsfw = media({...staticNsfw, nsfwPreviewAnimated: true})
+
+        const staticHtml = render(staticNsfw)
+        const animatedHtml = render(animatedNsfw)
+
+        expect(staticHtml).toContain('/media/nsfw-media/nsfw/nsfw-source.gif')
+        expect(staticHtml).not.toContain('/media/nsfw-media/nsfw/preview/nsfw-preview.avif')
+        expect(animatedHtml).toContain('/media/nsfw-media/nsfw/preview/nsfw-preview.avif')
     })
 })

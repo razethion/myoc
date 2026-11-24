@@ -1,6 +1,7 @@
 import {describe, expect, it} from 'vitest'
 import {writeAscii, writeUint16Le, writeUint32Be} from '../../test/binaryWriters'
 import {
+    createAnimatedAvifSequenceFile,
     createAvifFile,
     createBigEndianExifOrientationJpegFile,
     createExifOrientationJpegFile,
@@ -36,6 +37,12 @@ describe('gallery image metadata', () => {
             })
         },
     )
+
+    it('reads dimensions from a real animated AVIF sequence', async () => {
+        const bytes = await readFileBytes(createAnimatedAvifSequenceFile())
+
+        expect(readGalleryImageDimensions(bytes, 'image/avif')).toEqual({width: 16, height: 16})
+    })
 
     it('rejects malformed GIF and JPEG data', () => {
         expect(readGalleryImageDimensions(new Uint8Array(9), 'image/gif')).toBeNull()

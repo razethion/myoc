@@ -12,9 +12,20 @@ import {
     characterMediaPreviewImageUrl,
     characterProfileImageObjectKey,
     characterProfileImageUrl,
+    isAnimatedImageContentType,
     profilePhotoObjectKey,
     profilePhotoUrl,
 } from './url'
+
+describe('isAnimatedImageContentType', () => {
+    it('recognizes GIF content types and treats missing values as static', () => {
+        expect(isAnimatedImageContentType('image/gif')).toBe(true)
+        expect(isAnimatedImageContentType('IMAGE/GIF')).toBe(true)
+        expect(isAnimatedImageContentType('image/png')).toBe(false)
+        expect(isAnimatedImageContentType(null)).toBe(false)
+        expect(isAnimatedImageContentType(undefined)).toBe(false)
+    })
+})
 
 describe('media object keys', () => {
     it('builds profile and character keys with their expected folder paths', () => {
