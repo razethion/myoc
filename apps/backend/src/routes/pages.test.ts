@@ -3459,6 +3459,8 @@ describe('CharacterPage', () => {
                 showUnapprovedMedia: true,
                 email: 'demo@example.test',
                 id: 'profile-user',
+                sessionId: 'profile-session',
+                authenticatedAt: '2026-06-10 12:00:00',
                 lastSeenVersion: null,
                 profilePhotoKey: null,
                 role: 'user' as const,
