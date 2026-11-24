@@ -75,6 +75,7 @@ const CharacterFolderImageResponseSchema = responseSchema({
     folderImageUrl: z.string(),
 })
 const HeightChartResponseSchema = responseSchema({heightChart: CharacterHeightChartSchema})
+const HeightChartUploadInitResponseSchema = responseSchema({upload: ChunkedUploadSchema})
 const ChunkedUploadInitResponseSchema = responseSchema({
     mediaId: z.string(),
     uploads: responseSchema({
@@ -1102,21 +1103,18 @@ characterRoutes.put('/:id/height-chart', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: preliminaryHeightChart.error}, 400)
     }
 
-    const imageFileValue = form.get('heightChartImage')
-    const imageFile = imageFileValue instanceof File && imageFileValue.size > 0 ? imageFileValue : null
-    let uploadedImage: CompletedGalleryUpload | null = null
-    let uploadedObjectKey: string | null = null
+    const upload = await resolveHeightChartImageUpload(c, form, currentUser.id, character.id)
 
-    if (imageFile) {
-        const upload = await uploadHeightChartImage(c.env, currentUser.id, character.id, imageFile)
-
-        if ('error' in upload) {
-            return jsonResponse(c, ErrorResponseSchema, {error: upload.error}, upload.status)
-        }
-
-        uploadedImage = upload.image
-        uploadedObjectKey = upload.objectKey
+    if (upload instanceof Response) {
+        return upload
     }
+
+    if (upload && 'error' in upload) {
+        return jsonResponse(c, ErrorResponseSchema, {error: upload.error}, upload.status)
+    }
+
+    const uploadedImage = upload?.image ?? null
+    const uploadedObjectKey = upload?.objectKey ?? null
 
     const normalized = normalizeHeightChartJson(rawJson, existingHeightChart, uploadedImage)
 
@@ -1155,6 +1153,135 @@ characterRoutes.put('/:id/height-chart', async (c) => {
     return jsonResponse(c, HeightChartResponseSchema, {
         heightChart: toPublicHeightChart(c.env.MEDIA_PUBLIC_BASE_URL, currentUser.id, character.id, normalized.heightChart),
     })
+})
+
+characterRoutes.post('/:id/height-chart/chunked/init', async (c) => {
+    const owned = await requireOwnedCharacter(c)
+
+    if (owned instanceof Response) {
+        return owned
+    }
+
+    const {currentUser, character} = owned
+    const body = await readCharacterJsonBody<{contentType?: unknown}>(c)
+
+    if (body instanceof Response) {
+        return body
+    }
+
+    const contentType = normalizeGalleryImageContentType(body.contentType ?? 'image/png')
+
+    if ('error' in contentType) {
+        return jsonResponse(c, ErrorResponseSchema, {error: contentType.error}, 400)
+    }
+
+    const referenceId = crypto.randomUUID()
+    const imageKey = crypto.randomUUID()
+    const objectKey = galleryUploadObjectKey(
+        characterHeightChartImageObjectKey(currentUser.id, character.id, imageKey, contentType.contentType),
+        true,
+    )
+
+    try {
+        const upload = await c.env.MEDIA_BUCKET.createMultipartUpload(objectKey, {
+            httpMetadata: {
+                cacheControl: GALLERY_STAGING_CACHE_CONTROL,
+                contentType: contentType.contentType,
+            },
+        })
+
+        return jsonResponse(c, HeightChartUploadInitResponseSchema, {
+            upload: {
+                uploadId: upload.uploadId,
+                imageKey,
+                contentType: contentType.contentType,
+                chunkSize: GALLERY_CHUNK_SIZE,
+            },
+        })
+    } catch (error) {
+        console.error('Height chart upload init failed', {
+            referenceId,
+            userId: currentUser.id,
+            characterId: character.id,
+            error: describeError(error),
+        })
+
+        return jsonResponse(
+            c,
+            ErrorResponseSchema,
+            {error: `Upload could not be initialized. Try again, or contact support with reference ${referenceId}.`},
+            503,
+        )
+    }
+})
+
+characterRoutes.put('/:id/height-chart/chunked/:imageKey/:uploadId/:partNumber', async (c) => {
+    const owned = await requireOwnedCharacter(c)
+
+    if (owned instanceof Response) {
+        return owned
+    }
+
+    const {currentUser, character} = owned
+    const imageKey = normalizeUploadIdentifier(c.req.param('imageKey'), 'Image key')
+    const contentType = normalizeGalleryImageContentType(c.req.query('contentType'))
+    const uploadId = c.req.param('uploadId')
+    const partNumber = Number(c.req.param('partNumber'))
+
+    if ('error' in imageKey) {
+        return jsonResponse(c, ErrorResponseSchema, {error: imageKey.error}, 400)
+    }
+
+    if ('error' in contentType) {
+        return jsonResponse(c, ErrorResponseSchema, {error: contentType.error}, 400)
+    }
+
+    if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > 10000) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Part number must be between 1 and 10000'}, 400)
+    }
+
+    if (!c.req.raw.body) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Chunk body is required'}, 400)
+    }
+
+    const objectKey = galleryUploadObjectKey(
+        characterHeightChartImageObjectKey(currentUser.id, character.id, imageKey.value, contentType.contentType),
+        true,
+    )
+    const upload = c.env.MEDIA_BUCKET.resumeMultipartUpload(objectKey, uploadId)
+    const uploadedPart = await upload.uploadPart(partNumber, c.req.raw.body)
+
+    return jsonResponse(c, R2UploadedPartSchema, uploadedPart)
+})
+
+characterRoutes.delete('/:id/height-chart/chunked/:imageKey/:uploadId', async (c) => {
+    const owned = await requireOwnedCharacter(c)
+
+    if (owned instanceof Response) {
+        return owned
+    }
+
+    const {currentUser, character} = owned
+    const imageKey = normalizeUploadIdentifier(c.req.param('imageKey'), 'Image key')
+    const contentType = normalizeGalleryImageContentType(c.req.query('contentType'))
+    const uploadId = c.req.param('uploadId')
+
+    if ('error' in imageKey) {
+        return jsonResponse(c, ErrorResponseSchema, {error: imageKey.error}, 400)
+    }
+
+    if ('error' in contentType) {
+        return jsonResponse(c, ErrorResponseSchema, {error: contentType.error}, 400)
+    }
+
+    const objectKey = galleryUploadObjectKey(
+        characterHeightChartImageObjectKey(currentUser.id, character.id, imageKey.value, contentType.contentType),
+        true,
+    )
+    const upload = c.env.MEDIA_BUCKET.resumeMultipartUpload(objectKey, uploadId)
+    await upload.abort()
+
+    return c.body(null, 204)
 })
 
 /* istanbul ignore next -- route behavior is covered by integration tests; remaining branches are defensive upload-init failure paths. */
@@ -1559,6 +1686,174 @@ async function uploadHeightChartImage(
             contentType: converted.contentType,
         },
     })
+
+    return {
+        image: {
+            imageKey,
+            contentType: converted.contentType,
+            width: converted.width,
+            height: converted.height,
+            displayWidth: converted.width,
+            displayHeight: converted.height,
+            byteSize: converted.bytes.byteLength,
+        },
+        objectKey,
+    }
+}
+
+async function resolveHeightChartImageUpload(
+    c: CharacterRouteContext,
+    form: FormData,
+    userId: string,
+    characterId: string,
+): Promise<{image: CompletedGalleryUpload; objectKey: string} | {error: string; status: 400} | null | Response> {
+    const imageFileValue = form.get('heightChartImage')
+    const imageFile = imageFileValue instanceof File && imageFileValue.size > 0 ? imageFileValue : null
+    const stagedUpload = parseHeightChartStagedUpload(c, form.get('heightChartImageUpload'))
+
+    if (stagedUpload instanceof Response) {
+        return stagedUpload
+    }
+
+    if (stagedUpload) {
+        if (imageFile) {
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Provide a height chart image or a staged upload, not both'}, 400)
+        }
+
+        return completeStagedHeightChartImage(c.env, userId, characterId, stagedUpload)
+    }
+
+    if (imageFile) {
+        return uploadHeightChartImage(c.env, userId, characterId, imageFile)
+    }
+
+    return null
+}
+
+function parseHeightChartStagedUpload(c: CharacterRouteContext, value: File | string | null): CompletedChunkedUpload | null | Response {
+    if (value === null) {
+        return null
+    }
+
+    if (typeof value !== 'string') {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Height chart image upload is invalid'}, 400)
+    }
+
+    let parsed: unknown
+
+    try {
+        parsed = JSON.parse(value)
+    } catch {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Height chart image upload is invalid'}, 400)
+    }
+
+    const upload = parseCompletedChunkedUpload(parsed)
+
+    if (upload === null) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Height chart image upload is invalid'}, 400)
+    }
+
+    if ('error' in upload) {
+        return jsonResponse(c, ErrorResponseSchema, {error: upload.error}, 400)
+    }
+
+    return upload
+}
+
+async function completeStagedHeightChartImage(
+    env: Bindings,
+    userId: string,
+    characterId: string,
+    upload: CompletedChunkedUpload,
+): Promise<{image: CompletedGalleryUpload; objectKey: string} | {error: string; status: 400}> {
+    const stagingKey = galleryUploadObjectKey(
+        characterHeightChartImageObjectKey(userId, characterId, upload.imageKey, upload.contentType),
+        true,
+    )
+
+    let completedSize: number
+
+    try {
+        const completed = await env.MEDIA_BUCKET.resumeMultipartUpload(stagingKey, upload.uploadId).complete(upload.parts)
+        completedSize = completed.size
+    } catch (error) {
+        console.error('Height chart staged upload completion failed', {
+            userId,
+            characterId,
+            imageKey: upload.imageKey,
+            error: describeError(error),
+        })
+
+        return {error: 'Height chart image upload could not be completed', status: 400}
+    }
+
+    if (completedSize <= 0) {
+        await deleteR2Objects(env.MEDIA_BUCKET, [stagingKey])
+
+        return {error: 'Height chart image is empty', status: 400}
+    }
+
+    if (completedSize > GALLERY_IMAGE_MAX_BYTES) {
+        await deleteR2Objects(env.MEDIA_BUCKET, [stagingKey])
+
+        return {error: 'Height chart image must be 200 MB or smaller', status: 400}
+    }
+
+    const metadata = await readStoredGalleryImageMetadata(env.MEDIA_BUCKET, stagingKey, upload.contentType)
+
+    if (!metadata) {
+        await deleteR2Objects(env.MEDIA_BUCKET, [stagingKey])
+
+        return {error: 'Height chart image dimensions could not be verified', status: 400}
+    }
+
+    if (metadata.width * metadata.height > GALLERY_IMAGE_MAX_PIXELS) {
+        await deleteR2Objects(env.MEDIA_BUCKET, [stagingKey])
+
+        return {error: `Height chart image must be ${GALLERY_IMAGE_MAX_PIXELS.toLocaleString('en-US')} pixels or smaller`, status: 400}
+    }
+
+    const imageKey = upload.imageKey
+    let converted: GeneratedGalleryPreview
+
+    try {
+        converted = await generateHeightChartImageWithContainer(
+            env,
+            async () => {
+                const staged = await env.MEDIA_BUCKET.get(stagingKey)
+
+                if (!staged?.body) {
+                    throw new PreviewValidationError('Staged height chart image is missing')
+                }
+
+                return staged.body
+            },
+            {
+                width: metadata.width,
+                height: metadata.height,
+                displayWidth: metadata.displayWidth,
+                displayHeight: metadata.displayHeight,
+            },
+            imageKey,
+        )
+    } catch (error) {
+        await deleteR2Objects(env.MEDIA_BUCKET, [stagingKey])
+
+        if (error instanceof PreviewValidationError) {
+            return {error: 'Height chart image could not be processed', status: 400}
+        }
+
+        throw error
+    }
+
+    const objectKey = characterHeightChartImageObjectKey(userId, characterId, imageKey, converted.contentType)
+    await env.MEDIA_BUCKET.put(objectKey, converted.bytes, {
+        httpMetadata: {
+            cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
+            contentType: converted.contentType,
+        },
+    })
+    await deleteR2Objects(env.MEDIA_BUCKET, [stagingKey])
 
     return {
         image: {
