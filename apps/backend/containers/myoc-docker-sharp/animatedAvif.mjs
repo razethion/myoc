@@ -144,18 +144,22 @@ export async function createAnimatedAvifPreview(sourceBytes, options) {
 
     try {
         await writeFile(inputPath, sourceBytes)
-        const probe = await probeGif(inputPath, run)
+        // The budget gate runs a header-only probe first. The frame-count
+        // probe decodes the source, so oversized inputs must not reach it.
+        const frame = await probeFrameSize(inputPath, run)
 
-        if (!Number.isFinite(probe.frames) || probe.frames <= 1 || probe.width < 1 || probe.height < 1) {
+        if (frame.width * frame.height > ANIMATED_AVIF_MAX_SOURCE_PIXELS) {
+            console.warn('Animated preview source exceeds the pixel budget; using a static preview', {
+                height: frame.height,
+                width: frame.width,
+            })
+
             return null
         }
 
-        if (probe.width * probe.height > ANIMATED_AVIF_MAX_SOURCE_PIXELS) {
-            console.warn('Animated preview source exceeds the pixel budget; using a static preview', {
-                height: probe.height,
-                width: probe.width,
-            })
+        const probe = await probeGif(inputPath, run)
 
+        if (!Number.isFinite(probe.frames) || probe.frames <= 1 || probe.width < 1 || probe.height < 1) {
             return null
         }
 

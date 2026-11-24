@@ -113,6 +113,10 @@ test('falls back to a static preview above the pixel budget', async () => {
     assert.equal(result, null)
     assert.equal(fake.calls.length, 1)
     assert.equal(fake.calls[0].command, 'ffprobe')
+    assert.equal(
+        fake.calls.some((call) => call.args.includes('-count_frames')),
+        false,
+    )
 })
 
 test('treats a non-numeric frame count as a static source', async () => {
