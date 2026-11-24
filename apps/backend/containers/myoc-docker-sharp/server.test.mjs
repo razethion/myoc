@@ -8,6 +8,7 @@ import process from 'node:process'
 import {after, before, test} from 'node:test'
 import {promisify} from 'node:util'
 import sharp from 'sharp'
+import {createAnimatedAvifPreview} from './animatedAvif.mjs'
 
 const execFile = promisify(execFileCallback)
 
@@ -296,6 +297,117 @@ test('returns a stable error when an AVIF blur source cannot be decoded', async 
 
     assert.equal(response.status, 502)
     assert.deepEqual(await response.json(), {error: 'Blur generation failed'})
+})
+
+// Two frames whose first frame carries a transparent half, encoded through
+// the production animated preview path. Sharp rejects the result.
+async function createTransparentAnimatedAvifFixture() {
+    const dir = await mkdtemp(join(tmpdir(), 'myoc-blur-alpha-'))
+
+    try {
+        const frames = [Buffer.alloc(16 * 16 * 4), Buffer.alloc(16 * 16 * 4)]
+
+        for (let y = 0; y < 16; y += 1) {
+            for (let x = 0; x < 16; x += 1) {
+                const offset = (y * 16 + x) * 4
+                frames[0][offset] = 220
+                frames[0][offset + 1] = 10
+                frames[0][offset + 2] = 10
+                frames[0][offset + 3] = x < 8 ? 0 : 255
+                frames[1][offset] = 10
+                frames[1][offset + 1] = 20
+                frames[1][offset + 2] = 220
+                frames[1][offset + 3] = 255
+            }
+        }
+
+        const rawPath = join(dir, 'frames.raw')
+        const palettePath = join(dir, 'palette.png')
+        const gifPath = join(dir, 'source.gif')
+        await writeFile(rawPath, Buffer.concat(frames))
+        await execFile(
+            'ffmpeg',
+            [
+                '-nostdin',
+                '-v',
+                'error',
+                '-y',
+                '-f',
+                'rawvideo',
+                '-pix_fmt',
+                'rgba',
+                '-s',
+                '16x16',
+                '-i',
+                rawPath,
+                '-vf',
+                'palettegen=reserve_transparent=1',
+                palettePath,
+            ],
+            {stdio: ['ignore', 'pipe', 'pipe']},
+        )
+        await execFile(
+            'ffmpeg',
+            [
+                '-nostdin',
+                '-v',
+                'error',
+                '-y',
+                '-f',
+                'rawvideo',
+                '-pix_fmt',
+                'rgba',
+                '-s',
+                '16x16',
+                '-i',
+                rawPath,
+                '-i',
+                palettePath,
+                '-lavfi',
+                'paletteuse=alpha_threshold=128',
+                '-loop',
+                '0',
+                gifPath,
+            ],
+            {stdio: ['ignore', 'pipe', 'pipe']},
+        )
+        const preview = await createAnimatedAvifPreview(await readFile(gifPath), {maxBytes: 200_000, maxLongEdge: 1600})
+
+        if (!preview) {
+            throw new Error('Expected an animated AVIF fixture')
+        }
+
+        return Buffer.from(preview.bytes)
+    } finally {
+        await rm(dir, {force: true, recursive: true})
+    }
+}
+
+test('keeps alpha when blurring a transparent animated AVIF', async () => {
+    const source = await createTransparentAnimatedAvifFixture()
+
+    await assert.rejects(() => sharp(source).metadata())
+
+    const response = await fetch(`${baseUrl}/images/blur`, {
+        body: new Uint8Array(source),
+        headers: {authorization: `Bearer ${processorToken}`, 'content-type': 'image/avif'},
+        method: 'POST',
+    })
+
+    assert.equal(response.status, 200)
+
+    const bytes = Buffer.from(await response.arrayBuffer())
+    const metadata = await sharp(bytes).metadata()
+    assert.equal(metadata.format, 'heif')
+    assert.equal(metadata.hasAlpha, true)
+
+    const {data, info} = await sharp(bytes).raw().toBuffer({resolveWithObject: true})
+    const transparentEdgeAlpha = data[info.channels - 1]
+    const opaqueEdgeAlpha = data.at(-1)
+    assert.ok(
+        transparentEdgeAlpha < opaqueEdgeAlpha,
+        `expected the transparent edge to stay more transparent: ${transparentEdgeAlpha} vs ${opaqueEdgeAlpha}`,
+    )
 })
 
 // Two opaque frames encoded as a palette GIF. The gallery endpoint must return

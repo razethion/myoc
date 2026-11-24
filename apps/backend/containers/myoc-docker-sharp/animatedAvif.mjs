@@ -200,15 +200,17 @@ async function probeFrameSize(inputPath, run) {
         timeout: ANIMATED_AVIF_PROBE_TIMEOUT_MS,
     })
     const data = JSON.parse(stdout)
-    const video = Array.isArray(data.streams) ? data.streams.find((stream) => stream.codec_type === 'video') : null
+    const videos = Array.isArray(data.streams) ? data.streams.filter((stream) => stream.codec_type === 'video') : []
 
-    if (!video) {
+    if (videos.length === 0) {
         throw new Error('Frame probe returned no video stream')
     }
 
     return {
-        height: Number.parseInt(video.height ?? '0', 10),
-        width: Number.parseInt(video.width ?? '0', 10),
+        // The encoder writes color and alpha as separate video streams.
+        hasAlpha: videos.length > 1,
+        height: Number.parseInt(videos[0].height ?? '0', 10),
+        width: Number.parseInt(videos[0].width ?? '0', 10),
     }
 }
 
@@ -333,16 +335,23 @@ export async function extractFirstFramePng(sourceBytes, options = {}) {
 
     try {
         await writeFile(inputPath, sourceBytes)
-        const dimensions = await probeFrameSize(inputPath, run)
+        const frame = await probeFrameSize(inputPath, run)
 
-        if (dimensions.width * dimensions.height > ANIMATED_AVIF_MAX_SOURCE_PIXELS) {
+        if (frame.width * frame.height > ANIMATED_AVIF_MAX_SOURCE_PIXELS) {
             throw new Error('Frame source exceeds the pixel budget')
         }
 
-        await run('ffmpeg', ['-nostdin', '-y', '-i', inputPath, '-map', '0:v:0', '-frames:v', '1', '-c:v', 'png', outputPath], {
-            stdio: ['ignore', 'pipe', 'pipe'],
-            timeout: ANIMATED_AVIF_PROBE_TIMEOUT_MS,
-        })
+        const args = ['-nostdin', '-y', '-i', inputPath]
+
+        if (frame.hasAlpha) {
+            // Merging the alpha stream keeps transparency for the blur path.
+            args.push('-filter_complex', '[0:v:0][0:v:1]alphamerge[v]', '-map', '[v]')
+        } else {
+            args.push('-map', '0:v:0')
+        }
+
+        args.push('-frames:v', '1', '-c:v', 'png', outputPath)
+        await run('ffmpeg', args, {stdio: ['ignore', 'pipe', 'pipe'], timeout: ANIMATED_AVIF_PROBE_TIMEOUT_MS})
 
         return await readFile(outputPath)
     } finally {

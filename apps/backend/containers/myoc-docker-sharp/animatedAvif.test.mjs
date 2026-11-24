@@ -18,13 +18,13 @@ function gifBytes() {
     return Buffer.from('GIF89a' + '\0'.repeat(32), 'latin1')
 }
 
-function probeJson({frames = 3, height = 200, width = 300} = {}) {
+function probeJson({frames = 3, height = 200, streams = 1, width = 300} = {}) {
     return JSON.stringify({
-        streams: [{codec_type: 'video', height, nb_frames: String(frames), width}],
+        streams: Array.from({length: streams}, () => ({codec_type: 'video', height, nb_frames: String(frames), width})),
     })
 }
 
-function fakeExec({alphaBytes, frames = 3, height = 2000, outputSizes = [1024], transparent = false, width = 3000} = {}) {
+function fakeExec({alphaBytes, frames = 3, height = 2000, outputSizes = [1024], streams = 1, transparent = false, width = 3000} = {}) {
     const calls = []
     let encodeIndex = 0
 
@@ -32,7 +32,7 @@ function fakeExec({alphaBytes, frames = 3, height = 2000, outputSizes = [1024], 
         calls.push({args, command})
 
         if (command === 'ffprobe') {
-            return {stderr: '', stdout: probeJson({frames, height, width})}
+            return {stderr: '', stdout: probeJson({frames, height, streams, width})}
         }
 
         if (args.some((arg) => arg.includes('signalstats'))) {
@@ -85,6 +85,20 @@ test('extracts frame zero as PNG', async () => {
     assert.equal(call.command, 'ffmpeg')
     assert.ok(call.args.includes('0:v:0'))
     assert.ok(call.args.includes('png'))
+})
+
+test('merges the alpha stream when the animated AVIF carries one', async () => {
+    const fake = fakeExec({outputSizes: [512], streams: 2})
+
+    const bytes = await extractFirstFramePng(Buffer.from('fake-avif'), {execFile: fake.run})
+
+    assert.equal(bytes.length, 512)
+    const call = fake.calls.at(-1)
+    assert.equal(call.command, 'ffmpeg')
+    assert.ok(call.args.includes('-filter_complex'))
+    assert.ok(call.args.some((arg) => arg.includes('alphamerge')))
+    assert.ok(call.args.includes('[v]'))
+    assert.equal(call.args.includes('0:v:0'), false)
 })
 
 test('falls back to a static preview above the pixel budget', async () => {
