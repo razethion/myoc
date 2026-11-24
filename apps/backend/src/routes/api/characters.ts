@@ -58,6 +58,7 @@ import {
     characterMediaPreviewImageUrl,
     characterProfileImageObjectKey,
     characterProfileImageUrl,
+    isAnimatedImageContentType,
 } from '../../lib/media/url'
 import type {Bindings} from '../../types/bindings'
 
@@ -269,6 +270,7 @@ type CharacterMediaRecord = {
     sfw_preview_width: number | null
     sfw_preview_height: number | null
     sfw_preview_byte_size: number | null
+    sfw_preview_animated: number
     nsfw_preview_image_key: string | null
     nsfw_preview_content_type: string
     nsfw_blur_image_key: string | null
@@ -276,6 +278,7 @@ type CharacterMediaRecord = {
     nsfw_preview_width: number | null
     nsfw_preview_height: number | null
     nsfw_preview_byte_size: number | null
+    nsfw_preview_animated: number
     created_at: string
     updated_at: string
 }
@@ -347,6 +350,7 @@ type CompletedGalleryUpload = {
 }
 
 type CompletedGalleryPreview = {
+    animated: boolean
     imageKey: string
     contentType: 'image/avif'
     width: number
@@ -1997,28 +2001,30 @@ function toPublicMedia(baseUrl: string, media: CharacterMediaRecord) {
         sfwPreviewImageKey: media.sfw_preview_image_key,
         nsfwPreviewImageKey: media.nsfw_preview_image_key,
         nsfwBlurImageKey: media.nsfw_blur_image_key,
-        sfwPreviewImageUrl: media.sfw_preview_image_key
-            ? characterMediaPreviewImageUrl(
-                  baseUrl,
-                  media.user_id,
-                  media.character_id,
-                  media.id,
-                  media.sfw_preview_image_key,
-                  'sfw',
-                  media.sfw_preview_content_type,
-              )
-            : null,
-        nsfwPreviewImageUrl: media.nsfw_preview_image_key
-            ? characterMediaPreviewImageUrl(
-                  baseUrl,
-                  media.user_id,
-                  media.character_id,
-                  media.id,
-                  media.nsfw_preview_image_key,
-                  'nsfw',
-                  media.nsfw_preview_content_type,
-              )
-            : null,
+        sfwPreviewImageUrl:
+            media.sfw_preview_image_key && (!isAnimatedImageContentType(media.sfw_content_type) || media.sfw_preview_animated === 1)
+                ? characterMediaPreviewImageUrl(
+                      baseUrl,
+                      media.user_id,
+                      media.character_id,
+                      media.id,
+                      media.sfw_preview_image_key,
+                      'sfw',
+                      media.sfw_preview_content_type,
+                  )
+                : null,
+        nsfwPreviewImageUrl:
+            media.nsfw_preview_image_key && (!isAnimatedImageContentType(media.nsfw_content_type) || media.nsfw_preview_animated === 1)
+                ? characterMediaPreviewImageUrl(
+                      baseUrl,
+                      media.user_id,
+                      media.character_id,
+                      media.id,
+                      media.nsfw_preview_image_key,
+                      'nsfw',
+                      media.nsfw_preview_content_type,
+                  )
+                : null,
         nsfwBlurImageUrl: media.nsfw_blur_image_key
             ? characterMediaNsfwBlurImageUrl(
                   baseUrl,
@@ -2073,6 +2079,7 @@ async function updateCharacterMediaRecord(
               sfw_preview_width     = ?,
              sfw_preview_height    = ?,
              sfw_preview_byte_size = ?,
+             sfw_preview_animated  = ?,
              nsfw_width            = ?,
              nsfw_height           = ?,
              nsfw_byte_size        = ?,
@@ -2081,6 +2088,7 @@ async function updateCharacterMediaRecord(
               nsfw_preview_width     = ?,
              nsfw_preview_height    = ?,
              nsfw_preview_byte_size = ?,
+             nsfw_preview_animated  = ?,
              nsfw_blur_image_key   = ?,
              nsfw_blur_content_type = ?,
              sfw_review_status     = CASE WHEN ? THEN 'pending' ELSE sfw_review_status END,
@@ -2110,6 +2118,7 @@ async function updateCharacterMediaRecord(
             media.sfw_preview_width,
             media.sfw_preview_height,
             media.sfw_preview_byte_size,
+            media.sfw_preview_animated,
             media.nsfw_width,
             media.nsfw_height,
             media.nsfw_byte_size,
@@ -2118,6 +2127,7 @@ async function updateCharacterMediaRecord(
             media.nsfw_preview_width,
             media.nsfw_preview_height,
             media.nsfw_preview_byte_size,
+            media.nsfw_preview_animated,
             media.nsfw_blur_image_key,
             media.nsfw_blur_content_type,
             options.sfwWasModified ? 1 : 0,
@@ -2636,6 +2646,7 @@ function clearMediaVariant(nextMedia: CharacterMediaRecord, rating: MediaRating)
         nextMedia.sfw_preview_width = null
         nextMedia.sfw_preview_height = null
         nextMedia.sfw_preview_byte_size = null
+        nextMedia.sfw_preview_animated = 0
         return
     }
 
@@ -2649,6 +2660,7 @@ function clearMediaVariant(nextMedia: CharacterMediaRecord, rating: MediaRating)
     nextMedia.nsfw_preview_width = null
     nextMedia.nsfw_preview_height = null
     nextMedia.nsfw_preview_byte_size = null
+    nextMedia.nsfw_preview_animated = 0
     nextMedia.nsfw_blur_image_key = null
     nextMedia.nsfw_blur_content_type = 'image/webp'
 }
@@ -2671,6 +2683,7 @@ function assignMediaVariant(
         nextMedia.sfw_preview_width = preview?.width ?? null
         nextMedia.sfw_preview_height = preview?.height ?? null
         nextMedia.sfw_preview_byte_size = preview?.byteSize ?? null
+        nextMedia.sfw_preview_animated = preview?.animated ? 1 : 0
         return
     }
 
@@ -2684,6 +2697,7 @@ function assignMediaVariant(
     nextMedia.nsfw_preview_width = preview?.width ?? null
     nextMedia.nsfw_preview_height = preview?.height ?? null
     nextMedia.nsfw_preview_byte_size = preview?.byteSize ?? null
+    nextMedia.nsfw_preview_animated = preview?.animated ? 1 : 0
     nextMedia.nsfw_blur_image_key = null
     nextMedia.nsfw_blur_content_type = 'image/webp'
 }
@@ -2819,6 +2833,7 @@ function createNewCharacterMediaRecord(input: {
         sfw_preview_width: null,
         sfw_preview_height: null,
         sfw_preview_byte_size: null,
+        sfw_preview_animated: 0,
         nsfw_preview_image_key: null,
         nsfw_preview_content_type: 'image/webp',
         nsfw_blur_image_key: null,
@@ -2826,6 +2841,7 @@ function createNewCharacterMediaRecord(input: {
         nsfw_preview_width: null,
         nsfw_preview_height: null,
         nsfw_preview_byte_size: null,
+        nsfw_preview_animated: 0,
         created_at: input.now,
         updated_at: input.now,
     }
@@ -2962,12 +2978,12 @@ function createCharacterMediaInsertStatement(db: D1Database, media: CharacterMed
                                           sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type,
                                           sfw_artist, nsfw_artist,
                                           sfw_width, sfw_height, sfw_byte_size, sfw_preview_image_key, sfw_preview_content_type,
-                                          sfw_preview_width, sfw_preview_height, sfw_preview_byte_size,
+                                          sfw_preview_width, sfw_preview_height, sfw_preview_byte_size, sfw_preview_animated,
                                           nsfw_width, nsfw_height, nsfw_byte_size, nsfw_preview_image_key, nsfw_preview_content_type,
-                                          nsfw_preview_width, nsfw_preview_height, nsfw_preview_byte_size,
+                                          nsfw_preview_width, nsfw_preview_height, nsfw_preview_byte_size, nsfw_preview_animated,
                                           nsfw_blur_image_key, nsfw_blur_content_type,
                                           created_at, updated_at)
-             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
              WHERE (
                  SELECT COUNT(*)
                  FROM character_media
@@ -2993,6 +3009,7 @@ function createCharacterMediaInsertStatement(db: D1Database, media: CharacterMed
             media.sfw_preview_width,
             media.sfw_preview_height,
             media.sfw_preview_byte_size,
+            media.sfw_preview_animated,
             media.nsfw_width,
             media.nsfw_height,
             media.nsfw_byte_size,
@@ -3001,6 +3018,7 @@ function createCharacterMediaInsertStatement(db: D1Database, media: CharacterMed
             media.nsfw_preview_width,
             media.nsfw_preview_height,
             media.nsfw_preview_byte_size,
+            media.nsfw_preview_animated,
             media.nsfw_blur_image_key,
             media.nsfw_blur_content_type,
             media.created_at,
@@ -3061,6 +3079,7 @@ async function putMediaPreviewImage(
     uploadedKeys.push(objectKey)
 
     return {
+        animated: preview.animated,
         imageKey,
         contentType: preview.contentType,
         width: preview.width,
@@ -4068,6 +4087,7 @@ async function getOwnedCharacterMedia(
                 sfw_preview_width,
                 sfw_preview_height,
                 sfw_preview_byte_size,
+                sfw_preview_animated,
                 nsfw_preview_image_key,
                 nsfw_preview_content_type,
                 nsfw_blur_image_key,
@@ -4075,6 +4095,7 @@ async function getOwnedCharacterMedia(
                 nsfw_preview_width,
                 nsfw_preview_height,
                 nsfw_preview_byte_size,
+                nsfw_preview_animated,
                 created_at,
                 updated_at
          FROM character_media
@@ -4191,6 +4212,7 @@ async function getCharacterMedia(db: D1Database, userId: string, characterId: st
                     sfw_preview_width,
                     sfw_preview_height,
                     sfw_preview_byte_size,
+                    sfw_preview_animated,
                     nsfw_preview_image_key,
                     nsfw_preview_content_type,
                     nsfw_blur_image_key,
@@ -4198,6 +4220,7 @@ async function getCharacterMedia(db: D1Database, userId: string, characterId: st
                     nsfw_preview_width,
                     nsfw_preview_height,
                     nsfw_preview_byte_size,
+                    nsfw_preview_animated,
                     created_at,
                     updated_at
              FROM character_media

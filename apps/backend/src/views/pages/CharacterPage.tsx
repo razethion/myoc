@@ -6,6 +6,7 @@ import {
     characterMediaNsfwBlurImageUrl,
     characterMediaPreviewImageUrl,
     characterProfileImageUrl,
+    isAnimatedImageContentType,
     profilePhotoUrl,
 } from '../../lib/media/url'
 import {JsonLdScript} from '../components/JsonLdScript'
@@ -30,8 +31,10 @@ type CharacterPageMedia = {
     nsfwImageKey: string | null
     sfwPreviewImageKey: string | null
     sfwPreviewContentType: string
+    sfwPreviewAnimated: boolean
     nsfwPreviewImageKey: string | null
     nsfwPreviewContentType: string
+    nsfwPreviewAnimated: boolean
     nsfwBlurImageKey: string | null
     nsfwBlurContentType: string
     sfwContentType: string | null
@@ -258,17 +261,18 @@ function createSfwDisplayVariant(
         artist,
         imageAlt: imageAltForArtist(artist),
         displayHeight: positiveDimension(media.sfwHeight),
-        displayPreviewUrl: media.sfwPreviewImageKey
-            ? characterMediaPreviewImageUrl(
-                  mediaBaseUrl,
-                  character.userId,
-                  character.id,
-                  media.id,
-                  media.sfwPreviewImageKey,
-                  'sfw',
-                  media.sfwPreviewContentType,
-              )
-            : null,
+        displayPreviewUrl:
+            media.sfwPreviewImageKey && (!isAnimatedImageContentType(media.sfwContentType) || media.sfwPreviewAnimated)
+                ? characterMediaPreviewImageUrl(
+                      mediaBaseUrl,
+                      character.userId,
+                      character.id,
+                      media.id,
+                      media.sfwPreviewImageKey,
+                      'sfw',
+                      media.sfwPreviewContentType,
+                  )
+                : null,
         displayUrl: characterMediaImageUrl(
             mediaBaseUrl,
             character.userId,
@@ -297,17 +301,18 @@ function createNsfwDisplayVariant(
         artist,
         imageAlt: imageAltForArtist(artist),
         displayHeight: positiveDimension(media.nsfwHeight),
-        displayPreviewUrl: media.nsfwPreviewImageKey
-            ? characterMediaPreviewImageUrl(
-                  mediaBaseUrl,
-                  character.userId,
-                  character.id,
-                  media.id,
-                  media.nsfwPreviewImageKey,
-                  'nsfw',
-                  media.nsfwPreviewContentType,
-              )
-            : null,
+        displayPreviewUrl:
+            media.nsfwPreviewImageKey && (!isAnimatedImageContentType(media.nsfwContentType) || media.nsfwPreviewAnimated)
+                ? characterMediaPreviewImageUrl(
+                      mediaBaseUrl,
+                      character.userId,
+                      character.id,
+                      media.id,
+                      media.nsfwPreviewImageKey,
+                      'nsfw',
+                      media.nsfwPreviewContentType,
+                  )
+                : null,
         displayUrl: characterMediaImageUrl(
             mediaBaseUrl,
             character.userId,

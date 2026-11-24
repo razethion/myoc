@@ -15,6 +15,9 @@ import {
     enqueueMediaPreviewRegenerationCandidates,
     getMediaPreviewRegenerationCandidates,
     initializeMediaPreviewRegenerationDispatch,
+    isMediaPreviewRegenerationLeaseHeld,
+    MEDIA_PREVIEW_REGENERATION_LEASE_MS,
+    recordMediaPreviewRegenerationResult,
 } from './mediaPreviewRegeneration'
 
 const db = useTestDatabase()
@@ -133,7 +136,7 @@ describe('media preview queue consumer', () => {
         await db.prepare(`UPDATE media_preview_regeneration_items SET processing_attempts = 3 WHERE task_id = ?`).bind(body.taskId).run()
 
         const expired = createMessage(body)
-        await consumeImageProcessingDeadLetterQueue(createBatch(expired.message), env, () => new Date(now.getTime() + 121_000))
+        await consumeImageProcessingDeadLetterQueue(createBatch(expired.message), env, () => new Date(now.getTime() + 12 * 60_000 + 1_000))
         expect(expired.ack).toHaveBeenCalledOnce()
         expect(container.fetch).not.toHaveBeenCalled()
         await expectCompletedJobSummary({processedVariants: 1, failedVariants: 1})
@@ -245,15 +248,68 @@ describe('media preview queue consumer', () => {
         ])
     })
 
+    it('accepts a stored candidate without an animation flag', async () => {
+        const {body, env} = await createQueuedTask()
+        const row = await queryOne<{candidate_json: string}>(
+            'SELECT candidate_json FROM media_preview_regeneration_items WHERE task_id = ?',
+            [body.taskId],
+        )
+        const candidate = JSON.parse(row?.candidate_json ?? '{}') as Record<string, unknown>
+        delete candidate.previousPreviewAnimated
+        await db
+            .prepare('UPDATE media_preview_regeneration_items SET candidate_json = ? WHERE task_id = ?')
+            .bind(JSON.stringify(candidate), body.taskId)
+            .run()
+        const {ack, message, retry} = createMessage(body)
+
+        await consumeImageProcessingQueue(createBatch(message), env)
+
+        expect(ack).toHaveBeenCalledOnce()
+        expect(retry).not.toHaveBeenCalled()
+        await expectCompletedJobSummary({processedVariants: 1, regeneratedPreviews: 1})
+    })
+
+    it('leases a claimed task past the worst-case animated encode', async () => {
+        const {body} = await createQueuedTask()
+
+        const claimed = await claimMediaPreviewRegenerationTask(
+            db,
+            body.taskId,
+            new Date('2026-09-04T12:00:00Z'),
+            MEDIA_PREVIEW_REGENERATION_LEASE_MS,
+        )
+
+        expect(claimed).not.toBeNull()
+        expect(
+            await queryOne<{lease_expires_at: string}>('SELECT lease_expires_at FROM media_preview_regeneration_items WHERE task_id = ?', [
+                body.taskId,
+            ]),
+        ).toEqual({lease_expires_at: '2026-09-04 12:12:00.000'})
+    })
+
+    it('reports a regeneration lease as held only while its attempt owns it', async () => {
+        const {body} = await createQueuedTask()
+        const claimed = await claimMediaPreviewRegenerationTask(db, body.taskId, new Date('2026-09-04T12:00:00Z'))
+
+        if (!claimed) throw new Error('Expected to claim the task')
+        expect(await isMediaPreviewRegenerationLeaseHeld(db, body.taskId, claimed.leaseId)).toBe(true)
+        await recordMediaPreviewRegenerationResult(db, body.taskId, claimed.leaseId, {
+            error: null,
+            regeneratedBlur: false,
+            status: 'regenerated',
+        })
+        expect(await isMediaPreviewRegenerationLeaseHeld(db, body.taskId, claimed.leaseId)).toBe(false)
+    })
+
     it('delays a duplicate delivery while the first task lease is active', async () => {
         const {body, env} = await createQueuedTask()
-        await claimMediaPreviewRegenerationTask(db, body.taskId, new Date('2026-09-04T12:00:00Z'))
+        await claimMediaPreviewRegenerationTask(db, body.taskId, new Date('2026-09-04T12:00:00Z'), MEDIA_PREVIEW_REGENERATION_LEASE_MS)
         const {ack, message, retry} = createMessage(body, 2)
 
         await consumeImageProcessingQueue(createBatch(message), env, () => new Date('2026-09-04T12:00:01Z'))
 
         expect(ack).not.toHaveBeenCalled()
-        expect(retry).toHaveBeenCalledWith({delaySeconds: 119})
+        expect(retry).toHaveBeenCalledWith({delaySeconds: 120})
     })
 
     it('uses the minimum delay when a processing task has no lease time', async () => {

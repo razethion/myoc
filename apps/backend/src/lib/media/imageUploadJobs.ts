@@ -26,13 +26,16 @@ import {
     characterMediaPreviewImageObjectKey,
     characterMediaPreviewImageUrl,
     characterProfileImageObjectKey,
+    isAnimatedImageContentType,
     profilePhotoObjectKey,
 } from './url'
 
 const IMAGE_UPLOAD_DEADLINE_MS = 15 * 60 * 1_000
 const IMAGE_FAILED_GALLERY_RETRY_RETENTION_MS = 24 * 60 * 60 * 1_000
 const IMAGE_UPLOAD_RECONCILE_LIMIT = 50
-const IMAGE_TASK_LEASE_MS = 2 * 60 * 1_000
+// Animated AVIF previews can run two 300-second encode passes. Keep the lease
+// longer than the worst case so reconciliation does not requeue a live task.
+const IMAGE_TASK_LEASE_MS = 12 * 60 * 1_000
 const IMAGE_TASK_MAX_SHARP_ATTEMPTS = 3
 const IMAGE_TASK_STALE_MS = 2 * 60 * 1_000
 const IMAGE_CLEANUP_GRACE_MS = 60 * 60 * 1_000
@@ -880,6 +883,10 @@ async function processGalleryTask(
         return await handleTaskProcessingError(env.DB, task, leaseId, error, now, startedAt)
     }
 
+    if (!(await taskLeaseIsHeld(env.DB, task.id, leaseId))) {
+        return 'ack'
+    }
+
     const imageKey = fileStem(task.source_key)
     const previewKey = crypto.randomUUID()
     const blurKey = task.source_rating === 'nsfw' ? crypto.randomUUID() : null
@@ -932,6 +939,7 @@ async function processGalleryTask(
         previewWidth: generated.preview.width,
         previewHeight: generated.preview.height,
         previewByteSize: generated.preview.bytes.byteLength,
+        previewAnimated: generated.preview.animated,
         blurKey,
         blurObjectKey,
     }
@@ -966,7 +974,10 @@ async function processGalleryTask(
     ])
 
     if ((results as [D1Result, D1Result])[1].meta.changes === 0) {
-        await env.MEDIA_BUCKET.delete([imageObjectKey, previewObjectKey])
+        // The image key is shared by retries of the same source. A winning
+        // attempt may have published it, so delete only the attempt-unique
+        // preview and blur objects.
+        await env.MEDIA_BUCKET.delete(previewObjectKey)
         if (blurObjectKey) await env.MEDIA_BUCKET.delete(blurObjectKey)
         return 'ack'
     }
@@ -992,6 +1003,7 @@ type GalleryTaskOutput = {
     previewWidth: number
     previewHeight: number
     previewByteSize: number
+    previewAnimated: boolean
     blurKey: string | null
     blurObjectKey: string | null
 }
@@ -1105,11 +1117,12 @@ async function publishGalleryJobIfReady(env: Bindings, jobId: string, now: Date)
                  id, user_id, character_id, sfw_image_key, nsfw_image_key, sfw_content_type, nsfw_content_type,
                  sfw_artist, nsfw_artist, sfw_width, sfw_height, sfw_byte_size,
                  sfw_preview_image_key, sfw_preview_content_type, sfw_preview_width, sfw_preview_height, sfw_preview_byte_size,
+                 sfw_preview_animated,
                  nsfw_width, nsfw_height, nsfw_byte_size, nsfw_preview_image_key, nsfw_preview_content_type,
-                 nsfw_preview_width, nsfw_preview_height, nsfw_preview_byte_size,
+                 nsfw_preview_width, nsfw_preview_height, nsfw_preview_byte_size, nsfw_preview_animated,
                  nsfw_blur_image_key, nsfw_blur_content_type, created_at, updated_at
              )
-             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
              WHERE EXISTS (
                  SELECT 1 FROM image_upload_jobs
                  WHERE id = ? AND generation = ? AND state IN ('queued', 'processing', 'waiting_for_sources')
@@ -1138,6 +1151,7 @@ async function publishGalleryJobIfReady(env: Bindings, jobId: string, now: Date)
             sfwInsert.previewWidth,
             sfwInsert.previewHeight,
             sfwInsert.previewByteSize,
+            Number(sfwInsert.previewAnimated),
             nsfwInsert.width,
             nsfwInsert.height,
             nsfwInsert.byteSize,
@@ -1146,6 +1160,7 @@ async function publishGalleryJobIfReady(env: Bindings, jobId: string, now: Date)
             nsfwInsert.previewWidth,
             nsfwInsert.previewHeight,
             nsfwInsert.previewByteSize,
+            Number(nsfwInsert.previewAnimated),
             nsfwInsert.blurKey,
             GALLERY_NSFW_BLUR_CONTENT_TYPE,
             nowText,
@@ -1217,6 +1232,7 @@ type GalleryInsertVariant = {
     previewWidth: number | null
     previewHeight: number | null
     previewByteSize: number | null
+    previewAnimated: boolean
     blurKey: string | null
 }
 
@@ -1232,11 +1248,12 @@ function galleryInsertVariant(output: GalleryTaskOutput | null): GalleryInsertVa
             previewWidth: null,
             previewHeight: null,
             previewByteSize: null,
+            previewAnimated: false,
             blurKey: null,
         }
     }
 
-    return output
+    return {...output, previewAnimated: output.previewAnimated === true}
 }
 
 function galleryPublicResult(
@@ -1307,15 +1324,18 @@ function galleryPublicVariant(baseUrl: string, job: JobRow, mediaId: string, out
             output.rating,
             output.imageContentType,
         ),
-        previewUrl: characterMediaPreviewImageUrl(
-            baseUrl,
-            job.user_id,
-            job.target_id,
-            mediaId,
-            output.previewKey,
-            output.rating,
-            GALLERY_PREVIEW_CONTENT_TYPE,
-        ),
+        previewUrl:
+            output.previewKey && (!isAnimatedImageContentType(output.imageContentType) || values.previewAnimated)
+                ? characterMediaPreviewImageUrl(
+                      baseUrl,
+                      job.user_id,
+                      job.target_id,
+                      mediaId,
+                      output.previewKey,
+                      output.rating,
+                      GALLERY_PREVIEW_CONTENT_TYPE,
+                  )
+                : null,
         blurUrl: output.blurKey
             ? characterMediaNsfwBlurImageUrl(baseUrl, job.user_id, job.target_id, mediaId, output.blurKey, GALLERY_NSFW_BLUR_CONTENT_TYPE)
             : null,
@@ -1382,6 +1402,19 @@ function galleryMediaId(task: TaskRow): string {
 function fileStem(key: string): string {
     const file = key.slice(key.lastIndexOf('/') + 1)
     return file.replace(/\.[^.]+$/, '')
+}
+
+async function taskLeaseIsHeld(db: D1Database, taskId: string, leaseId: string): Promise<boolean> {
+    const row = await db
+        .prepare(
+            `SELECT 1 AS held
+             FROM image_processing_tasks
+             WHERE id = ? AND lease_id = ? AND state = 'processing'`,
+        )
+        .bind(taskId, leaseId)
+        .first<{held: number}>()
+
+    return row?.held === 1
 }
 
 function successfulSourceCleanupStatement(db: D1Database, jobId: string, generation: number, now: Date): D1PreparedStatement {

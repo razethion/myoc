@@ -103,6 +103,9 @@ jobs:
           node-version: '26'
           working-directory: apps/backend/containers/myoc-docker-sharp
 
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
       - name: Test preview processor
         working-directory: apps/backend/containers/myoc-docker-sharp
         run: npm run check

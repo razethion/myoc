@@ -23,6 +23,11 @@ const MEDIA_PREVIEW_REGENERATION_ITEMS_PER_WORKFLOW =
     MEDIA_PREVIEW_REGENERATION_BATCH_SIZE * MEDIA_PREVIEW_REGENERATION_BATCHES_PER_WORKFLOW
 const THUMBNAIL_REGENERATION_ITEMS_PER_WORKFLOW = 250
 const GALLERY_IMAGE_DIMENSION_PROBE_BYTES = 1024 * 1024
+// Animated AVIF previews can run two 300-second encode passes plus a blur.
+// Keep the lease past the worst case so a duplicate delivery cannot start a
+// second attempt while the first attempt still writes outputs.
+export const MEDIA_PREVIEW_REGENERATION_LEASE_MS = 12 * 60 * 1_000
+const CLAIM_LEASE_MS = 2 * 60 * 1_000
 
 export type MediaPreviewRegenerationSummary = {
     totalVariants: number
@@ -46,10 +51,10 @@ export function mediaPreviewRegenerationWorkflowInstanceId(runId: string, segmen
 export function activeMediaPreviewRegenerationWorkflowInstanceIds(
     runId: string,
     processedVariants: number,
-    jobName: 'media-preview-regeneration' | 'thumbnail-regeneration',
+    jobName: 'media-preview-regeneration' | 'thumbnail-regeneration' | 'gif-preview-backfill',
 ): string[] {
     const itemsPerWorkflow =
-        jobName === 'media-preview-regeneration' ? MEDIA_PREVIEW_REGENERATION_ITEMS_PER_WORKFLOW : THUMBNAIL_REGENERATION_ITEMS_PER_WORKFLOW
+        jobName === 'thumbnail-regeneration' ? THUMBNAIL_REGENERATION_ITEMS_PER_WORKFLOW : MEDIA_PREVIEW_REGENERATION_ITEMS_PER_WORKFLOW
     const segment = Math.floor(processedVariants / itemsPerWorkflow)
     const currentId = mediaPreviewRegenerationWorkflowInstanceId(runId, segment)
 
@@ -73,6 +78,12 @@ type MediaPreviewRegenerationEnv = Pick<
 
 type MediaPreviewRegenerationOptions = {
     maxContainerAttempts?: number
+    /**
+     * When provided, the task aborts before writing outputs if this returns
+     * false. It must report whether the task lease is still held by this
+     * attempt.
+     */
+    leaseHeld?: () => Promise<boolean>
 }
 
 export type MediaPreviewRegenerationItemStatus = MediaPreviewRegenerationResult['status'] | 'pending' | 'processing'
@@ -96,6 +107,7 @@ type CandidateRow = {
     image_content_type: string | null
     preview_key: string | null
     preview_content_type: string
+    preview_animated: number
     blur_key: string | null
     blur_content_type: string
 }
@@ -112,19 +124,27 @@ export function emptyMediaPreviewRegenerationSummary(): MediaPreviewRegeneration
     }
 }
 
-async function initializeMediaPreviewRegenerationSummary(db: D1Database, onlyInvalid: boolean): Promise<MediaPreviewRegenerationSummary> {
+async function initializeMediaPreviewRegenerationSummary(
+    db: D1Database,
+    onlyInvalid: boolean,
+    onlyGif: boolean,
+): Promise<MediaPreviewRegenerationSummary> {
     const totalVariants = await db
         .prepare(
             `SELECT COALESCE(SUM(
                         CASE WHEN sfw_image_key IS NOT NULL AND sfw_image_key <> ''
                             AND (? = 0 OR sfw_preview_image_key IS NULL OR sfw_preview_image_key = ''
                                  OR sfw_preview_content_type IS NOT ?)
+                            AND (? = 0 OR (sfw_content_type = 'image/gif'
+                                 AND (sfw_preview_animated = 0 OR sfw_preview_image_key IS NULL OR sfw_preview_image_key = '')))
                             THEN 1 ELSE 0 END +
                         CASE WHEN nsfw_image_key IS NOT NULL AND nsfw_image_key <> ''
                             AND (? = 0 OR nsfw_preview_image_key IS NULL OR nsfw_preview_image_key = ''
                                  OR nsfw_preview_content_type IS NOT ?
                                  OR nsfw_blur_image_key IS NULL OR nsfw_blur_image_key = ''
                                  OR nsfw_blur_content_type IS NOT ?)
+                            AND (? = 0 OR (nsfw_content_type = 'image/gif'
+                                 AND (nsfw_preview_animated = 0 OR nsfw_preview_image_key IS NULL OR nsfw_preview_image_key = '')))
                             THEN 1 ELSE 0 END
                     ), 0) AS total_variants
              FROM character_media`,
@@ -132,9 +152,11 @@ async function initializeMediaPreviewRegenerationSummary(db: D1Database, onlyInv
         .bind(
             Number(onlyInvalid),
             GALLERY_PREVIEW_CONTENT_TYPE,
+            Number(onlyGif),
             Number(onlyInvalid),
             GALLERY_PREVIEW_CONTENT_TYPE,
             GALLERY_NSFW_BLUR_CONTENT_TYPE,
+            Number(onlyGif),
         )
         .first<number>('total_variants')
 
@@ -148,8 +170,9 @@ export async function initializeMediaPreviewRegenerationDispatch(
     db: D1Database,
     runId: string,
     onlyInvalid = false,
+    onlyGif = false,
 ): Promise<MediaPreviewRegenerationSummary> {
-    const summary = await initializeMediaPreviewRegenerationSummary(db, onlyInvalid)
+    const summary = await initializeMediaPreviewRegenerationSummary(db, onlyInvalid, onlyGif)
     await db.batch([
         db
             .prepare(
@@ -330,10 +353,11 @@ export async function claimMediaPreviewRegenerationTask(
     db: D1Database,
     taskId: string,
     now: Date,
+    leaseMs = CLAIM_LEASE_MS,
 ): Promise<ClaimedMediaPreviewRegenerationTask | null> {
     const leaseId = crypto.randomUUID()
     const leasedAt = now.toISOString().replace('T', ' ').replace('Z', '')
-    const leaseExpiresAt = new Date(now.getTime() + 2 * 60 * 1_000).toISOString().replace('T', ' ').replace('Z', '')
+    const leaseExpiresAt = new Date(now.getTime() + leaseMs).toISOString().replace('T', ' ').replace('Z', '')
     const row = await db
         .prepare(
             `UPDATE media_preview_regeneration_items
@@ -365,6 +389,21 @@ export async function claimMediaPreviewRegenerationTask(
               runId: row.run_id,
           }
         : null
+}
+
+export async function isMediaPreviewRegenerationLeaseHeld(db: D1Database, taskId: string, leaseId: string): Promise<boolean> {
+    const row = await db
+        .prepare(
+            `SELECT 1 AS held
+             FROM media_preview_regeneration_items
+             WHERE task_id = ?
+               AND status = 'processing'
+               AND lease_id = ?`,
+        )
+        .bind(taskId, leaseId)
+        .first<{held: number}>()
+
+    return row?.held === 1
 }
 
 export async function recordMediaPreviewRegenerationResult(
@@ -474,6 +513,7 @@ export async function getMediaPreviewRegenerationCandidates(
     db: D1Database,
     cursor: MediaPreviewRegenerationCursor | null,
     onlyInvalid = false,
+    onlyGif = false,
 ): Promise<MediaPreviewRegenerationCandidate[]> {
     const cursorMediaId = cursor?.mediaId ?? null
     const cursorRatingOrder = cursor?.ratingOrder ?? -1
@@ -489,6 +529,7 @@ export async function getMediaPreviewRegenerationCandidates(
                        sfw_content_type AS image_content_type,
                        sfw_preview_image_key AS preview_key,
                        sfw_preview_content_type AS preview_content_type,
+                       sfw_preview_animated AS preview_animated,
                        NULL AS blur_key,
                        'image/webp' AS blur_content_type
                 FROM character_media
@@ -503,6 +544,7 @@ export async function getMediaPreviewRegenerationCandidates(
                        nsfw_content_type AS image_content_type,
                        nsfw_preview_image_key AS preview_key,
                        nsfw_preview_content_type AS preview_content_type,
+                       nsfw_preview_animated AS preview_animated,
                        nsfw_blur_image_key AS blur_key,
                        nsfw_blur_content_type AS blur_content_type
                 FROM character_media
@@ -517,12 +559,15 @@ export async function getMediaPreviewRegenerationCandidates(
                    image_content_type,
                    preview_key,
                    preview_content_type,
+                   preview_animated,
                    blur_key,
                    blur_content_type
             FROM media_variants
             WHERE image_key <> ''
               AND (? = 0 OR preview_key IS NULL OR preview_key = '' OR preview_content_type IS NOT ?
                    OR (rating = 'nsfw' AND (blur_key IS NULL OR blur_key = '' OR blur_content_type IS NOT ?)))
+              AND (? = 0 OR (image_content_type = 'image/gif'
+                   AND (preview_animated = 0 OR preview_key IS NULL OR preview_key = '')))
               AND (? IS NULL
                OR media_id > ?
                OR (media_id = ? AND rating_order > ?))
@@ -533,6 +578,7 @@ export async function getMediaPreviewRegenerationCandidates(
             Number(onlyInvalid),
             GALLERY_PREVIEW_CONTENT_TYPE,
             GALLERY_NSFW_BLUR_CONTENT_TYPE,
+            Number(onlyGif),
             cursorMediaId,
             cursorMediaId,
             cursorMediaId,
@@ -584,10 +630,31 @@ export async function regenerateMediaPreviewCandidate(
             priority: 'background' as const,
         }
         const preview = await generateMediaPreviewWithContainer(env, sourceUrl, source, containerOptions)
+
+        if (options.leaseHeld && !(await options.leaseHeld())) {
+            // A duplicate delivery reclaimed the task. Do not write outputs;
+            // the new attempt owns the same target keys.
+            return {
+                status: 'skipped',
+                regeneratedBlur: false,
+                error: null,
+            }
+        }
+
         await putPreview(env.MEDIA_BUCKET, candidate, preview)
 
         if (candidate.targetBlurKey) {
             await putBlur(env, candidate, candidate.targetBlurKey, preview, containerOptions)
+        }
+
+        if (options.leaseHeld && !(await options.leaseHeld())) {
+            // Leave written objects in place: the new attempt rewrites the
+            // same target keys and publishes behind the same WHERE guard.
+            return {
+                status: 'skipped',
+                regeneratedBlur: false,
+                error: null,
+            }
         }
 
         const updated = await publishRegeneratedPreview(env.DB, candidate, preview)
@@ -778,7 +845,8 @@ async function publishRegeneratedPreview(
                        sfw_preview_content_type = ?,
                        sfw_preview_width = ?,
                        sfw_preview_height = ?,
-                       sfw_preview_byte_size = ?
+                       sfw_preview_byte_size = ?,
+                       sfw_preview_animated = ?
                    WHERE id = ?
                      AND sfw_image_key = ?
                      AND sfw_content_type IS ?
@@ -794,6 +862,7 @@ async function publishRegeneratedPreview(
                        nsfw_preview_width = ?,
                        nsfw_preview_height = ?,
                        nsfw_preview_byte_size = ?,
+                       nsfw_preview_animated = ?,
                        nsfw_blur_image_key = ?,
                        nsfw_blur_content_type = ?
                    WHERE id = ?
@@ -824,6 +893,7 @@ async function publishRegeneratedPreview(
                       preview.width,
                       preview.height,
                       preview.bytes.byteLength,
+                      Number(preview.animated),
                       candidate.mediaId,
                       candidate.imageKey,
                       candidate.storedImageContentType,
@@ -840,6 +910,7 @@ async function publishRegeneratedPreview(
                       preview.width,
                       preview.height,
                       preview.bytes.byteLength,
+                      Number(preview.animated),
                       candidate.targetBlurKey,
                       GALLERY_NSFW_BLUR_CONTENT_TYPE,
                       candidate.mediaId,

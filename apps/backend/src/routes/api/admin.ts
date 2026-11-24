@@ -51,6 +51,7 @@ type ModerationMediaRow = {
     sfw_preview_width?: number | null
     sfw_preview_height?: number | null
     sfw_preview_byte_size?: number | null
+    sfw_preview_animated?: number | null
     nsfw_preview_image_key?: string | null
     nsfw_preview_content_type: string
     nsfw_blur_image_key?: string | null
@@ -58,6 +59,7 @@ type ModerationMediaRow = {
     nsfw_preview_width?: number | null
     nsfw_preview_height?: number | null
     nsfw_preview_byte_size?: number | null
+    nsfw_preview_animated?: number | null
 }
 
 type MediaVariantMove = {
@@ -101,6 +103,7 @@ type MediaVariantState = {
     previewWidth: number | null
     previewHeight: number | null
     previewByteSize: number | null
+    previewAnimated: number
 }
 
 type MediaVariantReviewState = {
@@ -138,6 +141,7 @@ const MEDIA_REVIEW_UPDATE_SQL = `UPDATE character_media
                                      sfw_preview_width      = ?,
                                      sfw_preview_height     = ?,
                                      sfw_preview_byte_size  = ?,
+                                     sfw_preview_animated   = ?,
                                      nsfw_width             = ?,
                                      nsfw_height            = ?,
                                      nsfw_byte_size         = ?,
@@ -146,6 +150,7 @@ const MEDIA_REVIEW_UPDATE_SQL = `UPDATE character_media
                                      nsfw_preview_width     = ?,
                                      nsfw_preview_height    = ?,
                                      nsfw_preview_byte_size = ?,
+                                     nsfw_preview_animated  = ?,
                                      sfw_review_status      = CASE WHEN ? THEN ? ELSE sfw_review_status END,
                                      sfw_reviewed_at        = CASE WHEN ? THEN ? ELSE sfw_reviewed_at END,
                                      sfw_approved_at        = CASE WHEN ? THEN ? ELSE sfw_approved_at END,
@@ -340,13 +345,15 @@ async function getModerationMedia(db: D1Database, mediaId: string): Promise<Mode
                 sfw_preview_width,
                 sfw_preview_height,
                 sfw_preview_byte_size,
+                sfw_preview_animated,
                 nsfw_preview_image_key,
                 nsfw_preview_content_type,
                 nsfw_blur_image_key,
                 nsfw_blur_content_type,
                 nsfw_preview_width,
                 nsfw_preview_height,
-                nsfw_preview_byte_size
+                nsfw_preview_byte_size,
+                nsfw_preview_animated
          FROM character_media
          WHERE id = ?
          LIMIT 1`,
@@ -440,6 +447,7 @@ function mediaVariantState(media: ModerationMediaRow, rating: 'sfw' | 'nsfw'): M
             previewWidth: media.sfw_preview_width ?? null,
             previewHeight: media.sfw_preview_height ?? null,
             previewByteSize: media.sfw_preview_byte_size ?? null,
+            previewAnimated: media.sfw_preview_animated ?? 0,
         }
     }
 
@@ -455,6 +463,7 @@ function mediaVariantState(media: ModerationMediaRow, rating: 'sfw' | 'nsfw'): M
         previewWidth: media.nsfw_preview_width ?? null,
         previewHeight: media.nsfw_preview_height ?? null,
         previewByteSize: media.nsfw_preview_byte_size ?? null,
+        previewAnimated: media.nsfw_preview_animated ?? 0,
     }
 }
 
@@ -471,6 +480,7 @@ function emptyMediaVariantState(): MediaVariantState {
         previewWidth: null,
         previewHeight: null,
         previewByteSize: null,
+        previewAnimated: 0,
     }
 }
 
@@ -618,6 +628,7 @@ function createMediaReviewBinds(
         plan.sfw.previewWidth,
         plan.sfw.previewHeight,
         plan.sfw.previewByteSize,
+        plan.sfw.previewAnimated,
         plan.nsfw.width,
         plan.nsfw.height,
         plan.nsfw.byteSize,
@@ -626,6 +637,7 @@ function createMediaReviewBinds(
         plan.nsfw.previewWidth,
         plan.nsfw.previewHeight,
         plan.nsfw.previewByteSize,
+        plan.nsfw.previewAnimated,
         updateSfwFlag,
         plan.sfwReview.status,
         updateSfwFlag,

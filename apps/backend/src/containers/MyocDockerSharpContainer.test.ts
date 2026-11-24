@@ -53,6 +53,33 @@ describe('MyocDockerSharpContainer', () => {
         )
     })
 
+    it('allows the deployment media host for preview regeneration', () => {
+        const container = new MyocDockerSharpContainer({} as DurableObjectState<Record<never, never>>, {
+            MEDIA_PUBLIC_BASE_URL: 'https://pub-abc123.r2.dev',
+            PREVIEW_PROCESSOR_TOKEN: 'preview-token',
+        })
+
+        expect(container.allowedHosts).toEqual(['m.myoc.art', 'm.dev.myoc.art', 'pub-abc123.r2.dev'])
+    })
+
+    it('does not duplicate a media host that is already allowed', () => {
+        const container = new MyocDockerSharpContainer({} as DurableObjectState<Record<never, never>>, {
+            MEDIA_PUBLIC_BASE_URL: 'https://m.myoc.art',
+            PREVIEW_PROCESSOR_TOKEN: 'preview-token',
+        })
+
+        expect(container.allowedHosts).toEqual(['m.myoc.art', 'm.dev.myoc.art'])
+    })
+
+    it('ignores an invalid media base URL', () => {
+        const container = new MyocDockerSharpContainer({} as DurableObjectState<Record<never, never>>, {
+            MEDIA_PUBLIC_BASE_URL: 'not-a-url',
+            PREVIEW_PROCESSOR_TOKEN: 'preview-token',
+        })
+
+        expect(container.allowedHosts).toEqual(['m.myoc.art', 'm.dev.myoc.art'])
+    })
+
     it('limits one container to four active image requests', async () => {
         let release = () => {}
         const pending = new Promise<void>((resolve) => {

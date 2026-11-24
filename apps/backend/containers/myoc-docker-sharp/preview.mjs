@@ -1,4 +1,5 @@
 import sharp from 'sharp'
+import {AnimatedPreviewTooLargeError, createAnimatedAvifPreview, extractFirstFramePng, isAvifSource, isGifSource} from './animatedAvif.mjs'
 import {addNclx, resolveCicp} from './avifColor.mjs'
 
 async function encodeAvif(pipeline, cicp, options) {
@@ -28,6 +29,12 @@ export async function createAvifPreview(sourceBytes, options) {
     const scale = Math.min(1, options.maxLongEdge / longEdge)
     const previewWidth = Math.max(1, Math.round(width * scale))
     const previewHeight = Math.max(1, Math.round(height * scale))
+    const animated = await animatedPreviewForSource(sourceBytes, options)
+
+    if (animated) {
+        return {...animated, animated: true}
+    }
+
     const cicp = resolveCicp(metadata.icc)
     const bytes = await encodeAvif(image.resize(previewWidth, previewHeight, {fit: 'fill'}), cicp, {
         chromaSubsampling: '4:4:4',
@@ -36,9 +43,30 @@ export async function createAvifPreview(sourceBytes, options) {
     })
 
     return {
+        animated: false,
         bytes,
         height: previewHeight,
         width: previewWidth,
+    }
+}
+
+async function animatedPreviewForSource(sourceBytes, options) {
+    if (!options.animatedPreviews || !isGifSource(sourceBytes)) {
+        return null
+    }
+
+    try {
+        return await createAnimatedAvifPreview(sourceBytes, {
+            maxBytes: options.maxBytes,
+            maxLongEdge: options.maxLongEdge,
+        })
+    } catch (error) {
+        if (!(error instanceof AnimatedPreviewTooLargeError)) {
+            console.warn('Animated AVIF preview failed; using a static preview', {
+                error: error instanceof Error ? error.message : String(error),
+            })
+        }
+        return null
     }
 }
 
@@ -47,6 +75,24 @@ export async function createAvifPreview(sourceBytes, options) {
  * @param {{limitInputPixels: number, maxWidth: number, quality: number, sigma: number}} options
  */
 export async function createAvifBlur(sourceBytes, options) {
+    try {
+        return await blurAvifSource(sourceBytes, options)
+    } catch (error) {
+        if (!isAvifSource(sourceBytes)) {
+            throw error
+        }
+
+        // Animated previews carry an AVIF sequence. Sharp cannot decode it,
+        // so blur frame zero. The upload path blurs the same frame in memory.
+        console.warn('Blur source rejected; blurring the first frame', {
+            error: error instanceof Error ? error.message : String(error),
+        })
+
+        return await blurAvifSource(await extractFirstFramePng(sourceBytes), options)
+    }
+}
+
+async function blurAvifSource(sourceBytes, options) {
     // nosemgrep: javascript.express.file.sharp-express.sharp-express -- sourceBytes is a bounded request body from the Worker.
     const image = sharp(sourceBytes, {
         limitInputPixels: options.limitInputPixels,
@@ -135,20 +181,29 @@ export async function createGalleryAvifOutputs(sourceBytes, options) {
 
     const longEdge = Math.max(width, height)
     const previewScale = Math.min(1, options.maxLongEdge / longEdge)
-    const previewWidth = Math.max(1, Math.round(width * previewScale))
-    const previewHeight = Math.max(1, Math.round(height * previewScale))
+    const staticPreviewWidth = Math.max(1, Math.round(width * previewScale))
+    const staticPreviewHeight = Math.max(1, Math.round(height * previewScale))
     const cicp = resolveCicp(metadata.icc)
-    const previewPipeline = image.clone().resize(previewWidth, previewHeight, {fit: 'fill'})
-    const previewBytes = await encodeAvif(previewPipeline.clone(), cicp, {
-        chromaSubsampling: '4:4:4',
-        effort: 4,
-        quality: options.previewQuality,
+    const previewPipeline = image.clone().resize(staticPreviewWidth, staticPreviewHeight, {fit: 'fill'})
+    const animated = await animatedPreviewForSource(sourceBytes, {
+        animatedPreviews: options.animatedPreviews,
+        maxBytes: options.previewMaxBytes,
+        maxLongEdge: options.maxLongEdge,
     })
+    const previewBytes =
+        animated?.bytes ??
+        (await encodeAvif(previewPipeline.clone(), cicp, {
+            chromaSubsampling: '4:4:4',
+            effort: 4,
+            quality: options.previewQuality,
+        }))
+    const previewWidth = animated?.width ?? staticPreviewWidth
+    const previewHeight = animated?.height ?? staticPreviewHeight
 
     if (!options.blur) {
         return {
             blur: null,
-            preview: {bytes: previewBytes, height: previewHeight, width: previewWidth},
+            preview: {animated: Boolean(animated), bytes: previewBytes, height: previewHeight, width: previewWidth},
         }
     }
 
@@ -163,6 +218,6 @@ export async function createGalleryAvifOutputs(sourceBytes, options) {
 
     return {
         blur: {bytes: blurBytes, height: blurHeight, width: blurWidth},
-        preview: {bytes: previewBytes, height: previewHeight, width: previewWidth},
+        preview: {animated: Boolean(animated), bytes: previewBytes, height: previewHeight, width: previewWidth},
     }
 }
