@@ -938,6 +938,27 @@ describe('POST /admin/image-approvals/:mediaId', () => {
         expect(media?.nsfw_blur_image_key).toEqual(expect.any(String))
     })
 
+    it('carries the SFW animation flag when marked NSFW', async () => {
+        await seedApprovalMedia({
+            id: mediaId,
+            userId: ownerId,
+            characterId,
+            sfwPreviewContentType: 'image/avif',
+            sfwPreviewAnimated: true,
+        })
+        const mediaBucket = createMockR2Bucket()
+        const previewContainer = createMockPreviewContainer()
+        await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/sfw-key.png', new Uint8Array([1, 2, 3]))
+        await mediaBucket.put('characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.avif', createAvifBytes(800, 600))
+        const response = await postImageApproval(mediaId, {sfwAction: 'mark_nsfw'}, mediaBucket, 'session-token', previewContainer)
+        const media = await queryOne<{sfw_preview_animated: number; nsfw_preview_animated: number}>(
+            'SELECT sfw_preview_animated, nsfw_preview_animated FROM character_media WHERE id = ?',
+            [mediaId],
+        )
+        expect(response.status).toBe(200)
+        expect(media).toEqual({sfw_preview_animated: 0, nsfw_preview_animated: 1})
+    })
+
     it('moves an SFW image to NSFW without preview objects when no preview key exists', async () => {
         await seedApprovalMedia({
             id: mediaId,
@@ -1060,6 +1081,31 @@ describe('POST /admin/image-approvals/:mediaId', () => {
         expect(await mediaBucket.get('characters/owner-1/character-1/media/media-1/nsfw/nsfw-key.png')).toBeNull()
         expect(await mediaBucket.get('characters/owner-1/character-1/media/media-1/nsfw/blur/nsfw-blur-key.webp')).toBeNull()
         expect(media).toEqual({sfw_image_key: 'nsfw-key', nsfw_image_key: null, sfw_homepage_allowed: 1})
+    })
+
+    it('carries the NSFW animation flag when marked SFW', async () => {
+        await seedApprovalMedia({
+            id: mediaId,
+            userId: ownerId,
+            characterId,
+            sfwImageKey: null,
+            sfwPreviewImageKey: null,
+            nsfwImageKey: 'nsfw-key',
+            nsfwPreviewImageKey: 'nsfw-preview-key',
+            nsfwPreviewAnimated: true,
+            nsfwBlurImageKey: 'nsfw-blur-key',
+        })
+        const mediaBucket = createMockR2Bucket()
+        await mediaBucket.put('characters/owner-1/character-1/media/media-1/nsfw/nsfw-key.png', new Uint8Array([1, 2, 3]))
+        await mediaBucket.put('characters/owner-1/character-1/media/media-1/nsfw/preview/nsfw-preview-key.webp', new Uint8Array([4, 5, 6]))
+        await mediaBucket.put('characters/owner-1/character-1/media/media-1/nsfw/blur/nsfw-blur-key.webp', new Uint8Array([7, 8, 9]))
+        const response = await postImageApproval(mediaId, {nsfwAction: 'mark_sfw_homepage'}, mediaBucket)
+        const media = await queryOne<{sfw_preview_animated: number; nsfw_preview_animated: number}>(
+            'SELECT sfw_preview_animated, nsfw_preview_animated FROM character_media WHERE id = ?',
+            [mediaId],
+        )
+        expect(response.status).toBe(200)
+        expect(media).toEqual({sfw_preview_animated: 1, nsfw_preview_animated: 0})
     })
 
     it('moves an NSFW image without optional media objects or a stored content type', async () => {
@@ -1242,15 +1288,22 @@ describe('POST /admin/reports/images/:mediaId/:rating/:action', () => {
 
     it('clears a reported SFW image while preserving an existing NSFW image', async () => {
         await seedCurrentUser()
-        await seedModerationMedia({id: mediaId, userId: ownerId, characterId, sfwReviewStatus: 'reported', nsfwImageKey: 'nsfw-key'})
+        await seedModerationMedia({
+            id: mediaId,
+            userId: ownerId,
+            characterId,
+            sfwReviewStatus: 'reported',
+            sfwPreviewAnimated: true,
+            nsfwImageKey: 'nsfw-key',
+        })
         const mediaBucket = createMockR2Bucket()
         const response = await postReportAction(mediaId, 'sfw', 'delete-image', mediaBucket)
-        const media = await queryOne<{sfw_image_key: string | null; nsfw_image_key: string | null}>(
-            'SELECT sfw_image_key, nsfw_image_key FROM character_media WHERE id = ?',
+        const media = await queryOne<{sfw_image_key: string | null; nsfw_image_key: string | null; sfw_preview_animated: number}>(
+            'SELECT sfw_image_key, nsfw_image_key, sfw_preview_animated FROM character_media WHERE id = ?',
             [mediaId],
         )
         expect(response.status).toBe(200)
-        expect(media).toEqual({sfw_image_key: null, nsfw_image_key: 'nsfw-key'})
+        expect(media).toEqual({sfw_image_key: null, nsfw_image_key: 'nsfw-key', sfw_preview_animated: 0})
         expectBucketDeletes(mediaBucket, [
             'characters/owner-1/character-1/media/media-1/sfw/sfw-key.png',
             'characters/owner-1/character-1/media/media-1/sfw/preview/sfw-preview-key.webp',
@@ -1266,17 +1319,18 @@ describe('POST /admin/reports/images/:mediaId/:rating/:action', () => {
             sfwReviewStatus: 'approved',
             nsfwImageKey: 'nsfw-key',
             nsfwPreviewImageKey: 'nsfw-preview-key',
+            nsfwPreviewAnimated: true,
             nsfwBlurImageKey: 'nsfw-blur-key',
             nsfwReviewStatus: 'reported',
         })
         const mediaBucket = createMockR2Bucket()
         const response = await postReportAction(mediaId, 'nsfw', 'delete-image', mediaBucket)
-        const media = await queryOne<{sfw_image_key: string | null; nsfw_image_key: string | null}>(
-            'SELECT sfw_image_key, nsfw_image_key FROM character_media WHERE id = ?',
+        const media = await queryOne<{sfw_image_key: string | null; nsfw_image_key: string | null; nsfw_preview_animated: number}>(
+            'SELECT sfw_image_key, nsfw_image_key, nsfw_preview_animated FROM character_media WHERE id = ?',
             [mediaId],
         )
         expect(response.status).toBe(200)
-        expect(media).toEqual({sfw_image_key: 'sfw-key', nsfw_image_key: null})
+        expect(media).toEqual({sfw_image_key: 'sfw-key', nsfw_image_key: null, nsfw_preview_animated: 0})
         expectBucketDeletes(mediaBucket, [
             'characters/owner-1/character-1/media/media-1/nsfw/nsfw-key.png',
             'characters/owner-1/character-1/media/media-1/nsfw/preview/nsfw-preview-key.webp',
