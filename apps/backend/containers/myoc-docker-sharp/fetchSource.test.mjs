@@ -30,6 +30,17 @@ function fakeResponse(options = {}) {
     }
 }
 
+function cancelRecorder() {
+    const state = {cancelled: 0}
+
+    return {
+        onCancel: () => {
+            state.cancelled += 1
+        },
+        state,
+    }
+}
+
 function sleepRecorder() {
     /** @type {number[]} */
     const delays = []
@@ -73,16 +84,17 @@ test('returns source bytes on the first attempt', async () => {
 test('retries retryable origin statuses with growing delays', async () => {
     const ok = Uint8Array.from([9])
     let calls = 0
+    const {onCancel, state} = cancelRecorder()
     const {sleepImpl, delays} = sleepRecorder()
 
     const bytes = await fetchImageBytes('https://media.example/image.gif', {
         fetchImpl: async () => {
             calls += 1
             if (calls === 1) {
-                return fakeResponse({status: 520})
+                return fakeResponse({onCancel, status: 520})
             }
             if (calls === 2) {
-                return fakeResponse({status: 502})
+                return fakeResponse({onCancel, status: 502})
             }
             return fakeResponse({chunks: [ok]})
         },
@@ -95,6 +107,7 @@ test('retries retryable origin statuses with growing delays', async () => {
     assert.deepEqual(bytes, Buffer.from([9]))
     assert.equal(calls, 3)
     assert.deepEqual(delays, [10, 20])
+    assert.equal(state.cancelled, 2)
 })
 
 test('throws after exhausting attempts', async () => {
@@ -168,13 +181,14 @@ test('retries network errors', async () => {
 
 test('rejects a declared size above the cap without retrying', async () => {
     let calls = 0
+    const {onCancel, state} = cancelRecorder()
     const {sleepImpl, delays} = sleepRecorder()
 
     await assert.rejects(
         fetchImageBytes('https://media.example/image.gif', {
             fetchImpl: async () => {
                 calls += 1
-                return fakeResponse({headers: {'content-length': '2048'}})
+                return fakeResponse({headers: {'content-length': '2048'}, onCancel})
             },
             maxBytes: 1024,
             retryDelayMs: 10,
@@ -186,6 +200,7 @@ test('rejects a declared size above the cap without retrying', async () => {
 
     assert.equal(calls, 1)
     assert.equal(delays.length, 0)
+    assert.equal(state.cancelled, 1)
 })
 
 test('rejects a streamed body above the cap and cancels the reader', async () => {

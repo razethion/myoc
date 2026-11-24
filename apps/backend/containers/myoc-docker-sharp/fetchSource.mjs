@@ -63,12 +63,15 @@ async function fetchImageBytesOnce(imageUrl, options, fetchImpl) {
         })
 
         if (!response.ok) {
+            // Release the connection before the retry loop ends the attempt.
+            await response.body?.getReader().cancel()
             throw new SourceFetchError(`Source image fetch failed with ${response.status}`, RETRYABLE_STATUSES.has(response.status))
         }
 
         const contentLength = Number.parseInt(response.headers.get('content-length') ?? '0', 10)
 
         if (contentLength > options.maxBytes) {
+            await response.body?.getReader().cancel()
             throw new SourceFetchError('Source image is too large', false)
         }
 
