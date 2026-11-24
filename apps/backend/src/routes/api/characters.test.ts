@@ -36,6 +36,7 @@ import {createRequestHeaders, type TestRequestOptions} from '../../test/request'
 import {apiRoutes} from '../api'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
+const heightChartMaxMultipartRequestBytes = 25 * 1024 * 1024
 const uuidPattern = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
 const currentUserRecord = {
     id: 'current-user',
@@ -3200,6 +3201,36 @@ describe('PUT /characters/:id/height-chart', () => {
         })
     })
 
+    it('rejects height chart upload requests that are larger than the request limit', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const form = new FormData()
+        form.set(
+            'heightChartJson',
+            JSON.stringify({
+                version: 1,
+                height: {meters: 1.82},
+                image: null,
+            }),
+        )
+        form.set('heightChartImage', new File([new Uint8Array(1024)], 'height-chart.png', {type: 'image/png'}))
+
+        const response = await putHeightChart(character.id, form, db, {
+            contentLength: String(heightChartMaxMultipartRequestBytes + 1),
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(413)
+        expect(await response.json()).toEqual({error: 'Height chart image upload is too large'})
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+        expect(mediaBucket.delete).not.toHaveBeenCalled()
+    })
+
     it('rejects incomplete height chart data without deleting an object', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
@@ -3577,7 +3608,7 @@ describe('PUT /characters/:id/height-chart', () => {
             }),
         )
         form.set('heightChartImage', file)
-        const formDataSpy = vi.spyOn(Request.prototype, 'formData').mockResolvedValueOnce(form)
+        const formDataSpy = vi.spyOn(Response.prototype, 'formData').mockResolvedValueOnce(form)
 
         const response = await putHeightChart(character.id, form, db, {
             mediaBucket,

@@ -330,6 +330,7 @@ const GALLERY_IMAGE_MAX_BYTES = 200 * 1024 * 1024
 const GALLERY_IMAGE_MAX_PIXELS = 200_000_000
 const GALLERY_IMAGE_DIMENSION_PROBE_BYTES = 1024 * 1024
 const HEIGHT_CHART_JSON_MAX_LENGTH = 2048
+const HEIGHT_CHART_MAX_MULTIPART_REQUEST_BYTES = 25 * 1024 * 1024
 const HEIGHT_CHART_MIN_METERS = 0.01
 const HEIGHT_CHART_MAX_METERS = 100
 const HEIGHT_CHART_MAX_FOOT_PERCENT = 180
@@ -1022,7 +1023,7 @@ characterRoutes.post('/:id/profile-image', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Character profile image upload is too large'}, 413)
     }
 
-    const owned = await requireOwnedCharacterMultipartForm(c, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES)
+    const owned = await requireOwnedCharacterMultipartForm(c, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES, 'Character profile image')
 
     if (owned instanceof Response) {
         return owned
@@ -1081,7 +1082,7 @@ characterRoutes.post('/:id/profile-image', async (c) => {
 
 /* istanbul ignore next -- route behavior is covered by integration tests; remaining branches are defensive DB cleanup paths. */
 characterRoutes.put('/:id/height-chart', async (c) => {
-    const owned = await requireOwnedCharacterMultipartForm(c)
+    const owned = await requireOwnedCharacterMultipartForm(c, HEIGHT_CHART_MAX_MULTIPART_REQUEST_BYTES, 'Height chart image')
 
     if (owned instanceof Response) {
         return owned
@@ -2192,7 +2193,8 @@ async function requireOwnedCharacter(c: CharacterRouteContext): Promise<
 /* istanbul ignore next -- exercised through route tests; remaining branch gaps are defensive content-type defaults. */
 async function requireOwnedCharacterMultipartForm(
     c: CharacterRouteContext,
-    maxBodyBytes?: number,
+    maxBodyBytes: number,
+    uploadLabel: string,
 ): Promise<
     | {
           currentUser: CurrentUser
@@ -2213,10 +2215,10 @@ async function requireOwnedCharacterMultipartForm(
         return jsonResponse(c, ErrorResponseSchema, {error: 'Multipart form data is required'}, 400)
     }
 
-    const form = maxBodyBytes ? await readFormDataUpTo(c.req.raw, maxBodyBytes) : await c.req.formData()
+    const form = await readFormDataUpTo(c.req.raw, maxBodyBytes)
 
     if (!form) {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Character profile image upload is too large'}, 413)
+        return jsonResponse(c, ErrorResponseSchema, {error: `${uploadLabel} upload is too large`}, 413)
     }
 
     return {
