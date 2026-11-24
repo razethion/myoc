@@ -43,7 +43,7 @@ const SESSION_COOKIE = 'myoc_session'
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30
 
 // Sensitive account changes require a full authentication no older than this window.
-export const STEP_UP_AUTH_WINDOW_SECONDS = 10 * 60
+const STEP_UP_AUTH_WINDOW_SECONDS = 10 * 60
 const SESSION_RENEWAL_INTERVAL_SECONDS = 60 * 60 * 24
 const SESSION_TOKEN_BYTES = 32
 const CSRF_TOKEN_PREFIX = 'csrf:'

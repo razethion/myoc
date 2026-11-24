@@ -8,7 +8,6 @@ import {
     getCurrentUser,
     hasRecentAuthentication,
     revokeOtherSessions,
-    STEP_UP_AUTH_WINDOW_SECONDS,
     toSqlTimestamp,
 } from './session'
 
@@ -136,7 +135,8 @@ describe('step-up authentication window', () => {
     it('keeps authentication time stale when an old session renews', async () => {
         const token = 'renew-without-reauth'
         const seededExpiry = toSqlTimestamp(new Date(Date.now() + 29 * DAY_MS - HOUR_MS))
-        const authenticatedAt = toSqlTimestamp(new Date(Date.now() - (STEP_UP_AUTH_WINDOW_SECONDS + 120) * 1000))
+        // 12 minutes ago: past the 10-minute step-up window used by hasRecentAuthentication.
+        const authenticatedAt = toSqlTimestamp(new Date(Date.now() - 12 * 60 * 1000))
 
         await seedUser({id: 'user-12'})
         await seedSession({userId: 'user-12', token, expiresAt: seededExpiry, authenticatedAt})
