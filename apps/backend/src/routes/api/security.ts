@@ -16,7 +16,13 @@ import {
     verifyRecoveryPhrase,
 } from '../../lib/auth/passkeys'
 import {enforceAuthChallengeRateLimit, enforceAuthIdentityRateLimit} from '../../lib/auth/rateLimit'
-import {getCurrentUser, hasRecentAuthentication, normalizeCredential, revokeOtherSessions, toSqlTimestamp} from '../../lib/auth/session'
+import {
+    getCurrentUser,
+    hasRecentAuthentication,
+    normalizeCredential,
+    revokeOtherSessionsStatement,
+    toSqlTimestamp,
+} from '../../lib/auth/session'
 import {stepUpRequiredResponse} from '../../lib/auth/stepUp'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {readJsonUpTo, STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
@@ -199,9 +205,8 @@ securityRoutes.post('/passkeys/verify', async (c) => {
             toSqlTimestamp(now),
         ),
         c.env.DB.prepare('DELETE FROM webauthn_challenges WHERE id = ?').bind(challengeId),
+        revokeOtherSessionsStatement(c.env.DB, currentUser.id, currentUser.sessionId),
     ])
-
-    await revokeOtherSessions(c.env.DB, currentUser.id, currentUser.sessionId)
 
     return jsonResponse(c, OkResponseSchema, {ok: true})
 })
@@ -234,15 +239,14 @@ securityRoutes.delete('/passkeys/:id', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Add another passkey before removing this one'}, 400)
     }
 
-    await c.env.DB.prepare(
-        `DELETE FROM user_passkeys
+    await c.env.DB.batch([
+        c.env.DB.prepare(
+            `DELETE FROM user_passkeys
          WHERE user_id = ?
            AND id = ?`,
-    )
-        .bind(currentUser.id, passkeyId)
-        .run()
-
-    await revokeOtherSessions(c.env.DB, currentUser.id, currentUser.sessionId)
+        ).bind(currentUser.id, passkeyId),
+        revokeOtherSessionsStatement(c.env.DB, currentUser.id, currentUser.sessionId),
+    ])
 
     return jsonResponse(c, OkResponseSchema, {ok: true})
 })
@@ -267,17 +271,16 @@ securityRoutes.post('/recovery/regenerate', async (c) => {
     const phrase = generateRecoveryPhrase()
     const phraseHash = await hashRecoveryPhrase(phrase)
 
-    await c.env.DB.prepare(
-        `UPDATE users
+    await c.env.DB.batch([
+        c.env.DB.prepare(
+            `UPDATE users
          SET recovery_phrase_hash         = ?,
              recovery_phrase_set_at       = ?,
              recovery_phrase_confirmed_at = NULL
          WHERE id = ?`,
-    )
-        .bind(phraseHash, toSqlTimestamp(new Date()), currentUser.id)
-        .run()
-
-    await revokeOtherSessions(c.env.DB, currentUser.id, currentUser.sessionId)
+        ).bind(phraseHash, toSqlTimestamp(new Date()), currentUser.id),
+        revokeOtherSessionsStatement(c.env.DB, currentUser.id, currentUser.sessionId),
+    ])
 
     return jsonResponse(c, RecoveryPhraseResponseSchema, {
         recoveryPhrase: phrase,
@@ -422,18 +425,17 @@ securityRoutes.post('/complete', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Regenerate and confirm a recovery phrase first'}, 400)
     }
 
-    await c.env.DB.prepare(
-        `UPDATE users
+    await c.env.DB.batch([
+        c.env.DB.prepare(
+            `UPDATE users
          SET password_hash            = ?,
              secure_account_required = 0,
              secure_account_required_at = NULL,
              secure_account_required_passkey_id = NULL
          WHERE id = ?`,
-    )
-        .bind(createDisabledPasswordHash(), currentUser.id)
-        .run()
-
-    await revokeOtherSessions(c.env.DB, currentUser.id, currentUser.sessionId)
+        ).bind(createDisabledPasswordHash(), currentUser.id),
+        revokeOtherSessionsStatement(c.env.DB, currentUser.id, currentUser.sessionId),
+    ])
 
     return jsonResponse(c, OkResponseSchema, {ok: true})
 })

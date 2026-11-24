@@ -4,7 +4,17 @@ import {hashRecoveryPhrase, verifyRecoveryPhrase} from '../../lib/auth/passkeys'
 import {createCsrfToken} from '../../lib/auth/session'
 import {STEP_UP_REQUIRED_ERROR} from '../../lib/auth/stepUp'
 import {STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
-import {countRows, queryAll, queryOne, seedChallenge, seedPasskey, seedSession, seedUser, useTestDatabase} from '../../test/d1'
+import {
+    countRows,
+    queryAll,
+    queryOne,
+    seedChallenge,
+    seedPasskey,
+    seedSession,
+    seedUser,
+    useTestDatabase,
+    withFailingTrigger,
+} from '../../test/d1'
 import {createAllowingAuthRateLimits, createMockRateLimit} from '../../test/mockRateLimit'
 import {apiRoutes} from '../api'
 
@@ -800,6 +810,31 @@ describe('session revocation after credential changes', () => {
         expect(await queryAll<{id: string}>('SELECT id FROM sessions WHERE user_id = ? ORDER BY id', ['user-1'])).toEqual([
             {id: 'current-session'},
         ])
+    })
+
+    it('keeps the passkey when the batched session revocation fails', async () => {
+        await seedCurrentUser()
+        await seedSession({id: 'other-session', userId: 'user-1', token: 'other-token'})
+        await seedPasskey({
+            id: 'passkey-1',
+            userId: 'user-1',
+            credentialId: 'credential-id',
+            webauthnUserId: 'webauthn-user-1',
+        })
+
+        const response = await withFailingTrigger(
+            {
+                name: 'fail_session_delete',
+                operation: 'DELETE',
+                table: 'sessions',
+                message: 'Test session delete failure',
+            },
+            () => securityRequest('/passkeys/passkey-1', db, {method: 'DELETE'}),
+        )
+
+        expect(response.status).toBe(500)
+        expect(await countRows('user_passkeys')).toBe(1)
+        expect(await countRows('sessions')).toBe(2)
     })
 
     it('revokes other sessions when recovery setup completes', async () => {

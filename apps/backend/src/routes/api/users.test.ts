@@ -873,6 +873,66 @@ describe('POST /settings', () => {
         expect(await queryOne<{bio: string}>('SELECT bio FROM users WHERE id = ?', [currentUser.id], db)).toEqual({bio: 'New bio'})
     })
 
+    it('does not write identity columns on profile-only saves', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser({}, sessionToken)
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const response = await withFailingTrigger(
+            {
+                name: 'fail_identity_columns',
+                operation: 'UPDATE',
+                table: 'users',
+                columns: ['email', 'username'],
+                message: 'Test identity column write',
+            },
+            () =>
+                postCurrentUserSettings(
+                    {
+                        email: 'old@example.com',
+                        username: 'olduser',
+                        bio: 'New bio',
+                    },
+                    db,
+                    {sessionToken, csrfToken},
+                ),
+        )
+
+        expect(response.status).toBe(200)
+        expect(await queryOne<{bio: string}>('SELECT bio FROM users WHERE id = ?', [currentUser.id], db)).toEqual({bio: 'New bio'})
+    })
+
+    it('still writes identity columns when the identity changes', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser({}, sessionToken)
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const response = await withFailingTrigger(
+            {
+                name: 'fail_identity_columns',
+                operation: 'UPDATE',
+                table: 'users',
+                columns: ['email', 'username'],
+                message: 'Test identity column write',
+            },
+            () =>
+                postCurrentUserSettings(
+                    {
+                        email: 'new@example.com',
+                        username: 'olduser',
+                        bio: 'Old bio',
+                    },
+                    db,
+                    {sessionToken, csrfToken},
+                ),
+        )
+
+        expect(response.status).toBe(500)
+        expect(await queryOne<{email: string}>('SELECT email FROM users WHERE id = ?', [currentUser.id], db)).toEqual({
+            email: 'old@example.com',
+        })
+    })
+
     it('redirects browser form submissions that need step-up authentication', async () => {
         const sessionToken = 'session-token'
         await seedCurrentUserWithStaleSession(sessionToken)

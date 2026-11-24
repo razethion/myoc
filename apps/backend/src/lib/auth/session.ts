@@ -88,15 +88,20 @@ export function hasRecentAuthentication(user: Pick<CurrentUser, 'authenticatedAt
     return now.getTime() - authenticatedAtMs <= STEP_UP_AUTH_WINDOW_SECONDS * 1000
 }
 
-export async function revokeOtherSessions(db: D1Database, userId: string, keepSessionId: string): Promise<void> {
-    await db
+/**
+ * Statement that deletes every session except the one being kept. Callers add
+ * it to the same DB.batch as the credential change it belongs to, so a failed
+ * revocation rolls the credential change back instead of leaving a partial
+ * security update.
+ */
+export function revokeOtherSessionsStatement(db: D1Database, userId: string, keepSessionId: string): D1PreparedStatement {
+    return db
         .prepare(
             `DELETE FROM sessions
          WHERE user_id = ?
            AND id <> ?`,
         )
         .bind(userId, keepSessionId)
-        .run()
 }
 
 export async function getCurrentUser(c: Context<{Bindings: Bindings}>): Promise<CurrentUser | null> {

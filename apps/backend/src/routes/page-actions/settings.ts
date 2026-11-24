@@ -7,6 +7,7 @@ import {
     getCurrentUser,
     hasRecentAuthentication,
     normalizeCredential,
+    revokeOtherSessionsStatement,
     toSqlTimestamp,
     type UserRecord,
 } from '../../lib/auth/session'
@@ -100,7 +101,7 @@ settingsPageActionRoutes.post('/settings', async (c) => {
     }
 
     try {
-        await c.env.DB.batch(await buildSettingsUpdateStatements(c.env.DB, currentUser, updateResult))
+        await c.env.DB.batch(await buildSettingsUpdateStatements(c.env.DB, currentUser, updateResult, changesIdentity))
     } catch (error) {
         if (isUniqueConstraintError(error)) {
             return respondToUpdate(c, {error: 'Email or username is already in use'}, 409)
@@ -296,14 +297,15 @@ async function buildSettingsUpdateStatements(
     db: D1Database,
     currentUser: CurrentUser,
     update: SettingsUpdate,
+    changesIdentity: boolean,
 ): Promise<D1PreparedStatement[]> {
-    const statements = [await buildUserUpdateStatement(db, currentUser.id, update)]
+    const statements = [await buildUserUpdateStatement(db, currentUser.id, update, changesIdentity)]
     statements.push(db.prepare('DELETE FROM user_social_links WHERE user_id = ?').bind(currentUser.id))
 
     if (update.password) {
         // Issue #251: a password change ends every other session, so a session
         // the attacker may still hold dies as soon as the owner rotates the password.
-        statements.push(db.prepare('DELETE FROM sessions WHERE user_id = ? AND id <> ?').bind(currentUser.id, currentUser.sessionId))
+        statements.push(revokeOtherSessionsStatement(db, currentUser.id, currentUser.sessionId))
     }
 
     for (const link of update.socialLinks) {
@@ -320,8 +322,27 @@ async function buildSettingsUpdateStatements(
     return statements
 }
 
-async function buildUserUpdateStatement(db: D1Database, userId: string, update: SettingsUpdate): Promise<D1PreparedStatement> {
+async function buildUserUpdateStatement(
+    db: D1Database,
+    userId: string,
+    update: SettingsUpdate,
+    changesIdentity: boolean,
+): Promise<D1PreparedStatement> {
     const displayNsfwMedia = Number(update.displayNsfwMedia)
+
+    if (!update.password && !changesIdentity) {
+        // Issue #251: a profile-only save skipped the step-up gate, so it must not
+        // rewrite identity columns. Leaving email and username out of the UPDATE
+        // keeps a concurrent identity change from being silently overwritten.
+        return db
+            .prepare(
+                `UPDATE users
+                 SET bio                = ?,
+                     display_nsfw_media = ?
+                 WHERE id = ?`,
+            )
+            .bind(update.bio, displayNsfwMedia, userId)
+    }
 
     if (update.password) {
         return db

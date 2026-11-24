@@ -3,13 +3,7 @@ import {describe, expect, it} from 'vitest'
 import {expectSessionCookie} from '../../test/assertions'
 import {queryAll, queryOne, seedSession, seedUser, sha256Hex, useTestDatabase} from '../../test/d1'
 import type {Bindings} from '../../types/bindings'
-import {
-    createSession,
-    getCurrentUser,
-    hasRecentAuthentication,
-    revokeOtherSessions,
-    toSqlTimestamp,
-} from './session'
+import {createSession, getCurrentUser, hasRecentAuthentication, revokeOtherSessionsStatement, toSqlTimestamp} from './session'
 
 const db = useTestDatabase()
 const DAY_MS = 60 * 60 * 24 * 1000
@@ -157,7 +151,7 @@ describe('step-up authentication window', () => {
         await seedSession({id: 'keep-me', userId: 'user-13', token: 'keep-token'})
         await seedSession({id: 'drop-me', userId: 'user-13', token: 'drop-token'})
 
-        await revokeOtherSessions(db, 'user-13', 'keep-me')
+        await revokeOtherSessionsStatement(db, 'user-13', 'keep-me').run()
 
         expect(await queryAll<{id: string}>('SELECT id FROM sessions WHERE user_id = ? ORDER BY id', ['user-13'])).toEqual([
             {id: 'keep-me'},
