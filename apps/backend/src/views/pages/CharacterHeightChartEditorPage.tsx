@@ -740,12 +740,13 @@ document.addEventListener('pointerdown', (event) => {
 
 els.saveButton.addEventListener('click', async () => {
     const savedRevision = state.editRevision;
+    const savedPendingFile = state.pendingFile;
     const savedObjectUrl = state.objectUrl;
     try {
         setLoading(true);
         const result = await apiSave();
-        if (state.editRevision !== savedRevision || state.objectUrl !== savedObjectUrl) {
-            showToast('Height data saved. Your newer changes are still pending.', true);
+        if (state.pendingFile !== savedPendingFile || state.objectUrl !== savedObjectUrl) {
+            showToast('Height data saved. Your newer image selection is still pending.', true);
             return;
         }
         state.pendingFile = null;
@@ -760,7 +761,7 @@ els.saveButton.addEventListener('click', async () => {
             state.image = null;
             state.previewSrc = '';
         }
-        showToast('Height data saved.', true);
+        showToast(state.editRevision === savedRevision ? 'Height data saved.' : 'Height data saved. Your newer changes are still pending.', true);
         renderAll();
     } catch (error) {
         showToast(error.message || 'Could not save height data.', false);
