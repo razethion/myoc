@@ -2,7 +2,17 @@ import {hash} from 'bcryptjs'
 import type {Context} from 'hono'
 import {Hono} from 'hono'
 import {z} from 'zod'
-import {getCurrentUser, normalizeCredential, toSqlTimestamp, type UserRecord} from '../../lib/auth/session'
+import {
+    type CurrentUser,
+    getCurrentUser,
+    hasRecentAuthentication,
+    normalizeCredential,
+    revokeOtherSessionsStatement,
+    SESSION_STILL_ACTIVE,
+    toSqlTimestamp,
+    type UserRecord,
+} from '../../lib/auth/session'
+import {STEP_UP_REQUIRED_ERROR, stepUpRequiredResponse} from '../../lib/auth/stepUp'
 import {csrfProtection} from '../../lib/http/csrf'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {safeLocalRedirectPath} from '../../lib/http/redirect'
@@ -75,12 +85,37 @@ settingsPageActionRoutes.post('/settings', async (c) => {
         return respondToUpdate(c, updateResult, 400)
     }
 
-    if (await hasConflictingUser(c.env.DB, updateResult.email, updateResult.username, currentUser.id)) {
+    // Issue #251: credential and identity changes need a recent full authentication.
+    // Profile-only changes (bio, links, preferences) stay allowed on an older session.
+    const changesIdentity = updateResult.email !== currentUser.email.toLowerCase() || updateResult.username !== currentUser.username
+
+    return applySettingsUpdate(c, currentUser, updateResult, changesIdentity)
+})
+
+async function applySettingsUpdate(
+    c: SettingsRouteContext,
+    currentUser: CurrentUser,
+    update: SettingsUpdate,
+    changesIdentity: boolean,
+): Promise<Response> {
+    const gated = Boolean(update.password) || changesIdentity
+
+    if (gated && !hasRecentAuthentication(currentUser)) {
+        if (c.req.header('accept')?.includes('text/html')) {
+            return respondToUpdate(c, {error: STEP_UP_REQUIRED_ERROR}, 403)
+        }
+
+        return stepUpRequiredResponse(c)
+    }
+
+    if (await hasConflictingUser(c.env.DB, update.email, update.username, currentUser.id)) {
         return respondToUpdate(c, {error: 'Email or username is already in use'}, 409)
     }
 
+    let batchResults: D1Result[]
+
     try {
-        await c.env.DB.batch(await buildSettingsUpdateStatements(c.env.DB, currentUser.id, updateResult))
+        batchResults = await c.env.DB.batch(await buildSettingsUpdateStatements(c.env.DB, currentUser, update, changesIdentity))
     } catch (error) {
         if (isUniqueConstraintError(error)) {
             return respondToUpdate(c, {error: 'Email or username is already in use'}, 409)
@@ -89,8 +124,17 @@ settingsPageActionRoutes.post('/settings', async (c) => {
         throw error
     }
 
+    // Issue #251: the gate above checked the session before the slow password
+    // hash ran, and a profile-only save never checks it at all. If another
+    // request revoked this session while the save was in flight, every guarded
+    // statement above matched nothing: report the dead session instead of a
+    // successful save, and leave the owner's remaining sessions alone.
+    if ((batchResults as [D1Result, ...D1Result[]])[0].meta.changes === 0) {
+        return respondToUpdate(c, {error: 'Authentication required'}, 401)
+    }
+
     return respondToUpdate(c, {ok: true})
-})
+}
 
 settingsPageActionRoutes.post('/passkey-setup', async (c) => {
     const currentUser = await getCurrentUser(c)
@@ -272,26 +316,62 @@ async function hasConflictingUser(db: D1Database, email: string, username: strin
     return Boolean(existingUser)
 }
 
-async function buildSettingsUpdateStatements(db: D1Database, userId: string, update: SettingsUpdate): Promise<D1PreparedStatement[]> {
-    const statements = [await buildUserUpdateStatement(db, userId, update)]
-    statements.push(db.prepare('DELETE FROM user_social_links WHERE user_id = ?').bind(userId))
+async function buildSettingsUpdateStatements(
+    db: D1Database,
+    currentUser: CurrentUser,
+    update: SettingsUpdate,
+    changesIdentity: boolean,
+): Promise<D1PreparedStatement[]> {
+    const statements = [await buildUserUpdateStatement(db, currentUser, update, changesIdentity)]
+    statements.push(
+        db
+            .prepare(`DELETE FROM user_social_links WHERE user_id = ? AND ${SESSION_STILL_ACTIVE}`)
+            .bind(currentUser.id, currentUser.sessionId, currentUser.id),
+    )
+
+    if (update.password) {
+        // Issue #251: a password change ends every other session, so a session
+        // the attacker may still hold dies as soon as the owner rotates the password.
+        statements.push(revokeOtherSessionsStatement(db, currentUser.id, currentUser.sessionId))
+    }
 
     for (const link of update.socialLinks) {
         statements.push(
             db
                 .prepare(
                     `INSERT INTO user_social_links (user_id, platform, label, url, updated_at)
-                 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+                 SELECT ?, ?, ?, ?, CURRENT_TIMESTAMP
+                 WHERE ${SESSION_STILL_ACTIVE}`,
                 )
-                .bind(userId, link.platform, link.label, link.url),
+                .bind(currentUser.id, link.platform, link.label, link.url, currentUser.sessionId, currentUser.id),
         )
     }
 
     return statements
 }
 
-async function buildUserUpdateStatement(db: D1Database, userId: string, update: SettingsUpdate): Promise<D1PreparedStatement> {
+async function buildUserUpdateStatement(
+    db: D1Database,
+    currentUser: CurrentUser,
+    update: SettingsUpdate,
+    changesIdentity: boolean,
+): Promise<D1PreparedStatement> {
     const displayNsfwMedia = Number(update.displayNsfwMedia)
+
+    if (!update.password && !changesIdentity) {
+        // Issue #251: a profile-only save skipped the step-up gate, so it must not
+        // rewrite identity columns. Leaving email and username out of the UPDATE
+        // keeps a concurrent identity change from being silently overwritten.
+        return db
+            .prepare(
+                `UPDATE users
+                 SET bio                = ?,
+                     display_nsfw_media = ?
+                 WHERE id = ?
+                   AND ${SESSION_STILL_ACTIVE}`,
+            )
+            .bind(update.bio, displayNsfwMedia, currentUser.id, currentUser.sessionId, currentUser.id)
+    }
 
     if (update.password) {
         return db
@@ -302,9 +382,19 @@ async function buildUserUpdateStatement(db: D1Database, userId: string, update: 
                      bio                = ?,
                      display_nsfw_media = ?,
                      password_hash      = ?
-                 WHERE id = ?`,
+                 WHERE id = ?
+                   AND ${SESSION_STILL_ACTIVE}`,
             )
-            .bind(update.email, update.username, update.bio, displayNsfwMedia, await hash(update.password, PASSWORD_HASH_ROUNDS), userId)
+            .bind(
+                update.email,
+                update.username,
+                update.bio,
+                displayNsfwMedia,
+                await hash(update.password, PASSWORD_HASH_ROUNDS),
+                currentUser.id,
+                currentUser.sessionId,
+                currentUser.id,
+            )
     }
 
     return db
@@ -314,9 +404,10 @@ async function buildUserUpdateStatement(db: D1Database, userId: string, update: 
                  username           = ?,
                  bio                = ?,
                  display_nsfw_media = ?
-             WHERE id = ?`,
+             WHERE id = ?
+               AND ${SESSION_STILL_ACTIVE}`,
         )
-        .bind(update.email, update.username, update.bio, displayNsfwMedia, userId)
+        .bind(update.email, update.username, update.bio, displayNsfwMedia, currentUser.id, currentUser.sessionId, currentUser.id)
 }
 
 function parseSocialLinks(body: UpdateUserRequest): {links: UserSocialLink[]} | {error: string} {
@@ -456,7 +547,7 @@ function respondToUpdate(
         | {
               error: string
           },
-    status: 200 | 400 | 401 | 409 | 413 = 200,
+    status: 200 | 400 | 401 | 403 | 409 | 413 = 200,
 ): Response {
     if (c.req.header('accept')?.includes('text/html')) {
         return c.redirect('/settings', status === 200 ? 302 : 303)

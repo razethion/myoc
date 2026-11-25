@@ -20,6 +20,13 @@ export const OkResponseSchema = z
     })
     .strict()
 
+export const StepUpRequiredResponseSchema = z
+    .object({
+        error: z.string(),
+        stepUpRequired: z.literal(true),
+    })
+    .strict()
+
 const UserRoleSchema = z.enum(['user', 'moderator', 'admin'])
 
 export const OwnUserSchema = z

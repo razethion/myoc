@@ -16,7 +16,15 @@ import {
     verifyRecoveryPhrase,
 } from '../../lib/auth/passkeys'
 import {enforceAuthChallengeRateLimit, enforceAuthIdentityRateLimit} from '../../lib/auth/rateLimit'
-import {getCurrentUser, normalizeCredential, toSqlTimestamp} from '../../lib/auth/session'
+import {
+    getCurrentUser,
+    hasRecentAuthentication,
+    normalizeCredential,
+    revokeOtherSessionsStatement,
+    SESSION_STILL_ACTIVE,
+    toSqlTimestamp,
+} from '../../lib/auth/session'
+import {stepUpRequiredResponse} from '../../lib/auth/stepUp'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {readJsonUpTo, STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
 import {ErrorResponseSchema, OkResponseSchema, responseSchema} from '../../lib/http/responseSchemas'
@@ -67,6 +75,10 @@ securityRoutes.post('/passkeys/options', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
+    if (!hasRecentAuthentication(currentUser)) {
+        return stepUpRequiredResponse(c)
+    }
+
     const rateLimitResponse = await enforceAuthIdentityRateLimit(c, currentUser.id)
 
     if (rateLimitResponse) {
@@ -92,6 +104,10 @@ securityRoutes.post('/passkeys/verify', async (c) => {
 
     if (!currentUser) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
+    }
+
+    if (!hasRecentAuthentication(currentUser)) {
+        return stepUpRequiredResponse(c)
     }
 
     let body: PasskeyVerifyRequest
@@ -151,7 +167,7 @@ securityRoutes.post('/passkeys/verify', async (c) => {
     const {credential, credentialBackedUp, credentialDeviceType} = verification.registrationInfo
     const passkeyId = crypto.randomUUID()
 
-    await c.env.DB.batch([
+    const batchResults = await c.env.DB.batch([
         c.env.DB.prepare(
             `UPDATE users
              SET webauthn_user_id = COALESCE(webauthn_user_id, ?),
@@ -159,8 +175,9 @@ securityRoutes.post('/passkeys/verify', async (c) => {
                      WHEN secure_account_required = 1 THEN ?
                      ELSE secure_account_required_passkey_id
                  END
-             WHERE id = ?`,
-        ).bind(challenge.webauthn_user_id, passkeyId, currentUser.id),
+             WHERE id = ?
+               AND ${SESSION_STILL_ACTIVE}`,
+        ).bind(challenge.webauthn_user_id, passkeyId, currentUser.id, currentUser.sessionId, currentUser.id),
         c.env.DB.prepare(
             `INSERT INTO user_passkeys (
                 id,
@@ -175,7 +192,8 @@ securityRoutes.post('/passkeys/verify', async (c) => {
                 name,
                 created_at
             )
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             WHERE ${SESSION_STILL_ACTIVE}`,
         ).bind(
             passkeyId,
             currentUser.id,
@@ -188,9 +206,25 @@ securityRoutes.post('/passkeys/verify', async (c) => {
             serializeTransports(credential.transports),
             normalizeOptionalText(body.name) ?? null,
             toSqlTimestamp(now),
+            currentUser.sessionId,
+            currentUser.id,
         ),
-        c.env.DB.prepare('DELETE FROM webauthn_challenges WHERE id = ?').bind(challengeId),
+        c.env.DB.prepare(`DELETE FROM webauthn_challenges WHERE id = ? AND ${SESSION_STILL_ACTIVE}`).bind(
+            challengeId,
+            currentUser.sessionId,
+            currentUser.id,
+        ),
+        revokeOtherSessionsStatement(c.env.DB, currentUser.id, currentUser.sessionId),
     ])
+
+    // Issue #251: the ceremony spans seconds, and the owner can revoke this session
+    // (for example, with a password change) while it runs. The guard above makes
+    // every statement inert once the authorizing session is gone, so a revoked
+    // request inserts nothing, consumes no challenge, and leaves the owner's
+    // remaining sessions alone.
+    if ((batchResults as [D1Result, ...D1Result[]])[0].meta.changes === 0) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
+    }
 
     return jsonResponse(c, OkResponseSchema, {ok: true})
 })
@@ -200,6 +234,10 @@ securityRoutes.delete('/passkeys/:id', async (c) => {
 
     if (!currentUser) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
+    }
+
+    if (!hasRecentAuthentication(currentUser)) {
+        return stepUpRequiredResponse(c)
     }
 
     const passkeyId = c.req.param('id')
@@ -219,13 +257,15 @@ securityRoutes.delete('/passkeys/:id', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Add another passkey before removing this one'}, 400)
     }
 
-    await c.env.DB.prepare(
-        `DELETE FROM user_passkeys
+    await c.env.DB.batch([
+        c.env.DB.prepare(
+            `DELETE FROM user_passkeys
          WHERE user_id = ?
-           AND id = ?`,
-    )
-        .bind(currentUser.id, passkeyId)
-        .run()
+           AND id = ?
+           AND ${SESSION_STILL_ACTIVE}`,
+        ).bind(currentUser.id, passkeyId, currentUser.sessionId, currentUser.id),
+        revokeOtherSessionsStatement(c.env.DB, currentUser.id, currentUser.sessionId),
+    ])
 
     return jsonResponse(c, OkResponseSchema, {ok: true})
 })
@@ -237,6 +277,10 @@ securityRoutes.post('/recovery/regenerate', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
+    if (!hasRecentAuthentication(currentUser)) {
+        return stepUpRequiredResponse(c)
+    }
+
     const rateLimitResponse = await enforceAuthIdentityRateLimit(c, currentUser.id)
 
     if (rateLimitResponse) {
@@ -246,15 +290,24 @@ securityRoutes.post('/recovery/regenerate', async (c) => {
     const phrase = generateRecoveryPhrase()
     const phraseHash = await hashRecoveryPhrase(phrase)
 
-    await c.env.DB.prepare(
-        `UPDATE users
+    const batchResults = await c.env.DB.batch([
+        c.env.DB.prepare(
+            `UPDATE users
          SET recovery_phrase_hash         = ?,
              recovery_phrase_set_at       = ?,
              recovery_phrase_confirmed_at = NULL
-         WHERE id = ?`,
-    )
-        .bind(phraseHash, toSqlTimestamp(new Date()), currentUser.id)
-        .run()
+         WHERE id = ?
+           AND ${SESSION_STILL_ACTIVE}`,
+        ).bind(phraseHash, toSqlTimestamp(new Date()), currentUser.id, currentUser.sessionId, currentUser.id),
+        revokeOtherSessionsStatement(c.env.DB, currentUser.id, currentUser.sessionId),
+    ])
+
+    // Issue #251: return the plaintext phrase only after the guarded write commits.
+    // If the session was revoked mid-request, the phrase was never stored, so
+    // report the dead session instead of handing out a phrase nothing knows.
+    if ((batchResults as [D1Result, ...D1Result[]])[0].meta.changes === 0) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
+    }
 
     return jsonResponse(c, RecoveryPhraseResponseSchema, {
         recoveryPhrase: phrase,
@@ -323,13 +376,11 @@ securityRoutes.post('/sessions/revoke-others', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
-    await c.env.DB.prepare(
-        `DELETE FROM sessions
-         WHERE user_id = ?
-           AND id <> ?`,
-    )
-        .bind(currentUser.id, currentUser.sessionId)
-        .run()
+    if (!hasRecentAuthentication(currentUser)) {
+        return stepUpRequiredResponse(c)
+    }
+
+    await revokeOtherSessionsStatement(c.env.DB, currentUser.id, currentUser.sessionId).run()
 
     return jsonResponse(c, OkResponseSchema, {ok: true})
 })
@@ -341,6 +392,10 @@ securityRoutes.post('/sessions/:id/revoke', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
+    if (!hasRecentAuthentication(currentUser)) {
+        return stepUpRequiredResponse(c)
+    }
+
     const sessionId = c.req.param('id')
 
     if (sessionId === currentUser.sessionId) {
@@ -350,9 +405,10 @@ securityRoutes.post('/sessions/:id/revoke', async (c) => {
     await c.env.DB.prepare(
         `DELETE FROM sessions
          WHERE user_id = ?
-           AND id = ?`,
+           AND id = ?
+           AND ${SESSION_STILL_ACTIVE}`,
     )
-        .bind(currentUser.id, sessionId)
+        .bind(currentUser.id, sessionId, currentUser.sessionId, currentUser.id)
         .run()
 
     return jsonResponse(c, OkResponseSchema, {ok: true})
@@ -363,6 +419,10 @@ securityRoutes.post('/complete', async (c) => {
 
     if (!currentUser) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
+    }
+
+    if (!hasRecentAuthentication(currentUser)) {
+        return stepUpRequiredResponse(c)
     }
 
     const [user, passkeys] = await Promise.all([getSecurityUser(c.env.DB, currentUser.id), listUserPasskeys(c.env.DB, currentUser.id)])
@@ -387,16 +447,18 @@ securityRoutes.post('/complete', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Regenerate and confirm a recovery phrase first'}, 400)
     }
 
-    await c.env.DB.prepare(
-        `UPDATE users
+    await c.env.DB.batch([
+        c.env.DB.prepare(
+            `UPDATE users
          SET password_hash            = ?,
              secure_account_required = 0,
              secure_account_required_at = NULL,
              secure_account_required_passkey_id = NULL
-         WHERE id = ?`,
-    )
-        .bind(createDisabledPasswordHash(), currentUser.id)
-        .run()
+         WHERE id = ?
+           AND ${SESSION_STILL_ACTIVE}`,
+        ).bind(createDisabledPasswordHash(), currentUser.id, currentUser.sessionId, currentUser.id),
+        revokeOtherSessionsStatement(c.env.DB, currentUser.id, currentUser.sessionId),
+    ])
 
     return jsonResponse(c, OkResponseSchema, {ok: true})
 })
