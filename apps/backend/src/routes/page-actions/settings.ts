@@ -124,12 +124,12 @@ async function applySettingsUpdate(
         throw error
     }
 
-    // Issue #251: the gate checked the session before the slow password hash ran.
-    // If another request revoked this session while the save was in flight, the
-    // guarded UPDATE matched nothing. Report the dead session instead of a
-    // successful save; the guarded revocation stayed inert too, so the owner's
-    // remaining sessions survive.
-    if (gated && (batchResults as [D1Result, ...D1Result[]])[0].meta.changes === 0) {
+    // Issue #251: the gate above checked the session before the slow password
+    // hash ran, and a profile-only save never checks it at all. If another
+    // request revoked this session while the save was in flight, every guarded
+    // statement above matched nothing: report the dead session instead of a
+    // successful save, and leave the owner's remaining sessions alone.
+    if ((batchResults as [D1Result, ...D1Result[]])[0].meta.changes === 0) {
         return respondToUpdate(c, {error: 'Authentication required'}, 401)
     }
 
@@ -367,9 +367,10 @@ async function buildUserUpdateStatement(
                 `UPDATE users
                  SET bio                = ?,
                      display_nsfw_media = ?
-                 WHERE id = ?`,
+                 WHERE id = ?
+                   AND ${SESSION_STILL_ACTIVE}`,
             )
-            .bind(update.bio, displayNsfwMedia, currentUser.id)
+            .bind(update.bio, displayNsfwMedia, currentUser.id, currentUser.sessionId, currentUser.id)
     }
 
     if (update.password) {
