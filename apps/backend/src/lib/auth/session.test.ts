@@ -173,4 +173,13 @@ describe('step-up authentication window', () => {
             {id: 'keep-me'},
         ])
     })
+
+    it('does nothing when the kept session no longer exists', async () => {
+        await seedUser({id: 'user-15'})
+        await seedSession({id: 'owner-session', userId: 'user-15', token: 'owner-token'})
+
+        await revokeOtherSessionsStatement(db, 'user-15', 'gone-session').run()
+
+        expect(await queryAll<{id: string}>('SELECT id FROM sessions WHERE user_id = ?', ['user-15'])).toEqual([{id: 'owner-session'}])
+    })
 })

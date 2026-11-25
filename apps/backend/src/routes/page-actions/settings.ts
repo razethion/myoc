@@ -8,6 +8,7 @@ import {
     hasRecentAuthentication,
     normalizeCredential,
     revokeOtherSessionsStatement,
+    SESSION_STILL_ACTIVE,
     toSqlTimestamp,
     type UserRecord,
 } from '../../lib/auth/session'
@@ -87,8 +88,9 @@ settingsPageActionRoutes.post('/settings', async (c) => {
     // Issue #251: credential and identity changes need a recent full authentication.
     // Profile-only changes (bio, links, preferences) stay allowed on an older session.
     const changesIdentity = updateResult.email !== currentUser.email.toLowerCase() || updateResult.username !== currentUser.username
+    const gated = Boolean(updateResult.password) || changesIdentity
 
-    if ((updateResult.password || changesIdentity) && !hasRecentAuthentication(currentUser)) {
+    if (gated && !hasRecentAuthentication(currentUser)) {
         if (c.req.header('accept')?.includes('text/html')) {
             return respondToUpdate(c, {error: STEP_UP_REQUIRED_ERROR}, 403)
         }
@@ -100,14 +102,25 @@ settingsPageActionRoutes.post('/settings', async (c) => {
         return respondToUpdate(c, {error: 'Email or username is already in use'}, 409)
     }
 
+    let batchResults: D1Result[]
+
     try {
-        await c.env.DB.batch(await buildSettingsUpdateStatements(c.env.DB, currentUser, updateResult, changesIdentity))
+        batchResults = await c.env.DB.batch(await buildSettingsUpdateStatements(c.env.DB, currentUser, updateResult, changesIdentity))
     } catch (error) {
         if (isUniqueConstraintError(error)) {
             return respondToUpdate(c, {error: 'Email or username is already in use'}, 409)
         }
 
         throw error
+    }
+
+    // Issue #251: the gate checked the session before the slow password hash ran.
+    // If another request revoked this session while the save was in flight, the
+    // guarded UPDATE matched nothing. Report the dead session instead of a
+    // successful save; the guarded revocation stayed inert too, so the owner's
+    // remaining sessions survive.
+    if (gated && (batchResults as [D1Result, ...D1Result[]])[0].meta.changes === 0) {
+        return respondToUpdate(c, {error: 'Authentication required'}, 401)
     }
 
     return respondToUpdate(c, {ok: true})
@@ -299,8 +312,12 @@ async function buildSettingsUpdateStatements(
     update: SettingsUpdate,
     changesIdentity: boolean,
 ): Promise<D1PreparedStatement[]> {
-    const statements = [await buildUserUpdateStatement(db, currentUser.id, update, changesIdentity)]
-    statements.push(db.prepare('DELETE FROM user_social_links WHERE user_id = ?').bind(currentUser.id))
+    const statements = [await buildUserUpdateStatement(db, currentUser, update, changesIdentity)]
+    statements.push(
+        db
+            .prepare(`DELETE FROM user_social_links WHERE user_id = ? AND ${SESSION_STILL_ACTIVE}`)
+            .bind(currentUser.id, currentUser.sessionId, currentUser.id),
+    )
 
     if (update.password) {
         // Issue #251: a password change ends every other session, so a session
@@ -313,9 +330,10 @@ async function buildSettingsUpdateStatements(
             db
                 .prepare(
                     `INSERT INTO user_social_links (user_id, platform, label, url, updated_at)
-                 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+                 SELECT ?, ?, ?, ?, CURRENT_TIMESTAMP
+                 WHERE ${SESSION_STILL_ACTIVE}`,
                 )
-                .bind(currentUser.id, link.platform, link.label, link.url),
+                .bind(currentUser.id, link.platform, link.label, link.url, currentUser.sessionId, currentUser.id),
         )
     }
 
@@ -324,7 +342,7 @@ async function buildSettingsUpdateStatements(
 
 async function buildUserUpdateStatement(
     db: D1Database,
-    userId: string,
+    currentUser: CurrentUser,
     update: SettingsUpdate,
     changesIdentity: boolean,
 ): Promise<D1PreparedStatement> {
@@ -341,7 +359,7 @@ async function buildUserUpdateStatement(
                      display_nsfw_media = ?
                  WHERE id = ?`,
             )
-            .bind(update.bio, displayNsfwMedia, userId)
+            .bind(update.bio, displayNsfwMedia, currentUser.id)
     }
 
     if (update.password) {
@@ -353,9 +371,19 @@ async function buildUserUpdateStatement(
                      bio                = ?,
                      display_nsfw_media = ?,
                      password_hash      = ?
-                 WHERE id = ?`,
+                 WHERE id = ?
+                   AND ${SESSION_STILL_ACTIVE}`,
             )
-            .bind(update.email, update.username, update.bio, displayNsfwMedia, await hash(update.password, PASSWORD_HASH_ROUNDS), userId)
+            .bind(
+                update.email,
+                update.username,
+                update.bio,
+                displayNsfwMedia,
+                await hash(update.password, PASSWORD_HASH_ROUNDS),
+                currentUser.id,
+                currentUser.sessionId,
+                currentUser.id,
+            )
     }
 
     return db
@@ -365,9 +393,10 @@ async function buildUserUpdateStatement(
                  username           = ?,
                  bio                = ?,
                  display_nsfw_media = ?
-             WHERE id = ?`,
+             WHERE id = ?
+               AND ${SESSION_STILL_ACTIVE}`,
         )
-        .bind(update.email, update.username, update.bio, displayNsfwMedia, userId)
+        .bind(update.email, update.username, update.bio, displayNsfwMedia, currentUser.id, currentUser.sessionId, currentUser.id)
 }
 
 function parseSocialLinks(body: UpdateUserRequest): {links: UserSocialLink[]} | {error: string} {

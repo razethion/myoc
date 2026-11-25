@@ -89,19 +89,29 @@ export function hasRecentAuthentication(user: Pick<CurrentUser, 'authenticatedAt
 }
 
 /**
- * Statement that deletes every session except the one being kept. Callers add
- * it to the same DB.batch as the credential change it belongs to, so a failed
- * revocation rolls the credential change back instead of leaving a partial
- * security update.
+ * SQL fragment that guards every credential write and session revocation for
+ * issue #251. A request that started on a session later revoked (a password
+ * change or recovery login ends other sessions) must commit nothing once that
+ * session is gone, including its own revocation, which would otherwise delete
+ * the owner's remaining sessions while its keep id points at a dead row.
+ */
+export const SESSION_STILL_ACTIVE = 'EXISTS (SELECT 1 FROM sessions WHERE id = ? AND user_id = ?)'
+
+/**
+ * Statement that deletes every session except the one being kept, and only
+ * while that kept session still exists. Callers add it to the same DB.batch as
+ * the credential change it belongs to, so a failed revocation rolls the
+ * credential change back instead of leaving a partial security update.
  */
 export function revokeOtherSessionsStatement(db: D1Database, userId: string, keepSessionId: string): D1PreparedStatement {
     return db
         .prepare(
             `DELETE FROM sessions
          WHERE user_id = ?
-           AND id <> ?`,
+           AND id <> ?
+           AND ${SESSION_STILL_ACTIVE}`,
         )
-        .bind(userId, keepSessionId)
+        .bind(userId, keepSessionId, keepSessionId, userId)
 }
 
 export async function getCurrentUser(c: Context<{Bindings: Bindings}>): Promise<CurrentUser | null> {

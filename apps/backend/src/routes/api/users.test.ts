@@ -1,5 +1,5 @@
 import {env} from 'cloudflare:workers'
-import {compare} from 'bcryptjs'
+import {compare, hash} from 'bcryptjs'
 import {describe, expect, it, vi} from 'vitest'
 import {createCsrfToken} from '../../lib/auth/session'
 import {STEP_UP_REQUIRED_ERROR} from '../../lib/auth/stepUp'
@@ -252,6 +252,15 @@ const currentUser = {
     displayNsfwMedia: false,
     lastSeenVersion: null,
 }
+
+vi.mock('bcryptjs', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('bcryptjs')>()
+
+    return {
+        ...actual,
+        hash: vi.fn(actual.hash),
+    }
+})
 
 const db = env.DB
 useTestDatabase()
@@ -982,6 +991,42 @@ describe('POST /settings', () => {
         expect(response.status).toBe(200)
         expect(await queryAll<{id: string}>('SELECT id FROM sessions WHERE user_id = ? ORDER BY id', [currentUser.id], db)).toEqual([
             {id: `${currentUser.id}-session`},
+        ])
+    })
+
+    it('rejects a password change when the session is revoked while the password hashes', async () => {
+        const sessionToken = 'session-token'
+        await seedCurrentUser({passwordHash: 'old-password-hash'}, sessionToken)
+        await seedSession({id: 'other-session', userId: currentUser.id, token: 'other-token'})
+        const actual = await vi.importActual<typeof import('bcryptjs')>('bcryptjs')
+
+        vi.mocked(hash).mockImplementationOnce(async (value, salt) => {
+            await db.prepare('DELETE FROM sessions WHERE id = ?').bind(`${currentUser.id}-session`).run()
+
+            return await actual.hash(value, salt)
+        })
+
+        const response = await postCurrentUserSettings(
+            {
+                email: 'old@example.com',
+                username: 'olduser',
+                bio: 'Old bio',
+                password: 'newpassword123',
+            },
+            db,
+            {
+                sessionToken,
+                csrfToken: await createCsrfToken(sessionToken),
+            },
+        )
+
+        expect(response.status).toBe(401)
+        expect(await response.json()).toEqual({error: 'Authentication required'})
+        expect(await queryOne<{password_hash: string}>('SELECT password_hash FROM users WHERE id = ?', [currentUser.id], db)).toEqual({
+            password_hash: 'old-password-hash',
+        })
+        expect(await queryAll<{id: string}>('SELECT id FROM sessions WHERE user_id = ? ORDER BY id', [currentUser.id], db)).toEqual([
+            {id: 'other-session'},
         ])
     })
 

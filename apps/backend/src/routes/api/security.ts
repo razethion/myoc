@@ -16,7 +16,14 @@ import {
     verifyRecoveryPhrase,
 } from '../../lib/auth/passkeys'
 import {enforceAuthChallengeRateLimit, enforceAuthIdentityRateLimit} from '../../lib/auth/rateLimit'
-import {getCurrentUser, hasRecentAuthentication, normalizeCredential, toSqlTimestamp} from '../../lib/auth/session'
+import {
+    getCurrentUser,
+    hasRecentAuthentication,
+    normalizeCredential,
+    revokeOtherSessionsStatement,
+    SESSION_STILL_ACTIVE,
+    toSqlTimestamp,
+} from '../../lib/auth/session'
 import {stepUpRequiredResponse} from '../../lib/auth/stepUp'
 import {jsonResponse} from '../../lib/http/jsonResponse'
 import {readJsonUpTo, STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
@@ -207,7 +214,7 @@ securityRoutes.post('/passkeys/verify', async (c) => {
             currentUser.sessionId,
             currentUser.id,
         ),
-        guardedRevokeOtherSessions(c.env.DB, currentUser.id, currentUser.sessionId),
+        revokeOtherSessionsStatement(c.env.DB, currentUser.id, currentUser.sessionId),
     ])
 
     // Issue #251: the ceremony spans seconds, and the owner can revoke this session
@@ -257,7 +264,7 @@ securityRoutes.delete('/passkeys/:id', async (c) => {
            AND id = ?
            AND ${SESSION_STILL_ACTIVE}`,
         ).bind(currentUser.id, passkeyId, currentUser.sessionId, currentUser.id),
-        guardedRevokeOtherSessions(c.env.DB, currentUser.id, currentUser.sessionId),
+        revokeOtherSessionsStatement(c.env.DB, currentUser.id, currentUser.sessionId),
     ])
 
     return jsonResponse(c, OkResponseSchema, {ok: true})
@@ -292,7 +299,7 @@ securityRoutes.post('/recovery/regenerate', async (c) => {
          WHERE id = ?
            AND ${SESSION_STILL_ACTIVE}`,
         ).bind(phraseHash, toSqlTimestamp(new Date()), currentUser.id, currentUser.sessionId, currentUser.id),
-        guardedRevokeOtherSessions(c.env.DB, currentUser.id, currentUser.sessionId),
+        revokeOtherSessionsStatement(c.env.DB, currentUser.id, currentUser.sessionId),
     ])
 
     // Issue #251: return the plaintext phrase only after the guarded write commits.
@@ -373,7 +380,7 @@ securityRoutes.post('/sessions/revoke-others', async (c) => {
         return stepUpRequiredResponse(c)
     }
 
-    await guardedRevokeOtherSessions(c.env.DB, currentUser.id, currentUser.sessionId).run()
+    await revokeOtherSessionsStatement(c.env.DB, currentUser.id, currentUser.sessionId).run()
 
     return jsonResponse(c, OkResponseSchema, {ok: true})
 })
@@ -450,29 +457,11 @@ securityRoutes.post('/complete', async (c) => {
          WHERE id = ?
            AND ${SESSION_STILL_ACTIVE}`,
         ).bind(createDisabledPasswordHash(), currentUser.id, currentUser.sessionId, currentUser.id),
-        guardedRevokeOtherSessions(c.env.DB, currentUser.id, currentUser.sessionId),
+        revokeOtherSessionsStatement(c.env.DB, currentUser.id, currentUser.sessionId),
     ])
 
     return jsonResponse(c, OkResponseSchema, {ok: true})
 })
-
-// Issue #251: guards every credential write and session revocation below. A
-// request that started on a session later revoked (a password change or
-// recovery login ends other sessions) must commit nothing, including the
-// revocation itself, which would otherwise delete the owner's remaining
-// sessions while its own authorizing session is already gone.
-const SESSION_STILL_ACTIVE = 'EXISTS (SELECT 1 FROM sessions WHERE id = ? AND user_id = ?)'
-
-function guardedRevokeOtherSessions(db: D1Database, userId: string, currentSessionId: string): D1PreparedStatement {
-    return db
-        .prepare(
-            `DELETE FROM sessions
-         WHERE user_id = ?
-           AND id <> ?
-           AND ${SESSION_STILL_ACTIVE}`,
-        )
-        .bind(userId, currentSessionId, currentSessionId, userId)
-}
 
 async function getSecurityUser(db: D1Database, userId: string): Promise<SecurityUserRecord | null> {
     return await db
