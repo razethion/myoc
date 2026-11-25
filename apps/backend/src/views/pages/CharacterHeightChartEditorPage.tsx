@@ -1,5 +1,5 @@
 import type {CurrentUser} from '../../lib/auth/session'
-import {GALLERY_CHUNK_SIZE} from '../../lib/gallery'
+import {GALLERY_CHUNK_SIZE, GALLERY_IMAGE_MAX_BYTES} from '../../lib/gallery'
 import {HEIGHT_CHART_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/heightChart'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
@@ -63,6 +63,7 @@ const ALPHA_OPAQUE_THRESHOLD = 24;
 // multipart framing and the JSON field under the route's request-body cap.
 const DIRECT_UPLOAD_FILE_MAX_BYTES = ${safeJson(HEIGHT_CHART_MAX_MULTIPART_REQUEST_BYTES - 131072)};
 const UPLOAD_CHUNK_SIZE = ${safeJson(GALLERY_CHUNK_SIZE)};
+const MAX_IMAGE_FILE_BYTES = ${safeJson(GALLERY_IMAGE_MAX_BYTES)};
 
 const initialChart = character.heightChart || null;
 const state = {
@@ -467,6 +468,10 @@ async function loadImageFile(file) {
         throw new Error('Choose an image file.');
     }
 
+    if (file.size > MAX_IMAGE_FILE_BYTES) {
+        throw new Error('Height chart image must be 200 MB or smaller.');
+    }
+
     if (state.objectUrl) URL.revokeObjectURL(state.objectUrl);
     state.objectUrl = URL.createObjectURL(file);
 
@@ -725,9 +730,14 @@ document.addEventListener('pointerdown', (event) => {
 });
 
 els.saveButton.addEventListener('click', async () => {
+    const savedObjectUrl = state.objectUrl;
     try {
         setLoading(true);
         const result = await apiSave();
+        if (state.objectUrl !== savedObjectUrl) {
+            showToast('Height data saved. Your newer image selection is still pending.', true);
+            return;
+        }
         state.pendingFile = null;
         if (result.heightChart && result.heightChart.image) {
             state.image = result.heightChart.image;

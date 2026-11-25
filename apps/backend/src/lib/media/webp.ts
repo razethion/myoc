@@ -21,18 +21,14 @@ export function getWebpDimensions(bytes: Uint8Array): WebpDimensions | null {
         const chunkSize = readUint32Le(bytes, offset + 4)
         const dataOffset = offset + 8
 
-        if (dataOffset + chunkSize > bytes.length) {
-            return null
-        }
-
-        if (chunkType === VP8X && chunkSize >= 10) {
+        if (chunkType === VP8X && chunkSize >= 10 && dataOffset + 10 <= bytes.length) {
             return {
                 width: readUint24Le(bytes, dataOffset + 4) + 1,
                 height: readUint24Le(bytes, dataOffset + 7) + 1,
             }
         }
 
-        if (chunkType === VP8L && chunkSize >= 5 && byteAt(bytes, dataOffset) === 0x2f) {
+        if (chunkType === VP8L && chunkSize >= 5 && dataOffset + 5 <= bytes.length && byteAt(bytes, dataOffset) === 0x2f) {
             const b1 = byteAt(bytes, dataOffset + 1)
             const b2 = byteAt(bytes, dataOffset + 2)
             const b3 = byteAt(bytes, dataOffset + 3)
@@ -47,6 +43,7 @@ export function getWebpDimensions(bytes: Uint8Array): WebpDimensions | null {
         if (
             chunkType === VP8 &&
             chunkSize >= 10 &&
+            dataOffset + 10 <= bytes.length &&
             byteAt(bytes, dataOffset + 3) === 0x9d &&
             byteAt(bytes, dataOffset + 4) === 0x01 &&
             byteAt(bytes, dataOffset + 5) === 0x2a
@@ -57,7 +54,13 @@ export function getWebpDimensions(bytes: Uint8Array): WebpDimensions | null {
             }
         }
 
-        offset = dataOffset + chunkSize + (chunkSize % 2)
+        const nextOffset = dataOffset + chunkSize + (chunkSize % 2)
+
+        if (nextOffset > bytes.length) {
+            return null
+        }
+
+        offset = nextOffset
     }
 
     return null

@@ -5,6 +5,7 @@ import {createImageReviewQueueStatement} from '../../lib/admin/imageApprovals'
 import {type CurrentUser, getCurrentUser, toSqlTimestamp} from '../../lib/auth/session'
 import {
     GALLERY_CHUNK_SIZE,
+    GALLERY_IMAGE_MAX_BYTES,
     GALLERY_MAX_IMAGES_PER_ROW,
     GALLERY_MAX_MEDIA_PER_CHARACTER,
     shouldForceGalleryRowFullWidth,
@@ -331,7 +332,6 @@ const GALLERY_IMAGE_ALLOWED_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 
 const GALLERY_IMAGE_CACHE_CONTROL = REVOCABLE_MEDIA_CACHE_CONTROL
 const GALLERY_STAGING_CACHE_CONTROL = 'private, no-store'
 const GALLERY_STAGING_OBJECT_KEY_PREFIX = 'image-staging/'
-const GALLERY_IMAGE_MAX_BYTES = 200 * 1024 * 1024
 const GALLERY_IMAGE_MAX_PIXELS = 200_000_000
 const GALLERY_IMAGE_DIMENSION_PROBE_BYTES = 1024 * 1024
 const HEIGHT_CHART_JSON_MAX_LENGTH = 2048
