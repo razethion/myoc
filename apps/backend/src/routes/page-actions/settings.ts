@@ -88,7 +88,17 @@ settingsPageActionRoutes.post('/settings', async (c) => {
     // Issue #251: credential and identity changes need a recent full authentication.
     // Profile-only changes (bio, links, preferences) stay allowed on an older session.
     const changesIdentity = updateResult.email !== currentUser.email.toLowerCase() || updateResult.username !== currentUser.username
-    const gated = Boolean(updateResult.password) || changesIdentity
+
+    return applySettingsUpdate(c, currentUser, updateResult, changesIdentity)
+})
+
+async function applySettingsUpdate(
+    c: SettingsRouteContext,
+    currentUser: CurrentUser,
+    update: SettingsUpdate,
+    changesIdentity: boolean,
+): Promise<Response> {
+    const gated = Boolean(update.password) || changesIdentity
 
     if (gated && !hasRecentAuthentication(currentUser)) {
         if (c.req.header('accept')?.includes('text/html')) {
@@ -98,14 +108,14 @@ settingsPageActionRoutes.post('/settings', async (c) => {
         return stepUpRequiredResponse(c)
     }
 
-    if (await hasConflictingUser(c.env.DB, updateResult.email, updateResult.username, currentUser.id)) {
+    if (await hasConflictingUser(c.env.DB, update.email, update.username, currentUser.id)) {
         return respondToUpdate(c, {error: 'Email or username is already in use'}, 409)
     }
 
     let batchResults: D1Result[]
 
     try {
-        batchResults = await c.env.DB.batch(await buildSettingsUpdateStatements(c.env.DB, currentUser, updateResult, changesIdentity))
+        batchResults = await c.env.DB.batch(await buildSettingsUpdateStatements(c.env.DB, currentUser, update, changesIdentity))
     } catch (error) {
         if (isUniqueConstraintError(error)) {
             return respondToUpdate(c, {error: 'Email or username is already in use'}, 409)
@@ -124,7 +134,7 @@ settingsPageActionRoutes.post('/settings', async (c) => {
     }
 
     return respondToUpdate(c, {ok: true})
-})
+}
 
 settingsPageActionRoutes.post('/passkey-setup', async (c) => {
     const currentUser = await getCurrentUser(c)
