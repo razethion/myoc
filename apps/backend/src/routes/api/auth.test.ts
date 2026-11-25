@@ -9,7 +9,17 @@ import {beforeEach, describe, expect, it, vi} from 'vitest'
 import {hashRecoveryPhrase, verifyRecoveryPhrase} from '../../lib/auth/passkeys'
 import {createCsrfToken, type UserRecord} from '../../lib/auth/session'
 import {expectSessionCookie} from '../../test/assertions'
-import {queryAll, queryOne, seedAuthenticatedUser, seedChallenge, seedPasskey, seedUser, sha256Hex, useTestDatabase} from '../../test/d1'
+import {
+    queryAll,
+    queryOne,
+    seedAuthenticatedUser,
+    seedChallenge,
+    seedPasskey,
+    seedSession,
+    seedUser,
+    sha256Hex,
+    useTestDatabase,
+} from '../../test/d1'
 import {createAllowingAuthRateLimits, createMockRateLimit} from '../../test/mockRateLimit'
 import {apiRoutes} from '../api'
 import {authPageActionRoutes} from '../page-actions/auth'
@@ -1222,6 +1232,24 @@ describe('POST /recovery/login', () => {
         })
         expect(await queryAll('SELECT id FROM user_passkeys WHERE user_id = ?', [user.id])).toHaveLength(1)
         expect(await queryAll('SELECT id FROM sessions WHERE user_id = ?', [user.id])).toHaveLength(1)
+    })
+
+    it('revokes every existing session when recovery login succeeds', async () => {
+        const recoveryPhrase = 'correct-horse-battery-staple'
+        const user = await seedTestUser('password123', {recoveryPhraseHash: await hashRecoveryPhrase(recoveryPhrase)})
+        await seedSession({id: 'attacker-session', userId: user.id, token: 'attacker-token'})
+
+        const response = await postRecoveryLogin({
+            username: 'testuser',
+            recoveryPhrase,
+        })
+
+        expect(response.status).toBe(200)
+        expectSessionCookie(response)
+
+        const sessions = await queryAll<{id: string}>('SELECT id FROM sessions WHERE user_id = ?', [user.id])
+        expect(sessions).toHaveLength(1)
+        expect(sessions[0]?.id).not.toBe('attacker-session')
     })
 
     it('still redirects successful browser recovery login to settings', async () => {

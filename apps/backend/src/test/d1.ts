@@ -1,6 +1,7 @@
 import {applyD1Migrations, type D1Migration, reset} from 'cloudflare:test'
 import {env} from 'cloudflare:workers'
 import {beforeAll, beforeEach} from 'vitest'
+import {toSqlTimestamp} from '../lib/auth/session'
 
 type TestEnvironment = typeof env & {
     TEST_MIGRATIONS: D1Migration[]
@@ -36,6 +37,7 @@ type SessionSeed = {
     token: string
     createdAt?: string
     expiresAt?: string
+    authenticatedAt?: string | null
 }
 
 type FolderSeed = {
@@ -307,13 +309,16 @@ export async function seedUser(seed: UserSeed, db: D1Database = testDb): Promise
 
 export async function seedSession(seed: SessionSeed, db: D1Database = testDb): Promise<void> {
     await db
-        .prepare('INSERT INTO sessions (id, user_id, session_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)')
+        .prepare('INSERT INTO sessions (id, user_id, session_hash, created_at, expires_at, authenticated_at) VALUES (?, ?, ?, ?, ?, ?)')
         .bind(
             seed.id ?? `${seed.userId}-session`,
             seed.userId,
             await sha256Hex(seed.token),
             seed.createdAt ?? DEFAULT_TIMESTAMP,
             seed.expiresAt ?? DEFAULT_FUTURE_TIMESTAMP,
+            // Seeded sessions default to a recent authentication so existing tests keep
+            // passing the step-up gate; step-up tests override this with an old value.
+            seed.authenticatedAt === undefined ? toSqlTimestamp(new Date()) : seed.authenticatedAt,
         )
         .run()
 }

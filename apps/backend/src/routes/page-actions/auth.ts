@@ -629,15 +629,22 @@ authPageActionRoutes.post('/recovery/login', async (c) => {
 
     const now = new Date()
 
-    await c.env.DB.prepare(
-        `UPDATE users
+    // Issue #251: a recovery-phrase login proves takeover. Drop every existing
+    // session so an attacker's session cannot survive the account being recovered.
+    // The batch keeps the purge atomic with the recovery-state reset.
+    await c.env.DB.batch([
+        c.env.DB.prepare(
+            `DELETE FROM sessions
+         WHERE user_id = ?`,
+        ).bind(user.id),
+        c.env.DB.prepare(
+            `UPDATE users
          SET secure_account_required            = 0,
              secure_account_required_at         = NULL,
              secure_account_required_passkey_id = NULL
          WHERE id = ?`,
-    )
-        .bind(user.id)
-        .run()
+        ).bind(user.id),
+    ])
 
     const sessionToken = await createSession(c.env.DB, user.id, now)
     setSessionCookie(c, sessionToken)
