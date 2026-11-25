@@ -75,7 +75,8 @@ const state = {
     nameTagXPct: initialChart ? initialChart.calibration.nameTagXPercent : 50,
     previewSrc: initialChart && initialChart.image ? initialChart.image.url : '',
     pendingFile: null,
-    objectUrl: ''
+    objectUrl: '',
+    editRevision: 0
 };
 const alphaBounds = {
     src: '',
@@ -280,6 +281,7 @@ function syncHeightInputs() {
 }
 
 function setCalibration(marker, valuePct) {
+    state.editRevision += 1;
     if (marker === 'top') {
         state.topPct = clamp(valuePct, 0, Math.min(100, state.bottomPct - 2));
     } else {
@@ -289,6 +291,7 @@ function setCalibration(marker, valuePct) {
 }
 
 function setNameTagX(valuePct) {
+    state.editRevision += 1;
     state.nameTagXPct = clamp(valuePct, 0, 100);
 }
 
@@ -494,6 +497,7 @@ async function loadImageFile(file) {
     state.topPct = 5;
     state.bottomPct = state.croppedFeet ? VIRTUAL_FOOT_START_PCT : 95;
     state.nameTagXPct = 50;
+    state.editRevision += 1;
 }
 
 async function readApiError(response, fallback) {
@@ -618,6 +622,7 @@ els.heightFeet.addEventListener('input', () => {
     const feet = Number(els.heightFeet.value || 0);
     const inches = Number(els.heightInches.value || 0);
     state.heightMeters = Math.max(1, Math.round(feet * 12 + inches)) / INCHES_PER_METER;
+    state.editRevision += 1;
     if (els.heightMeters) els.heightMeters.value = state.heightMeters.toFixed(2);
     renderChart();
     renderCalibration();
@@ -627,6 +632,7 @@ els.heightInches.addEventListener('input', () => {
     const feet = Number(els.heightFeet.value || 0);
     const inches = Number(els.heightInches.value || 0);
     state.heightMeters = Math.max(1, Math.round(feet * 12 + inches)) / INCHES_PER_METER;
+    state.editRevision += 1;
     if (els.heightMeters) els.heightMeters.value = state.heightMeters.toFixed(2);
     renderChart();
     renderCalibration();
@@ -634,6 +640,7 @@ els.heightInches.addEventListener('input', () => {
 
 els.heightMeters.addEventListener('input', () => {
     state.heightMeters = Math.max(0.01, Number(els.heightMeters.value || 0));
+    state.editRevision += 1;
     const parts = imperialParts(state.heightMeters);
     els.heightFeet.value = String(parts.feet);
     els.heightInches.value = String(parts.inches);
@@ -659,6 +666,7 @@ els.removeImage.addEventListener('click', () => {
     state.previewSrc = '';
     state.pendingFile = null;
     state.objectUrl = '';
+    state.editRevision += 1;
     els.imageInput.value = '';
     renderAll();
 });
@@ -683,6 +691,7 @@ document.addEventListener('change', (event) => {
     if (!browser || !(target instanceof browser.HTMLInputElement)) return;
     if (target.matches('[data-cropped-feet]')) {
         state.croppedFeet = target.checked;
+        state.editRevision += 1;
         if (state.croppedFeet) {
             state.bottomPct = Math.max(state.bottomPct, VIRTUAL_FOOT_START_PCT);
         } else {
@@ -730,12 +739,12 @@ document.addEventListener('pointerdown', (event) => {
 });
 
 els.saveButton.addEventListener('click', async () => {
-    const savedObjectUrl = state.objectUrl;
+    const savedRevision = state.editRevision;
     try {
         setLoading(true);
         const result = await apiSave();
-        if (state.objectUrl !== savedObjectUrl) {
-            showToast('Height data saved. Your newer image selection is still pending.', true);
+        if (state.editRevision !== savedRevision) {
+            showToast('Height data saved. Your newer changes are still pending.', true);
             return;
         }
         state.pendingFile = null;
