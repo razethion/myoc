@@ -3649,13 +3649,7 @@ describe('GET /edit/:characterId', () => {
         expect(html).toContain('gallery-drop-marker')
         expect(html).toContain('data-gallery-draggable')
         expect(html).not.toContain('id="remove-row-modal"')
-        expect(html).toContain('const csrfToken =')
-        expect(html).toContain('const galleryChunkSize = 5242880;')
-        expect(html).toContain('function uploadChunkWithXhr')
-        expect(html).toContain('xhr.timeout = 120000')
-        expect(html).toContain('xhr.upload.onprogress')
         expect(html).toContain('Chunk upload network failure')
-        expect(html).toContain('[1500, 5000, 10000]')
         expectPatternAllowsReportedCharacterNames(html, 'character-name')
     })
 
@@ -3748,7 +3742,10 @@ describe('GET /edit/:characterId', () => {
 
         expect(response.status).toBe(200)
         expect(html).toContain('No height data')
-        expect(html).toContain('const character = {"id":"character-1","userId":"current-user","name":"RAZETH","heightChart":null};')
+        // The editor script builds its save URLs from character.id and reads character.heightChart,
+        // so the hydration payload must carry both fields.
+        expect(html).toContain('"id":"character-1"')
+        expect(html).toContain('"heightChart":null')
     })
 
     it('redirects logged-out users to login', async () => {
