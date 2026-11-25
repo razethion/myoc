@@ -1,6 +1,7 @@
 import {env} from 'cloudflare:workers'
 import {describe, expect, it, vi} from 'vitest'
 import {createCsrfToken} from '../../lib/auth/session'
+import {GALLERY_CHUNK_SIZE, GALLERY_IMAGE_MAX_BYTES} from '../../lib/gallery'
 import {STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
 import {PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/profileImage'
 import {thumbnailOriginalObjectKey} from '../../lib/media/thumbnailSources'
@@ -36,6 +37,7 @@ import {createRequestHeaders, type TestRequestOptions} from '../../test/request'
 import {apiRoutes} from '../api'
 
 const mediaPublicBaseUrl = 'https://m.myoc.art'
+const heightChartMaxMultipartRequestBytes = 25 * 1024 * 1024
 const uuidPattern = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
 const currentUserRecord = {
     id: 'current-user',
@@ -773,6 +775,78 @@ async function putHeightChart(
             method: 'PUT',
             body,
             headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
+    )
+}
+
+async function postHeightChartUploadInit(
+    characterId: string,
+    body: unknown,
+    db: D1Database,
+    options: CharacterRequestOptions = {},
+): Promise<Response> {
+    return apiRoutes.request(
+        `https://example.com/characters/${characterId}/height-chart/chunked/init`,
+        {
+            method: 'POST',
+            body: JSON.stringify(body),
+            headers: createRequestHeaders(body, options),
+        },
+        requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
+    )
+}
+
+async function putHeightChartUploadPart(
+    characterId: string,
+    imageKey: string,
+    uploadId: string,
+    partNumber: number | string,
+    body: BodyInit | null,
+    contentType: string,
+    db: D1Database,
+    options: CharacterRequestOptions = {},
+): Promise<Response> {
+    const bodyLength =
+        body instanceof Blob
+            ? body.size
+            : typeof body === 'string'
+              ? new TextEncoder().encode(body).byteLength
+              : body instanceof Uint8Array
+                ? body.byteLength
+                : null
+
+    return apiRoutes.request(
+        `https://example.com/characters/${characterId}/height-chart/chunked/${imageKey}/${uploadId}/${partNumber}?contentType=${encodeURIComponent(contentType)}`,
+        {
+            method: 'PUT',
+            body,
+            headers: createRequestHeaders(
+                undefined,
+                bodyLength === null ? options : {...options, contentLength: options.contentLength ?? String(bodyLength)},
+                false,
+            ),
+        },
+        requestEnv(db, options.mediaBucket, options.previewContainer),
+        testExecutionContext,
+    )
+}
+
+async function deleteHeightChartUpload(
+    characterId: string,
+    imageKey: string,
+    uploadId: string,
+    contentType: string,
+    db: D1Database,
+    options: CharacterRequestOptions = {},
+): Promise<Response> {
+    return apiRoutes.request(
+        `https://example.com/characters/${characterId}/height-chart/chunked/${imageKey}/${uploadId}?contentType=${encodeURIComponent(contentType)}`,
+        {
+            method: 'DELETE',
+            headers: createRequestHeaders(undefined, options, false),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer),
         testExecutionContext,
@@ -3200,6 +3274,77 @@ describe('PUT /characters/:id/height-chart', () => {
         })
     })
 
+    it('rejects height chart upload requests that are larger than the request limit', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const form = new FormData()
+        form.set(
+            'heightChartJson',
+            JSON.stringify({
+                version: 1,
+                height: {meters: 1.82},
+                image: null,
+            }),
+        )
+        form.set('heightChartImage', new File([new Uint8Array(1024)], 'height-chart.png', {type: 'image/png'}))
+
+        const response = await putHeightChart(character.id, form, db, {
+            contentLength: String(heightChartMaxMultipartRequestBytes + 1),
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(413)
+        expect(await response.json()).toEqual({error: 'Height chart image upload is too large'})
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+        expect(mediaBucket.delete).not.toHaveBeenCalled()
+    })
+
+    it('rejects an oversized height chart upload without a content-length header', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const probeForm = new FormData()
+        probeForm.set('heightChartJson', '{}')
+
+        expect(
+            new Request('https://example.com/characters/character-id/height-chart', {method: 'PUT', body: probeForm}).headers.get(
+                'content-length',
+            ),
+        ).toBeNull()
+
+        const form = new FormData()
+        form.set(
+            'heightChartJson',
+            JSON.stringify({
+                version: 1,
+                height: {meters: 1.82},
+                image: null,
+            }),
+        )
+        form.set(
+            'heightChartImage',
+            new File([new Uint8Array(heightChartMaxMultipartRequestBytes + 1024)], 'height-chart.png', {type: 'image/png'}),
+        )
+
+        const response = await putHeightChart(character.id, form, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(413)
+        expect(await response.json()).toEqual({error: 'Height chart image upload is too large'})
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+        expect(mediaBucket.delete).not.toHaveBeenCalled()
+    })
+
     it('rejects incomplete height chart data without deleting an object', async () => {
         const sessionToken = 'session-token'
         const mediaBucket = createMockR2Bucket()
@@ -3577,7 +3722,7 @@ describe('PUT /characters/:id/height-chart', () => {
             }),
         )
         form.set('heightChartImage', file)
-        const formDataSpy = vi.spyOn(Request.prototype, 'formData').mockResolvedValueOnce(form)
+        const formDataSpy = vi.spyOn(Response.prototype, 'formData').mockResolvedValueOnce(form)
 
         const response = await putHeightChart(character.id, form, db, {
             mediaBucket,
@@ -3818,6 +3963,934 @@ describe('PUT /characters/:id/height-chart', () => {
         )
         expect(JSON.parse(stored?.height_chart_json ?? '').image.key).toBe(body.heightChart.image.key)
         expect(mediaBucket.delete).toHaveBeenCalledWith('characters/current-user/character-id/height-chart/old-height-chart.png')
+    })
+})
+
+describe('POST /characters/:id/height-chart/chunked', () => {
+    it('creates a staged height chart multipart upload', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+
+        const response = await postHeightChartUploadInit(character.id, {contentType: 'image/png'}, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(200)
+        const body = (await response.json()) as {upload: {uploadId: string; imageKey: string; contentType: string; chunkSize: number}}
+        expect(body.upload.uploadId).toBeTruthy()
+        expect(body.upload.imageKey).toMatch(new RegExp(`^${uuidPattern}$`))
+        expect(body.upload.contentType).toBe('image/png')
+        expect(body.upload.chunkSize).toBe(GALLERY_CHUNK_SIZE)
+        expect(mediaBucket.createMultipartUpload).toHaveBeenCalledWith(
+            expect.stringContaining(`image-staging/characters/current-user/character-id/height-chart/${body.upload.imageKey}.png`),
+            expect.anything(),
+        )
+    })
+
+    it('rejects an unsupported content type for a height chart upload', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+
+        const response = await postHeightChartUploadInit(character.id, {contentType: 'image/tiff'}, db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Image must be PNG, JPG, GIF, WebP, or AVIF'})
+    })
+
+    it('rejects an invalid JSON body for a height chart upload init', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+
+        const response = await apiRoutes.request(
+            `https://example.com/characters/${character.id}/height-chart/chunked/init`,
+            {
+                method: 'POST',
+                body: 'not-json',
+                headers: createRequestHeaders('not-json', {sessionToken, csrfToken: await createCsrfToken(sessionToken)}),
+            },
+            requestEnv(db),
+            testExecutionContext,
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Invalid JSON body'})
+    })
+
+    it('returns 503 when the height chart multipart upload cannot be created', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        vi.spyOn(mediaBucket, 'createMultipartUpload').mockRejectedValueOnce(new Error('r2 unavailable'))
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+        const response = await postHeightChartUploadInit(character.id, {}, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(503)
+        expect(((await response.json()) as {error: string}).error).toContain('Upload could not be initialized')
+        errorSpy.mockRestore()
+    })
+
+    it('streams a height chart part into the staged multipart upload', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await postHeightChartUploadInit(character.id, {contentType: 'image/png'}, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+        const init = (await initResponse.json()) as {upload: {uploadId: string; imageKey: string}}
+
+        const response = await putHeightChartUploadPart(
+            character.id,
+            init.upload.imageKey,
+            init.upload.uploadId,
+            1,
+            createPngFile(1600, 3200),
+            'image/png',
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({partNumber: 1, etag: expect.any(String)})
+        const partUpload = vi.mocked(mediaBucket.resumeMultipartUpload).mock.results[0]?.value
+        expect(partUpload?.uploadPart).toHaveBeenCalledWith(1, expect.any(ReadableStream))
+    })
+
+    it('rejects a height chart part with an unknown content length', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+
+        const response = await putHeightChartUploadPart(
+            character.id,
+            'image-key',
+            'upload-id',
+            1,
+            new ReadableStream({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode('chunk'))
+                    controller.close()
+                },
+            }),
+            'image/png',
+            db,
+            {sessionToken, csrfToken: await createCsrfToken(sessionToken)},
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Chunk body must have a known length'})
+    })
+
+    it('rejects a height chart part with an invalid content length', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        for (const contentLength of ['0', 'not-a-number']) {
+            const response = await putHeightChartUploadPart(
+                character.id,
+                'image-key',
+                'upload-id',
+                1,
+                new ReadableStream({
+                    start(controller) {
+                        controller.enqueue(new TextEncoder().encode('chunk'))
+                        controller.close()
+                    },
+                }),
+                'image/png',
+                db,
+                {sessionToken, csrfToken, contentLength},
+            )
+
+            expect(response.status).toBe(400)
+            expect(await response.json()).toEqual({error: 'Chunk body must have a known length'})
+        }
+    })
+
+    it('rejects a height chart part larger than the maximum upload size', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const response = await putHeightChartUploadPart(
+            character.id,
+            'image-key',
+            'upload-id',
+            1,
+            new ReadableStream({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode('chunk'))
+                    controller.close()
+                },
+            }),
+            'image/png',
+            db,
+            {mediaBucket, sessionToken, csrfToken, contentLength: String(GALLERY_IMAGE_MAX_BYTES + 1)},
+        )
+
+        expect(response.status).toBe(413)
+        expect(await response.json()).toEqual({error: 'Chunk is larger than the maximum upload size'})
+        expect(mediaBucket.resumeMultipartUpload).not.toHaveBeenCalled()
+    })
+
+    it('rejects an invalid height chart part number', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+
+        const response = await putHeightChartUploadPart(
+            character.id,
+            'image-key',
+            'upload-id',
+            '0',
+            new TextEncoder().encode('chunk'),
+            'image/png',
+            db,
+            {sessionToken, csrfToken: await createCsrfToken(sessionToken)},
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Part number must be between 1 and 10000'})
+    })
+
+    it('rejects a height chart part without a body', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+
+        const response = await putHeightChartUploadPart(character.id, 'image-key', 'upload-id', 1, null, 'image/png', db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Chunk body is required'})
+    })
+
+    it('rejects an invalid height chart part image key', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+
+        const response = await putHeightChartUploadPart(
+            character.id,
+            encodeURIComponent('bad key'),
+            'upload-id',
+            1,
+            new TextEncoder().encode('chunk'),
+            'image/png',
+            db,
+            {sessionToken, csrfToken: await createCsrfToken(sessionToken)},
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Image key is invalid'})
+    })
+
+    it('rejects an invalid height chart part content type', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+
+        const response = await putHeightChartUploadPart(
+            character.id,
+            'image-key',
+            'upload-id',
+            1,
+            new TextEncoder().encode('chunk'),
+            'image/tiff',
+            db,
+            {sessionToken, csrfToken: await createCsrfToken(sessionToken)},
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Image must be PNG, JPG, GIF, WebP, or AVIF'})
+    })
+
+    it('aborts a staged height chart upload', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await postHeightChartUploadInit(character.id, {contentType: 'image/png'}, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+        const init = (await initResponse.json()) as {upload: {uploadId: string; imageKey: string}}
+        const abort = vi.fn(async () => undefined)
+        const resume = vi.spyOn(mediaBucket, 'resumeMultipartUpload').mockImplementationOnce(
+            () =>
+                ({
+                    abort,
+                }) as unknown as ReturnType<R2Bucket['resumeMultipartUpload']>,
+        )
+
+        const response = await deleteHeightChartUpload(character.id, init.upload.imageKey, init.upload.uploadId, 'image/png', db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+
+        expect(response.status).toBe(204)
+        expect(resume).toHaveBeenCalledWith(
+            `image-staging/characters/current-user/character-id/height-chart/${init.upload.imageKey}.png`,
+            init.upload.uploadId,
+        )
+        expect(abort).toHaveBeenCalled()
+    })
+
+    it('rejects an invalid content type when aborting a height chart upload', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+
+        const response = await deleteHeightChartUpload(character.id, 'image-key', 'upload-id', 'image/tiff', db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Image must be PNG, JPG, GIF, WebP, or AVIF'})
+    })
+
+    it('rejects an invalid image key when aborting a height chart upload', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+
+        const response = await deleteHeightChartUpload(character.id, encodeURIComponent('bad key'), 'upload-id', 'image/png', db, {
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Image key is invalid'})
+    })
+})
+
+describe('PUT /characters/:id/height-chart staged upload', () => {
+    const stagedHeightChartJson = JSON.stringify({
+        version: 1,
+        height: {meters: 1.82},
+        image: null,
+        calibration: {headYPercent: 5, footYPercent: 95, footIsVirtual: false, nameTagXPercent: 50},
+    })
+
+    function stagedUploadForm(reference: unknown): FormData {
+        const form = new FormData()
+        form.set('heightChartJson', stagedHeightChartJson)
+        form.set('heightChartImageUpload', typeof reference === 'string' ? reference : JSON.stringify(reference))
+
+        return form
+    }
+
+    it('saves a height chart from a staged chunked upload', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const convertedBytes = createAvifBytes(800, 1600)
+        const previewContainer = createMockPreviewContainer(new Response(convertedBytes, {headers: {'content-type': 'image/avif'}}))
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await postHeightChartUploadInit(character.id, {contentType: 'image/png'}, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+        const init = (await initResponse.json()) as {upload: {uploadId: string; imageKey: string}}
+
+        const partResponse = await putHeightChartUploadPart(
+            character.id,
+            init.upload.imageKey,
+            init.upload.uploadId,
+            1,
+            createPngFile(1600, 3200),
+            'image/png',
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+        const uploadedPart = (await partResponse.json()) as {partNumber: number; etag: string}
+
+        const response = await putHeightChart(
+            character.id,
+            stagedUploadForm({
+                uploadId: init.upload.uploadId,
+                imageKey: init.upload.imageKey,
+                contentType: 'image/png',
+                parts: [uploadedPart],
+            }),
+            db,
+            {mediaBucket, previewContainer: previewContainer.namespace, sessionToken, csrfToken},
+        )
+
+        expect(response.status).toBe(200)
+        const body = (await response.json()) as {heightChart: {image: {key: string; url: string}}}
+        expect(body.heightChart.image.key).toBe(init.upload.imageKey)
+        expect(body.heightChart.image.url).toBe(
+            `${mediaPublicBaseUrl}/characters/current-user/character-id/height-chart/${init.upload.imageKey}.avif`,
+        )
+        expect(mediaBucket.put).toHaveBeenCalledWith(
+            `characters/current-user/character-id/height-chart/${init.upload.imageKey}.avif`,
+            convertedBytes,
+            {
+                httpMetadata: {
+                    cacheControl: 'public, max-age=300, must-revalidate',
+                    contentType: 'image/avif',
+                },
+            },
+        )
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            `image-staging/characters/current-user/character-id/height-chart/${init.upload.imageKey}.png`,
+        )
+        const stored = await queryOne<{height_chart_json: string}>(
+            'SELECT height_chart_json FROM characters WHERE id = ?',
+            [character.id],
+            db,
+        )
+        expect(JSON.parse(stored?.height_chart_json ?? '').image.key).toBe(init.upload.imageKey)
+    })
+
+    it('deletes the staged height chart image when the D1 update fails', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        const character = createCharacterRecord()
+        const convertedBytes = createAvifBytes(800, 1600)
+        const previewContainer = createMockPreviewContainer(new Response(convertedBytes, {headers: {'content-type': 'image/avif'}}))
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await postHeightChartUploadInit(character.id, {contentType: 'image/png'}, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+        const init = (await initResponse.json()) as {upload: {uploadId: string; imageKey: string}}
+
+        const partResponse = await putHeightChartUploadPart(
+            character.id,
+            init.upload.imageKey,
+            init.upload.uploadId,
+            1,
+            createPngFile(1600, 3200),
+            'image/png',
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+        const uploadedPart = (await partResponse.json()) as {partNumber: number; etag: string}
+
+        try {
+            const response = await withFailingTrigger(
+                {
+                    name: 'height_chart_update',
+                    operation: 'UPDATE',
+                    table: 'characters',
+                    columns: ['height_chart_json'],
+                },
+                () =>
+                    putHeightChart(
+                        character.id,
+                        stagedUploadForm({
+                            uploadId: init.upload.uploadId,
+                            imageKey: init.upload.imageKey,
+                            contentType: 'image/png',
+                            parts: [uploadedPart],
+                        }),
+                        db,
+                        {mediaBucket, previewContainer: previewContainer.namespace, sessionToken, csrfToken},
+                    ),
+                db,
+            )
+
+            expect(response.status).toBe(500)
+            expect(mediaBucket.delete).toHaveBeenCalledWith(
+                `characters/current-user/character-id/height-chart/${init.upload.imageKey}.avif`,
+            )
+            expect(mediaBucket.delete).toHaveBeenCalledWith(
+                `image-staging/characters/current-user/character-id/height-chart/${init.upload.imageKey}.png`,
+            )
+            const stored = await queryOne<{height_chart_json: string}>(
+                'SELECT height_chart_json FROM characters WHERE id = ?',
+                [character.id],
+                db,
+            )
+            expect(stored?.height_chart_json).toBe('')
+        } finally {
+            error.mockRestore()
+        }
+    })
+
+    it('rejects a staged height chart upload when completion fails', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        vi.spyOn(mediaBucket, 'resumeMultipartUpload').mockImplementationOnce(
+            () =>
+                ({
+                    complete: async () => {
+                        throw new Error('bad etag')
+                    },
+                }) as unknown as ReturnType<R2Bucket['resumeMultipartUpload']>,
+        )
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+        const response = await putHeightChart(
+            character.id,
+            stagedUploadForm({uploadId: 'upload-id', imageKey: 'image-key', contentType: 'image/png', parts: [{partNumber: 1, etag: 'e'}]}),
+            db,
+            {mediaBucket, sessionToken, csrfToken: await createCsrfToken(sessionToken)},
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Height chart image upload could not be completed'})
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+        errorSpy.mockRestore()
+    })
+
+    it('rejects an empty staged height chart upload', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        vi.spyOn(mediaBucket, 'resumeMultipartUpload').mockImplementationOnce(
+            () =>
+                ({
+                    complete: async () => ({size: 0}),
+                }) as unknown as ReturnType<R2Bucket['resumeMultipartUpload']>,
+        )
+
+        const response = await putHeightChart(
+            character.id,
+            stagedUploadForm({uploadId: 'upload-id', imageKey: 'image-key', contentType: 'image/png', parts: [{partNumber: 1, etag: 'e'}]}),
+            db,
+            {mediaBucket, sessionToken, csrfToken: await createCsrfToken(sessionToken)},
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Height chart image is empty'})
+        expect(mediaBucket.delete).toHaveBeenCalledWith('image-staging/characters/current-user/character-id/height-chart/image-key.png')
+    })
+
+    it('rejects a staged height chart upload larger than 200 MB', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        vi.spyOn(mediaBucket, 'resumeMultipartUpload').mockImplementationOnce(
+            () =>
+                ({
+                    complete: async () => ({size: 200 * 1024 * 1024 + 1}),
+                }) as unknown as ReturnType<R2Bucket['resumeMultipartUpload']>,
+        )
+
+        const response = await putHeightChart(
+            character.id,
+            stagedUploadForm({uploadId: 'upload-id', imageKey: 'image-key', contentType: 'image/png', parts: [{partNumber: 1, etag: 'e'}]}),
+            db,
+            {mediaBucket, sessionToken, csrfToken: await createCsrfToken(sessionToken)},
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Height chart image must be 200 MB or smaller'})
+        expect(mediaBucket.delete).toHaveBeenCalledWith('image-staging/characters/current-user/character-id/height-chart/image-key.png')
+    })
+
+    it('rejects a staged height chart upload whose dimensions cannot be verified', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await postHeightChartUploadInit(character.id, {contentType: 'image/png'}, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+        const init = (await initResponse.json()) as {upload: {uploadId: string; imageKey: string}}
+        const partResponse = await putHeightChartUploadPart(
+            character.id,
+            init.upload.imageKey,
+            init.upload.uploadId,
+            1,
+            new TextEncoder().encode('not-an-image'),
+            'image/png',
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+        const uploadedPart = (await partResponse.json()) as {partNumber: number; etag: string}
+
+        const response = await putHeightChart(
+            character.id,
+            stagedUploadForm({
+                uploadId: init.upload.uploadId,
+                imageKey: init.upload.imageKey,
+                contentType: 'image/png',
+                parts: [uploadedPart],
+            }),
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Height chart image dimensions could not be verified'})
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            `image-staging/characters/current-user/character-id/height-chart/${init.upload.imageKey}.png`,
+        )
+    })
+
+    it('rejects a staged height chart upload above the pixel limit', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await postHeightChartUploadInit(character.id, {contentType: 'image/png'}, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+        const init = (await initResponse.json()) as {upload: {uploadId: string; imageKey: string}}
+        const partResponse = await putHeightChartUploadPart(
+            character.id,
+            init.upload.imageKey,
+            init.upload.uploadId,
+            1,
+            createPngFile(20_000, 20_000),
+            'image/png',
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+        const uploadedPart = (await partResponse.json()) as {partNumber: number; etag: string}
+
+        const response = await putHeightChart(
+            character.id,
+            stagedUploadForm({
+                uploadId: init.upload.uploadId,
+                imageKey: init.upload.imageKey,
+                contentType: 'image/png',
+                parts: [uploadedPart],
+            }),
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Height chart image must be 200,000,000 pixels or smaller'})
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            `image-staging/characters/current-user/character-id/height-chart/${init.upload.imageKey}.png`,
+        )
+    })
+
+    it('rejects a staged height chart upload whose object disappears before processing', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const previewContainer = createMockPreviewContainer(
+            new Response(createAvifBytes(800, 1600), {headers: {'content-type': 'image/avif'}}),
+        )
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await postHeightChartUploadInit(character.id, {contentType: 'image/png'}, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+        const init = (await initResponse.json()) as {upload: {uploadId: string; imageKey: string}}
+        const partResponse = await putHeightChartUploadPart(
+            character.id,
+            init.upload.imageKey,
+            init.upload.uploadId,
+            1,
+            createPngFile(1600, 3200),
+            'image/png',
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+        const uploadedPart = (await partResponse.json()) as {partNumber: number; etag: string}
+
+        const originalGet = mediaBucket.get.bind(mediaBucket)
+        mediaBucket.get = vi.fn(async (key: string, options?: R2GetOptions) =>
+            options ? originalGet(key, options) : null,
+        ) as unknown as R2Bucket['get']
+
+        const response = await putHeightChart(
+            character.id,
+            stagedUploadForm({
+                uploadId: init.upload.uploadId,
+                imageKey: init.upload.imageKey,
+                contentType: 'image/png',
+                parts: [uploadedPart],
+            }),
+            db,
+            {mediaBucket, previewContainer: previewContainer.namespace, sessionToken, csrfToken},
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Height chart image could not be processed'})
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            `image-staging/characters/current-user/character-id/height-chart/${init.upload.imageKey}.png`,
+        )
+    })
+
+    it('returns 500 and clears staging when the height chart container fails', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const previewContainer = createMockPreviewContainer([new Error('converter unavailable')])
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await postHeightChartUploadInit(character.id, {contentType: 'image/png'}, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+        const init = (await initResponse.json()) as {upload: {uploadId: string; imageKey: string}}
+        const partResponse = await putHeightChartUploadPart(
+            character.id,
+            init.upload.imageKey,
+            init.upload.uploadId,
+            1,
+            createPngFile(1600, 3200),
+            'image/png',
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+        const uploadedPart = (await partResponse.json()) as {partNumber: number; etag: string}
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+        const response = await putHeightChart(
+            character.id,
+            stagedUploadForm({
+                uploadId: init.upload.uploadId,
+                imageKey: init.upload.imageKey,
+                contentType: 'image/png',
+                parts: [uploadedPart],
+            }),
+            db,
+            {mediaBucket, previewContainer: previewContainer.namespace, sessionToken, csrfToken},
+        )
+
+        expect(response.status).toBe(500)
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            `image-staging/characters/current-user/character-id/height-chart/${init.upload.imageKey}.png`,
+        )
+        errorSpy.mockRestore()
+    })
+
+    it('returns 500 and clears staging when publishing the final image fails', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const previewContainer = createMockPreviewContainer(
+            new Response(createAvifBytes(800, 1600), {headers: {'content-type': 'image/avif'}}),
+        )
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await postHeightChartUploadInit(character.id, {contentType: 'image/png'}, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+        const init = (await initResponse.json()) as {upload: {uploadId: string; imageKey: string}}
+        const partResponse = await putHeightChartUploadPart(
+            character.id,
+            init.upload.imageKey,
+            init.upload.uploadId,
+            1,
+            createPngFile(1600, 3200),
+            'image/png',
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+        const uploadedPart = (await partResponse.json()) as {partNumber: number; etag: string}
+        vi.spyOn(mediaBucket, 'put').mockRejectedValueOnce(new Error('r2 write failed'))
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+        const response = await putHeightChart(
+            character.id,
+            stagedUploadForm({
+                uploadId: init.upload.uploadId,
+                imageKey: init.upload.imageKey,
+                contentType: 'image/png',
+                parts: [uploadedPart],
+            }),
+            db,
+            {mediaBucket, previewContainer: previewContainer.namespace, sessionToken, csrfToken},
+        )
+
+        expect(response.status).toBe(500)
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            `image-staging/characters/current-user/character-id/height-chart/${init.upload.imageKey}.png`,
+        )
+        errorSpy.mockRestore()
+    })
+
+    it('returns 500 and clears staging when the staged metadata read fails', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await postHeightChartUploadInit(character.id, {contentType: 'image/png'}, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+        const init = (await initResponse.json()) as {upload: {uploadId: string; imageKey: string}}
+        const partResponse = await putHeightChartUploadPart(
+            character.id,
+            init.upload.imageKey,
+            init.upload.uploadId,
+            1,
+            createPngFile(1600, 3200),
+            'image/png',
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+        const uploadedPart = (await partResponse.json()) as {partNumber: number; etag: string}
+        vi.spyOn(mediaBucket, 'get').mockRejectedValueOnce(new Error('r2 read failed'))
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+        const response = await putHeightChart(
+            character.id,
+            stagedUploadForm({
+                uploadId: init.upload.uploadId,
+                imageKey: init.upload.imageKey,
+                contentType: 'image/png',
+                parts: [uploadedPart],
+            }),
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+
+        expect(response.status).toBe(500)
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            `image-staging/characters/current-user/character-id/height-chart/${init.upload.imageKey}.png`,
+        )
+        errorSpy.mockRestore()
+    })
+
+    it('rejects a height chart request that sends both an image and a staged upload', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const form = stagedUploadForm({
+            uploadId: 'upload-id',
+            imageKey: 'image-key',
+            contentType: 'image/png',
+            parts: [{partNumber: 1, etag: 'e'}],
+        })
+        form.set('heightChartImage', createPngFile(1600, 3200))
+
+        const response = await putHeightChart(character.id, form, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Provide a height chart image or a staged upload, not both'})
+        expect(mediaBucket.put).not.toHaveBeenCalled()
+    })
+
+    it.each([
+        {
+            name: 'a file part',
+            reference: () => new File(['x'], 'upload.json', {type: 'application/json'}),
+            error: 'Height chart image upload is invalid',
+        },
+        {name: 'invalid JSON', reference: 'not-json', error: 'Height chart image upload is invalid'},
+        {name: 'a null reference', reference: 'null', error: 'Height chart image upload is invalid'},
+        {
+            name: 'a missing parts list',
+            reference: {uploadId: 'upload-id', imageKey: 'image-key', contentType: 'image/png'},
+            error: 'uploaded parts are required',
+        },
+    ])('rejects a staged height chart upload with $name', async ({reference, error}) => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const form = new FormData()
+        form.set('heightChartJson', stagedHeightChartJson)
+        form.set(
+            'heightChartImageUpload',
+            typeof reference === 'function' ? reference() : typeof reference === 'string' ? reference : JSON.stringify(reference),
+        )
+
+        const response = await putHeightChart(character.id, form, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken: await createCsrfToken(sessionToken),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error})
+        expect(mediaBucket.put).not.toHaveBeenCalled()
     })
 })
 
@@ -8058,6 +9131,15 @@ describe('remaining character route edge coverage', () => {
                 },
             ],
             ['/characters/character-id/height-chart', {method: 'PUT', body: new FormData()}],
+            [
+                '/characters/character-id/height-chart/chunked/init',
+                {method: 'POST', body: JSON.stringify({}), headers: {'content-type': 'application/json'}},
+            ],
+            [
+                '/characters/character-id/height-chart/chunked/image-key/upload-id/1?contentType=image%2Fpng',
+                {method: 'PUT', body: createPngFile(1, 1)},
+            ],
+            ['/characters/character-id/height-chart/chunked/image-key/upload-id?contentType=image%2Fpng', {method: 'DELETE'}],
             [
                 '/characters/character-id/media/chunked/init',
                 {

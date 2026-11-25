@@ -41,6 +41,43 @@ describe('getWebpDimensions', () => {
         })
     })
 
+    it('reads VP8L dimensions when the image chunk extends beyond the given bytes', () => {
+        expect(getWebpDimensions(createWebpBytes([{type: 'VP8L', data: createVp8lData(321, 123), declaredSize: 2 * 1024 * 1024}]))).toEqual(
+            {
+                width: 321,
+                height: 123,
+            },
+        )
+    })
+
+    it('reads VP8 dimensions when the image chunk extends beyond the given bytes', () => {
+        expect(getWebpDimensions(createWebpBytes([{type: 'VP8 ', data: createVp8Data(1024, 768), declaredSize: 2 * 1024 * 1024}]))).toEqual(
+            {
+                width: 1024,
+                height: 768,
+            },
+        )
+    })
+
+    it('returns null when the dimension header bytes are cut off', () => {
+        expect(
+            getWebpDimensions(
+                createWebpBytes([
+                    {type: 'JUNK', data: new Uint8Array(4)},
+                    {type: 'VP8 ', data: createVp8Data(1024, 768).slice(0, 6), declaredSize: 2 * 1024 * 1024},
+                ]),
+            ),
+        ).toBeNull()
+        expect(
+            getWebpDimensions(
+                createWebpBytes([
+                    {type: 'JUNK', data: new Uint8Array(4)},
+                    {type: 'VP8L', data: createVp8lData(321, 123).slice(0, 3), declaredSize: 2 * 1024 * 1024},
+                ]),
+            ),
+        ).toBeNull()
+    })
+
     it('skips odd-sized chunks before reading dimensions', () => {
         expect(
             getWebpDimensions(
@@ -88,6 +125,10 @@ function createVp8xWebpBytes(width: number, height: number): Uint8Array {
 }
 
 function createVp8lWebpBytes(width: number, height: number): Uint8Array {
+    return createWebpBytes([{type: 'VP8L', data: createVp8lData(width, height)}])
+}
+
+function createVp8lData(width: number, height: number): Uint8Array {
     const widthMinusOne = width - 1
     const heightMinusOne = height - 1
     const data = new Uint8Array(5)
@@ -97,10 +138,14 @@ function createVp8lWebpBytes(width: number, height: number): Uint8Array {
     data[3] = (heightMinusOne >> 2) & 0xff
     data[4] = (heightMinusOne >> 10) & 0x0f
 
-    return createWebpBytes([{type: 'VP8L', data}])
+    return data
 }
 
 function createVp8WebpBytes(width: number, height: number): Uint8Array {
+    return createWebpBytes([{type: 'VP8 ', data: createVp8Data(width, height)}])
+}
+
+function createVp8Data(width: number, height: number): Uint8Array {
     const data = new Uint8Array(10)
     data[3] = 0x9d
     data[4] = 0x01
@@ -108,7 +153,7 @@ function createVp8WebpBytes(width: number, height: number): Uint8Array {
     writeUint16Le(data, 6, width)
     writeUint16Le(data, 8, height)
 
-    return createWebpBytes([{type: 'VP8 ', data}])
+    return data
 }
 
 function createVp8xData(width: number, height: number): Uint8Array {
@@ -119,17 +164,14 @@ function createVp8xData(width: number, height: number): Uint8Array {
 }
 
 function createTruncatedWebpChunk(): Uint8Array {
-    const bytes = new Uint8Array(30)
-    writeAscii(bytes, 0, 'RIFF')
-    writeUint32Le(bytes, 4, bytes.length - 8)
-    writeAscii(bytes, 8, 'WEBP')
-    writeAscii(bytes, 12, 'VP8X')
-    writeUint32Le(bytes, 16, 40)
-    return bytes
+    return createWebpBytes([
+        {type: 'JUNK', data: new Uint8Array(4)},
+        {type: 'VP8X', data: new Uint8Array(2), declaredSize: 40},
+    ])
 }
 
 function createWebpBytes(
-    chunks: Array<{type: string; data: Uint8Array}>,
+    chunks: Array<{type: string; data: Uint8Array; declaredSize?: number}>,
     options: {riffType?: string; containerType?: string} = {},
 ): Uint8Array {
     const length = chunks.reduce((total, chunk) => total + 8 + chunk.data.length + (chunk.data.length % 2), 12)
@@ -142,7 +184,7 @@ function createWebpBytes(
 
     for (const chunk of chunks) {
         writeAscii(bytes, offset, chunk.type)
-        writeUint32Le(bytes, offset + 4, chunk.data.length)
+        writeUint32Le(bytes, offset + 4, chunk.declaredSize ?? chunk.data.length)
         bytes.set(chunk.data, offset + 8)
         offset += 8 + chunk.data.length + (chunk.data.length % 2)
     }

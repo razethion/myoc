@@ -1,4 +1,6 @@
 import type {CurrentUser} from '../../lib/auth/session'
+import {GALLERY_CHUNK_SIZE, GALLERY_IMAGE_MAX_BYTES} from '../../lib/gallery'
+import {HEIGHT_CHART_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/heightChart'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 
@@ -57,6 +59,11 @@ const VIRTUAL_FOOT_START_PCT = 118;
 const CHART_FRAME_PAD = 18;
 const MODEL_TOP_PADDING = 25;
 const ALPHA_OPAQUE_THRESHOLD = 24;
+// Files at or above this size upload through the chunked endpoints. The margin keeps
+// multipart framing and the JSON field under the route's request-body cap.
+const DIRECT_UPLOAD_FILE_MAX_BYTES = ${safeJson(HEIGHT_CHART_MAX_MULTIPART_REQUEST_BYTES - 131072)};
+const UPLOAD_CHUNK_SIZE = ${safeJson(GALLERY_CHUNK_SIZE)};
+const MAX_IMAGE_FILE_BYTES = ${safeJson(GALLERY_IMAGE_MAX_BYTES)};
 
 const initialChart = character.heightChart || null;
 const state = {
@@ -68,7 +75,8 @@ const state = {
     nameTagXPct: initialChart ? initialChart.calibration.nameTagXPercent : 50,
     previewSrc: initialChart && initialChart.image ? initialChart.image.url : '',
     pendingFile: null,
-    objectUrl: ''
+    objectUrl: '',
+    editRevision: 0
 };
 const alphaBounds = {
     src: '',
@@ -273,6 +281,7 @@ function syncHeightInputs() {
 }
 
 function setCalibration(marker, valuePct) {
+    state.editRevision += 1;
     if (marker === 'top') {
         state.topPct = clamp(valuePct, 0, Math.min(100, state.bottomPct - 2));
     } else {
@@ -282,6 +291,7 @@ function setCalibration(marker, valuePct) {
 }
 
 function setNameTagX(valuePct) {
+    state.editRevision += 1;
     state.nameTagXPct = clamp(valuePct, 0, 100);
 }
 
@@ -461,6 +471,10 @@ async function loadImageFile(file) {
         throw new Error('Choose an image file.');
     }
 
+    if (file.size > MAX_IMAGE_FILE_BYTES) {
+        throw new Error('Height chart image must be 200 MB or smaller.');
+    }
+
     if (state.objectUrl) URL.revokeObjectURL(state.objectUrl);
     state.objectUrl = URL.createObjectURL(file);
 
@@ -483,6 +497,79 @@ async function loadImageFile(file) {
     state.topPct = 5;
     state.bottomPct = state.croppedFeet ? VIRTUAL_FOOT_START_PCT : 95;
     state.nameTagXPct = 50;
+    state.editRevision += 1;
+}
+
+async function readApiError(response, fallback) {
+    try {
+        const body = await response.json();
+        return body.error || fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+async function uploadStagedHeightChartImage(file) {
+    const contentType = file.type || 'image/png';
+    const basePath = '/api/characters/' + encodeURIComponent(character.id) + '/height-chart/chunked';
+    const initResponse = await fetch(basePath + '/init', {
+        method: 'POST',
+        headers: {
+            'content-type': 'application/json',
+            'x-csrf-token': csrfToken
+        },
+        body: JSON.stringify({contentType})
+    });
+    if (!initResponse.ok) throw new Error(await readApiError(initResponse, 'Could not start the image upload.'));
+    const upload = (await initResponse.json()).upload;
+    const chunkSize = upload.chunkSize || UPLOAD_CHUNK_SIZE;
+    const parts = [];
+    try {
+        let offset = 0;
+        let partNumber = 1;
+        while (offset < file.size) {
+            const chunk = file.slice(offset, Math.min(offset + chunkSize, file.size), contentType);
+            const partResponse = await fetch(
+                basePath + '/' + encodeURIComponent(upload.imageKey)
+                + '/' + encodeURIComponent(upload.uploadId)
+                + '/' + partNumber
+                + '?contentType=' + encodeURIComponent(upload.contentType),
+                {
+                    method: 'PUT',
+                    headers: {
+                        'x-csrf-token': csrfToken
+                    },
+                    body: chunk
+                }
+            );
+            if (!partResponse.ok) throw new Error(await readApiError(partResponse, 'Could not upload image data.'));
+            parts.push(await partResponse.json());
+            offset += chunk.size;
+            partNumber += 1;
+            if (els.saveButton) els.saveButton.textContent = 'Uploading ' + Math.round((offset / file.size) * 100) + '%';
+        }
+    } catch (error) {
+        try {
+            await fetch(
+                basePath + '/' + encodeURIComponent(upload.imageKey)
+                + '/' + encodeURIComponent(upload.uploadId)
+                + '?contentType=' + encodeURIComponent(upload.contentType),
+                {
+                    method: 'DELETE',
+                    headers: {
+                        'x-csrf-token': csrfToken
+                    }
+                }
+            );
+        } catch {}
+        throw error;
+    }
+    return {
+        uploadId: upload.uploadId,
+        imageKey: upload.imageKey,
+        contentType: upload.contentType,
+        parts
+    };
 }
 
 async function apiSave() {
@@ -503,7 +590,13 @@ async function apiSave() {
     };
     const form = new FormData();
     form.set('heightChartJson', JSON.stringify(payload));
-    if (state.pendingFile) form.set('heightChartImage', state.pendingFile);
+    if (state.pendingFile) {
+        if (state.pendingFile.size > DIRECT_UPLOAD_FILE_MAX_BYTES) {
+            form.set('heightChartImageUpload', JSON.stringify(await uploadStagedHeightChartImage(state.pendingFile)));
+        } else {
+            form.set('heightChartImage', state.pendingFile);
+        }
+    }
 
     const response = await fetch('/api/characters/' + encodeURIComponent(character.id) + '/height-chart', {
         method: 'PUT',
@@ -529,6 +622,7 @@ els.heightFeet.addEventListener('input', () => {
     const feet = Number(els.heightFeet.value || 0);
     const inches = Number(els.heightInches.value || 0);
     state.heightMeters = Math.max(1, Math.round(feet * 12 + inches)) / INCHES_PER_METER;
+    state.editRevision += 1;
     if (els.heightMeters) els.heightMeters.value = state.heightMeters.toFixed(2);
     renderChart();
     renderCalibration();
@@ -538,6 +632,7 @@ els.heightInches.addEventListener('input', () => {
     const feet = Number(els.heightFeet.value || 0);
     const inches = Number(els.heightInches.value || 0);
     state.heightMeters = Math.max(1, Math.round(feet * 12 + inches)) / INCHES_PER_METER;
+    state.editRevision += 1;
     if (els.heightMeters) els.heightMeters.value = state.heightMeters.toFixed(2);
     renderChart();
     renderCalibration();
@@ -545,6 +640,7 @@ els.heightInches.addEventListener('input', () => {
 
 els.heightMeters.addEventListener('input', () => {
     state.heightMeters = Math.max(0.01, Number(els.heightMeters.value || 0));
+    state.editRevision += 1;
     const parts = imperialParts(state.heightMeters);
     els.heightFeet.value = String(parts.feet);
     els.heightInches.value = String(parts.inches);
@@ -570,6 +666,7 @@ els.removeImage.addEventListener('click', () => {
     state.previewSrc = '';
     state.pendingFile = null;
     state.objectUrl = '';
+    state.editRevision += 1;
     els.imageInput.value = '';
     renderAll();
 });
@@ -594,6 +691,7 @@ document.addEventListener('change', (event) => {
     if (!browser || !(target instanceof browser.HTMLInputElement)) return;
     if (target.matches('[data-cropped-feet]')) {
         state.croppedFeet = target.checked;
+        state.editRevision += 1;
         if (state.croppedFeet) {
             state.bottomPct = Math.max(state.bottomPct, VIRTUAL_FOOT_START_PCT);
         } else {
@@ -641,22 +739,36 @@ document.addEventListener('pointerdown', (event) => {
 });
 
 els.saveButton.addEventListener('click', async () => {
+    const savedRevision = state.editRevision;
+    const savedPendingFile = state.pendingFile;
+    const savedObjectUrl = state.objectUrl;
     try {
         setLoading(true);
         const result = await apiSave();
-        state.pendingFile = null;
-        if (result.heightChart && result.heightChart.image) {
-            state.image = result.heightChart.image;
-            state.previewSrc = result.heightChart.image.url;
-            if (state.objectUrl) {
-                URL.revokeObjectURL(state.objectUrl);
-                state.objectUrl = '';
+        if (state.pendingFile !== savedPendingFile || state.objectUrl !== savedObjectUrl) {
+            if (state.image === null && state.pendingFile === null) {
+                showToast('Height data saved. Your image removal is not saved yet. Save again to apply it.', true);
+            } else {
+                showToast('Height data saved. Your newer image selection is still pending.', true);
             }
-        } else {
-            state.image = null;
-            state.previewSrc = '';
+            renderAll();
+            return;
         }
-        showToast('Height data saved.', true);
+        if (savedPendingFile) {
+            state.pendingFile = null;
+            if (result.heightChart && result.heightChart.image) {
+                state.image = result.heightChart.image;
+                state.previewSrc = result.heightChart.image.url;
+                if (state.objectUrl) {
+                    URL.revokeObjectURL(state.objectUrl);
+                    state.objectUrl = '';
+                }
+            } else {
+                state.image = null;
+                state.previewSrc = '';
+            }
+        }
+        showToast(state.editRevision === savedRevision ? 'Height data saved.' : 'Height data saved. Your newer changes are still pending.', true);
         renderAll();
     } catch (error) {
         showToast(error.message || 'Could not save height data.', false);

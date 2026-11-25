@@ -5,6 +5,7 @@ import {createImageReviewQueueStatement} from '../../lib/admin/imageApprovals'
 import {type CurrentUser, getCurrentUser, toSqlTimestamp} from '../../lib/auth/session'
 import {
     GALLERY_CHUNK_SIZE,
+    GALLERY_IMAGE_MAX_BYTES,
     GALLERY_MAX_IMAGES_PER_ROW,
     GALLERY_MAX_MEDIA_PER_CHARACTER,
     shouldForceGalleryRowFullWidth,
@@ -24,7 +25,11 @@ import {
     responseSchema,
 } from '../../lib/http/responseSchemas'
 import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../../lib/media/cacheControl'
-import {type HeightChartJson, parseHeightChartJson as parseCharacterHeightChartJson} from '../../lib/media/heightChart'
+import {
+    HEIGHT_CHART_MAX_MULTIPART_REQUEST_BYTES,
+    type HeightChartJson,
+    parseHeightChartJson as parseCharacterHeightChartJson,
+} from '../../lib/media/heightChart'
 import {type GalleryImageMetadata, readGalleryImageMetadata} from '../../lib/media/imageMetadata'
 import {type CompletedGalleryJobSource, createGalleryImageUploadJob} from '../../lib/media/imageUploadJobs'
 import {tagPngWithSrgbFixedLength} from '../../lib/media/pngColorSpace'
@@ -75,6 +80,7 @@ const CharacterFolderImageResponseSchema = responseSchema({
     folderImageUrl: z.string(),
 })
 const HeightChartResponseSchema = responseSchema({heightChart: CharacterHeightChartSchema})
+const HeightChartUploadInitResponseSchema = responseSchema({upload: ChunkedUploadSchema})
 const ChunkedUploadInitResponseSchema = responseSchema({
     mediaId: z.string(),
     uploads: responseSchema({
@@ -326,7 +332,6 @@ const GALLERY_IMAGE_ALLOWED_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 
 const GALLERY_IMAGE_CACHE_CONTROL = REVOCABLE_MEDIA_CACHE_CONTROL
 const GALLERY_STAGING_CACHE_CONTROL = 'private, no-store'
 const GALLERY_STAGING_OBJECT_KEY_PREFIX = 'image-staging/'
-const GALLERY_IMAGE_MAX_BYTES = 200 * 1024 * 1024
 const GALLERY_IMAGE_MAX_PIXELS = 200_000_000
 const GALLERY_IMAGE_DIMENSION_PROBE_BYTES = 1024 * 1024
 const HEIGHT_CHART_JSON_MAX_LENGTH = 2048
@@ -1022,7 +1027,7 @@ characterRoutes.post('/:id/profile-image', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Character profile image upload is too large'}, 413)
     }
 
-    const owned = await requireOwnedCharacterMultipartForm(c, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES)
+    const owned = await requireOwnedCharacterMultipartForm(c, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES, 'Character profile image')
 
     if (owned instanceof Response) {
         return owned
@@ -1081,7 +1086,7 @@ characterRoutes.post('/:id/profile-image', async (c) => {
 
 /* istanbul ignore next -- route behavior is covered by integration tests; remaining branches are defensive DB cleanup paths. */
 characterRoutes.put('/:id/height-chart', async (c) => {
-    const owned = await requireOwnedCharacterMultipartForm(c)
+    const owned = await requireOwnedCharacterMultipartForm(c, HEIGHT_CHART_MAX_MULTIPART_REQUEST_BYTES, 'Height chart image')
 
     if (owned instanceof Response) {
         return owned
@@ -1101,21 +1106,18 @@ characterRoutes.put('/:id/height-chart', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: preliminaryHeightChart.error}, 400)
     }
 
-    const imageFileValue = form.get('heightChartImage')
-    const imageFile = imageFileValue instanceof File && imageFileValue.size > 0 ? imageFileValue : null
-    let uploadedImage: CompletedGalleryUpload | null = null
-    let uploadedObjectKey: string | null = null
+    const upload = await resolveHeightChartImageUpload(c, form, currentUser.id, character.id)
 
-    if (imageFile) {
-        const upload = await uploadHeightChartImage(c.env, currentUser.id, character.id, imageFile)
-
-        if ('error' in upload) {
-            return jsonResponse(c, ErrorResponseSchema, {error: upload.error}, upload.status)
-        }
-
-        uploadedImage = upload.image
-        uploadedObjectKey = upload.objectKey
+    if (upload instanceof Response) {
+        return upload
     }
+
+    if (upload && 'error' in upload) {
+        return jsonResponse(c, ErrorResponseSchema, {error: upload.error}, upload.status)
+    }
+
+    const uploadedImage = upload?.image ?? null
+    const uploadedObjectKey = upload?.objectKey ?? null
 
     const normalized = normalizeHeightChartJson(rawJson, existingHeightChart, uploadedImage)
 
@@ -1154,6 +1156,146 @@ characterRoutes.put('/:id/height-chart', async (c) => {
     return jsonResponse(c, HeightChartResponseSchema, {
         heightChart: toPublicHeightChart(c.env.MEDIA_PUBLIC_BASE_URL, currentUser.id, character.id, normalized.heightChart),
     })
+})
+
+characterRoutes.post('/:id/height-chart/chunked/init', async (c) => {
+    const owned = await requireOwnedCharacter(c)
+
+    if (owned instanceof Response) {
+        return owned
+    }
+
+    const {currentUser, character} = owned
+    const body = await readCharacterJsonBody<{contentType?: unknown}>(c)
+
+    if (body instanceof Response) {
+        return body
+    }
+
+    const contentType = normalizeGalleryImageContentType(body.contentType ?? 'image/png')
+
+    if ('error' in contentType) {
+        return jsonResponse(c, ErrorResponseSchema, {error: contentType.error}, 400)
+    }
+
+    const referenceId = crypto.randomUUID()
+    const imageKey = crypto.randomUUID()
+    const objectKey = galleryUploadObjectKey(
+        characterHeightChartImageObjectKey(currentUser.id, character.id, imageKey, contentType.contentType),
+        true,
+    )
+
+    try {
+        const upload = await c.env.MEDIA_BUCKET.createMultipartUpload(objectKey, {
+            httpMetadata: {
+                cacheControl: GALLERY_STAGING_CACHE_CONTROL,
+                contentType: contentType.contentType,
+            },
+        })
+
+        return jsonResponse(c, HeightChartUploadInitResponseSchema, {
+            upload: {
+                uploadId: upload.uploadId,
+                imageKey,
+                contentType: contentType.contentType,
+                chunkSize: GALLERY_CHUNK_SIZE,
+            },
+        })
+    } catch (error) {
+        console.error('Height chart upload init failed', {
+            referenceId,
+            userId: currentUser.id,
+            characterId: character.id,
+            error: describeError(error),
+        })
+
+        return jsonResponse(
+            c,
+            ErrorResponseSchema,
+            {error: `Upload could not be initialized. Try again, or contact support with reference ${referenceId}.`},
+            503,
+        )
+    }
+})
+
+characterRoutes.put('/:id/height-chart/chunked/:imageKey/:uploadId/:partNumber', async (c) => {
+    const owned = await requireOwnedCharacter(c)
+
+    if (owned instanceof Response) {
+        return owned
+    }
+
+    const {currentUser, character} = owned
+    const imageKey = normalizeUploadIdentifier(c.req.param('imageKey'), 'Image key')
+    const contentType = normalizeGalleryImageContentType(c.req.query('contentType'))
+    const uploadId = c.req.param('uploadId')
+    const partNumber = Number(c.req.param('partNumber'))
+
+    if ('error' in imageKey) {
+        return jsonResponse(c, ErrorResponseSchema, {error: imageKey.error}, 400)
+    }
+
+    if ('error' in contentType) {
+        return jsonResponse(c, ErrorResponseSchema, {error: contentType.error}, 400)
+    }
+
+    if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > 10000) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Part number must be between 1 and 10000'}, 400)
+    }
+
+    if (!c.req.raw.body) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Chunk body is required'}, 400)
+    }
+
+    const contentLengthHeader = c.req.raw.headers.get('content-length')
+    const contentLength = contentLengthHeader === null ? Number.NaN : Number(contentLengthHeader)
+
+    if (!Number.isSafeInteger(contentLength) || contentLength < 1) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Chunk body must have a known length'}, 400)
+    }
+
+    if (contentLength > GALLERY_IMAGE_MAX_BYTES) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Chunk is larger than the maximum upload size'}, 413)
+    }
+
+    const objectKey = galleryUploadObjectKey(
+        characterHeightChartImageObjectKey(currentUser.id, character.id, imageKey.value, contentType.contentType),
+        true,
+    )
+    const upload = c.env.MEDIA_BUCKET.resumeMultipartUpload(objectKey, uploadId)
+    const uploadedPart = await upload.uploadPart(partNumber, c.req.raw.body)
+
+    return jsonResponse(c, R2UploadedPartSchema, uploadedPart)
+})
+
+characterRoutes.delete('/:id/height-chart/chunked/:imageKey/:uploadId', async (c) => {
+    const owned = await requireOwnedCharacter(c)
+
+    if (owned instanceof Response) {
+        return owned
+    }
+
+    const {currentUser, character} = owned
+    const imageKey = normalizeUploadIdentifier(c.req.param('imageKey'), 'Image key')
+    const contentType = normalizeGalleryImageContentType(c.req.query('contentType'))
+    const uploadId = c.req.param('uploadId')
+
+    if ('error' in imageKey) {
+        return jsonResponse(c, ErrorResponseSchema, {error: imageKey.error}, 400)
+    }
+
+    if ('error' in contentType) {
+        return jsonResponse(c, ErrorResponseSchema, {error: contentType.error}, 400)
+    }
+
+    const objectKey = galleryUploadObjectKey(
+        characterHeightChartImageObjectKey(currentUser.id, character.id, imageKey.value, contentType.contentType),
+        true,
+    )
+    const upload = c.env.MEDIA_BUCKET.resumeMultipartUpload(objectKey, uploadId)
+    await upload.abort()
+
+    return c.body(null, 204)
 })
 
 /* istanbul ignore next -- route behavior is covered by integration tests; remaining branches are defensive upload-init failure paths. */
@@ -1570,6 +1712,169 @@ async function uploadHeightChartImage(
             byteSize: converted.bytes.byteLength,
         },
         objectKey,
+    }
+}
+
+async function resolveHeightChartImageUpload(
+    c: CharacterRouteContext,
+    form: FormData,
+    userId: string,
+    characterId: string,
+): Promise<{image: CompletedGalleryUpload; objectKey: string} | {error: string; status: 400} | null | Response> {
+    const imageFileValue = form.get('heightChartImage')
+    const imageFile = imageFileValue instanceof File && imageFileValue.size > 0 ? imageFileValue : null
+    const stagedUpload = parseHeightChartStagedUpload(c, form.get('heightChartImageUpload'))
+
+    if (stagedUpload instanceof Response) {
+        return stagedUpload
+    }
+
+    if (stagedUpload) {
+        if (imageFile) {
+            return jsonResponse(c, ErrorResponseSchema, {error: 'Provide a height chart image or a staged upload, not both'}, 400)
+        }
+
+        return completeStagedHeightChartImage(c.env, userId, characterId, stagedUpload)
+    }
+
+    if (imageFile) {
+        return uploadHeightChartImage(c.env, userId, characterId, imageFile)
+    }
+
+    return null
+}
+
+function parseHeightChartStagedUpload(c: CharacterRouteContext, value: File | string | null): CompletedChunkedUpload | null | Response {
+    if (value === null) {
+        return null
+    }
+
+    if (typeof value !== 'string') {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Height chart image upload is invalid'}, 400)
+    }
+
+    let parsed: unknown
+
+    try {
+        parsed = JSON.parse(value)
+    } catch {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Height chart image upload is invalid'}, 400)
+    }
+
+    const upload = parseCompletedChunkedUpload(parsed)
+
+    if (upload === null) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Height chart image upload is invalid'}, 400)
+    }
+
+    if ('error' in upload) {
+        return jsonResponse(c, ErrorResponseSchema, {error: upload.error}, 400)
+    }
+
+    return upload
+}
+
+async function completeStagedHeightChartImage(
+    env: Bindings,
+    userId: string,
+    characterId: string,
+    upload: CompletedChunkedUpload,
+): Promise<{image: CompletedGalleryUpload; objectKey: string} | {error: string; status: 400}> {
+    const stagingKey = galleryUploadObjectKey(
+        characterHeightChartImageObjectKey(userId, characterId, upload.imageKey, upload.contentType),
+        true,
+    )
+
+    // Completing consumes the multipart upload id. If saving fails after this point, the client
+    // must start a new upload and send every part again. The chart keeps its previous image.
+    let completedSize: number
+
+    try {
+        const completed = await env.MEDIA_BUCKET.resumeMultipartUpload(stagingKey, upload.uploadId).complete(upload.parts)
+        completedSize = completed.size
+    } catch (error) {
+        console.error('Height chart staged upload completion failed', {
+            userId,
+            characterId,
+            imageKey: upload.imageKey,
+            error: describeError(error),
+        })
+
+        return {error: 'Height chart image upload could not be completed', status: 400}
+    }
+
+    try {
+        if (completedSize <= 0) {
+            return {error: 'Height chart image is empty', status: 400}
+        }
+
+        if (completedSize > GALLERY_IMAGE_MAX_BYTES) {
+            return {error: 'Height chart image must be 200 MB or smaller', status: 400}
+        }
+
+        const metadata = await readStoredGalleryImageMetadata(env.MEDIA_BUCKET, stagingKey, upload.contentType)
+
+        if (!metadata) {
+            return {error: 'Height chart image dimensions could not be verified', status: 400}
+        }
+
+        if (metadata.width * metadata.height > GALLERY_IMAGE_MAX_PIXELS) {
+            return {error: `Height chart image must be ${GALLERY_IMAGE_MAX_PIXELS.toLocaleString('en-US')} pixels or smaller`, status: 400}
+        }
+
+        const imageKey = upload.imageKey
+        let converted: GeneratedGalleryPreview
+
+        try {
+            converted = await generateHeightChartImageWithContainer(
+                env,
+                async () => {
+                    const staged = await env.MEDIA_BUCKET.get(stagingKey)
+
+                    if (!staged?.body) {
+                        throw new PreviewValidationError('Staged height chart image is missing')
+                    }
+
+                    return staged.body
+                },
+                {
+                    width: metadata.width,
+                    height: metadata.height,
+                    displayWidth: metadata.displayWidth,
+                    displayHeight: metadata.displayHeight,
+                },
+                imageKey,
+            )
+        } catch (error) {
+            if (error instanceof PreviewValidationError) {
+                return {error: 'Height chart image could not be processed', status: 400}
+            }
+
+            throw error
+        }
+
+        const objectKey = characterHeightChartImageObjectKey(userId, characterId, imageKey, converted.contentType)
+        await env.MEDIA_BUCKET.put(objectKey, converted.bytes, {
+            httpMetadata: {
+                cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
+                contentType: converted.contentType,
+            },
+        })
+
+        return {
+            image: {
+                imageKey,
+                contentType: converted.contentType,
+                width: converted.width,
+                height: converted.height,
+                displayWidth: converted.width,
+                displayHeight: converted.height,
+                byteSize: converted.bytes.byteLength,
+            },
+            objectKey,
+        }
+    } finally {
+        await deleteR2Objects(env.MEDIA_BUCKET, [stagingKey])
     }
 }
 
@@ -2192,7 +2497,8 @@ async function requireOwnedCharacter(c: CharacterRouteContext): Promise<
 /* istanbul ignore next -- exercised through route tests; remaining branch gaps are defensive content-type defaults. */
 async function requireOwnedCharacterMultipartForm(
     c: CharacterRouteContext,
-    maxBodyBytes?: number,
+    maxBodyBytes: number,
+    uploadLabel: string,
 ): Promise<
     | {
           currentUser: CurrentUser
@@ -2213,10 +2519,10 @@ async function requireOwnedCharacterMultipartForm(
         return jsonResponse(c, ErrorResponseSchema, {error: 'Multipart form data is required'}, 400)
     }
 
-    const form = maxBodyBytes ? await readFormDataUpTo(c.req.raw, maxBodyBytes) : await c.req.formData()
+    const form = await readFormDataUpTo(c.req.raw, maxBodyBytes)
 
     if (!form) {
-        return jsonResponse(c, ErrorResponseSchema, {error: 'Character profile image upload is too large'}, 413)
+        return jsonResponse(c, ErrorResponseSchema, {error: `${uploadLabel} upload is too large`}, 413)
     }
 
     return {
