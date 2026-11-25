@@ -740,10 +740,11 @@ document.addEventListener('pointerdown', (event) => {
 
 els.saveButton.addEventListener('click', async () => {
     const savedRevision = state.editRevision;
+    const savedObjectUrl = state.objectUrl;
     try {
         setLoading(true);
         const result = await apiSave();
-        if (state.editRevision !== savedRevision) {
+        if (state.editRevision !== savedRevision || state.objectUrl !== savedObjectUrl) {
             showToast('Height data saved. Your newer changes are still pending.', true);
             return;
         }
