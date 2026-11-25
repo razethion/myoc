@@ -746,20 +746,27 @@ els.saveButton.addEventListener('click', async () => {
         setLoading(true);
         const result = await apiSave();
         if (state.pendingFile !== savedPendingFile || state.objectUrl !== savedObjectUrl) {
-            showToast('Height data saved. Your newer image selection is still pending.', true);
+            if (state.image === null && state.pendingFile === null) {
+                showToast('Height data saved. Your image removal is not saved yet. Save again to apply it.', true);
+            } else {
+                showToast('Height data saved. Your newer image selection is still pending.', true);
+            }
+            renderAll();
             return;
         }
-        state.pendingFile = null;
-        if (result.heightChart && result.heightChart.image) {
-            state.image = result.heightChart.image;
-            state.previewSrc = result.heightChart.image.url;
-            if (state.objectUrl) {
-                URL.revokeObjectURL(state.objectUrl);
-                state.objectUrl = '';
+        if (savedPendingFile) {
+            state.pendingFile = null;
+            if (result.heightChart && result.heightChart.image) {
+                state.image = result.heightChart.image;
+                state.previewSrc = result.heightChart.image.url;
+                if (state.objectUrl) {
+                    URL.revokeObjectURL(state.objectUrl);
+                    state.objectUrl = '';
+                }
+            } else {
+                state.image = null;
+                state.previewSrc = '';
             }
-        } else {
-            state.image = null;
-            state.previewSrc = '';
         }
         showToast(state.editRevision === savedRevision ? 'Height data saved.' : 'Height data saved. Your newer changes are still pending.', true);
         renderAll();

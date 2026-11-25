@@ -1247,8 +1247,15 @@ characterRoutes.put('/:id/height-chart/chunked/:imageKey/:uploadId/:partNumber',
         return jsonResponse(c, ErrorResponseSchema, {error: 'Chunk body is required'}, 400)
     }
 
-    if (!c.req.raw.headers.get('content-length')) {
+    const contentLengthHeader = c.req.raw.headers.get('content-length')
+    const contentLength = contentLengthHeader === null ? Number.NaN : Number(contentLengthHeader)
+
+    if (!Number.isSafeInteger(contentLength) || contentLength < 1) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Chunk body must have a known length'}, 400)
+    }
+
+    if (contentLength > GALLERY_IMAGE_MAX_BYTES) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Chunk is larger than the maximum upload size'}, 413)
     }
 
     const objectKey = galleryUploadObjectKey(

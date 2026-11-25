@@ -1,7 +1,7 @@
 import {env} from 'cloudflare:workers'
 import {describe, expect, it, vi} from 'vitest'
 import {createCsrfToken} from '../../lib/auth/session'
-import {GALLERY_CHUNK_SIZE} from '../../lib/gallery'
+import {GALLERY_CHUNK_SIZE, GALLERY_IMAGE_MAX_BYTES} from '../../lib/gallery'
 import {STANDARD_JSON_REQUEST_MAX_BYTES} from '../../lib/http/requestBody'
 import {PROFILE_IMAGE_MAX_JSON_REQUEST_BYTES, PROFILE_IMAGE_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/profileImage'
 import {thumbnailOriginalObjectKey} from '../../lib/media/thumbnailSources'
@@ -4106,6 +4106,64 @@ describe('POST /characters/:id/height-chart/chunked', () => {
         expect(await response.json()).toEqual({error: 'Chunk body must have a known length'})
     })
 
+    it('rejects a height chart part with an invalid content length', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        for (const contentLength of ['0', 'not-a-number']) {
+            const response = await putHeightChartUploadPart(
+                character.id,
+                'image-key',
+                'upload-id',
+                1,
+                new ReadableStream({
+                    start(controller) {
+                        controller.enqueue(new TextEncoder().encode('chunk'))
+                        controller.close()
+                    },
+                }),
+                'image/png',
+                db,
+                {sessionToken, csrfToken, contentLength},
+            )
+
+            expect(response.status).toBe(400)
+            expect(await response.json()).toEqual({error: 'Chunk body must have a known length'})
+        }
+    })
+
+    it('rejects a height chart part larger than the maximum upload size', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const response = await putHeightChartUploadPart(
+            character.id,
+            'image-key',
+            'upload-id',
+            1,
+            new ReadableStream({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode('chunk'))
+                    controller.close()
+                },
+            }),
+            'image/png',
+            db,
+            {mediaBucket, sessionToken, csrfToken, contentLength: String(GALLERY_IMAGE_MAX_BYTES + 1)},
+        )
+
+        expect(response.status).toBe(413)
+        expect(await response.json()).toEqual({error: 'Chunk is larger than the maximum upload size'})
+        expect(mediaBucket.resumeMultipartUpload).not.toHaveBeenCalled()
+    })
+
     it('rejects an invalid height chart part number', async () => {
         const sessionToken = 'session-token'
         const character = createCharacterRecord()
@@ -4333,6 +4391,77 @@ describe('PUT /characters/:id/height-chart staged upload', () => {
             db,
         )
         expect(JSON.parse(stored?.height_chart_json ?? '').image.key).toBe(init.upload.imageKey)
+    })
+
+    it('deletes the staged height chart image when the D1 update fails', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        const character = createCharacterRecord()
+        const convertedBytes = createAvifBytes(800, 1600)
+        const previewContainer = createMockPreviewContainer(new Response(convertedBytes, {headers: {'content-type': 'image/avif'}}))
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await postHeightChartUploadInit(character.id, {contentType: 'image/png'}, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+        const init = (await initResponse.json()) as {upload: {uploadId: string; imageKey: string}}
+
+        const partResponse = await putHeightChartUploadPart(
+            character.id,
+            init.upload.imageKey,
+            init.upload.uploadId,
+            1,
+            createPngFile(1600, 3200),
+            'image/png',
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+        const uploadedPart = (await partResponse.json()) as {partNumber: number; etag: string}
+
+        try {
+            const response = await withFailingTrigger(
+                {
+                    name: 'height_chart_update',
+                    operation: 'UPDATE',
+                    table: 'characters',
+                    columns: ['height_chart_json'],
+                },
+                () =>
+                    putHeightChart(
+                        character.id,
+                        stagedUploadForm({
+                            uploadId: init.upload.uploadId,
+                            imageKey: init.upload.imageKey,
+                            contentType: 'image/png',
+                            parts: [uploadedPart],
+                        }),
+                        db,
+                        {mediaBucket, previewContainer: previewContainer.namespace, sessionToken, csrfToken},
+                    ),
+                db,
+            )
+
+            expect(response.status).toBe(500)
+            expect(mediaBucket.delete).toHaveBeenCalledWith(
+                `characters/current-user/character-id/height-chart/${init.upload.imageKey}.avif`,
+            )
+            expect(mediaBucket.delete).toHaveBeenCalledWith(
+                `image-staging/characters/current-user/character-id/height-chart/${init.upload.imageKey}.png`,
+            )
+            const stored = await queryOne<{height_chart_json: string}>(
+                'SELECT height_chart_json FROM characters WHERE id = ?',
+                [character.id],
+                db,
+            )
+            expect(stored?.height_chart_json).toBe('')
+        } finally {
+            error.mockRestore()
+        }
     })
 
     it('rejects a staged height chart upload when completion fails', async () => {
