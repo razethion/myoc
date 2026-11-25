@@ -1,4 +1,6 @@
 import type {CurrentUser} from '../../lib/auth/session'
+import {GALLERY_CHUNK_SIZE} from '../../lib/gallery'
+import {HEIGHT_CHART_MAX_MULTIPART_REQUEST_BYTES} from '../../lib/media/heightChart'
 import {Navbar} from '../components/Navbar'
 import {BaseLayout} from '../layouts/BaseLayout'
 
@@ -57,6 +59,10 @@ const VIRTUAL_FOOT_START_PCT = 118;
 const CHART_FRAME_PAD = 18;
 const MODEL_TOP_PADDING = 25;
 const ALPHA_OPAQUE_THRESHOLD = 24;
+// Files at or above this size upload through the chunked endpoints. The margin keeps
+// multipart framing and the JSON field under the route's request-body cap.
+const DIRECT_UPLOAD_FILE_MAX_BYTES = ${safeJson(HEIGHT_CHART_MAX_MULTIPART_REQUEST_BYTES - 131072)};
+const UPLOAD_CHUNK_SIZE = ${safeJson(GALLERY_CHUNK_SIZE)};
 
 const initialChart = character.heightChart || null;
 const state = {
@@ -485,6 +491,78 @@ async function loadImageFile(file) {
     state.nameTagXPct = 50;
 }
 
+async function readApiError(response, fallback) {
+    try {
+        const body = await response.json();
+        return body.error || fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+async function uploadStagedHeightChartImage(file) {
+    const contentType = file.type || 'image/png';
+    const basePath = '/api/characters/' + encodeURIComponent(character.id) + '/height-chart/chunked';
+    const initResponse = await fetch(basePath + '/init', {
+        method: 'POST',
+        headers: {
+            'content-type': 'application/json',
+            'x-csrf-token': csrfToken
+        },
+        body: JSON.stringify({contentType})
+    });
+    if (!initResponse.ok) throw new Error(await readApiError(initResponse, 'Could not start the image upload.'));
+    const upload = (await initResponse.json()).upload;
+    const chunkSize = upload.chunkSize || UPLOAD_CHUNK_SIZE;
+    const parts = [];
+    try {
+        let offset = 0;
+        let partNumber = 1;
+        while (offset < file.size) {
+            const chunk = file.slice(offset, Math.min(offset + chunkSize, file.size), contentType);
+            const partResponse = await fetch(
+                basePath + '/' + encodeURIComponent(upload.imageKey)
+                + '/' + encodeURIComponent(upload.uploadId)
+                + '/' + partNumber
+                + '?contentType=' + encodeURIComponent(upload.contentType),
+                {
+                    method: 'PUT',
+                    headers: {
+                        'x-csrf-token': csrfToken
+                    },
+                    body: chunk
+                }
+            );
+            if (!partResponse.ok) throw new Error(await readApiError(partResponse, 'Could not upload image data.'));
+            parts.push(await partResponse.json());
+            offset += chunk.size;
+            partNumber += 1;
+            if (els.saveButton) els.saveButton.textContent = 'Uploading ' + Math.round((offset / file.size) * 100) + '%';
+        }
+    } catch (error) {
+        try {
+            await fetch(
+                basePath + '/' + encodeURIComponent(upload.imageKey)
+                + '/' + encodeURIComponent(upload.uploadId)
+                + '?contentType=' + encodeURIComponent(upload.contentType),
+                {
+                    method: 'DELETE',
+                    headers: {
+                        'x-csrf-token': csrfToken
+                    }
+                }
+            );
+        } catch {}
+        throw error;
+    }
+    return {
+        uploadId: upload.uploadId,
+        imageKey: upload.imageKey,
+        contentType: upload.contentType,
+        parts
+    };
+}
+
 async function apiSave() {
     const payload = {
         version: 1,
@@ -503,7 +581,13 @@ async function apiSave() {
     };
     const form = new FormData();
     form.set('heightChartJson', JSON.stringify(payload));
-    if (state.pendingFile) form.set('heightChartImage', state.pendingFile);
+    if (state.pendingFile) {
+        if (state.pendingFile.size > DIRECT_UPLOAD_FILE_MAX_BYTES) {
+            form.set('heightChartImageUpload', JSON.stringify(await uploadStagedHeightChartImage(state.pendingFile)));
+        } else {
+            form.set('heightChartImage', state.pendingFile);
+        }
+    }
 
     const response = await fetch('/api/characters/' + encodeURIComponent(character.id) + '/height-chart', {
         method: 'PUT',

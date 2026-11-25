@@ -809,12 +809,25 @@ async function putHeightChartUploadPart(
     db: D1Database,
     options: CharacterRequestOptions = {},
 ): Promise<Response> {
+    const bodyLength =
+        body instanceof Blob
+            ? body.size
+            : typeof body === 'string'
+              ? new TextEncoder().encode(body).byteLength
+              : body instanceof Uint8Array
+                ? body.byteLength
+                : null
+
     return apiRoutes.request(
         `https://example.com/characters/${characterId}/height-chart/chunked/${imageKey}/${uploadId}/${partNumber}?contentType=${encodeURIComponent(contentType)}`,
         {
             method: 'PUT',
             body,
-            headers: createRequestHeaders(undefined, options, false),
+            headers: createRequestHeaders(
+                undefined,
+                bodyLength === null ? options : {...options, contentLength: options.contentLength ?? String(bodyLength)},
+                false,
+            ),
         },
         requestEnv(db, options.mediaBucket, options.previewContainer),
         testExecutionContext,
@@ -4063,6 +4076,34 @@ describe('POST /characters/:id/height-chart/chunked', () => {
 
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({partNumber: 1, etag: expect.any(String)})
+        const partUpload = vi.mocked(mediaBucket.resumeMultipartUpload).mock.results[0]?.value
+        expect(partUpload?.uploadPart).toHaveBeenCalledWith(1, expect.any(ReadableStream))
+    })
+
+    it('rejects a height chart part with an unknown content length', async () => {
+        const sessionToken = 'session-token'
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+
+        const response = await putHeightChartUploadPart(
+            character.id,
+            'image-key',
+            'upload-id',
+            1,
+            new ReadableStream({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode('chunk'))
+                    controller.close()
+                },
+            }),
+            'image/png',
+            db,
+            {sessionToken, csrfToken: await createCsrfToken(sessionToken)},
+        )
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({error: 'Chunk body must have a known length'})
     })
 
     it('rejects an invalid height chart part number', async () => {
@@ -4558,6 +4599,103 @@ describe('PUT /characters/:id/height-chart staged upload', () => {
 
         expect(response.status).toBe(500)
         expect(mediaBucket.put).not.toHaveBeenCalled()
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            `image-staging/characters/current-user/character-id/height-chart/${init.upload.imageKey}.png`,
+        )
+        errorSpy.mockRestore()
+    })
+
+    it('returns 500 and clears staging when publishing the final image fails', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const previewContainer = createMockPreviewContainer(
+            new Response(createAvifBytes(800, 1600), {headers: {'content-type': 'image/avif'}}),
+        )
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await postHeightChartUploadInit(character.id, {contentType: 'image/png'}, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+        const init = (await initResponse.json()) as {upload: {uploadId: string; imageKey: string}}
+        const partResponse = await putHeightChartUploadPart(
+            character.id,
+            init.upload.imageKey,
+            init.upload.uploadId,
+            1,
+            createPngFile(1600, 3200),
+            'image/png',
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+        const uploadedPart = (await partResponse.json()) as {partNumber: number; etag: string}
+        vi.spyOn(mediaBucket, 'put').mockRejectedValueOnce(new Error('r2 write failed'))
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+        const response = await putHeightChart(
+            character.id,
+            stagedUploadForm({
+                uploadId: init.upload.uploadId,
+                imageKey: init.upload.imageKey,
+                contentType: 'image/png',
+                parts: [uploadedPart],
+            }),
+            db,
+            {mediaBucket, previewContainer: previewContainer.namespace, sessionToken, csrfToken},
+        )
+
+        expect(response.status).toBe(500)
+        expect(mediaBucket.delete).toHaveBeenCalledWith(
+            `image-staging/characters/current-user/character-id/height-chart/${init.upload.imageKey}.png`,
+        )
+        errorSpy.mockRestore()
+    })
+
+    it('returns 500 and clears staging when the staged metadata read fails', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const csrfToken = await createCsrfToken(sessionToken)
+
+        const initResponse = await postHeightChartUploadInit(character.id, {contentType: 'image/png'}, db, {
+            mediaBucket,
+            sessionToken,
+            csrfToken,
+        })
+        const init = (await initResponse.json()) as {upload: {uploadId: string; imageKey: string}}
+        const partResponse = await putHeightChartUploadPart(
+            character.id,
+            init.upload.imageKey,
+            init.upload.uploadId,
+            1,
+            createPngFile(1600, 3200),
+            'image/png',
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+        const uploadedPart = (await partResponse.json()) as {partNumber: number; etag: string}
+        vi.spyOn(mediaBucket, 'get').mockRejectedValueOnce(new Error('r2 read failed'))
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+        const response = await putHeightChart(
+            character.id,
+            stagedUploadForm({
+                uploadId: init.upload.uploadId,
+                imageKey: init.upload.imageKey,
+                contentType: 'image/png',
+                parts: [uploadedPart],
+            }),
+            db,
+            {mediaBucket, sessionToken, csrfToken},
+        )
+
+        expect(response.status).toBe(500)
         expect(mediaBucket.delete).toHaveBeenCalledWith(
             `image-staging/characters/current-user/character-id/height-chart/${init.upload.imageKey}.png`,
         )

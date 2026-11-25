@@ -1,3 +1,5 @@
+export const HEIGHT_CHART_MAX_MULTIPART_REQUEST_BYTES = 25 * 1024 * 1024
+
 export type HeightChartJson = {
     version: 1
     height: {

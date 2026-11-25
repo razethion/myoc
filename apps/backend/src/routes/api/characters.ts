@@ -24,7 +24,11 @@ import {
     responseSchema,
 } from '../../lib/http/responseSchemas'
 import {REVOCABLE_MEDIA_CACHE_CONTROL} from '../../lib/media/cacheControl'
-import {type HeightChartJson, parseHeightChartJson as parseCharacterHeightChartJson} from '../../lib/media/heightChart'
+import {
+    HEIGHT_CHART_MAX_MULTIPART_REQUEST_BYTES,
+    type HeightChartJson,
+    parseHeightChartJson as parseCharacterHeightChartJson,
+} from '../../lib/media/heightChart'
 import {type GalleryImageMetadata, readGalleryImageMetadata} from '../../lib/media/imageMetadata'
 import {type CompletedGalleryJobSource, createGalleryImageUploadJob} from '../../lib/media/imageUploadJobs'
 import {tagPngWithSrgbFixedLength} from '../../lib/media/pngColorSpace'
@@ -331,7 +335,6 @@ const GALLERY_IMAGE_MAX_BYTES = 200 * 1024 * 1024
 const GALLERY_IMAGE_MAX_PIXELS = 200_000_000
 const GALLERY_IMAGE_DIMENSION_PROBE_BYTES = 1024 * 1024
 const HEIGHT_CHART_JSON_MAX_LENGTH = 2048
-const HEIGHT_CHART_MAX_MULTIPART_REQUEST_BYTES = 25 * 1024 * 1024
 const HEIGHT_CHART_MIN_METERS = 0.01
 const HEIGHT_CHART_MAX_METERS = 100
 const HEIGHT_CHART_MAX_FOOT_PERCENT = 180
@@ -1244,6 +1247,10 @@ characterRoutes.put('/:id/height-chart/chunked/:imageKey/:uploadId/:partNumber',
         return jsonResponse(c, ErrorResponseSchema, {error: 'Chunk body is required'}, 400)
     }
 
+    if (!c.req.raw.headers.get('content-length')) {
+        return jsonResponse(c, ErrorResponseSchema, {error: 'Chunk body must have a known length'}, 400)
+    }
+
     const objectKey = galleryUploadObjectKey(
         characterHeightChartImageObjectKey(currentUser.id, character.id, imageKey.value, contentType.contentType),
         true,
@@ -1771,6 +1778,8 @@ async function completeStagedHeightChartImage(
         true,
     )
 
+    // Completing consumes the multipart upload id. If saving fails after this point, the client
+    // must start a new upload and send every part again. The chart keeps its previous image.
     let completedSize: number
 
     try {
@@ -1787,85 +1796,78 @@ async function completeStagedHeightChartImage(
         return {error: 'Height chart image upload could not be completed', status: 400}
     }
 
-    if (completedSize <= 0) {
-        await deleteR2Objects(env.MEDIA_BUCKET, [stagingKey])
-
-        return {error: 'Height chart image is empty', status: 400}
-    }
-
-    if (completedSize > GALLERY_IMAGE_MAX_BYTES) {
-        await deleteR2Objects(env.MEDIA_BUCKET, [stagingKey])
-
-        return {error: 'Height chart image must be 200 MB or smaller', status: 400}
-    }
-
-    const metadata = await readStoredGalleryImageMetadata(env.MEDIA_BUCKET, stagingKey, upload.contentType)
-
-    if (!metadata) {
-        await deleteR2Objects(env.MEDIA_BUCKET, [stagingKey])
-
-        return {error: 'Height chart image dimensions could not be verified', status: 400}
-    }
-
-    if (metadata.width * metadata.height > GALLERY_IMAGE_MAX_PIXELS) {
-        await deleteR2Objects(env.MEDIA_BUCKET, [stagingKey])
-
-        return {error: `Height chart image must be ${GALLERY_IMAGE_MAX_PIXELS.toLocaleString('en-US')} pixels or smaller`, status: 400}
-    }
-
-    const imageKey = upload.imageKey
-    let converted: GeneratedGalleryPreview
-
     try {
-        converted = await generateHeightChartImageWithContainer(
-            env,
-            async () => {
-                const staged = await env.MEDIA_BUCKET.get(stagingKey)
-
-                if (!staged?.body) {
-                    throw new PreviewValidationError('Staged height chart image is missing')
-                }
-
-                return staged.body
-            },
-            {
-                width: metadata.width,
-                height: metadata.height,
-                displayWidth: metadata.displayWidth,
-                displayHeight: metadata.displayHeight,
-            },
-            imageKey,
-        )
-    } catch (error) {
-        await deleteR2Objects(env.MEDIA_BUCKET, [stagingKey])
-
-        if (error instanceof PreviewValidationError) {
-            return {error: 'Height chart image could not be processed', status: 400}
+        if (completedSize <= 0) {
+            return {error: 'Height chart image is empty', status: 400}
         }
 
-        throw error
-    }
+        if (completedSize > GALLERY_IMAGE_MAX_BYTES) {
+            return {error: 'Height chart image must be 200 MB or smaller', status: 400}
+        }
 
-    const objectKey = characterHeightChartImageObjectKey(userId, characterId, imageKey, converted.contentType)
-    await env.MEDIA_BUCKET.put(objectKey, converted.bytes, {
-        httpMetadata: {
-            cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
-            contentType: converted.contentType,
-        },
-    })
-    await deleteR2Objects(env.MEDIA_BUCKET, [stagingKey])
+        const metadata = await readStoredGalleryImageMetadata(env.MEDIA_BUCKET, stagingKey, upload.contentType)
 
-    return {
-        image: {
-            imageKey,
-            contentType: converted.contentType,
-            width: converted.width,
-            height: converted.height,
-            displayWidth: converted.width,
-            displayHeight: converted.height,
-            byteSize: converted.bytes.byteLength,
-        },
-        objectKey,
+        if (!metadata) {
+            return {error: 'Height chart image dimensions could not be verified', status: 400}
+        }
+
+        if (metadata.width * metadata.height > GALLERY_IMAGE_MAX_PIXELS) {
+            return {error: `Height chart image must be ${GALLERY_IMAGE_MAX_PIXELS.toLocaleString('en-US')} pixels or smaller`, status: 400}
+        }
+
+        const imageKey = upload.imageKey
+        let converted: GeneratedGalleryPreview
+
+        try {
+            converted = await generateHeightChartImageWithContainer(
+                env,
+                async () => {
+                    const staged = await env.MEDIA_BUCKET.get(stagingKey)
+
+                    if (!staged?.body) {
+                        throw new PreviewValidationError('Staged height chart image is missing')
+                    }
+
+                    return staged.body
+                },
+                {
+                    width: metadata.width,
+                    height: metadata.height,
+                    displayWidth: metadata.displayWidth,
+                    displayHeight: metadata.displayHeight,
+                },
+                imageKey,
+            )
+        } catch (error) {
+            if (error instanceof PreviewValidationError) {
+                return {error: 'Height chart image could not be processed', status: 400}
+            }
+
+            throw error
+        }
+
+        const objectKey = characterHeightChartImageObjectKey(userId, characterId, imageKey, converted.contentType)
+        await env.MEDIA_BUCKET.put(objectKey, converted.bytes, {
+            httpMetadata: {
+                cacheControl: GALLERY_IMAGE_CACHE_CONTROL,
+                contentType: converted.contentType,
+            },
+        })
+
+        return {
+            image: {
+                imageKey,
+                contentType: converted.contentType,
+                width: converted.width,
+                height: converted.height,
+                displayWidth: converted.width,
+                displayHeight: converted.height,
+                byteSize: converted.bytes.byteLength,
+            },
+            objectKey,
+        }
+    } finally {
+        await deleteR2Objects(env.MEDIA_BUCKET, [stagingKey])
     }
 }
 
