@@ -1087,7 +1087,7 @@ function createLightboxViewer(src, width, height, sourceUrl = src, requestId = g
     viewerElement.dataset.imageSrc = src;
     viewerElement.dataset.imageWidth = String(width);
     viewerElement.dataset.imageHeight = String(height);
-    prepareLightboxColorSampler(src);
+    prepareLightboxColorSampler(src, shouldUseHtmlOverlay);
 }
 
 function isGifImageUrl(src) {
@@ -1224,7 +1224,6 @@ function setLightboxColorPicking(isPicking) {
     button?.classList.toggle('btn-active', galleryLightboxColorPicking);
     button?.setAttribute('aria-pressed', galleryLightboxColorPicking ? 'true' : 'false');
     viewerElement?.classList.toggle('is-color-picking', galleryLightboxColorPicking);
-    setLightboxGifOverlayVisible(!galleryLightboxColorPicking);
 
     if (galleryLightboxViewer) {
         galleryLightboxViewer.setMouseNavEnabled(!galleryLightboxColorPicking);
@@ -1240,17 +1239,19 @@ function resetLightboxColorState() {
     galleryColorSampleImage = null;
     galleryColorSampleSrc = '';
     setLightboxColorPicking(false);
+    setLightboxColorPickerHidden(false);
     setLightboxColorPickerAvailable(true);
     setLightboxColorStatus('Pick a pixel');
     setLightboxPickedColor('');
     clearLightboxColorPreview();
 }
 
-function prepareLightboxColorSampler(src) {
+function prepareLightboxColorSampler(src, isAnimated) {
     cancelLightboxColorSampler();
     galleryColorSampleImage = null;
-    galleryColorSampleSrc = src;
+    galleryColorSampleSrc = isAnimated ? '' : src;
 
+    setLightboxColorPickerHidden(Boolean(isAnimated));
     setLightboxColorPickerAvailable(true);
     setLightboxColorStatus('Pick a pixel');
 }
@@ -1297,6 +1298,14 @@ function loadLightboxColorSampler() {
         setLightboxColorStatus('Color sampling unavailable');
     };
     image.src = src;
+}
+
+function setLightboxColorPickerHidden(isHidden) {
+    const buttonWrap = document.getElementById('lightbox-color-picker-wrap');
+    const footerControls = document.getElementById('lightbox-color-controls');
+    if (buttonWrap) buttonWrap.hidden = Boolean(isHidden);
+    if (footerControls) footerControls.hidden = Boolean(isHidden);
+    if (isHidden) setLightboxColorPicking(false);
 }
 
 function setLightboxColorPickerAvailable(isAvailable) {
@@ -1356,13 +1365,6 @@ function pickLightboxColor(event) {
         setLightboxColorPicking(false);
     } catch {
         setLightboxColorStatus('Color sampling unavailable');
-    }
-}
-
-function setLightboxGifOverlayVisible(isVisible) {
-    const overlay = document.querySelector('.gallery-lightbox-gif-overlay');
-    if (overlay) {
-        overlay.hidden = !isVisible;
     }
 }
 
@@ -2713,7 +2715,7 @@ export function CharacterPage({
                                     </svg>
                                 </button>
                             </div>
-                            <div class="tooltip tooltip-bottom" data-tip="Pick color">
+                            <div class="tooltip tooltip-bottom" data-tip="Pick color" id="lightbox-color-picker-wrap">
                                 <button
                                     aria-label="Pick color"
                                     aria-pressed="false"
@@ -2786,7 +2788,7 @@ export function CharacterPage({
                                 Unknown artist
                             </p>
                         </div>
-                        <div class="flex items-center gap-3">
+                        <div class="flex items-center gap-3" id="lightbox-color-controls">
                             <canvas
                                 aria-label="Color zoom preview"
                                 class="gallery-color-preview rounded"
