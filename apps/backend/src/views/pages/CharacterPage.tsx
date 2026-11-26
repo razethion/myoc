@@ -626,6 +626,11 @@ function CharacterPageStyles() {
                 cursor: crosshair;
             }
 
+            #lightbox-color-picker-wrap[hidden],
+            #lightbox-color-controls[hidden] {
+                display: none;
+            }
+
             .gallery-lightbox-gif-overlay {
                 display: block;
                 height: 100%;
