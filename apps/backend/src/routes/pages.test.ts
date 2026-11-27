@@ -1567,6 +1567,28 @@ describe('public page redirects', () => {
 })
 
 describe('GET /settings', () => {
+    it('renders a section menu that organizes the settings panels', async () => {
+        const response = await getAppPath(
+            '/settings',
+            await seedPageDatabase({
+                currentUser: createCurrentUserRecord('demo'),
+            }),
+            {
+                cookie: 'myoc_session=session-token',
+            },
+        )
+        const html = await response.text()
+
+        expect(response.status).toBe(200)
+        for (const tab of ['profile', 'security', 'preferences', 'migration']) {
+            expect(html).toContain(`data-settings-tab="${tab}"`)
+            expect(html).toContain(`data-settings-panel="${tab}"`)
+        }
+        expect(html).toContain('data-settings-panel="profile">')
+        expect(html).toMatch(/data-settings-panel="security"[^>]*hidden/)
+        expect(html).toContain('activateSettingsTab')
+    })
+
     it('links to the Toyhou.se migration page for signed-in users', async () => {
         const response = await getAppPath(
             '/settings',
