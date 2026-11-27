@@ -484,13 +484,16 @@ function UserSettingsPageScript({userId}: {userId: string}) {
                 validateUrl(customUrl, 'Custom link');
             }
 
-            if (!form.reportValidity()) {
+            const revealInvalidPanel = () => {
                 const invalidControl = form.querySelector(':invalid');
                 const invalidPanel = invalidControl?.closest('[data-settings-panel]');
                 if (invalidPanel) {
                     activateSettingsTab(invalidPanel.getAttribute('data-settings-panel'));
-                    form.reportValidity();
                 }
+            };
+            revealInvalidPanel();
+            if (!form.reportValidity()) {
+                revealInvalidPanel();
                 showSettingsAlert('Check the highlighted fields and try again.');
                 return false;
             }
