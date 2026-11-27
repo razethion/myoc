@@ -485,6 +485,12 @@ function UserSettingsPageScript({userId}: {userId: string}) {
             }
 
             if (!form.reportValidity()) {
+                const invalidControl = form.querySelector(':invalid');
+                const invalidPanel = invalidControl?.closest('[data-settings-panel]');
+                if (invalidPanel) {
+                    activateSettingsTab(invalidPanel.getAttribute('data-settings-panel'));
+                    form.reportValidity();
+                }
                 showSettingsAlert('Check the highlighted fields and try again.');
                 return false;
             }
@@ -919,6 +925,7 @@ function UserSettingsPageScript({userId}: {userId: string}) {
                 }
 
                 if (pendingLastPasskeyRemoval && !passwordInput?.value.trim()) {
+                    activateSettingsTab('security');
                     revealPasswordField();
                     showSettingsAlert('Enter a password before removing your last passkey.');
                     return;

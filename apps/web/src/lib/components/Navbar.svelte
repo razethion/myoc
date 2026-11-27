@@ -252,7 +252,7 @@ function markReleaseSeen(): void {
                             </svg>
                         </summary>
                         <ul class="menu dropdown-content rounded-box z-50 mt-3 w-60 border border-base-300 bg-base-200 p-2 shadow-xl">
-                            <li class="menu-title"><span>Explore</span></li>
+                            <li class="menu-title"><span>Browse</span></li>
                             {#each [CHARACTERS_ITEM, RECENT_UPLOADS_ITEM, SIZE_CHART_ITEM, LEADERBOARD_ITEM] as item}
                                 {@render menuItem(item)}
                             {/each}
