@@ -1090,7 +1090,7 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
                     </nav>
 
                     <div class="min-w-0 flex-1">
-                        <form action="/settings" class="space-y-8" data-settings-form method="post">
+                        <form action="/settings" class="space-y-8" data-settings-form method="post" novalidate>
                             <input name="csrfToken" type="hidden" value={currentUser.csrfToken} />
 
                             <section
