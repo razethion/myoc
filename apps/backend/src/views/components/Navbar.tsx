@@ -172,7 +172,7 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
                                 </summary>
                                 <ul class="menu dropdown-content bg-base-100 rounded-box z-50 mt-3 w-52 p-2 shadow">
                                     <li class="menu-title">
-                                        <span>Explore</span>
+                                        <span>Browse</span>
                                     </li>
                                     <li>
                                         <a href="/recent">Recent uploads</a>
