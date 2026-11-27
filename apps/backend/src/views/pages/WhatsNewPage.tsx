@@ -100,7 +100,6 @@ export function WhatsNewPage({currentUser, guestInitial, mediaBaseUrl, releases}
                             <div>
                                 <p class="text-sm font-semibold uppercase tracking-[0.28em] text-primary">Release Notes</p>
                                 <h1 class="mt-3 text-4xl font-black tracking-tight sm:text-5xl">What's new</h1>
-                                <p class="mt-4 max-w-2xl text-lg leading-8 text-base-content/75">Follow MyOC updates as they happen.</p>
                             </div>
                             <div class="rounded-lg border border-base-300 bg-base-200 px-4 py-3" data-app-version={APP_VERSION}>
                                 <p class="text-xs font-bold uppercase tracking-[0.22em] text-base-content/60">Current version</p>

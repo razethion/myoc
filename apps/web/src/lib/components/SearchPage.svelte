@@ -133,7 +133,6 @@ async function loadMoreCharacters(): Promise<void> {
                 <h1 class="mt-1 text-4xl font-bold sm:text-5xl">
                     {hasQuery ? `Results for "${results.query}"` : 'Search MyOC'}
                 </h1>
-                <p class="mt-2 max-w-2xl text-sm opacity-70 sm:text-base">Browse matching profiles and character pages.</p>
             </div>
 
             <div class="flex flex-wrap gap-2">

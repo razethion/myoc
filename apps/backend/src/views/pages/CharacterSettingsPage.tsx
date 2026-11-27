@@ -1960,9 +1960,6 @@ export function CharacterSettingsPage({currentUser, character, media, galleryTab
                         <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                             <div>
                                 <h2 class="text-2xl font-bold">Gallery</h2>
-                                <p class="text-sm text-base-content/70">
-                                    Upload PNG, JPG, WebP, GIF, AVIF, or other browser-supported images, then manage the gallery tabs.
-                                </p>
                             </div>
                             <div class="flex flex-wrap items-center justify-end gap-3">
                                 <button class="btn btn-secondary" id="bulk-upload-images" type="button">
@@ -1987,9 +1984,6 @@ export function CharacterSettingsPage({currentUser, character, media, galleryTab
                         <div>
                             <div class="mb-3 min-w-0">
                                 <h3 class="text-lg font-semibold">Gallery Tabs</h3>
-                                <p class="text-sm text-base-content/70">
-                                    Create, rename, delete, and reorder the tabs shown on this character gallery.
-                                </p>
                             </div>
                             <div
                                 aria-label="Gallery layout tabs"
@@ -2194,6 +2188,9 @@ function BulkUploadDialog() {
                         <label class="fieldset-label" for="bulk-gallery-image-files">
                             Image Files
                         </label>
+                        <p class="text-xs text-base-content/60">
+                            PNG, JPG, WebP, GIF, and AVIF images are accepted. Files are stored unmodified.
+                        </p>
                         <p class="text-xs text-base-content/60">Maximum 200 MB and 200,000,000 pixels per image.</p>
                         <input accept="image/*" class="file-input w-full" id="bulk-gallery-image-files" multiple required type="file" />
                     </fieldset>

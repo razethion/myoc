@@ -1267,7 +1267,7 @@ export function RecentMediaPage({currentUser, guestInitial, mediaBaseUrl, page, 
                 <header class="mb-5 border-b border-base-300 pb-5">
                     <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                         <div>
-                            <p class="text-sm font-semibold uppercase tracking-widest text-primary">Explore</p>
+                            <p class="text-sm font-semibold uppercase tracking-widest text-primary">Browse</p>
                             <h1 class="mt-1 text-4xl font-bold sm:text-5xl">Recently uploaded</h1>
                         </div>
                         <RecentMediaFilterControls showNsfw={showNsfw} showUnapproved={showUnapproved} />

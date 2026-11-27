@@ -71,7 +71,6 @@ export function Navbar({currentUser, guestInitial = 'R', mediaBaseUrl}: NavbarPr
                                         </div>
                                         <div class="min-w-0">
                                             <div class="truncate text-sm font-semibold">{currentUser.username}</div>
-                                            <div class="truncate text-xs text-base-content/60">Signed in</div>
                                         </div>
                                     </div>
                                 </li>

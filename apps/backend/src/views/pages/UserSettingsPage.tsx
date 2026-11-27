@@ -993,7 +993,6 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
                 <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     <div class="min-w-0">
                         <h1 class="text-4xl font-bold sm:text-5xl">User Settings</h1>
-                        <p class="mt-1 text-sm text-base-content/70">Edit how your account appears on your profile.</p>
                     </div>
                 </div>
 
@@ -1098,9 +1097,6 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
                             >
                                 <div>
                                     <h2 class="text-2xl font-bold">Account Login</h2>
-                                    <p class="text-sm text-base-content/70">
-                                        Manage email, sign-in methods, recovery, and active sessions.
-                                    </p>
                                 </div>
 
                                 <div class={hasPasskeys ? 'grid gap-3' : 'grid gap-3 sm:grid-cols-2'}>
@@ -1296,7 +1292,6 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
                             <section class="space-y-5" data-settings-panel="profile">
                                 <div>
                                     <h2 class="text-2xl font-bold">Profile</h2>
-                                    <p class="text-sm text-base-content/70">These details appear above your character folders.</p>
                                 </div>
 
                                 <fieldset class="fieldset">
@@ -1397,7 +1392,6 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
                             <section class="space-y-5" data-settings-panel="preferences" hidden>
                                 <div>
                                     <h2 class="text-2xl font-bold">Preferences</h2>
-                                    <p class="text-sm text-base-content/70">Control how media and content appear for you.</p>
                                 </div>
 
                                 <section class="rounded-box border border-base-300 bg-base-200 p-4">
@@ -1423,9 +1417,6 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
                             <section class="space-y-5" data-settings-panel="migration" hidden>
                                 <div>
                                     <h2 class="text-2xl font-bold">Migration</h2>
-                                    <p class="text-sm text-base-content/70">
-                                        Bring characters and images over from other character gallery sites.
-                                    </p>
                                 </div>
 
                                 <div class="rounded-box border border-base-300 bg-base-200 p-4">
@@ -1446,7 +1437,6 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
                             <section class="space-y-5" data-settings-panel="profile">
                                 <div>
                                     <h2 class="text-2xl font-bold">Social Links</h2>
-                                    <p class="text-sm text-base-content/70">Add the public links that should appear with your profile.</p>
                                 </div>
 
                                 <div class="grid gap-3 sm:grid-cols-2">
