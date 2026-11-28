@@ -1171,12 +1171,9 @@ export function SizeChartViewerPage({currentUser, guestInitial, mediaBaseUrl}: S
                 `}</style>
                 <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                     <div>
-                        <p class="text-sm font-bold uppercase tracking-wide text-base-content/60">Site Tools</p>
+                        <p class="text-sm font-bold uppercase tracking-wide text-base-content/60">Browse</p>
                         <h1 class="text-4xl font-bold">Size Chart</h1>
                     </div>
-                    <p class="max-w-xl text-sm text-base-content/70">
-                        Search the site for characters with saved height data, then add them to a temporary comparison chart.
-                    </p>
                 </div>
                 <div class="alert alert-warning alert-dash mb-4" role="alert">
                     <span>This feature does not yet support content preferences. You may see NSFW media unexpectedly.</span>

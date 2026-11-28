@@ -152,6 +152,48 @@ function UserSettingsPageScript({userId}: {userId: string}) {
         }
 
         const settingsForm = document.querySelector('[data-settings-form]');
+        const settingsTabButtons = document.querySelectorAll('[data-settings-tab]');
+        const settingsPanels = document.querySelectorAll('[data-settings-panel]');
+
+        function activateSettingsTab(name) {
+            let matched = false;
+            for (const panel of settingsPanels) {
+                const active = panel.getAttribute('data-settings-panel') === name;
+                panel.hidden = !active;
+                if (active) matched = true;
+            }
+            if (!matched) return activateSettingsTab('profile');
+            for (const tab of settingsTabButtons) {
+                const active = tab.getAttribute('data-settings-tab') === name;
+                tab.classList.toggle('menu-active', active);
+                tab.setAttribute('aria-selected', active ? 'true' : 'false');
+            }
+            window.history.replaceState(null, '', '#' + name);
+        }
+
+        for (const tab of settingsTabButtons) {
+            tab.addEventListener('click', () => activateSettingsTab(tab.getAttribute('data-settings-tab')));
+        }
+
+        const settingsTablist = document.querySelector('[data-settings-tablist]');
+        if (settingsTablist) {
+            settingsTablist.addEventListener('keydown', (event) => {
+                const tabs = Array.from(settingsTabButtons);
+                const current = tabs.indexOf(document.activeElement);
+                if (current === -1) return;
+                let next = null;
+                if (event.key === 'ArrowDown' || event.key === 'ArrowRight') next = tabs[(current + 1) % tabs.length];
+                else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') next = tabs[(current - 1 + tabs.length) % tabs.length];
+                else if (event.key === 'Home') next = tabs[0];
+                else if (event.key === 'End') next = tabs[tabs.length - 1];
+                if (!next) return;
+                event.preventDefault();
+                activateSettingsTab(next.getAttribute('data-settings-tab'));
+                next.focus();
+            });
+        }
+        activateSettingsTab(window.location.hash.slice(1) || 'profile');
+
         const settingsAlert = document.querySelector('[data-settings-alert]');
         const settingsAlertMessage = document.querySelector('[data-settings-alert-message]');
         const profilePhotoUploader = document.querySelector('[data-profile-photo-uploader]');
@@ -339,6 +381,7 @@ function UserSettingsPageScript({userId}: {userId: string}) {
                 return;
             }
 
+            activateSettingsTab('security');
             passwordFieldset.hidden = false;
             passwordInput.focus();
             passwordFieldset.scrollIntoView({ block: 'center' });
@@ -459,7 +502,16 @@ function UserSettingsPageScript({userId}: {userId: string}) {
                 validateUrl(customUrl, 'Custom link');
             }
 
+            const revealInvalidPanel = () => {
+                const invalidControl = form.querySelector(':invalid');
+                const invalidPanel = invalidControl?.closest('[data-settings-panel]');
+                if (invalidPanel) {
+                    activateSettingsTab(invalidPanel.getAttribute('data-settings-panel'));
+                }
+            };
+            revealInvalidPanel();
             if (!form.reportValidity()) {
+                revealInvalidPanel();
                 showSettingsAlert('Check the highlighted fields and try again.');
                 return false;
             }
@@ -964,441 +1016,600 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
         >
             <Navbar currentUser={currentUser} mediaBaseUrl={mediaBaseUrl} />
 
-            <main class="container mx-auto max-w-3xl px-3 py-6 sm:px-0">
+            <main class="container mx-auto max-w-5xl px-3 py-6 sm:px-0">
                 <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     <div class="min-w-0">
                         <h1 class="text-4xl font-bold sm:text-5xl">User Settings</h1>
-                        <p class="mt-1 text-sm text-base-content/70">Edit how your account appears on your profile.</p>
                     </div>
                 </div>
 
-                <form action="/settings" class="space-y-8" data-settings-form method="post">
-                    <input name="csrfToken" type="hidden" value={currentUser.csrfToken} />
-
-                    <section
-                        class="space-y-5"
-                        data-csrf-token={currentUser.csrfToken}
-                        data-force-passkey-setup={secureAccountRequired ? 'true' : 'false'}
-                        data-passkey-count={passkeys.length}
-                        data-security-section
-                    >
-                        <div>
-                            <h2 class="text-2xl font-bold">Account Login</h2>
-                            <p class="text-sm text-base-content/70">Manage email, sign-in methods, recovery, and active sessions.</p>
-                        </div>
-
-                        <div class={hasPasskeys ? 'grid gap-3' : 'grid gap-3 sm:grid-cols-2'}>
-                            <fieldset class="fieldset">
-                                <label class="fieldset-label" for="email">
-                                    Email
-                                </label>
-                                <input
-                                    autocomplete="email"
-                                    class="input input-bordered w-full"
-                                    id="email"
-                                    name="email"
-                                    required
-                                    type="email"
-                                    value={currentUser.email}
-                                />
-                            </fieldset>
-
-                            <fieldset class="fieldset" data-password-fieldset hidden={hasPasskeys}>
-                                <label class="fieldset-label" for="password">
-                                    Password
-                                </label>
-                                <input
-                                    autocomplete="new-password"
-                                    class="input input-bordered w-full"
-                                    data-password-input
-                                    id="password"
-                                    minLength={8}
-                                    name="password"
-                                    placeholder="Enter a new password"
-                                    type="password"
-                                />
-                                <div class="label">
-                                    <span class="label-text-alt">Leave blank to keep your current password.</span>
-                                </div>
-                            </fieldset>
-                        </div>
-
-                        {secureAccountRequired ? (
-                            <div class="alert alert-warning">
-                                <div>
-                                    <p class="font-bold">Secure your account</p>
-                                    <p class="text-sm">
-                                        Add a fresh passkey, review active sessions, revoke anything unfamiliar, then regenerate and confirm
-                                        a recovery phrase.
-                                    </p>
-                                </div>
-                            </div>
-                        ) : null}
-
-                        {!hasPasskeys ? (
-                            <div class="alert alert-info">
-                                <div>
-                                    <p class="font-bold">Create a passkey</p>
-                                    <p class="text-sm">Passkeys are the preferred sign-in method for MyOC accounts!</p>
-                                </div>
-                            </div>
-                        ) : null}
-
-                        <div class="rounded-box border border-base-300 bg-base-200 p-4">
-                            <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                                <div>
-                                    <h3 class="text-xl font-bold">Passkey Setup</h3>
-                                    <p class="mt-1 text-sm text-base-content/70">
-                                        Create a passkey, save a recovery phrase, and remove password sign-in.
-                                    </p>
-                                </div>
-                                <button class="btn btn-primary" data-add-passkey-button type="button">
-                                    Add Passkey
+                <div class="flex flex-col gap-10 md:flex-row">
+                    {/* biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: nav with role="tablist" is the ARIA tabs pattern; the daisyUI menu list stays presentational. */}
+                    <nav aria-label="Settings sections" class="md:w-52 md:shrink-0" role="tablist">
+                        <ul class="menu rounded-box border border-base-300 bg-base-200 gap-1 p-2" data-settings-tablist role="presentation">
+                            <li role="presentation">
+                                <button
+                                    aria-controls="settings-panel-profile settings-panel-profile-social"
+                                    aria-selected="false"
+                                    class="justify-start"
+                                    data-settings-tab="profile"
+                                    id="settings-tab-profile"
+                                    role="tab"
+                                    type="button"
+                                >
+                                    <svg
+                                        aria-hidden="true"
+                                        class="h-5 w-5 shrink-0 opacity-70"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="1.5"
+                                        viewBox="0 0 24 24"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                    >
+                                        <path
+                                            d="M17.982 18.725A7.488 7.488 0 0 0 12 15.75a7.488 7.488 0 0 0-5.982 2.975m11.963 0a9 9 0 1 0-11.963 0m11.963 0A8.966 8.966 0 0 1 12 21a8.966 8.966 0 0 1-5.982-2.275M15 9.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                        ></path>
+                                    </svg>
+                                    Profile
                                 </button>
-                            </div>
-                        </div>
+                            </li>
+                            <li role="presentation">
+                                <button
+                                    aria-controls="settings-panel-security"
+                                    aria-selected="false"
+                                    class="justify-start"
+                                    data-settings-tab="security"
+                                    id="settings-tab-security"
+                                    role="tab"
+                                    type="button"
+                                >
+                                    <svg
+                                        aria-hidden="true"
+                                        class="h-5 w-5 shrink-0 opacity-70"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="1.5"
+                                        viewBox="0 0 24 24"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                    >
+                                        <path
+                                            d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                        ></path>
+                                    </svg>
+                                    Security
+                                </button>
+                            </li>
+                            <li role="presentation">
+                                <button
+                                    aria-controls="settings-panel-preferences"
+                                    aria-selected="false"
+                                    class="justify-start"
+                                    data-settings-tab="preferences"
+                                    id="settings-tab-preferences"
+                                    role="tab"
+                                    type="button"
+                                >
+                                    <svg
+                                        aria-hidden="true"
+                                        class="h-5 w-5 shrink-0 opacity-70"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="1.5"
+                                        viewBox="0 0 24 24"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                    >
+                                        <path
+                                            d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                        ></path>
+                                    </svg>
+                                    Preferences
+                                </button>
+                            </li>
+                            <li role="presentation">
+                                <button
+                                    aria-controls="settings-panel-migration"
+                                    aria-selected="false"
+                                    class="justify-start"
+                                    data-settings-tab="migration"
+                                    id="settings-tab-migration"
+                                    role="tab"
+                                    type="button"
+                                >
+                                    <svg
+                                        aria-hidden="true"
+                                        class="h-5 w-5 shrink-0 opacity-70"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="1.5"
+                                        viewBox="0 0 24 24"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                    >
+                                        <path
+                                            d="M6.429 9.75 2.25 12l4.179 2.25m0-4.5 5.571 3 5.571-3m-11.142 0L2.25 7.5 12 2.25l9.75 5.25-4.179 2.25m0 0L21.75 12l-4.179 2.25m0 0 4.179 2.25L12 21.75 2.25 16.5l4.179-2.25m11.142 0-5.571 3-5.571-3"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                        ></path>
+                                    </svg>
+                                    Toyhou.se Migration
+                                </button>
+                            </li>
+                        </ul>
+                    </nav>
 
-                        <div class="rounded-box border border-base-300 bg-base-200 p-4">
-                            <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div class="min-w-0 flex-1">
+                        <form action="/settings" class="space-y-8" data-settings-form method="post" novalidate>
+                            <input name="csrfToken" type="hidden" value={currentUser.csrfToken} />
+
+                            <section
+                                aria-labelledby="settings-tab-security"
+                                class="space-y-5"
+                                data-csrf-token={currentUser.csrfToken}
+                                data-force-passkey-setup={secureAccountRequired ? 'true' : 'false'}
+                                data-passkey-count={passkeys.length}
+                                data-security-section
+                                data-settings-panel="security"
+                                hidden
+                                id="settings-panel-security"
+                                role="tabpanel"
+                            >
                                 <div>
-                                    <h3 class="text-xl font-bold">Passkeys</h3>
-                                    <p class="text-sm text-base-content/70">
-                                        <span data-passkey-count-text>{passkeys.length}</span> registered
-                                    </p>
+                                    <h2 class="text-2xl font-bold">Account Login</h2>
                                 </div>
-                            </div>
 
-                            <div class="mt-4 space-y-3" data-passkey-list hidden={!hasPasskeys}>
-                                {passkeys.map((passkey) => (
-                                    <div class="rounded-box border border-base-300 bg-base-100 p-3" data-passkey-item>
-                                        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                            <div class="min-w-0">
-                                                <div class="flex flex-wrap items-center gap-2">
-                                                    <p class="font-semibold">{passkey.name}</p>
-                                                    {passkey.backedUp ? (
-                                                        <span class="badge badge-success badge-sm">Synced</span>
-                                                    ) : (
-                                                        <span class="badge badge-neutral badge-sm">Single device</span>
-                                                    )}
-                                                </div>
-                                                <p class="mt-1 text-sm text-base-content/70">
-                                                    {formatPasskeyTransports(passkey.transports)} · Added{' '}
-                                                    {formatSecurityDate(passkey.createdAt)} · Last used{' '}
-                                                    {formatSecurityDate(passkey.lastUsedAt)}
-                                                </p>
-                                            </div>
-                                            <button
-                                                class="btn btn-ghost btn-sm"
-                                                data-passkey-id={passkey.id}
-                                                data-remove-passkey-button
-                                                type="button"
-                                            >
-                                                Remove
-                                            </button>
+                                <div class={hasPasskeys ? 'grid gap-3' : 'grid gap-3 sm:grid-cols-2'}>
+                                    <fieldset class="fieldset">
+                                        <label class="fieldset-label" for="email">
+                                            Email
+                                        </label>
+                                        <input
+                                            autocomplete="email"
+                                            class="input input-bordered w-full"
+                                            id="email"
+                                            name="email"
+                                            required
+                                            type="email"
+                                            value={currentUser.email}
+                                        />
+                                    </fieldset>
+
+                                    <fieldset class="fieldset" data-password-fieldset hidden={hasPasskeys}>
+                                        <label class="fieldset-label" for="password">
+                                            Password
+                                        </label>
+                                        <input
+                                            autocomplete="new-password"
+                                            class="input input-bordered w-full"
+                                            data-password-input
+                                            id="password"
+                                            minLength={8}
+                                            name="password"
+                                            placeholder="Enter a new password"
+                                            type="password"
+                                        />
+                                        <div class="label">
+                                            <span class="label-text-alt">Leave blank to keep your current password.</span>
+                                        </div>
+                                    </fieldset>
+                                </div>
+
+                                {secureAccountRequired ? (
+                                    <div class="alert alert-warning">
+                                        <div>
+                                            <p class="font-bold">Secure your account</p>
+                                            <p class="text-sm">
+                                                Add a fresh passkey, review active sessions, revoke anything unfamiliar, then regenerate and
+                                                confirm a recovery phrase.
+                                            </p>
                                         </div>
                                     </div>
-                                ))}
-                            </div>
-                            <p class="mt-4 text-sm text-base-content/70" data-no-passkeys-message hidden={hasPasskeys}>
-                                No passkeys registered.
-                            </p>
-                        </div>
+                                ) : null}
 
-                        <div class="rounded-box border border-base-300 bg-base-200 p-4">
-                            <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                                <div>
-                                    <h3 class="text-xl font-bold">Recovery Phrase</h3>
-                                    <p class="mt-1 text-sm text-base-content/70">
-                                        Status: {recoveryPhraseConfirmed ? 'Confirmed' : 'Needs confirmation'}
+                                {!hasPasskeys ? (
+                                    <div class="alert alert-info">
+                                        <div>
+                                            <p class="font-bold">Create a passkey</p>
+                                            <p class="text-sm">Passkeys are the preferred sign-in method for MyOC accounts!</p>
+                                        </div>
+                                    </div>
+                                ) : null}
+
+                                <div class="rounded-box border border-base-300 bg-base-200 p-4">
+                                    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                                        <div>
+                                            <h3 class="text-xl font-bold">Passkey Setup</h3>
+                                            <p class="mt-1 text-sm text-base-content/70">
+                                                Create a passkey, save a recovery phrase, and remove password sign-in.
+                                            </p>
+                                        </div>
+                                        <button class="btn btn-primary" data-add-passkey-button type="button">
+                                            Add Passkey
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div class="rounded-box border border-base-300 bg-base-200 p-4">
+                                    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                        <div>
+                                            <h3 class="text-xl font-bold">Passkeys</h3>
+                                            <p class="text-sm text-base-content/70">
+                                                <span data-passkey-count-text>{passkeys.length}</span> registered
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div class="mt-4 space-y-3" data-passkey-list hidden={!hasPasskeys}>
+                                        {passkeys.map((passkey) => (
+                                            <div class="rounded-box border border-base-300 bg-base-100 p-3" data-passkey-item>
+                                                <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                                    <div class="min-w-0">
+                                                        <div class="flex flex-wrap items-center gap-2">
+                                                            <p class="font-semibold">{passkey.name}</p>
+                                                            {passkey.backedUp ? (
+                                                                <span class="badge badge-success badge-sm">Synced</span>
+                                                            ) : (
+                                                                <span class="badge badge-neutral badge-sm">Single device</span>
+                                                            )}
+                                                        </div>
+                                                        <p class="mt-1 text-sm text-base-content/70">
+                                                            {formatPasskeyTransports(passkey.transports)} · Added{' '}
+                                                            {formatSecurityDate(passkey.createdAt)} · Last used{' '}
+                                                            {formatSecurityDate(passkey.lastUsedAt)}
+                                                        </p>
+                                                    </div>
+                                                    <button
+                                                        class="btn btn-ghost btn-sm"
+                                                        data-passkey-id={passkey.id}
+                                                        data-remove-passkey-button
+                                                        type="button"
+                                                    >
+                                                        Remove
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <p class="mt-4 text-sm text-base-content/70" data-no-passkeys-message hidden={hasPasskeys}>
+                                        No passkeys registered.
                                     </p>
                                 </div>
-                                <button class="btn btn-secondary" data-regenerate-recovery-button type="button">
-                                    Regenerate Phrase
-                                </button>
-                            </div>
-                        </div>
 
-                        <div class="rounded-box border border-base-300 bg-base-200 p-4">
-                            <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                                <div>
-                                    <h3 class="text-xl font-bold">Sessions</h3>
-                                    <p class="mt-1 text-sm text-base-content/70">{sessions.length} active</p>
+                                <div class="rounded-box border border-base-300 bg-base-200 p-4">
+                                    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                                        <div>
+                                            <h3 class="text-xl font-bold">Recovery Phrase</h3>
+                                            <p class="mt-1 text-sm text-base-content/70">
+                                                Status: {recoveryPhraseConfirmed ? 'Confirmed' : 'Needs confirmation'}
+                                            </p>
+                                        </div>
+                                        <button class="btn btn-secondary" data-regenerate-recovery-button type="button">
+                                            Regenerate Phrase
+                                        </button>
+                                    </div>
                                 </div>
-                                <button class="btn btn-secondary" data-revoke-other-sessions-button type="button">
-                                    Revoke Other Sessions
-                                </button>
-                            </div>
 
-                            {sessions.length > 0 ? (
-                                <div class="mt-4 overflow-x-auto">
-                                    <table class="table table-sm">
-                                        <thead>
-                                            <tr>
-                                                <th>Session</th>
-                                                <th>Created</th>
-                                                <th>Expires</th>
-                                                <th></th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {sessions.map((session) => (
-                                                <tr>
-                                                    <td>{session.isCurrent ? 'Current' : 'Active'}</td>
-                                                    <td>{formatSecurityDate(session.createdAt)}</td>
-                                                    <td>{formatSecurityDate(session.expiresAt)}</td>
-                                                    <td class="text-right">
-                                                        {session.isCurrent ? (
-                                                            <span class="badge badge-primary badge-sm">This session</span>
-                                                        ) : (
-                                                            <button
-                                                                class="btn btn-ghost btn-xs"
-                                                                data-revoke-session-button
-                                                                data-session-id={session.id}
-                                                                type="button"
-                                                            >
-                                                                Revoke
-                                                            </button>
-                                                        )}
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            ) : null}
-                        </div>
-
-                        {secureAccountRequired ? (
-                            <div class="flex justify-end">
-                                <button class="btn btn-primary" data-complete-secure-account-button type="button">
-                                    Complete Security Review
-                                </button>
-                            </div>
-                        ) : null}
-                    </section>
-
-                    <section class="space-y-5">
-                        <div>
-                            <h2 class="text-2xl font-bold">Profile</h2>
-                            <p class="text-sm text-base-content/70">These details appear above your character folders.</p>
-                        </div>
-
-                        <fieldset class="fieldset">
-                            <label class="fieldset-label" for="username">
-                                Username
-                            </label>
-                            <label class="input input-bordered w-full">
-                                <span class="opacity-60">@</span>
-                                <input
-                                    class="grow"
-                                    id="username"
-                                    maxLength={32}
-                                    minLength={3}
-                                    name="username"
-                                    pattern="[A-Za-z0-9_]+"
-                                    required
-                                    title="Use 3-32 letters, numbers, or underscores."
-                                    type="text"
-                                    value={currentUser.username}
-                                />
-                            </label>
-                            <div class="label justify-between">
-                                <span class="label-text-alt">Letters, numbers, and underscores only.</span>
-                                <span class="label-text-alt">32 characters max</span>
-                            </div>
-                        </fieldset>
-
-                        <fieldset class="fieldset">
-                            <label class="fieldset-label" for="bio">
-                                Bio
-                            </label>
-                            <textarea
-                                class="textarea textarea-bordered min-h-32 w-full resize-y"
-                                id="bio"
-                                maxLength={255}
-                                name="bio"
-                                placeholder="Write a short profile bio..."
-                            >
-                                {currentUser.bio}
-                            </textarea>
-                            <div class="label justify-end">
-                                <span class="label-text-alt">255 characters max</span>
-                            </div>
-                        </fieldset>
-
-                        <section class="rounded-box border border-base-300 bg-base-200 p-4">
-                            <label class="flex cursor-pointer items-start gap-3">
-                                <input
-                                    checked={currentUser.displayNsfwMedia}
-                                    class="checkbox checkbox-primary mt-1"
-                                    name="displayNsfwMedia"
-                                    type="checkbox"
-                                    value="true"
-                                />
-                                <span>
-                                    <span class="block font-bold">Display NSFW media</span>
-                                    <span class="mt-1 block text-sm text-base-content/70">
-                                        Show NSFW variants while browsing media when they are available. NSFW media will always display when
-                                        editing characters.
-                                    </span>
-                                </span>
-                            </label>
-                        </section>
-
-                        <section
-                            class="rounded-box border border-base-300 bg-base-200 p-4"
-                            data-csrf-token={currentUser.csrfToken}
-                            data-profile-photo-uploader
-                        >
-                            <div class="flex flex-col gap-4 sm:flex-row sm:items-center">
-                                <img
-                                    alt={`${currentUser.username} profile preview`}
-                                    class="h-24 w-24 shrink-0 rounded object-cover"
-                                    data-profile-photo-image
-                                    data-profile-photo-preview
-                                    src={avatarUrlFor(currentUser, mediaBaseUrl)}
-                                />
-
-                                <div class="min-w-0 flex-1">
-                                    <h3 class="text-xl font-bold">Profile Photo</h3>
-                                    <p class="mt-1 text-sm text-base-content/70">You'll be able to crop the image before uploading.</p>
-
-                                    <div class="mt-4 flex flex-col gap-3 sm:flex-row">
-                                        <input
-                                            accept="image/*"
-                                            class="file-input file-input-bordered w-full"
-                                            data-profile-photo-input
-                                            type="file"
-                                        />
-                                        <button class="btn btn-secondary" data-profile-photo-button disabled type="button">
-                                            Upload Photo
+                                <div class="rounded-box border border-base-300 bg-base-200 p-4">
+                                    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                                        <div>
+                                            <h3 class="text-xl font-bold">Sessions</h3>
+                                            <p class="mt-1 text-sm text-base-content/70">{sessions.length} active</p>
+                                        </div>
+                                        <button class="btn btn-secondary" data-revoke-other-sessions-button type="button">
+                                            Revoke Other Sessions
                                         </button>
                                     </div>
 
-                                    <div class="mt-4 hidden rounded-box border border-base-300 bg-base-100 p-4" data-profile-photo-cropper>
-                                        <div class="max-h-[22rem] overflow-hidden rounded-box bg-base-300">
-                                            <img
-                                                alt="Selected avatar crop editor"
-                                                class="block max-h-[22rem] w-full object-contain"
-                                                data-profile-photo-crop-image
-                                            />
+                                    {sessions.length > 0 ? (
+                                        <div class="mt-4 overflow-x-auto">
+                                            <table class="table table-sm">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Session</th>
+                                                        <th>Created</th>
+                                                        <th>Expires</th>
+                                                        <th></th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {sessions.map((session) => (
+                                                        <tr>
+                                                            <td>{session.isCurrent ? 'Current' : 'Active'}</td>
+                                                            <td>{formatSecurityDate(session.createdAt)}</td>
+                                                            <td>{formatSecurityDate(session.expiresAt)}</td>
+                                                            <td class="text-right">
+                                                                {session.isCurrent ? (
+                                                                    <span class="badge badge-primary badge-sm">This session</span>
+                                                                ) : (
+                                                                    <button
+                                                                        class="btn btn-ghost btn-xs"
+                                                                        data-revoke-session-button
+                                                                        data-session-id={session.id}
+                                                                        type="button"
+                                                                    >
+                                                                        Revoke
+                                                                    </button>
+                                                                )}
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
                                         </div>
-                                        <p class="mt-3 text-xs text-base-content/60">
-                                            Drag the image or crop box to choose the square area.
-                                        </p>
+                                    ) : null}
+                                </div>
+
+                                {secureAccountRequired ? (
+                                    <div class="flex justify-end">
+                                        <button class="btn btn-primary" data-complete-secure-account-button type="button">
+                                            Complete Security Review
+                                        </button>
+                                    </div>
+                                ) : null}
+                            </section>
+
+                            <section
+                                aria-labelledby="settings-tab-profile"
+                                class="space-y-5"
+                                data-settings-panel="profile"
+                                id="settings-panel-profile"
+                                role="tabpanel"
+                            >
+                                <div>
+                                    <h2 class="text-2xl font-bold">Profile</h2>
+                                </div>
+
+                                <fieldset class="fieldset">
+                                    <label class="fieldset-label" for="username">
+                                        Username
+                                    </label>
+                                    <label class="input input-bordered w-full">
+                                        <span class="opacity-60">@</span>
+                                        <input
+                                            class="grow"
+                                            id="username"
+                                            maxLength={32}
+                                            minLength={3}
+                                            name="username"
+                                            pattern="[A-Za-z0-9_]+"
+                                            required
+                                            title="Use 3-32 letters, numbers, or underscores."
+                                            type="text"
+                                            value={currentUser.username}
+                                        />
+                                    </label>
+                                    <div class="label justify-between">
+                                        <span class="label-text-alt">Letters, numbers, and underscores only.</span>
+                                        <span class="label-text-alt">32 characters max</span>
+                                    </div>
+                                </fieldset>
+
+                                <fieldset class="fieldset">
+                                    <label class="fieldset-label" for="bio">
+                                        Bio
+                                    </label>
+                                    <textarea
+                                        class="textarea textarea-bordered min-h-32 w-full resize-y"
+                                        id="bio"
+                                        maxLength={255}
+                                        name="bio"
+                                        placeholder="Write a short profile bio..."
+                                    >
+                                        {currentUser.bio}
+                                    </textarea>
+                                    <div class="label justify-end">
+                                        <span class="label-text-alt">255 characters max</span>
+                                    </div>
+                                </fieldset>
+
+                                <section
+                                    class="rounded-box border border-base-300 bg-base-200 p-4"
+                                    data-csrf-token={currentUser.csrfToken}
+                                    data-profile-photo-uploader
+                                >
+                                    <div class="flex flex-col gap-4 sm:flex-row sm:items-center">
+                                        <img
+                                            alt={`${currentUser.username} profile preview`}
+                                            class="h-24 w-24 shrink-0 rounded object-cover"
+                                            data-profile-photo-image
+                                            data-profile-photo-preview
+                                            src={avatarUrlFor(currentUser, mediaBaseUrl)}
+                                        />
+
+                                        <div class="min-w-0 flex-1">
+                                            <h3 class="text-xl font-bold">Profile Photo</h3>
+                                            <p class="mt-1 text-sm text-base-content/70">
+                                                You'll be able to crop the image before uploading.
+                                            </p>
+
+                                            <div class="mt-4 flex flex-col gap-3 sm:flex-row">
+                                                <input
+                                                    accept="image/*"
+                                                    class="file-input file-input-bordered w-full"
+                                                    data-profile-photo-input
+                                                    type="file"
+                                                />
+                                                <button class="btn btn-secondary" data-profile-photo-button disabled type="button">
+                                                    Upload Photo
+                                                </button>
+                                            </div>
+
+                                            <div
+                                                class="mt-4 hidden rounded-box border border-base-300 bg-base-100 p-4"
+                                                data-profile-photo-cropper
+                                            >
+                                                <div class="max-h-[22rem] overflow-hidden rounded-box bg-base-300">
+                                                    <img
+                                                        alt="Selected avatar crop editor"
+                                                        class="block max-h-[22rem] w-full object-contain"
+                                                        data-profile-photo-crop-image
+                                                    />
+                                                </div>
+                                                <p class="mt-3 text-xs text-base-content/60">
+                                                    Drag the image or crop box to choose the square area.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </section>
+                            </section>
+
+                            <section
+                                aria-labelledby="settings-tab-preferences"
+                                class="space-y-5"
+                                data-settings-panel="preferences"
+                                hidden
+                                id="settings-panel-preferences"
+                                role="tabpanel"
+                            >
+                                <div>
+                                    <h2 class="text-2xl font-bold">Preferences</h2>
+                                </div>
+
+                                <section class="rounded-box border border-base-300 bg-base-200 p-4">
+                                    <label class="flex cursor-pointer items-start gap-3">
+                                        <input
+                                            checked={currentUser.displayNsfwMedia}
+                                            class="checkbox checkbox-primary mt-1"
+                                            name="displayNsfwMedia"
+                                            type="checkbox"
+                                            value="true"
+                                        />
+                                        <span>
+                                            <span class="block font-bold">Display NSFW media</span>
+                                            <span class="mt-1 block text-sm text-base-content/70">
+                                                Show NSFW variants while browsing media when they are available. NSFW media will always
+                                                display when editing characters.
+                                            </span>
+                                        </span>
+                                    </label>
+                                </section>
+                            </section>
+
+                            <section
+                                aria-labelledby="settings-tab-migration"
+                                class="space-y-5"
+                                data-settings-panel="migration"
+                                hidden
+                                id="settings-panel-migration"
+                                role="tabpanel"
+                            >
+                                <div>
+                                    <h2 class="text-2xl font-bold">Migration</h2>
+                                </div>
+
+                                <div class="rounded-box border border-base-300 bg-base-200 p-4">
+                                    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                                        <div>
+                                            <h3 class="text-xl font-bold">Migrate from Toyhou.se</h3>
+                                            <p class="mt-1 text-sm text-base-content/70">
+                                                Start a Toyhou.se profile import from a public profile URL.
+                                            </p>
+                                        </div>
+                                        <a class="btn btn-secondary" href="/migrate">
+                                            Open Migration
+                                        </a>
                                     </div>
                                 </div>
-                            </div>
-                        </section>
-                    </section>
+                            </section>
 
-                    <section class="space-y-5">
-                        <div>
-                            <h2 class="text-2xl font-bold">Migration</h2>
-                            <p class="text-sm text-base-content/70">Bring characters and images over from other character gallery sites.</p>
-                        </div>
-
-                        <div class="rounded-box border border-base-300 bg-base-200 p-4">
-                            <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                            <section
+                                aria-labelledby="settings-tab-profile"
+                                class="space-y-5"
+                                data-settings-panel="profile"
+                                id="settings-panel-profile-social"
+                                role="tabpanel"
+                            >
                                 <div>
-                                    <h3 class="text-xl font-bold">Migrate from Toyhou.se</h3>
-                                    <p class="mt-1 text-sm text-base-content/70">
-                                        Start a Toyhou.se profile import from a public profile URL.
-                                    </p>
+                                    <h2 class="text-2xl font-bold">Social Links</h2>
                                 </div>
-                                <a class="btn btn-secondary" href="/migrate">
-                                    Open Migration
-                                </a>
+
+                                <div class="grid gap-3 sm:grid-cols-2">
+                                    {FIXED_SOCIAL_LINKS.map((link) => (
+                                        <fieldset class="fieldset">
+                                            <label class="fieldset-label" for={link.formName}>
+                                                {link.label}
+                                            </label>
+                                            <label class="input input-bordered w-full">
+                                                <SocialIcon platform={link.platform} />
+                                                <input
+                                                    data-social-label={link.label}
+                                                    data-social-url
+                                                    class="grow"
+                                                    id={link.formName}
+                                                    inputmode="url"
+                                                    name={link.formName}
+                                                    placeholder={link.placeholder}
+                                                    type="text"
+                                                    value={socialValues.fixed[link.platform]}
+                                                />
+                                            </label>
+                                        </fieldset>
+                                    ))}
+                                </div>
+
+                                <div class="rounded-box border border-base-300 bg-base-200 p-4">
+                                    <h3 class="font-semibold">Custom Link</h3>
+                                    <div class="mt-3 grid gap-3 sm:grid-cols-2">
+                                        <fieldset class="fieldset">
+                                            <label class="fieldset-label" for="customLinkLabel">
+                                                Label
+                                            </label>
+                                            <input
+                                                class="input input-bordered w-full"
+                                                autocomplete="off"
+                                                id="customLinkLabel"
+                                                maxLength={40}
+                                                name="customLinkLabel"
+                                                placeholder="Website"
+                                                type="text"
+                                                value={socialValues.customLabel}
+                                            />
+                                        </fieldset>
+
+                                        <fieldset class="fieldset">
+                                            <label class="fieldset-label" for="customLinkUrl">
+                                                URL
+                                            </label>
+                                            <label class="input input-bordered w-full">
+                                                <SocialIcon platform="custom" />
+                                                <input
+                                                    class="grow"
+                                                    autocomplete="off"
+                                                    id="customLinkUrl"
+                                                    inputmode="url"
+                                                    name="customLinkUrl"
+                                                    placeholder="https://example.com"
+                                                    type="text"
+                                                    value={socialValues.customUrl}
+                                                />
+                                            </label>
+                                        </fieldset>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <div class="space-y-4 border-t border-base-300 pt-6">
+                                <div class="alert invisible min-h-12 py-2" data-settings-alert>
+                                    <span data-settings-alert-message></span>
+                                </div>
+
+                                <div class="flex w-full flex-wrap justify-end gap-2">
+                                    <a class="btn btn-ghost" href="/">
+                                        Cancel
+                                    </a>
+                                    <button class="btn btn-primary" type="submit">
+                                        Save Changes
+                                    </button>
+                                </div>
                             </div>
-                        </div>
-                    </section>
-
-                    <section class="space-y-5">
-                        <div>
-                            <h2 class="text-2xl font-bold">Social Links</h2>
-                            <p class="text-sm text-base-content/70">Add the public links that should appear with your profile.</p>
-                        </div>
-
-                        <div class="grid gap-3 sm:grid-cols-2">
-                            {FIXED_SOCIAL_LINKS.map((link) => (
-                                <fieldset class="fieldset">
-                                    <label class="fieldset-label" for={link.formName}>
-                                        {link.label}
-                                    </label>
-                                    <label class="input input-bordered w-full">
-                                        <SocialIcon platform={link.platform} />
-                                        <input
-                                            data-social-label={link.label}
-                                            data-social-url
-                                            class="grow"
-                                            id={link.formName}
-                                            inputmode="url"
-                                            name={link.formName}
-                                            placeholder={link.placeholder}
-                                            type="text"
-                                            value={socialValues.fixed[link.platform]}
-                                        />
-                                    </label>
-                                </fieldset>
-                            ))}
-                        </div>
-
-                        <div class="rounded-box border border-base-300 bg-base-200 p-4">
-                            <h3 class="font-semibold">Custom Link</h3>
-                            <div class="mt-3 grid gap-3 sm:grid-cols-2">
-                                <fieldset class="fieldset">
-                                    <label class="fieldset-label" for="customLinkLabel">
-                                        Label
-                                    </label>
-                                    <input
-                                        class="input input-bordered w-full"
-                                        autocomplete="off"
-                                        id="customLinkLabel"
-                                        maxLength={40}
-                                        name="customLinkLabel"
-                                        placeholder="Website"
-                                        type="text"
-                                        value={socialValues.customLabel}
-                                    />
-                                </fieldset>
-
-                                <fieldset class="fieldset">
-                                    <label class="fieldset-label" for="customLinkUrl">
-                                        URL
-                                    </label>
-                                    <label class="input input-bordered w-full">
-                                        <SocialIcon platform="custom" />
-                                        <input
-                                            class="grow"
-                                            autocomplete="off"
-                                            id="customLinkUrl"
-                                            inputmode="url"
-                                            name="customLinkUrl"
-                                            placeholder="https://example.com"
-                                            type="text"
-                                            value={socialValues.customUrl}
-                                        />
-                                    </label>
-                                </fieldset>
-                            </div>
-                        </div>
-                    </section>
-
-                    <div class="space-y-4 border-t border-base-300 pt-6">
-                        <div class="alert invisible min-h-12 py-2" data-settings-alert>
-                            <span data-settings-alert-message></span>
-                        </div>
-
-                        <div class="flex w-full flex-wrap justify-end gap-2">
-                            <a class="btn btn-ghost" href="/">
-                                Cancel
-                            </a>
-                            <button class="btn btn-primary" type="submit">
-                                Save Changes
-                            </button>
-                        </div>
+                        </form>
                     </div>
-                </form>
+                </div>
 
                 <dialog class="modal" data-passkey-setup-modal>
                     <div class="modal-box">
