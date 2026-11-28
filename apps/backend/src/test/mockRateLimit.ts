@@ -20,3 +20,14 @@ export function createAllowingAuthRateLimits(): Pick<
         AUTH_CHALLENGE_RATE_LIMITER: createMockRateLimit(),
     }
 }
+
+export function createAllowingUploadRateLimits(): Pick<
+    Env,
+    'UPLOAD_NETWORK_RATE_LIMITER' | 'UPLOAD_IDENTITY_BURST_RATE_LIMITER' | 'UPLOAD_IDENTITY_SUSTAINED_RATE_LIMITER'
+> {
+    return {
+        UPLOAD_NETWORK_RATE_LIMITER: createMockRateLimit(),
+        UPLOAD_IDENTITY_BURST_RATE_LIMITER: createMockRateLimit(),
+        UPLOAD_IDENTITY_SUSTAINED_RATE_LIMITER: createMockRateLimit(),
+    }
+}

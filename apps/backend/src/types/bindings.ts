@@ -17,5 +17,7 @@ export type Bindings = Omit<
     IMAGE_PROCESSING_QUEUE: Queue<ImageProcessingMessage>
     IMAGE_PROCESSING_DLQ_NAME: string
     IMAGE_UPLOAD_ASYNC_ENABLED?: string
+    IMAGE_UPLOAD_MAX_ACTIVE_JOBS?: string
+    IMAGE_UPLOAD_DAILY_QUOTA?: string
     RECENT_FEED_CURSOR_SECRET?: string
 }

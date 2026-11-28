@@ -40,6 +40,12 @@ const IMAGE_TASK_MAX_SHARP_ATTEMPTS = 3
 const IMAGE_TASK_STALE_MS = 2 * 60 * 1_000
 const IMAGE_CLEANUP_GRACE_MS = 60 * 60 * 1_000
 const SQUARE_SOURCE_MAX_BYTES = 3 * 1024 * 1024
+const IMAGE_UPLOAD_ACTIVE_STATE_LIST = "('uploading', 'queued', 'processing', 'waiting_for_sources', 'publishing')"
+const IMAGE_UPLOAD_MAX_ACTIVE_JOBS_DEFAULT = 200
+const IMAGE_UPLOAD_DAILY_QUOTA_DEFAULT = 5_000
+const IMAGE_UPLOAD_QUOTA_WINDOW_MS = 24 * 60 * 60 * 1_000
+const IMAGE_UPLOAD_TERMINAL_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000
+const IMAGE_UPLOAD_RETENTION_LIMIT = 100
 
 export const ImageUploadKindSchema = z.enum(['gallery', 'user-profile', 'character-profile', 'folder-image'])
 type ImageUploadKind = z.infer<typeof ImageUploadKindSchema>
@@ -153,6 +159,35 @@ type CreateGalleryJobInput = {
 
 export class ImageUploadConflictError extends Error {}
 export class ImageUploadValidationError extends Error {}
+export class ImageUploadCapacityError extends Error {}
+
+function positiveIntOverride(value: string | undefined, fallback: number): number {
+    const parsed = Number.parseInt(value ?? '', 10)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+async function assertUploadQuota(env: Bindings, userId: string, now: Date): Promise<void> {
+    const activeCap = positiveIntOverride(env.IMAGE_UPLOAD_MAX_ACTIVE_JOBS, IMAGE_UPLOAD_MAX_ACTIVE_JOBS_DEFAULT)
+    const dailyQuota = positiveIntOverride(env.IMAGE_UPLOAD_DAILY_QUOTA, IMAGE_UPLOAD_DAILY_QUOTA_DEFAULT)
+    const windowText = toSqlTimestamp(new Date(now.getTime() - IMAGE_UPLOAD_QUOTA_WINDOW_MS))
+    const [active, recent] = await env.DB.batch([
+        env.DB.prepare(
+            `SELECT COUNT(*) AS count FROM image_upload_jobs WHERE user_id = ? AND state IN ${IMAGE_UPLOAD_ACTIVE_STATE_LIST}`,
+        ).bind(userId),
+        env.DB.prepare(`SELECT COUNT(*) AS count FROM image_upload_jobs WHERE user_id = ? AND created_at >= ?`).bind(userId, windowText),
+    ])
+    const activeCount = (active?.results[0] as {count: number} | undefined)?.count ?? 0
+
+    if (activeCount >= activeCap) {
+        throw new ImageUploadCapacityError('Too many image uploads are in progress. Wait for some to finish and try again.')
+    }
+
+    const recentCount = (recent?.results[0] as {count: number} | undefined)?.count ?? 0
+
+    if (recentCount >= dailyQuota) {
+        throw new ImageUploadCapacityError('Daily image upload limit reached. Try again later.')
+    }
+}
 
 export async function createGalleryImageUploadJob(env: Bindings, input: CreateGalleryJobInput): Promise<ImageUploadStatus> {
     if (
@@ -188,6 +223,7 @@ export async function createGalleryImageUploadJob(env: Bindings, input: CreateGa
     }
 
     const now = input.now ?? new Date()
+    await assertUploadQuota(env, input.userId, now)
     const nowText = toSqlTimestamp(now)
     const jobId = crypto.randomUUID()
     const statements: D1PreparedStatement[] = [
@@ -281,6 +317,7 @@ export async function createSquareImageUploadJob(env: Bindings, input: CreateSqu
     await assertOwnedTarget(env.DB, input.userId, targetType, input.targetId)
 
     const now = input.now ?? new Date()
+    await assertUploadQuota(env, input.userId, now)
     const nowText = toSqlTimestamp(now)
     const jobId = crypto.randomUUID()
     const sourceId = crypto.randomUUID()
@@ -712,6 +749,34 @@ export async function reconcileImageUploads(env: Bindings, now = new Date()): Pr
                 .run()
         }
     }
+
+    await purgeTerminalUploadJobs(env.DB, now)
+}
+
+async function purgeTerminalUploadJobs(db: D1Database, now: Date): Promise<void> {
+    const beforeText = toSqlTimestamp(new Date(now.getTime() - IMAGE_UPLOAD_TERMINAL_RETENTION_MS))
+    const terminal = await db
+        .prepare(
+            `SELECT id
+             FROM image_upload_jobs
+             WHERE state IN ('ready', 'failed', 'canceled') AND updated_at <= ?
+             ORDER BY updated_at, id
+             LIMIT ?`,
+        )
+        .bind(beforeText, IMAGE_UPLOAD_RETENTION_LIMIT)
+        .all<{id: string}>()
+
+    const statements: D1PreparedStatement[] = []
+
+    if (terminal.results.length > 0) {
+        const placeholders = terminal.results.map(() => '?').join(', ')
+        statements.push(
+            db.prepare(`DELETE FROM image_upload_jobs WHERE id IN (${placeholders})`).bind(...terminal.results.map((job) => job.id)),
+        )
+    }
+
+    statements.push(db.prepare(`DELETE FROM image_cleanup_tasks WHERE state IN ('done', 'failed') AND updated_at <= ?`).bind(beforeText))
+    await db.batch(statements)
 }
 
 async function expireAbandonedCapacityJobs(db: D1Database, now: Date): Promise<void> {

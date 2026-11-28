@@ -3,6 +3,7 @@ import {createCsrfToken} from '../../lib/auth/session'
 import {queryOne, seedAuthenticatedUser, seedFolder, useTestDatabase} from '../../test/d1'
 import {createPngFile} from '../../test/imageFixtures'
 import {createMockR2Bucket} from '../../test/mockR2'
+import {createAllowingUploadRateLimits, createMockRateLimit} from '../../test/mockRateLimit'
 import type {Bindings} from '../../types/bindings'
 import {apiRoutes} from '../api'
 
@@ -13,13 +14,33 @@ function createQueue(): Queue {
     return {send: vi.fn(async () => undefined)} as unknown as Queue
 }
 
-function createEnv(): Bindings {
+function createEnv(overrides: Partial<Bindings> = {}): Bindings {
     return {
         DB: db,
         IMAGE_PROCESSING_QUEUE: createQueue(),
         MEDIA_BUCKET: createMockR2Bucket(),
         MEDIA_PUBLIC_BASE_URL: 'https://m.myoc.art',
+        ...createAllowingUploadRateLimits(),
+        ...overrides,
     } as unknown as Bindings
+}
+
+function sqlTimestamp(date: Date): string {
+    return date.toISOString().replace('T', ' ').slice(0, 19)
+}
+
+async function seedUploadJob(id: string, state: string, options: {createdAt?: Date; userId?: string} = {}): Promise<void> {
+    const createdAt = sqlTimestamp(options.createdAt ?? new Date())
+    await db
+        .prepare(
+            `INSERT INTO image_upload_jobs (
+                id, user_id, target_type, target_id, state, idempotency_key, request_json,
+                deadline_at, created_at, updated_at
+            ) VALUES (?, ?, 'user_profile', 'user-1', ?, ?, '{"kind":"user-profile","targetId":"user-1"}',
+                '2099-01-01 00:00:00', ?, ?)`,
+        )
+        .bind(id, options.userId ?? 'user-1', state, `seed-${id}`, createdAt, createdAt)
+        .run()
 }
 
 async function postUpload(env: Bindings, options: {form?: FormData; idempotencyKey?: string; authenticated?: boolean} = {}) {
@@ -386,5 +407,94 @@ describe('image upload API', () => {
                 )
             ).status,
         ).toBe(404)
+    })
+
+    it('rejects uploads when the network rate limiter denies the request', async () => {
+        await seedAuthenticatedUser({id: 'user-1'}, sessionToken)
+        const env = createEnv({UPLOAD_NETWORK_RATE_LIMITER: createMockRateLimit(false)})
+
+        const response = await postUpload(env)
+
+        expect(response.status).toBe(429)
+        expect(response.headers.get('retry-after')).toBe('60')
+        expect(await queryOne(`SELECT id FROM image_upload_jobs WHERE user_id = 'user-1'`)).toBeNull()
+    })
+
+    it('rejects uploads when the identity rate limiter denies the request', async () => {
+        await seedAuthenticatedUser({id: 'user-1'}, sessionToken)
+        const env = createEnv({UPLOAD_IDENTITY_SUSTAINED_RATE_LIMITER: createMockRateLimit(false)})
+
+        const response = await postUpload(env)
+
+        expect(response.status).toBe(429)
+    })
+
+    it('rejects retries when the network rate limiter denies the request', async () => {
+        await seedAuthenticatedUser({id: 'user-1'}, sessionToken)
+        const env = createEnv()
+        const created = (await (await postUpload(env, {idempotencyKey: 'retry-limited-key'})).json()) as {job: {id: string}}
+
+        const response = await apiRoutes.request(
+            `https://example.com/image-uploads/${created.job.id}/retry`,
+            {
+                method: 'POST',
+                headers: {
+                    cookie: `myoc_session=${sessionToken}`,
+                    'idempotency-key': 'retry-limited-retry',
+                    'x-csrf-token': await createCsrfToken(sessionToken),
+                },
+            },
+            createEnv({UPLOAD_NETWORK_RATE_LIMITER: createMockRateLimit(false)}),
+        )
+
+        expect(response.status).toBe(429)
+    })
+
+    it('caps active upload jobs per account', async () => {
+        await seedAuthenticatedUser({id: 'user-1'}, sessionToken)
+        await seedUploadJob('active-job-1', 'queued')
+        await seedUploadJob('active-job-2', 'processing')
+        const env = createEnv({IMAGE_UPLOAD_MAX_ACTIVE_JOBS: '2'})
+
+        const blocked = await postUpload(env, {idempotencyKey: 'over-active-cap'})
+        expect(blocked.status).toBe(429)
+        expect(blocked.headers.get('retry-after')).toBe('60')
+
+        await db.prepare(`UPDATE image_upload_jobs SET state = 'ready' WHERE id = 'active-job-2'`).run()
+        const allowed = await postUpload(env, {idempotencyKey: 'under-active-cap'})
+        expect(allowed.status).toBe(202)
+    })
+
+    it('falls back to the default cap when the override is not a positive number', async () => {
+        await seedAuthenticatedUser({id: 'user-1'}, sessionToken)
+        await seedUploadJob('active-job-1', 'queued')
+        const env = createEnv({IMAGE_UPLOAD_MAX_ACTIVE_JOBS: '0'})
+
+        const response = await postUpload(env, {idempotencyKey: 'zero-cap-override'})
+        expect(response.status).toBe(202)
+    })
+
+    it('caps upload jobs created per rolling day', async () => {
+        await seedAuthenticatedUser({id: 'user-1'}, sessionToken)
+        await seedUploadJob('quota-job-1', 'ready')
+        await seedUploadJob('quota-job-2', 'ready')
+        await seedUploadJob('quota-job-old', 'ready', {createdAt: new Date(Date.now() - 25 * 60 * 60 * 1_000)})
+        const env = createEnv({IMAGE_UPLOAD_DAILY_QUOTA: '2'})
+
+        const blocked = await postUpload(env, {idempotencyKey: 'over-daily-quota'})
+        expect(blocked.status).toBe(429)
+    })
+
+    it('lets an idempotent replay through even when the quota is exhausted', async () => {
+        await seedAuthenticatedUser({id: 'user-1'}, sessionToken)
+        const env = createEnv({IMAGE_UPLOAD_DAILY_QUOTA: '1'})
+
+        const first = await postUpload(env, {idempotencyKey: 'quota-replay-key'})
+        expect(first.status).toBe(202)
+        const firstBody = (await first.json()) as {job: {id: string}}
+
+        const replay = await postUpload(env, {idempotencyKey: 'quota-replay-key'})
+        expect(replay.status).toBe(202)
+        expect((await replay.json()) as {job: {id: string}}).toHaveProperty('job.id', firstBody.job.id)
     })
 })
