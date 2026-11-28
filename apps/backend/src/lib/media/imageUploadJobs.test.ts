@@ -232,6 +232,57 @@ describe('image upload jobs', () => {
         expect(await getImageUploadStatus(db, 'user-1', job.id)).toMatchObject({state: 'failed', error: {code: 'deadline_exceeded'}})
     })
 
+    it('purges terminal jobs past the retention window', async () => {
+        await seedUser({id: 'user-1'})
+        const setup = createEnv()
+        const oldJob = await createSquareImageUploadJob(setup.env, {
+            userId: 'user-1',
+            kind: 'user-profile',
+            targetId: 'user-1',
+            idempotencyKey: 'retention-old',
+            bytes: await pngBytes(),
+            now,
+        })
+        const recentJob = await createSquareImageUploadJob(setup.env, {
+            userId: 'user-1',
+            kind: 'user-profile',
+            targetId: 'user-1',
+            idempotencyKey: 'retention-recent',
+            bytes: await pngBytes(),
+            now,
+        })
+        const activeJob = await createSquareImageUploadJob(setup.env, {
+            userId: 'user-1',
+            kind: 'user-profile',
+            targetId: 'user-1',
+            idempotencyKey: 'retention-active',
+            bytes: await pngBytes(),
+            now,
+        })
+        const thirtyOneDaysAgo = new Date(now.getTime() - 31 * 24 * 60 * 60 * 1_000)
+        const staleText = thirtyOneDaysAgo.toISOString().replace('T', ' ').slice(0, 19)
+        await db.batch([
+            db.prepare(`UPDATE image_upload_jobs SET state = 'ready', updated_at = ? WHERE id = ?`).bind(staleText, oldJob.id),
+            db.prepare(`UPDATE image_upload_jobs SET state = 'ready' WHERE id = ?`).bind(recentJob.id),
+            db.prepare(`UPDATE image_upload_jobs SET state = 'processing', updated_at = ? WHERE id = ?`).bind(staleText, activeJob.id),
+            db
+                .prepare(
+                    `INSERT INTO image_cleanup_tasks (id, job_id, bucket, object_key, state, not_before, created_at, updated_at)
+                     VALUES ('old-cleanup', ?, 'source', 'old/object', 'done', ?, ?, ?)`,
+                )
+                .bind(oldJob.id, staleText, staleText, staleText),
+        ])
+
+        await reconcileImageUploads(setup.env, now)
+
+        expect(await queryOne('SELECT id FROM image_upload_jobs WHERE id = ?', [oldJob.id])).toBeNull()
+        expect(await queryOne('SELECT id FROM image_processing_tasks WHERE job_id = ?', [oldJob.id])).toBeNull()
+        expect(await queryOne('SELECT id FROM image_upload_sources WHERE job_id = ?', [oldJob.id])).toBeNull()
+        expect(await queryOne('SELECT id FROM image_cleanup_tasks WHERE id = ?', ['old-cleanup'])).toBeNull()
+        expect(await queryOne('SELECT id FROM image_upload_jobs WHERE id = ?', [recentJob.id])).not.toBeNull()
+        expect(await queryOne('SELECT state FROM image_upload_jobs WHERE id = ?', [activeJob.id])).toMatchObject({state: 'processing'})
+    })
+
     it('does not process a task whose lease is revoked during its claim', async () => {
         await seedUser({id: 'user-1'})
         const setup = createEnv()

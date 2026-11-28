@@ -142,6 +142,30 @@
         "limit": 10,
         "period": 60
       }
+    },
+    {
+      "name": "UPLOAD_NETWORK_RATE_LIMITER",
+      "namespace_id": "539139905",
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
+    },
+    {
+      "name": "UPLOAD_IDENTITY_BURST_RATE_LIMITER",
+      "namespace_id": "539139906",
+      "simple": {
+        "limit": 20,
+        "period": 10
+      }
+    },
+    {
+      "name": "UPLOAD_IDENTITY_SUSTAINED_RATE_LIMITER",
+      "namespace_id": "539139907",
+      "simple": {
+        "limit": 120,
+        "period": 60
+      }
     }
   ],
   "r2_buckets": [

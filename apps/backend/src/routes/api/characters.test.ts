@@ -33,6 +33,7 @@ import {
     createWebpFile,
 } from '../../test/imageFixtures'
 import {createMockR2Bucket} from '../../test/mockR2'
+import {createAllowingUploadRateLimits, createMockRateLimit} from '../../test/mockRateLimit'
 import {createRequestHeaders, type TestRequestOptions} from '../../test/request'
 import {apiRoutes} from '../api'
 
@@ -283,6 +284,7 @@ function requestEnv(db: D1Database, mediaBucket?: R2Bucket, previewContainer?: D
         MYOC_DOCKER_SHARP_CONTAINER: previewContainer ?? defaultContainer,
         PREVIEW_PROCESSOR_TOKEN: 'preview-token',
         IMAGE_UPLOAD_ASYNC_ENABLED: asyncImageUploads ? 'true' : 'false',
+        ...createAllowingUploadRateLimits(),
     }
 }
 
@@ -5002,6 +5004,101 @@ describe('character media uploads', () => {
         })
         expect(await mediaBucket.get(publishedObjectKey)).toBeNull()
         expect(await mediaBucket.list()).toHaveProperty('objects.length', 1)
+    })
+
+    it('rejects completion routes when the upload rate limiter denies the request', async () => {
+        const sessionToken = 'session-token'
+        const csrfToken = await createCsrfToken(sessionToken)
+        const character = createCharacterRecord()
+        const media = createMediaRecord({character_id: character.id})
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        await seedMediaRecord(media)
+        const headers = {
+            cookie: `myoc_session=${sessionToken}`,
+            'content-type': 'application/json',
+            'x-csrf-token': csrfToken,
+        }
+        const limitedEnv = {...requestEnv(db), UPLOAD_NETWORK_RATE_LIMITER: createMockRateLimit(false)}
+
+        const createResponse = await apiRoutes.request(
+            `https://example.com/characters/${character.id}/media/chunked/complete`,
+            {method: 'POST', body: JSON.stringify({mediaId: 'media-id'}), headers},
+            limitedEnv,
+            testExecutionContext,
+        )
+        expect(createResponse.status).toBe(429)
+
+        const replaceResponse = await apiRoutes.request(
+            `https://example.com/characters/${character.id}/media/${media.id}/chunked/complete`,
+            {method: 'POST', body: JSON.stringify({}), headers},
+            limitedEnv,
+            testExecutionContext,
+        )
+        expect(replaceResponse.status).toBe(429)
+
+        const toyhouseResponse = await apiRoutes.request(
+            'https://example.com/characters/toyhouse-import-items/item-id/complete',
+            {method: 'POST', body: JSON.stringify({}), headers},
+            limitedEnv,
+            testExecutionContext,
+        )
+        expect(toyhouseResponse.status).toBe(429)
+    })
+
+    it('rejects an asynchronous gallery completion when the account job cap is reached', async () => {
+        const sessionToken = 'session-token'
+        const mediaBucket = createMockR2Bucket()
+        const character = createCharacterRecord()
+        const queue = {send: vi.fn(async () => undefined)} as unknown as Queue
+        await seedCurrentUser(sessionToken)
+        await seedCharacterRecord(character)
+        const routeEnv = {
+            ...requestEnv(db, mediaBucket),
+            IMAGE_PROCESSING_QUEUE: queue,
+            IMAGE_UPLOAD_ASYNC_ENABLED: 'true',
+            IMAGE_UPLOAD_MAX_ACTIVE_JOBS: '1',
+        }
+        await db
+            .prepare(
+                `INSERT INTO image_upload_jobs (
+                    id, user_id, target_type, target_id, state, idempotency_key, request_json,
+                    deadline_at, created_at, updated_at
+                ) VALUES ('capped-job', 'current-user', 'user_profile', 'current-user', 'queued', 'capped-job-key',
+                    '{"kind":"user-profile","targetId":"current-user"}', '2099-01-01 00:00:00', '2026-09-04 12:00:00', '2026-09-04 12:00:00')`,
+            )
+            .run()
+        const csrfToken = await createCsrfToken(sessionToken)
+        const headers = {cookie: `myoc_session=${sessionToken}`, 'x-csrf-token': csrfToken}
+        const initResponse = await apiRoutes.request(
+            `https://example.com/characters/${character.id}/media/chunked/init`,
+            {method: 'POST', body: JSON.stringify({ratings: ['sfw']}), headers: {...headers, 'content-type': 'application/json'}},
+            routeEnv,
+            testExecutionContext,
+        )
+        const init = (await initResponse.json()) as ChunkedSfwInitBody
+        const partResponse = await apiRoutes.request(
+            `https://example.com/characters/${character.id}/media/chunked/${init.mediaId}/sfw/${encodeURIComponent(init.uploads.sfw.uploadId)}/1?imageKey=${init.uploads.sfw.imageKey}&contentType=image%2Fpng`,
+            {method: 'PUT', body: createPngFile(800, 600), headers},
+            routeEnv,
+            testExecutionContext,
+        )
+        const part = (await partResponse.json()) as R2UploadedPart
+
+        const response = await apiRoutes.request(
+            `https://example.com/characters/${character.id}/media/chunked/complete`,
+            {
+                method: 'POST',
+                body: JSON.stringify({mediaId: init.mediaId, sfwUpload: {...init.uploads.sfw, parts: [part]}}),
+                headers: {...headers, 'content-type': 'application/json', 'idempotency-key': 'gallery-capped'},
+            },
+            routeEnv,
+            testExecutionContext,
+        )
+
+        expect(response.status).toBe(429)
+        expect(await response.json()).toEqual({error: 'Too many image uploads are in progress. Wait for some to finish and try again.'})
+        expect(await queryOne('SELECT id FROM image_upload_jobs WHERE id = ?', ['capped-job'], db)).not.toBeNull()
     })
 
     it('aborts an asynchronous gallery upload under its staging key', async () => {

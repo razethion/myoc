@@ -31,7 +31,7 @@ import {
     parseHeightChartJson as parseCharacterHeightChartJson,
 } from '../../lib/media/heightChart'
 import {type GalleryImageMetadata, readGalleryImageMetadata} from '../../lib/media/imageMetadata'
-import {type CompletedGalleryJobSource, createGalleryImageUploadJob} from '../../lib/media/imageUploadJobs'
+import {type CompletedGalleryJobSource, createGalleryImageUploadJob, ImageUploadCapacityError} from '../../lib/media/imageUploadJobs'
 import {tagPngWithSrgbFixedLength} from '../../lib/media/pngColorSpace'
 import {
     GALLERY_NSFW_BLUR_CONTENT_TYPE,
@@ -50,6 +50,7 @@ import {
 } from '../../lib/media/profileImage'
 import {deleteR2Objects} from '../../lib/media/r2Delete'
 import {retainThumbnailOriginal, thumbnailOriginalObjectKey} from '../../lib/media/thumbnailSources'
+import {enforceUploadRateLimits} from '../../lib/media/uploadLimits'
 import {
     characterFolderImageObjectKey,
     characterFolderImageUrl,
@@ -1496,6 +1497,12 @@ characterRoutes.post('/toyhouse-import-items/:itemId/complete', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: itemId.error}, 400)
     }
 
+    const limitResponse = await enforceUploadRateLimits(c, currentUser.id)
+
+    if (limitResponse) {
+        return limitResponse
+    }
+
     const complete = await parseChunkedMediaCompleteBody(c)
 
     if ('error' in complete) {
@@ -1508,15 +1515,10 @@ characterRoutes.post('/toyhouse-import-items/:itemId/complete', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Import item not found'}, 404)
     }
 
-    if (item.status === 'imported' && item.media_id) {
-        const existingMedia = await getOwnedCharacterMedia(c.env.DB, currentUser.id, item.character_id, item.media_id)
+    const skippedResponse = await toyhouseReimportResponse(c, currentUser.id, item)
 
-        if (existingMedia) {
-            return jsonResponse(c, ToyhouseImportCompleteResponseSchema, {
-                media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, existingMedia),
-                skipped: true,
-            })
-        }
+    if (skippedResponse) {
+        return skippedResponse
     }
 
     const mediaId = normalizeUploadIdentifier(complete.body.mediaId, 'Media id')
@@ -1575,6 +1577,12 @@ characterRoutes.post('/:id/media/chunked/complete', async (c) => {
     }
 
     const {currentUser, character} = owned
+
+    const limitResponse = await enforceUploadRateLimits(c, currentUser.id)
+
+    if (limitResponse) {
+        return limitResponse
+    }
 
     const complete = await parseChunkedMediaCompleteBody(c)
 
@@ -1960,6 +1968,12 @@ characterRoutes.post('/:id/media/:mediaId/chunked/complete', async (c) => {
     }
 
     const {currentUser, character, media} = owned
+
+    const limitResponse = await enforceUploadRateLimits(c, currentUser.id)
+
+    if (limitResponse) {
+        return limitResponse
+    }
 
     const complete = await parseChunkedMediaCompleteBody(c)
 
@@ -2859,9 +2873,13 @@ function describeError(error: unknown): string {
     }
 }
 
-function mediaCompletionFailure(error: unknown, referenceId: string): {message: string; status: 400 | 409 | 500} {
+function mediaCompletionFailure(error: unknown, referenceId: string): {message: string; status: 400 | 409 | 429 | 500} {
     if (error instanceof GalleryUploadValidationError) {
         return {message: error.message, status: 400}
+    }
+
+    if (error instanceof ImageUploadCapacityError) {
+        return {message: error.message, status: 429}
     }
 
     if (error instanceof GalleryMediaCapacityError) {
@@ -2884,6 +2902,27 @@ function mediaCompletionFailure(error: unknown, referenceId: string): {message: 
 function mediaCompletionErrorResponse(c: CharacterRouteContext, error: unknown, referenceId: string): Response {
     const failure = mediaCompletionFailure(error, referenceId)
     return jsonResponse(c, ErrorResponseSchema, {error: failure.message}, failure.status)
+}
+
+async function toyhouseReimportResponse(
+    c: CharacterRouteContext,
+    userId: string,
+    item: ToyhouseImportItemRecord,
+): Promise<Response | null> {
+    if (item.status !== 'imported' || !item.media_id) {
+        return null
+    }
+
+    const existingMedia = await getOwnedCharacterMedia(c.env.DB, userId, item.character_id, item.media_id)
+
+    if (!existingMedia) {
+        return null
+    }
+
+    return jsonResponse(c, ToyhouseImportCompleteResponseSchema, {
+        media: toPublicMedia(c.env.MEDIA_PUBLIC_BASE_URL, existingMedia),
+        skipped: true,
+    })
 }
 
 function existingMediaVariantKey(media: CharacterMediaRecord, rating: MediaRating): string | null {

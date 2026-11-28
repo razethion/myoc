@@ -1,3 +1,4 @@
+import type {Context} from 'hono'
 import {Hono} from 'hono'
 import {z} from 'zod'
 import {getCurrentUser} from '../../lib/auth/session'
@@ -9,11 +10,13 @@ import {
     createSquareImageUploadJob,
     getImageUploadBatchStatus,
     getImageUploadStatus,
+    ImageUploadCapacityError,
     ImageUploadConflictError,
     ImageUploadKindSchema,
     ImageUploadValidationError,
     retryImageUploadJob,
 } from '../../lib/media/imageUploadJobs'
+import {enforceUploadRateLimits} from '../../lib/media/uploadLimits'
 import type {Bindings} from '../../types/bindings'
 
 const IMAGE_UPLOAD_FORM_MAX_BYTES = 3 * 1024 * 1024 + 64 * 1024
@@ -36,11 +39,36 @@ const ImageUploadBatchResponseSchema = responseSchema({jobs: z.array(ImageUpload
 
 export const imageUploadRoutes = new Hono<{Bindings: Bindings}>()
 
+type UploadRouteContext = Context<{Bindings: Bindings}>
+
+function imageUploadErrorResponse(c: UploadRouteContext, error: unknown): Response | null {
+    if (error instanceof ImageUploadConflictError) {
+        return jsonResponse(c, ErrorResponseSchema, {error: error.message}, 409)
+    }
+
+    if (error instanceof ImageUploadValidationError) {
+        return jsonResponse(c, ErrorResponseSchema, {error: error.message}, 400)
+    }
+
+    if (error instanceof ImageUploadCapacityError) {
+        c.header('Retry-After', '60')
+        return jsonResponse(c, ErrorResponseSchema, {error: error.message}, 429)
+    }
+
+    return null
+}
+
 imageUploadRoutes.post('/', async (c) => {
     const currentUser = await getCurrentUser(c)
 
     if (!currentUser) {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
+    }
+
+    const limitResponse = await enforceUploadRateLimits(c, currentUser.id)
+
+    if (limitResponse) {
+        return limitResponse
     }
 
     const idempotencyKey = readIdempotencyKey(c.req.header('idempotency-key'))
@@ -79,12 +107,10 @@ imageUploadRoutes.post('/', async (c) => {
         })
         return jsonResponse(c, ImageUploadResponseSchema, {job, statusUrl: `/api/image-uploads/${encodeURIComponent(job.id)}`}, 202)
     } catch (error) {
-        if (error instanceof ImageUploadConflictError) {
-            return jsonResponse(c, ErrorResponseSchema, {error: error.message}, 409)
-        }
+        const handled = imageUploadErrorResponse(c, error)
 
-        if (error instanceof ImageUploadValidationError) {
-            return jsonResponse(c, ErrorResponseSchema, {error: error.message}, 400)
+        if (handled) {
+            return handled
         }
 
         throw error
@@ -121,6 +147,12 @@ imageUploadRoutes.post('/:jobId/retry', async (c) => {
         return jsonResponse(c, ErrorResponseSchema, {error: 'Authentication required'}, 401)
     }
 
+    const limitResponse = await enforceUploadRateLimits(c, currentUser.id)
+
+    if (limitResponse) {
+        return limitResponse
+    }
+
     const idempotencyKey = readIdempotencyKey(c.req.header('idempotency-key'))
 
     if (!idempotencyKey) {
@@ -136,8 +168,10 @@ imageUploadRoutes.post('/:jobId/retry', async (c) => {
 
         return jsonResponse(c, ImageUploadResponseSchema, {job, statusUrl: c.req.path.replace(/\/retry$/, '')}, 202)
     } catch (error) {
-        if (error instanceof ImageUploadConflictError) {
-            return jsonResponse(c, ErrorResponseSchema, {error: error.message}, 409)
+        const handled = imageUploadErrorResponse(c, error)
+
+        if (handled) {
+            return handled
         }
 
         throw error
