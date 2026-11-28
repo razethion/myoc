@@ -381,6 +381,7 @@ function UserSettingsPageScript({userId}: {userId: string}) {
                 return;
             }
 
+            activateSettingsTab('security');
             passwordFieldset.hidden = false;
             passwordInput.focus();
             passwordFieldset.scrollIntoView({ block: 'center' });
@@ -945,7 +946,6 @@ function UserSettingsPageScript({userId}: {userId: string}) {
                 }
 
                 if (pendingLastPasskeyRemoval && !passwordInput?.value.trim()) {
-                    activateSettingsTab('security');
                     revealPasswordField();
                     showSettingsAlert('Enter a password before removing your last passkey.');
                     return;
