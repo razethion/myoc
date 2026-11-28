@@ -916,6 +916,18 @@ describe('public page redirects', () => {
         expect(html).toContain('data-recent-feed')
         expect(html).toContain('data-persist-unapproved="false"')
         expect(html).toContain('Show unapproved')
+
+        const stylesheetIndex = html.indexOf('<link href="/app.css" rel="stylesheet"/>')
+        const preconnectIndex = html.indexOf('<link href="https://m.myoc.art" rel="preconnect"/>')
+        const preloadIndex = html.indexOf(
+            '<link as="font" crossorigin="anonymous" href="/assets/Nohemi.woff2" rel="preload" type="font/woff2"/>',
+        )
+
+        expect(stylesheetIndex).toBeGreaterThan(-1)
+        expect(preconnectIndex).toBeGreaterThanOrEqual(0)
+        expect(preconnectIndex).toBeLessThan(stylesheetIndex)
+        expect(preloadIndex).toBeGreaterThanOrEqual(0)
+        expect(preloadIndex).toBeLessThan(stylesheetIndex)
     })
 
     it.each([false, true])('shows a generic unavailable page when the recent gallery cannot load (signed in: %s)', async (signedIn) => {

@@ -302,6 +302,7 @@ export function ProfilePage({
 
     return (
         <BaseLayout
+            mediaBaseUrl={mediaBaseUrl}
             head={
                 <ProfilePageHead
                     currentFolder={currentFolder}

@@ -26,7 +26,7 @@ const BYTES_PER_GB = BYTES_PER_MB * 1024
 
 export function LeaderboardPage({currentUser, guestInitial, mediaBaseUrl, snapshot}: LeaderboardPageProps) {
     return (
-        <BaseLayout title={LEADERBOARD_TITLE}>
+        <BaseLayout mediaBaseUrl={mediaBaseUrl} title={LEADERBOARD_TITLE}>
             <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl} />
             <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
                 <header class="border-b border-base-300 pb-6">

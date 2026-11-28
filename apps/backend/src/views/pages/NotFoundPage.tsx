@@ -51,7 +51,7 @@ export function NotFoundPage({
     message = 'The page you are looking for does not exist or has been moved.',
 }: NotFoundPageProps) {
     return (
-        <BaseLayout head={<NotFoundStyles />} title="404 | MyOC">
+        <BaseLayout mediaBaseUrl={mediaBaseUrl} head={<NotFoundStyles />} title="404 | MyOC">
             <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl} />
             <main class="not-found-field flex min-h-[calc(100vh-4rem)] items-center px-4 py-16 sm:px-6 lg:px-8">
                 <section class="mx-auto grid w-full max-w-6xl items-center gap-10 lg:grid-cols-[0.9fr_1.1fr]">

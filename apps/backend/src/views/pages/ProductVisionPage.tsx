@@ -53,7 +53,7 @@ const PRODUCT_VISION_IS_NOT = [
 
 export function ProductVisionPage({currentUser, guestInitial, mediaBaseUrl}: ProductVisionPageProps) {
     return (
-        <BaseLayout title="Product Vision | MyOC">
+        <BaseLayout mediaBaseUrl={mediaBaseUrl} title="Product Vision | MyOC">
             <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl} />
             <main class="min-h-[calc(100vh-4rem)] bg-base-100 px-4 py-12 sm:px-6 lg:px-8 lg:py-16">
                 <section class="mx-auto max-w-6xl">

@@ -1,6 +1,19 @@
+# Response headers for static assets served from this directory.
+# Workers static assets apply this file to asset responses only, never to Worker responses.
+# scripts/sync-web-assets.mjs copies this file to the web app project root, so the same rules
+# govern the asset responses served on myoc.art (the web app serves these assets).
+
 /*
   X-Content-Type-Options: nosniff
-  Referrer-Policy: strict-origin-when-cross-origin
-  X-Frame-Options: DENY
-  Permissions-Policy: accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()
-  Content-Security-Policy: default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; sandbox
+
+/app.css
+  Cache-Control: public, max-age=300, stale-while-revalidate=3600
+  X-Content-Type-Options: nosniff
+
+/assets/*
+  Cache-Control: public, max-age=300, stale-while-revalidate=3600
+  X-Content-Type-Options: nosniff
+
+/vendor/*
+  Cache-Control: public, max-age=300, stale-while-revalidate=3600
+  X-Content-Type-Options: nosniff

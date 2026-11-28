@@ -1815,7 +1815,7 @@ export function CharacterSettingsPage({currentUser, character, media, galleryTab
     const characterViewUrl = `${characterProfileBaseUrl}${encodeURIComponent(character.name)}`
 
     return (
-        <BaseLayout title={`${character.name} Settings | MyOC`}>
+        <BaseLayout mediaBaseUrl={mediaBaseUrl} title={`${character.name} Settings | MyOC`}>
             <Navbar currentUser={currentUser} guestInitial={currentUser.username.charAt(0).toUpperCase()} mediaBaseUrl={mediaBaseUrl} />
             <main class="container mx-auto max-w-7xl px-3 py-6 sm:px-4">
                 <style>{`

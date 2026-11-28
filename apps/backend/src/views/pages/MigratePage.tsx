@@ -90,7 +90,7 @@ export function MigratePage({
     const toyhouseFolderUrl = getToyhouseFolderUrl(normalizedToyhouseUsername)
 
     return (
-        <BaseLayout title="Migrate from Toyhou.se | MyOC">
+        <BaseLayout mediaBaseUrl={mediaBaseUrl} title="Migrate from Toyhou.se | MyOC">
             <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl} />
 
             <main class="container mx-auto max-w-3xl px-3 py-6 sm:px-0">

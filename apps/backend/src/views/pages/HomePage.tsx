@@ -1248,7 +1248,7 @@ export function HomePage({
     stats,
 }: HomePageProps) {
     return (
-        <BaseLayout head={<HomePageHead siteUrl={siteUrl} stats={stats} />} title={HOME_PAGE_TITLE}>
+        <BaseLayout mediaBaseUrl={mediaBaseUrl} head={<HomePageHead siteUrl={siteUrl} stats={stats} />} title={HOME_PAGE_TITLE}>
             <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl} />
             <main>
                 <HeroSection stats={stats} />

@@ -7,10 +7,11 @@ const FAVICON_DATA_URL =
 type BaseLayoutProps = {
     title: string
     head?: Child
+    mediaBaseUrl: string
     children: Child
 }
 
-export function BaseLayout({title, head, children}: BaseLayoutProps) {
+export function BaseLayout({title, head, mediaBaseUrl, children}: BaseLayoutProps) {
     return (
         <>
             {raw('<!DOCTYPE html>')}
@@ -20,6 +21,8 @@ export function BaseLayout({title, head, children}: BaseLayoutProps) {
                     <meta content="width=device-width, initial-scale=1" name="viewport" />
                     <title>{title}</title>
                     <link href={FAVICON_DATA_URL} rel="icon" type="image/svg+xml" />
+                    <link href={mediaBaseUrl} rel="preconnect" />
+                    <link as="font" crossOrigin="anonymous" href="/assets/Nohemi.woff2" rel="preload" type="font/woff2" />
                     <link href="/app.css" rel="stylesheet" />
                     {head}
                 </head>

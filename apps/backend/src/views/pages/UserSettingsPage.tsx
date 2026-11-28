@@ -1011,6 +1011,7 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
 
     return (
         <BaseLayout
+            mediaBaseUrl={mediaBaseUrl}
             head={<style>{`[data-profile-photo-cropper] cropper-canvas { height: min(22rem, 55vh); }`}</style>}
             title="User Settings | MyOC"
         >
