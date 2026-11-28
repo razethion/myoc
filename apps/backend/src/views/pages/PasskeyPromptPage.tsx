@@ -10,7 +10,7 @@ type PasskeyPromptPageProps = {
 
 export function PasskeyPromptPage({currentUser, mediaBaseUrl, returnTo}: PasskeyPromptPageProps) {
     return (
-        <BaseLayout title="Set Up A Passkey | MyOC">
+        <BaseLayout mediaBaseUrl={mediaBaseUrl} title="Set Up A Passkey | MyOC">
             <Navbar currentUser={currentUser} mediaBaseUrl={mediaBaseUrl} />
 
             <main class="container mx-auto flex min-h-[calc(100vh-5rem)] max-w-2xl items-center px-3 py-10 sm:px-0">

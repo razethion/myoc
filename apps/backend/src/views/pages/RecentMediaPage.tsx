@@ -1244,7 +1244,7 @@ export function RecentMediaUnavailablePage({
     mediaBaseUrl,
 }: Pick<RecentMediaPageProps, 'currentUser' | 'guestInitial' | 'mediaBaseUrl'>) {
     return (
-        <BaseLayout title="Recently uploaded media | MyOC">
+        <BaseLayout mediaBaseUrl={mediaBaseUrl} title="Recently uploaded media | MyOC">
             <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl} />
             <main class="w-full px-3 py-6 sm:px-5 lg:px-6">
                 <div class="alert" role="alert">
@@ -1260,7 +1260,7 @@ export function RecentMediaPage({currentUser, guestInitial, mediaBaseUrl, page, 
     const hasMore = page.nextCursor !== null
 
     return (
-        <BaseLayout title="Recently uploaded media | MyOC">
+        <BaseLayout mediaBaseUrl={mediaBaseUrl} title="Recently uploaded media | MyOC">
             <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl} />
             <RecentMediaStyles />
             <main class="w-full px-3 py-6 sm:px-5 lg:px-6">

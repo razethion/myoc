@@ -91,7 +91,7 @@ function ReleaseBlock({release, isCurrent}: {release: ReleaseNote; isCurrent: bo
 
 export function WhatsNewPage({currentUser, guestInitial, mediaBaseUrl, releases}: WhatsNewPageProps) {
     return (
-        <BaseLayout head={<WhatsNewStyles />} title="What's New | MyOC">
+        <BaseLayout mediaBaseUrl={mediaBaseUrl} head={<WhatsNewStyles />} title="What's New | MyOC">
             <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl} />
             <main class="whats-new-shell min-h-[calc(100vh-4rem)] px-4 py-10 sm:px-6 sm:py-14 lg:px-8">
                 <section class="mx-auto max-w-5xl">

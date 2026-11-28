@@ -1585,7 +1585,7 @@ export function CharacterManagementPage({
     const folderTree = buildFolderTree(foldersWithUrls)
 
     return (
-        <BaseLayout head={<CharacterManagementStyles />} title="Character Management | MyOC">
+        <BaseLayout mediaBaseUrl={mediaBaseUrl} head={<CharacterManagementStyles />} title="Character Management | MyOC">
             <Navbar currentUser={currentUser} mediaBaseUrl={mediaBaseUrl} />
             <main class="management-shell min-h-screen px-3 py-6 sm:px-5">
                 <section class="mx-auto mb-5 max-w-7xl overflow-hidden rounded-[2rem] border border-base-300 bg-base-100/90 p-5 shadow-sm sm:p-7">

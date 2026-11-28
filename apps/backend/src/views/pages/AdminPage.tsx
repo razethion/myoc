@@ -44,7 +44,7 @@ export function AdminPage({activeSection, children, currentUser, imageApprovalPe
     const activeItem = visibleNavItems.find((item) => item.section === activeSection) ?? fallbackItem
 
     return (
-        <BaseLayout title={`${activeItem.label} | Admin | MyOC`}>
+        <BaseLayout mediaBaseUrl={mediaBaseUrl} title={`${activeItem.label} | Admin | MyOC`}>
             <Navbar currentUser={currentUser} mediaBaseUrl={mediaBaseUrl} />
             <main
                 class={

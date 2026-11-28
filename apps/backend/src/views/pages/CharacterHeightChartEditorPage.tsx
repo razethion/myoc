@@ -790,7 +790,7 @@ renderAll();
 
 export function CharacterHeightChartEditorPage({currentUser, character, mediaBaseUrl}: CharacterHeightChartEditorPageProps) {
     return (
-        <BaseLayout title={`${character.name} Height Chart | MyOC`}>
+        <BaseLayout mediaBaseUrl={mediaBaseUrl} title={`${character.name} Height Chart | MyOC`}>
             <Navbar currentUser={currentUser} guestInitial={currentUser.username.charAt(0).toUpperCase()} mediaBaseUrl={mediaBaseUrl} />
             <main class="container mx-auto max-w-6xl px-3 py-6 sm:px-0">
                 <style>{`

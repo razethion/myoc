@@ -2633,6 +2633,7 @@ export function CharacterPage({
 
     return (
         <BaseLayout
+            mediaBaseUrl={mediaBaseUrl}
             head={
                 <>
                     <CharacterPageHead

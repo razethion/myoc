@@ -387,7 +387,7 @@ export function AuthPage({mode, loginMethod = 'passkey', preAuthCsrfToken, curre
     const isLogin = mode === 'login'
 
     return (
-        <BaseLayout head={<AuthPageStyles />} title={`${mode === 'login' ? 'Login' : 'Create account'} | MyOC`}>
+        <BaseLayout mediaBaseUrl={mediaBaseUrl} head={<AuthPageStyles />} title={`${mode === 'login' ? 'Login' : 'Create account'} | MyOC`}>
             <Navbar currentUser={currentUser} guestInitial={guestInitial} mediaBaseUrl={mediaBaseUrl} />
 
             <main
