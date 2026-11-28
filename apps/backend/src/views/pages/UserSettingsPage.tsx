@@ -166,14 +166,31 @@ function UserSettingsPageScript({userId}: {userId: string}) {
             for (const tab of settingsTabButtons) {
                 const active = tab.getAttribute('data-settings-tab') === name;
                 tab.classList.toggle('menu-active', active);
-                if (active) tab.setAttribute('aria-current', 'page');
-                else tab.removeAttribute('aria-current');
+                tab.setAttribute('aria-selected', active ? 'true' : 'false');
             }
             window.history.replaceState(null, '', '#' + name);
         }
 
         for (const tab of settingsTabButtons) {
             tab.addEventListener('click', () => activateSettingsTab(tab.getAttribute('data-settings-tab')));
+        }
+
+        const settingsTablist = document.querySelector('[data-settings-tablist]');
+        if (settingsTablist) {
+            settingsTablist.addEventListener('keydown', (event) => {
+                const tabs = Array.from(settingsTabButtons);
+                const current = tabs.indexOf(document.activeElement);
+                if (current === -1) return;
+                let next = null;
+                if (event.key === 'ArrowDown' || event.key === 'ArrowRight') next = tabs[(current + 1) % tabs.length];
+                else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') next = tabs[(current - 1 + tabs.length) % tabs.length];
+                else if (event.key === 'Home') next = tabs[0];
+                else if (event.key === 'End') next = tabs[tabs.length - 1];
+                if (!next) return;
+                event.preventDefault();
+                activateSettingsTab(next.getAttribute('data-settings-tab'));
+                next.focus();
+            });
         }
         activateSettingsTab(window.location.hash.slice(1) || 'profile');
 
@@ -1007,10 +1024,19 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
                 </div>
 
                 <div class="flex flex-col gap-10 md:flex-row">
-                    <nav aria-label="Settings sections" class="md:w-52 md:shrink-0">
-                        <ul class="menu rounded-box border border-base-300 bg-base-200 gap-1 p-2">
-                            <li>
-                                <button class="justify-start" data-settings-tab="profile" type="button">
+                    {/* biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: nav with role="tablist" is the ARIA tabs pattern; the daisyUI menu list stays presentational. */}
+                    <nav aria-label="Settings sections" class="md:w-52 md:shrink-0" role="tablist">
+                        <ul class="menu rounded-box border border-base-300 bg-base-200 gap-1 p-2" data-settings-tablist role="presentation">
+                            <li role="presentation">
+                                <button
+                                    aria-controls="settings-panel-profile settings-panel-profile-social"
+                                    aria-selected="false"
+                                    class="justify-start"
+                                    data-settings-tab="profile"
+                                    id="settings-tab-profile"
+                                    role="tab"
+                                    type="button"
+                                >
                                     <svg
                                         aria-hidden="true"
                                         class="h-5 w-5 shrink-0 opacity-70"
@@ -1029,8 +1055,16 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
                                     Profile
                                 </button>
                             </li>
-                            <li>
-                                <button class="justify-start" data-settings-tab="security" type="button">
+                            <li role="presentation">
+                                <button
+                                    aria-controls="settings-panel-security"
+                                    aria-selected="false"
+                                    class="justify-start"
+                                    data-settings-tab="security"
+                                    id="settings-tab-security"
+                                    role="tab"
+                                    type="button"
+                                >
                                     <svg
                                         aria-hidden="true"
                                         class="h-5 w-5 shrink-0 opacity-70"
@@ -1049,8 +1083,16 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
                                     Security
                                 </button>
                             </li>
-                            <li>
-                                <button class="justify-start" data-settings-tab="preferences" type="button">
+                            <li role="presentation">
+                                <button
+                                    aria-controls="settings-panel-preferences"
+                                    aria-selected="false"
+                                    class="justify-start"
+                                    data-settings-tab="preferences"
+                                    id="settings-tab-preferences"
+                                    role="tab"
+                                    type="button"
+                                >
                                     <svg
                                         aria-hidden="true"
                                         class="h-5 w-5 shrink-0 opacity-70"
@@ -1069,8 +1111,16 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
                                     Preferences
                                 </button>
                             </li>
-                            <li>
-                                <button class="justify-start" data-settings-tab="migration" type="button">
+                            <li role="presentation">
+                                <button
+                                    aria-controls="settings-panel-migration"
+                                    aria-selected="false"
+                                    class="justify-start"
+                                    data-settings-tab="migration"
+                                    id="settings-tab-migration"
+                                    role="tab"
+                                    type="button"
+                                >
                                     <svg
                                         aria-hidden="true"
                                         class="h-5 w-5 shrink-0 opacity-70"
@@ -1097,6 +1147,7 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
                             <input name="csrfToken" type="hidden" value={currentUser.csrfToken} />
 
                             <section
+                                aria-labelledby="settings-tab-security"
                                 class="space-y-5"
                                 data-csrf-token={currentUser.csrfToken}
                                 data-force-passkey-setup={secureAccountRequired ? 'true' : 'false'}
@@ -1104,6 +1155,8 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
                                 data-security-section
                                 data-settings-panel="security"
                                 hidden
+                                id="settings-panel-security"
+                                role="tabpanel"
                             >
                                 <div>
                                     <h2 class="text-2xl font-bold">Account Login</h2>
@@ -1299,7 +1352,13 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
                                 ) : null}
                             </section>
 
-                            <section class="space-y-5" data-settings-panel="profile">
+                            <section
+                                aria-labelledby="settings-tab-profile"
+                                class="space-y-5"
+                                data-settings-panel="profile"
+                                id="settings-panel-profile"
+                                role="tabpanel"
+                            >
                                 <div>
                                     <h2 class="text-2xl font-bold">Profile</h2>
                                 </div>
@@ -1399,7 +1458,14 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
                                 </section>
                             </section>
 
-                            <section class="space-y-5" data-settings-panel="preferences" hidden>
+                            <section
+                                aria-labelledby="settings-tab-preferences"
+                                class="space-y-5"
+                                data-settings-panel="preferences"
+                                hidden
+                                id="settings-panel-preferences"
+                                role="tabpanel"
+                            >
                                 <div>
                                     <h2 class="text-2xl font-bold">Preferences</h2>
                                 </div>
@@ -1424,7 +1490,14 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
                                 </section>
                             </section>
 
-                            <section class="space-y-5" data-settings-panel="migration" hidden>
+                            <section
+                                aria-labelledby="settings-tab-migration"
+                                class="space-y-5"
+                                data-settings-panel="migration"
+                                hidden
+                                id="settings-panel-migration"
+                                role="tabpanel"
+                            >
                                 <div>
                                     <h2 class="text-2xl font-bold">Migration</h2>
                                 </div>
@@ -1444,7 +1517,13 @@ export function UserSettingsPage({currentUser, passkeys = [], sessions = [], soc
                                 </div>
                             </section>
 
-                            <section class="space-y-5" data-settings-panel="profile">
+                            <section
+                                aria-labelledby="settings-tab-profile"
+                                class="space-y-5"
+                                data-settings-panel="profile"
+                                id="settings-panel-profile-social"
+                                role="tabpanel"
+                            >
                                 <div>
                                     <h2 class="text-2xl font-bold">Social Links</h2>
                                 </div>

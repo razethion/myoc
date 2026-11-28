@@ -2097,7 +2097,8 @@ function UploadDialog() {
                 <h2 class="text-xl font-bold">Upload Image</h2>
                 <form class="mt-5 space-y-4" id="upload-image-form">
                     <p class="text-sm text-base-content/70">
-                        PNG, JPG, WebP, GIF, and AVIF images are accepted. Files are stored unmodified.
+                        PNG, JPG, WebP, GIF, and AVIF images are accepted. Files are stored unmodified, except that untagged RGB PNG files
+                        receive an sRGB color-space chunk.
                     </p>
                     <p class="text-xs text-base-content/60">Maximum 200 MB and 200,000,000 pixels per image.</p>
                     <div class="grid gap-3 sm:grid-cols-2">
@@ -2189,7 +2190,8 @@ function BulkUploadDialog() {
                             Image Files
                         </label>
                         <p class="text-xs text-base-content/60">
-                            PNG, JPG, WebP, GIF, and AVIF images are accepted. Files are stored unmodified.
+                            PNG, JPG, WebP, GIF, and AVIF images are accepted. Files are stored unmodified, except that untagged RGB PNG
+                            files receive an sRGB color-space chunk.
                         </p>
                         <p class="text-xs text-base-content/60">Maximum 200 MB and 200,000,000 pixels per image.</p>
                         <input accept="image/*" class="file-input w-full" id="bulk-gallery-image-files" multiple required type="file" />
@@ -2361,7 +2363,8 @@ function MediaDialogs({characterName}: {characterName: string}) {
                     <h2 class="text-xl font-bold">Edit Image</h2>
                     <form class="mt-5 space-y-4" id="edit-image-artist-form">
                         <p class="text-sm text-base-content/70">
-                            PNG, JPG, WebP, GIF, and AVIF replacements are accepted. Files are stored unmodified.
+                            PNG, JPG, WebP, GIF, and AVIF replacements are accepted. Files are stored unmodified, except that untagged RGB
+                            PNG files receive an sRGB color-space chunk.
                         </p>
                         <div class="grid gap-3 sm:grid-cols-2">
                             <fieldset class="fieldset rounded border border-base-300 bg-base-200 p-3">

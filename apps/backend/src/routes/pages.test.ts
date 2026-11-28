@@ -1584,7 +1584,7 @@ describe('GET /settings', () => {
             expect(html).toContain(`data-settings-tab="${tab}"`)
             expect(html).toContain(`data-settings-panel="${tab}"`)
         }
-        expect(html).toContain('data-settings-panel="profile">')
+        expect(html).toMatch(/data-settings-panel="profile"[^>]*role="tabpanel"/)
         expect(html).toMatch(/data-settings-panel="security"[^>]*hidden/)
         expect(html).toContain('activateSettingsTab')
     })
